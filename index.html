@@ -1,209 +1,4 @@
-// ══════════════════════════════════════════════════════════════
-// GOOGLE DRIVE API — Caricamento diretto dal browser
-// ══════════════════════════════════════════════════════════════
-const GDRIVE_CLIENT_ID = '776430136931-pgjrq8jf2c0rkqqt6hco1s6g5qi5cr96.apps.googleusercontent.com';
-const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
-const GDRIVE_FOLDER_NAME = 'Europa Auto — Foto';
-
-let _driveAccessToken = null;
-let _driveTokenExpiry = 0;
-
-// Controlla se il token è valido
-function isDriveConnected() {
-  return _driveAccessToken && Date.now() < _driveTokenExpiry;
-}
-
-// Login Google e ottieni access token
-function connectGoogleDrive() {
-  return new Promise((resolve, reject) => {
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: GDRIVE_CLIENT_ID,
-      scope: GDRIVE_SCOPES,
-      callback: (response) => {
-        if (response.error) { reject(response.error); return; }
-        _driveAccessToken = response.access_token;
-        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
-        updateDriveConnectBar(true);
-        resolve(_driveAccessToken);
-      }
-    });
-    client.requestAccessToken();
-  });
-}
-
-// Aggiorna la barra di connessione Drive
-function updateDriveConnectBar(connected) {
-  const bar = document.getElementById('drive-connect-bar');
-  if (!bar) return;
-  if (connected) {
-    bar.className = 'drive-connect-bar drive-connected';
-    bar.innerHTML = '<div class="drive-icon">✅</div><div class="drive-text"><strong>Google Drive connesso</strong> — Premi "Salva su Drive" per caricare le foto di questa auto.</div><button class="drive-btn" onclick="connectGoogleDrive()" style="background:#1a4fa0;">Riconnetti</button>';
-  }
-}
-
-// Trova o crea la cartella root "Europa Auto — Foto"
-async function getOrCreateRootFolder(token) {
-  // Cerca cartella esistente
-  const searchRes = await fetch(
-    'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + GDRIVE_FOLDER_NAME + "' and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)',
-    { headers: { Authorization: 'Bearer ' + token } }
-  );
-  const searchData = await searchRes.json();
-  if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
-
-  // Crea cartella
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: GDRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
-  });
-  const createData = await createRes.json();
-  return createData.id;
-}
-
-// Trova o crea sottocartella per la targa
-async function getOrCreateCarFolder(token, rootFolderId, targa) {
-  const searchRes = await fetch(
-    'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + targa + "' and mimeType='application/vnd.google-apps.folder' and '" + rootFolderId + "' in parents and trashed=false") + '&fields=files(id,name)',
-    { headers: { Authorization: 'Bearer ' + token } }
-  );
-  const searchData = await searchRes.json();
-  if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
-
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: targa, mimeType: 'application/vnd.google-apps.folder', parents: [rootFolderId] })
-  });
-  const createData = await createRes.json();
-  return createData.id;
-}
-
-// Imposta cartella come condivisibile (chiunque con il link)
-async function shareFolderPublic(token, folderId) {
-  await fetch('https://www.googleapis.com/drive/v3/files/' + folderId + '/permissions', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'reader', type: 'anyone' })
-  });
-  return 'https://drive.google.com/drive/folders/' + folderId;
-}
-
-// Carica una singola foto su Drive
-async function uploadSinglePhoto(token, folderId, photoData, fileName) {
-  // Converti base64 in blob
-  const base64 = photoData.replace(/^data:[^;]+;base64,/, '');
-  const mimeMatch = photoData.match(/^data:([^;]+);base64,/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  
-  const byteChars = atob(base64);
-  const byteArr = new Uint8Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-  const blob = new Blob([byteArr], { type: mime });
-
-  // Upload multipart
-  const boundary = '-------314159265358979323846';
-  const meta = JSON.stringify({ name: fileName, parents: [folderId] });
-  
-  const formData = new FormData();
-  formData.append('metadata', new Blob([meta], { type: 'application/json' }));
-  formData.append('file', blob);
-
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token },
-    body: formData
-  });
-  return await res.json();
-}
-
-// Elimina cartella targa da Drive
-async function deleteFotoFromDrive(targa) {
-  if (!targa) return;
-  localStorage.removeItem('ea_drive_link_' + targa.toUpperCase());
-  // Se non connesso, salta
-  if (!isDriveConnected()) return;
-  try {
-    const token = _driveAccessToken;
-    const rootId = await getOrCreateRootFolder(token);
-    const searchRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + targa.toUpperCase() + "' and '" + rootId + "' in parents and trashed=false") + '&fields=files(id)',
-      { headers: { Authorization: 'Bearer ' + token } }
-    );
-    const data = await searchRes.json();
-    if (data.files && data.files.length > 0) {
-      await fetch('https://www.googleapis.com/drive/v3/files/' + data.files[0].id, {
-        method: 'DELETE',
-        headers: { Authorization: 'Bearer ' + token }
-      });
-    }
-  } catch(e) { /* silenzioso */ }
-}
-
-// Funzione principale — carica tutte le foto in parallelo
-async function uploadFotoSequential(targa, statusEl) {
-  const photos = loadFoto(targa);
-  if (!photos.length) { alert('Nessuna foto da caricare.'); return null; }
-
-  // Assicurati di avere un token valido
-  let token = _driveAccessToken;
-  if (!isDriveConnected()) {
-    if (statusEl) { statusEl.textContent = '🔐 Accesso a Google Drive…'; statusEl.style.color = '#1a4fa0'; }
-    token = await connectGoogleDrive();
-  }
-
-  if (statusEl) { statusEl.textContent = '📁 Preparazione cartella Drive…'; statusEl.style.color = '#1a4fa0'; }
-  
-  const rootId = await getOrCreateRootFolder(token);
-  const carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
-
-  if (statusEl) { statusEl.textContent = '⬆️ Caricamento ' + photos.length + ' foto in parallelo…'; }
-
-  // Carica tutte le foto in parallelo (molto più veloce)
-  const uploads = photos.map((p, i) => {
-    const name = p.name || ('foto_' + String(i+1).padStart(2,'0') + '.jpg');
-    return uploadSinglePhoto(token, carFolderId, p.data, name);
-  });
-  await Promise.all(uploads);
-
-  if (statusEl) { statusEl.textContent = '🔗 Generazione link condivisibile…'; }
-  
-  const link = await shareFolderPublic(token, carFolderId);
-  localStorage.setItem('ea_drive_link_' + targa.toUpperCase(), link);
-  return link;
-}
-
-async function autoUploadDriveFromEditor() {
-  const targa = (document.getElementById('targa').value||'').trim().toUpperCase();
-  if (!targa) { alert('Inserisci prima la targa.'); return; }
-  const photos = loadFoto(targa);
-  if (!photos.length) { alert('Nessuna foto da caricare.'); return; }
-  const statusEl = document.getElementById('drive-status-editor');
-  try {
-    const link = await uploadFotoSequential(targa, statusEl);
-    if (statusEl && link) statusEl.innerHTML = '✅ ' + photos.length + ' foto su Drive — <a href="' + link + '" target="_blank" style="color:#27ae60;font-weight:700;">Apri cartella · copia il link per il cliente</a>';
-    renderArchive(''); renderReady('');
-  } catch(err) {
-    if (statusEl) { statusEl.textContent = '⚠ Errore: ' + err.message; statusEl.style.color = '#e74c3c'; }
-    console.error(err);
-  }
-}
-
-async function autoUploadDriveFromModal() {
-  if (!_currentFotoTarga) { alert('Nessuna auto selezionata.'); return; }
-  const targa = _currentFotoTarga;
-  const photos = loadFoto(targa);
-  if (!photos.length) { alert('Nessuna foto da caricare.'); return; }
-  const statusEl = document.getElementById('foto-modal-drive-status');
-  try {
-    const link = await uploadFotoSequential(targa, statusEl);
-    if (statusEl && link) statusEl.innerHTML = '✅ ' + photos.length + ' foto su Drive — <a href="' + link + '" target="_blank" style="color:#27ae60;font-weight:700;">Apri cartella · copia il link per il cliente</a>';
-    renderArchive(''); renderReady('');
-  } catch(err) {
-    if (statusEl) { statusEl.textContent = '⚠ Errore: ' + err.message; statusEl.style.color = '#e74c3c'; }
-    console.error(err);
-  }
-}<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="UTF-8">
@@ -3329,6 +3124,211 @@ async function autoUploadDriveFromModal() {
   }
 }
 
-</script>
+// ══════════════════════════════════════════════════════════════
+// GOOGLE DRIVE API — Caricamento diretto dal browser
+// ══════════════════════════════════════════════════════════════
+const GDRIVE_CLIENT_ID = '776430136931-pgjrq8jf2c0rkqqt6hco1s6g5qi5cr96.apps.googleusercontent.com';
+const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FOLDER_NAME = 'Europa Auto — Foto';
+
+let _driveAccessToken = null;
+let _driveTokenExpiry = 0;
+
+// Controlla se il token è valido
+function isDriveConnected() {
+  return _driveAccessToken && Date.now() < _driveTokenExpiry;
+}
+
+// Login Google e ottieni access token
+function connectGoogleDrive() {
+  return new Promise((resolve, reject) => {
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: GDRIVE_CLIENT_ID,
+      scope: GDRIVE_SCOPES,
+      callback: (response) => {
+        if (response.error) { reject(response.error); return; }
+        _driveAccessToken = response.access_token;
+        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+        updateDriveConnectBar(true);
+        resolve(_driveAccessToken);
+      }
+    });
+    client.requestAccessToken();
+  });
+}
+
+// Aggiorna la barra di connessione Drive
+function updateDriveConnectBar(connected) {
+  const bar = document.getElementById('drive-connect-bar');
+  if (!bar) return;
+  if (connected) {
+    bar.className = 'drive-connect-bar drive-connected';
+    bar.innerHTML = '<div class="drive-icon">✅</div><div class="drive-text"><strong>Google Drive connesso</strong> — Premi "Salva su Drive" per caricare le foto di questa auto.</div><button class="drive-btn" onclick="connectGoogleDrive()" style="background:#1a4fa0;">Riconnetti</button>';
+  }
+}
+
+// Trova o crea la cartella root "Europa Auto — Foto"
+async function getOrCreateRootFolder(token) {
+  // Cerca cartella esistente
+  const searchRes = await fetch(
+    'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + GDRIVE_FOLDER_NAME + "' and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)',
+    { headers: { Authorization: 'Bearer ' + token } }
+  );
+  const searchData = await searchRes.json();
+  if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
+
+  // Crea cartella
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: GDRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const createData = await createRes.json();
+  return createData.id;
+}
+
+// Trova o crea sottocartella per la targa
+async function getOrCreateCarFolder(token, rootFolderId, targa) {
+  const searchRes = await fetch(
+    'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + targa + "' and mimeType='application/vnd.google-apps.folder' and '" + rootFolderId + "' in parents and trashed=false") + '&fields=files(id,name)',
+    { headers: { Authorization: 'Bearer ' + token } }
+  );
+  const searchData = await searchRes.json();
+  if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
+
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: targa, mimeType: 'application/vnd.google-apps.folder', parents: [rootFolderId] })
+  });
+  const createData = await createRes.json();
+  return createData.id;
+}
+
+// Imposta cartella come condivisibile (chiunque con il link)
+async function shareFolderPublic(token, folderId) {
+  await fetch('https://www.googleapis.com/drive/v3/files/' + folderId + '/permissions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' })
+  });
+  return 'https://drive.google.com/drive/folders/' + folderId;
+}
+
+// Carica una singola foto su Drive
+async function uploadSinglePhoto(token, folderId, photoData, fileName) {
+  // Converti base64 in blob
+  const base64 = photoData.replace(/^data:[^;]+;base64,/, '');
+  const mimeMatch = photoData.match(/^data:([^;]+);base64,/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  
+  const byteChars = atob(base64);
+  const byteArr = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([byteArr], { type: mime });
+
+  // Upload multipart
+  const boundary = '-------314159265358979323846';
+  const meta = JSON.stringify({ name: fileName, parents: [folderId] });
+  
+  const formData = new FormData();
+  formData.append('metadata', new Blob([meta], { type: 'application/json' }));
+  formData.append('file', blob);
+
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token },
+    body: formData
+  });
+  return await res.json();
+}
+
+// Elimina cartella targa da Drive
+async function deleteFotoFromDrive(targa) {
+  if (!targa) return;
+  localStorage.removeItem('ea_drive_link_' + targa.toUpperCase());
+  // Se non connesso, salta
+  if (!isDriveConnected()) return;
+  try {
+    const token = _driveAccessToken;
+    const rootId = await getOrCreateRootFolder(token);
+    const searchRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='" + targa.toUpperCase() + "' and '" + rootId + "' in parents and trashed=false") + '&fields=files(id)',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const data = await searchRes.json();
+    if (data.files && data.files.length > 0) {
+      await fetch('https://www.googleapis.com/drive/v3/files/' + data.files[0].id, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + token }
+      });
+    }
+  } catch(e) { /* silenzioso */ }
+}
+
+// Funzione principale — carica tutte le foto in parallelo
+async function uploadFotoSequential(targa, statusEl) {
+  const photos = loadFoto(targa);
+  if (!photos.length) { alert('Nessuna foto da caricare.'); return null; }
+
+  // Assicurati di avere un token valido
+  let token = _driveAccessToken;
+  if (!isDriveConnected()) {
+    if (statusEl) { statusEl.textContent = '🔐 Accesso a Google Drive…'; statusEl.style.color = '#1a4fa0'; }
+    token = await connectGoogleDrive();
+  }
+
+  if (statusEl) { statusEl.textContent = '📁 Preparazione cartella Drive…'; statusEl.style.color = '#1a4fa0'; }
+  
+  const rootId = await getOrCreateRootFolder(token);
+  const carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
+
+  if (statusEl) { statusEl.textContent = '⬆️ Caricamento ' + photos.length + ' foto in parallelo…'; }
+
+  // Carica tutte le foto in parallelo (molto più veloce)
+  const uploads = photos.map((p, i) => {
+    const name = p.name || ('foto_' + String(i+1).padStart(2,'0') + '.jpg');
+    return uploadSinglePhoto(token, carFolderId, p.data, name);
+  });
+  await Promise.all(uploads);
+
+  if (statusEl) { statusEl.textContent = '🔗 Generazione link condivisibile…'; }
+  
+  const link = await shareFolderPublic(token, carFolderId);
+  localStorage.setItem('ea_drive_link_' + targa.toUpperCase(), link);
+  return link;
+}
+
+async function autoUploadDriveFromEditor() {
+  const targa = (document.getElementById('targa').value||'').trim().toUpperCase();
+  if (!targa) { alert('Inserisci prima la targa.'); return; }
+  const photos = loadFoto(targa);
+  if (!photos.length) { alert('Nessuna foto da caricare.'); return; }
+  const statusEl = document.getElementById('drive-status-editor');
+  try {
+    const link = await uploadFotoSequential(targa, statusEl);
+    if (statusEl && link) statusEl.innerHTML = '✅ ' + photos.length + ' foto su Drive — <a href="' + link + '" target="_blank" style="color:#27ae60;font-weight:700;">Apri cartella · copia il link per il cliente</a>';
+    renderArchive(''); renderReady('');
+  } catch(err) {
+    if (statusEl) { statusEl.textContent = '⚠ Errore: ' + err.message; statusEl.style.color = '#e74c3c'; }
+    console.error(err);
+  }
+}
+
+async function autoUploadDriveFromModal() {
+  if (!_currentFotoTarga) { alert('Nessuna auto selezionata.'); return; }
+  const targa = _currentFotoTarga;
+  const photos = loadFoto(targa);
+  if (!photos.length) { alert('Nessuna foto da caricare.'); return; }
+  const statusEl = document.getElementById('foto-modal-drive-status');
+  try {
+    const link = await uploadFotoSequential(targa, statusEl);
+    if (statusEl && link) statusEl.innerHTML = '✅ ' + photos.length + ' foto su Drive — <a href="' + link + '" target="_blank" style="color:#27ae60;font-weight:700;">Apri cartella · copia il link per il cliente</a>';
+    renderArchive(''); renderReady('');
+  } catch(err) {
+    if (statusEl) { statusEl.textContent = '⚠ Errore: ' + err.message; statusEl.style.color = '#e74c3c'; }
+    console.error(err);
+  }
+}</script>
 </body>
 </html>
