@@ -373,7 +373,12 @@ html, body{
 <div class="app-bar">
   
   <div>
-    <div class="app-bar-title">Stato d'Uso — Certificazione Autoveicolo</div>
+    <div id="drive-login-bar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#34a853;color:white;padding:10px 20px;align-items:center;gap:12px;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:600;letter-spacing:.04em;">
+  <span>☁️ Connetti Google Drive per salvare le foto direttamente sul cloud</span>
+  <button onclick="connectGoogleDrive().then(hideDriveLoginBar)" style="background:white;color:#34a853;border:none;padding:7px 18px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.06em;cursor:pointer;text-transform:uppercase;">Connetti ora</button>
+  <button onclick="hideDriveLoginBar()" style="background:rgba(255,255,255,0.2);color:white;border:none;padding:7px 14px;font-family:'Barlow Condensed',sans-serif;font-size:14px;cursor:pointer;">✕</button>
+</div>
+<div class="app-bar-title">Stato d'Uso — Certificazione Autoveicolo</div>
     
   </div>
   <button onclick="manualSync(this)" style="margin-left:auto;padding:7px 16px;background:#27ae60;border:1.5px solid #27ae60;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;">🔄 Aggiorna Dati</button>
@@ -2336,27 +2341,41 @@ document.addEventListener('DOMContentLoaded', () => {
 // Aggiorna contatori dopo breve delay
 setTimeout(updateCounts, 500);
 
-// Auto-connetti Google Drive all'avvio (silenzioso)
-setTimeout(function() {
-  try {
-    if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: GDRIVE_CLIENT_ID,
-        scope: GDRIVE_SCOPES,
-        prompt: '', // nessun popup se già autorizzato in precedenza
-        callback: (response) => {
-          if (!response.error && response.access_token) {
-            _driveAccessToken = response.access_token;
-            _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
-            updateDriveConnectBar(true);
-          }
-        }
-      });
-      // Prova silenzioso (senza popup) — funziona se l'utente ha già fatto login prima
-      client.requestAccessToken({ prompt: '' });
+// Auto-connetti Google Drive all'avvio
+function tryAutoConnectDrive() {
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    setTimeout(tryAutoConnectDrive, 500);
+    return;
+  }
+  // Prova prima in silenzio (funziona se già autorizzato)
+  const silentClient = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID,
+    scope: GDRIVE_SCOPES,
+    prompt: '',
+    callback: (response) => {
+      if (!response.error && response.access_token) {
+        _driveAccessToken = response.access_token;
+        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+        updateDriveConnectBar(true);
+        hideDriveLoginBar();
+      } else {
+        // Se silenzioso fallisce, mostra barra login visibile
+        showDriveLoginBar();
+      }
     }
-  } catch(e) { /* silenzioso */ }
-}, 1500);
+  });
+  try { silentClient.requestAccessToken({ prompt: '' }); } catch(e) { showDriveLoginBar(); }
+}
+setTimeout(tryAutoConnectDrive, 1000);
+
+function showDriveLoginBar() {
+  const bar = document.getElementById('drive-login-bar');
+  if (bar) bar.style.display = 'flex';
+}
+function hideDriveLoginBar() {
+  const bar = document.getElementById('drive-login-bar');
+  if (bar) bar.style.display = 'none';
+}
 
 
 // ══════════════════════════════════════════════════════════════
