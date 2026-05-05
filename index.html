@@ -375,7 +375,7 @@ html, body{
   <div>
     <div id="drive-login-bar" style="display:flex;position:fixed;top:0;left:0;right:0;z-index:9999;background:#34a853;color:white;padding:10px 20px;align-items:center;gap:12px;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:600;letter-spacing:.04em;">
   <span>☁️ Connetti Google Drive per salvare le foto direttamente sul cloud</span>
-  <button onclick="connectGoogleDrive().then(hideDriveLoginBar)" style="background:white;color:#34a853;border:none;padding:7px 18px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.06em;cursor:pointer;text-transform:uppercase;">Connetti ora</button>
+  <button onclick="forceGoogleLogin()" style="background:white;color:#34a853;border:none;padding:7px 18px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.06em;cursor:pointer;text-transform:uppercase;">Connetti ora</button>
   <button onclick="hideDriveLoginBar()" style="background:rgba(255,255,255,0.2);color:white;border:none;padding:7px 14px;font-family:'Barlow Condensed',sans-serif;font-size:14px;cursor:pointer;">✕</button>
 </div>
 <div class="app-bar-title">Stato d'Uso — Certificazione Autoveicolo</div>
@@ -586,6 +586,19 @@ html, body{
           <input type="file" id="foto-file-input" multiple accept="image/*" style="display:none" onchange="handleFotoUpload(this.files)">
         </div>
         <div id="foto-grid-container" style="margin-top:16px;"></div>
+
+        <!-- VIDEO UPLOAD -->
+        <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px;">
+          <div class="card-hd" style="font-size:13px;margin-bottom:10px;">🎬 Video del Veicolo</div>
+          <div id="video-status-bar" style="font-size:13px;color:var(--gray);margin-bottom:10px;min-height:18px;"></div>
+          <div id="video-preview" style="margin-bottom:10px;"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button onclick="document.getElementById('video-file-input').click()" style="padding:10px 18px;background:#1a4fa0;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;">🎬 Carica Video su Drive</button>
+            <input type="file" id="video-file-input" accept="video/*" style="display:none" onchange="handleVideoUpload(this.files[0])">
+            <span style="font-size:11px;color:var(--gray);">Il video viene caricato direttamente su Google Drive</span>
+          </div>
+        </div>
+
         <div id="foto-share-btn-wrap" style="margin-top:14px;display:none;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
             <button onclick="shareGalleryFromEditor()" style="padding:12px 6px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;">📱 WhatsApp</button>
@@ -2360,6 +2373,142 @@ document.addEventListener('DOMContentLoaded', () => {
 setTimeout(updateCounts, 500);
 
 
+// ══════════════════════════════════════════════════════════════
+// UPLOAD VIDEO SU GOOGLE DRIVE
+// ══════════════════════════════════════════════════════════════
+
+function getVideoKey(targa) { return 'ea_video_' + targa.toUpperCase().trim(); }
+
+function saveVideoLink(targa, link, name, fileId) {
+  localStorage.setItem(getVideoKey(targa), JSON.stringify({ link, name, fileId }));
+}
+
+function loadVideoLink(targa) {
+  try { return JSON.parse(localStorage.getItem(getVideoKey(targa)) || 'null'); } catch(e) { return null; }
+}
+
+async function handleVideoUpload(file) {
+  if (!file) return;
+  const targa = (document.getElementById('targa').value || '').trim().toUpperCase();
+  if (!targa) { alert('Inserisci prima la targa.'); return; }
+
+  const statusEl = document.getElementById('video-status-bar');
+  const previewEl = document.getElementById('video-preview');
+
+  // Connetti Drive se necessario
+  if (!isDriveConnected()) {
+    if (statusEl) { statusEl.textContent = '🔐 Connessione a Google Drive…'; statusEl.style.color = '#1a4fa0'; }
+    try { await connectGoogleDrive(); } catch(e) {
+      statusEl.textContent = '⚠ Connessione Drive necessaria.'; statusEl.style.color = '#e74c3c'; return;
+    }
+  }
+
+  const token = _driveAccessToken;
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  if (statusEl) { statusEl.textContent = '⬆️ Caricamento video (' + sizeMB + ' MB) in corso… attendere'; statusEl.style.color = '#1a4fa0'; }
+
+  try {
+    // Ottieni cartella auto su Drive
+    const rootId = await getOrCreateRootFolder(token);
+    const carFolderId = await getOrCreateCarFolder(token, rootId, targa);
+
+    // Upload resumable per file grandi
+    const meta = JSON.stringify({ name: file.name, parents: [carFolderId] });
+
+    // Inizia upload resumable
+    const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        'X-Upload-Content-Type': file.type,
+        'X-Upload-Content-Length': file.size
+      },
+      body: meta
+    });
+
+    const uploadUrl = initRes.headers.get('Location');
+    if (!uploadUrl) throw new Error('Impossibile avviare upload');
+
+    // Upload del file con progress
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          if (statusEl) statusEl.textContent = '⬆️ Caricamento video… ' + pct + '%';
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200 || xhr.status === 201) {
+          resolve(JSON.parse(xhr.responseText));
+        } else {
+          reject(new Error('Upload fallito: ' + xhr.status));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Errore di rete'));
+      xhr.send(file);
+    }).then(async (fileData) => {
+      // Rendi il video pubblico
+      await fetch('https://www.googleapis.com/drive/v3/files/' + fileData.id + '/permissions', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'reader', type: 'anyone' })
+      });
+
+      const videoLink = 'https://drive.google.com/file/d/' + fileData.id + '/view';
+      saveVideoLink(targa, videoLink, file.name, fileData.id);
+
+      if (statusEl) {
+        statusEl.innerHTML = '✅ Video caricato — <a href="' + videoLink + '" target="_blank" style="color:#27ae60;font-weight:700;">Apri su Drive</a>';
+        statusEl.style.color = '#27ae60';
+      }
+      renderVideoPreview(targa);
+    });
+
+  } catch(err) {
+    if (statusEl) { statusEl.textContent = '⚠ Errore: ' + err.message; statusEl.style.color = '#e74c3c'; }
+    console.error(err);
+  }
+
+  document.getElementById('video-file-input').value = '';
+}
+
+function renderVideoPreview(targa) {
+  const previewEl = document.getElementById('video-preview');
+  if (!previewEl) return;
+  const v = loadVideoLink(targa);
+  if (!v) { previewEl.innerHTML = ''; return; }
+  previewEl.innerHTML = '<div style="background:#f0f7ff;border:1px solid #c0d8f0;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+    '<span style="font-size:1.4rem;">🎬</span>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-size:13px;font-weight:600;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (v.name || 'Video') + '</div>' +
+      '<a href="' + v.link + '" target="_blank" style="font-size:12px;color:#1a4fa0;">Apri su Drive</a>' +
+    '</div>' +
+    '<button onclick="deleteVideo('' + targa + '')" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:5px 10px;font-size:11px;cursor:pointer;">Elimina</button>' +
+  '</div>';
+}
+
+async function deleteVideo(targa) {
+  if (!confirm('Eliminare il video da Drive?')) return;
+  const v = loadVideoLink(targa);
+  if (v && v.fileId && isDriveConnected()) {
+    try {
+      await fetch('https://www.googleapis.com/drive/v3/files/' + v.fileId, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + _driveAccessToken }
+      });
+    } catch(e) {}
+  }
+  localStorage.removeItem(getVideoKey(targa));
+  renderVideoPreview(targa);
+  const statusEl = document.getElementById('video-status-bar');
+  if (statusEl) { statusEl.textContent = 'Video eliminato.'; statusEl.style.color = '#999'; }
+}
+
+
 function fotoCountInline(targa) {
   const n = loadFoto(targa).length;
   const driveN = localStorage.getItem('ea_drive_count_' + (targa||'').toUpperCase());
@@ -2542,27 +2691,54 @@ async function refreshDriveBadges() {
 // Auto-connetti Google Drive all'avvio
 function tryAutoConnectDrive() {
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-    setTimeout(tryAutoConnectDrive, 500);
+    setTimeout(tryAutoConnectDrive, 300);
     return;
   }
-  // Prova silenzioso - se già autorizzato nasconde la barra automaticamente
+  // Prima prova silenzioso (se già autorizzato in precedenza)
   const silentClient = google.accounts.oauth2.initTokenClient({
     client_id: GDRIVE_CLIENT_ID,
     scope: GDRIVE_SCOPES,
     prompt: '',
     callback: (response) => {
       if (!response.error && response.access_token) {
+        // Già autorizzato — connetti silenziosamente
         _driveAccessToken = response.access_token;
         _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
         updateDriveConnectBar(true);
         hideDriveLoginBar();
+        setTimeout(refreshFotoButtons, 800);
+      } else {
+        // Non ancora autorizzato — mostra popup Google immediatamente
+        forceGoogleLogin();
       }
-      // Se fallisce la barra è già visibile (display:flex di default)
     }
   });
-  try { silentClient.requestAccessToken({ prompt: '' }); } catch(e) { /* barra già visibile */ }
+  try {
+    silentClient.requestAccessToken({ prompt: '' });
+  } catch(e) {
+    forceGoogleLogin();
+  }
 }
-setTimeout(tryAutoConnectDrive, 1500);
+
+function forceGoogleLogin() {
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return;
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID,
+    scope: GDRIVE_SCOPES,
+    callback: (response) => {
+      if (!response.error && response.access_token) {
+        _driveAccessToken = response.access_token;
+        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+        updateDriveConnectBar(true);
+        hideDriveLoginBar();
+        setTimeout(refreshFotoButtons, 800);
+      }
+    }
+  });
+  client.requestAccessToken({ prompt: 'select_account' });
+}
+
+setTimeout(tryAutoConnectDrive, 800);
 
 function showDriveLoginBar() {
   const bar = document.getElementById('drive-login-bar');
@@ -2697,6 +2873,7 @@ body{background:#0f0f0f;color:#f0f0f0;font-family:'Barlow',sans-serif;}
   <div class="badge">${photos.length} FOTO</div>
 </div>
 <div class="grid">${imgs}</div>
+${(function(){ const v = loadVideoLink(targa); return v ? '<div style=\"background:#1a1a1a;padding:20px;text-align:center;\"><a href=\"' + v.link + '\" target=\"_blank\" style=\"display:inline-flex;align-items:center;gap:10px;background:#1a4fa0;color:white;text-decoration:none;padding:14px 28px;font-family:Barlow Condensed,sans-serif;font-size:1.1rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;\">🎬 Guarda il Video del Veicolo</a></div>' : ''; })()}
 <div class="footer">Europa Auto S.r.l. · <span>Via Nigra 4, Paderno Dugnano (MI)</span> · Tel 0362285390</div>
 <div class="lb" id="lb">
   <button class="lb-close" onclick="closeLB()">✕</button>
