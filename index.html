@@ -1230,7 +1230,24 @@ function switchTab(tabId, btn){
   if(btn) btn.classList.add('active');
   if(tabId === 'foto'){
     const targa = (document.getElementById('targa').value||'').trim().toUpperCase();
-    if(targa){ document.getElementById('foto-targa-avviso').style.display='none'; renderFotoEditor(targa); }
+    if(targa){
+      document.getElementById('foto-targa-avviso').style.display='none';
+      const localPhotos = loadFoto(targa);
+      const statusEl = document.getElementById('drive-status-editor');
+      // Se non ci sono foto in locale ma c'è Drive connesso, sincronizza automaticamente
+      if(!localPhotos.length && isDriveConnected()){
+        if(statusEl) { statusEl.textContent = '☁️ Cerco foto su Drive…'; statusEl.style.color = '#1a4fa0'; }
+        syncFotoFromDrive(targa, statusEl).then(synced => {
+          renderFotoEditor(targa);
+          if(synced && statusEl) {
+            const shareWrap = document.getElementById('foto-share-btn-wrap');
+            if(shareWrap) shareWrap.style.display = 'block';
+          }
+        });
+      } else {
+        renderFotoEditor(targa);
+      }
+    }
     else { document.getElementById('foto-targa-avviso').style.display='block'; renderFotoEditor(''); }
   }
 }
@@ -1566,7 +1583,7 @@ function renderReady(filter){
   container.innerHTML = '<div class="archive-grid">' +
     filtered.map(r => `<div class="archive-card" style="border-left:4px solid #27ae60;">
       <div class="archive-card-score" style="color:${col(r.avg)}">${r.avg.toFixed(1)}</div>
-      <div class="archive-card-targa">${r.targa} ${fotoCountBadge(r.targa)} ${driveLinkBadge(r.targa)}</div>
+      <div class="archive-card-targa">${r.targa} ${fotoCountBadge(r.targa)} <span data-targa-drive="${r.targa}" style="display:none;background:#34a853;color:white;font-size:11px;font-weight:700;padding:2px 8px;margin-left:4px;" title="Foto su Google Drive">☁️ ...</span> ${driveLinkBadge(r.targa)}</div>
       <div class="archive-card-veicolo">${r.marca} ${r.modello}</div>
       <div class="archive-card-meta">✅ Confermato il ${r.confirmedDate} alle ${r.confirmedTime}</div>
       <div class="archive-card-meta">🔍 Ispettore: ${r.ispettore||'—'}</div>
@@ -2346,6 +2363,123 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Aggiorna contatori dopo breve delay
 setTimeout(updateCounts, 500);
+
+
+// ══════════════════════════════════════════════════════════════
+// SINCRONIZZAZIONE FOTO DA GOOGLE DRIVE
+// ══════════════════════════════════════════════════════════════
+
+// Conta le foto nella cartella Drive di una targa
+async function getDrivePhotoCount(targa) {
+  if (!isDriveConnected()) return null;
+  try {
+    const token = _driveAccessToken;
+    const rootId = await getOrCreateRootFolder(token);
+    // Cerca cartella targa
+    const searchRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(
+        "name='" + targa.toUpperCase() + "' and mimeType='application/vnd.google-apps.folder' and '" + rootId + "' in parents and trashed=false"
+      ) + '&fields=files(id)',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const data = await searchRes.json();
+    if (!data.files || !data.files.length) return 0;
+    const folderId = data.files[0].id;
+    // Conta i file nella cartella
+    const countRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(
+        "'" + folderId + "' in parents and trashed=false and mimeType contains 'image/'"
+      ) + '&fields=files(id)&pageSize=100',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const countData = await countRes.json();
+    return (countData.files || []).length;
+  } catch(e) { return null; }
+}
+
+// Scarica le foto da Drive e le salva nel localStorage
+async function syncFotoFromDrive(targa, statusEl) {
+  if (!isDriveConnected()) {
+    // Prova a connettersi prima
+    try { await connectGoogleDrive(); } catch(e) { return false; }
+  }
+  try {
+    const token = _driveAccessToken;
+    if (statusEl) { statusEl.textContent = '☁️ Sincronizzazione foto da Drive…'; statusEl.style.color = '#1a4fa0'; }
+    
+    const rootId = await getOrCreateRootFolder(token);
+    // Cerca cartella targa
+    const searchRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(
+        "name='" + targa.toUpperCase() + "' and mimeType='application/vnd.google-apps.folder' and '" + rootId + "' in parents and trashed=false"
+      ) + '&fields=files(id)',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const data = await searchRes.json();
+    if (!data.files || !data.files.length) {
+      if (statusEl) { statusEl.textContent = 'Nessuna foto su Drive per questa auto.'; statusEl.style.color = '#999'; }
+      return false;
+    }
+    const folderId = data.files[0].id;
+
+    // Lista file nella cartella
+    const listRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(
+        "'" + folderId + "' in parents and trashed=false and mimeType contains 'image/'"
+      ) + '&fields=files(id,name,mimeType)&pageSize=100',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const listData = await listRes.json();
+    const files = listData.files || [];
+    if (!files.length) {
+      if (statusEl) { statusEl.textContent = 'Nessuna foto su Drive per questa auto.'; statusEl.style.color = '#999'; }
+      return false;
+    }
+
+    if (statusEl) { statusEl.textContent = '⬇️ Download ' + files.length + ' foto da Drive…'; }
+
+    // Scarica ogni foto e convertila in base64
+    const photos = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (statusEl) { statusEl.textContent = '⬇️ Download foto ' + (i+1) + ' di ' + files.length + '…'; }
+      const imgRes = await fetch(
+        'https://www.googleapis.com/drive/v3/files/' + f.id + '?alt=media',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      const blob = await imgRes.blob();
+      const base64 = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      photos.push({ data: base64, name: f.name });
+    }
+
+    // Salva nel localStorage
+    saveFoto(targa, photos);
+    if (statusEl) { statusEl.innerHTML = '✅ ' + photos.length + ' foto sincronizzate da Drive'; statusEl.style.color = '#27ae60'; }
+    return true;
+  } catch(err) {
+    if (statusEl) { statusEl.textContent = '⚠ Errore sincronizzazione: ' + err.message; statusEl.style.color = '#e74c3c'; }
+    return false;
+  }
+}
+
+// Aggiorna i badge Drive nelle card con il conteggio reale da Drive
+async function refreshDriveBadges() {
+  if (!isDriveConnected()) return;
+  // Aggiorna tutte le card visibili
+  document.querySelectorAll('[data-targa-drive]').forEach(async el => {
+    const targa = el.getAttribute('data-targa-drive');
+    const count = await getDrivePhotoCount(targa);
+    if (count !== null) {
+      el.textContent = '☁️ ' + count;
+      el.style.display = count > 0 ? 'inline' : 'none';
+    }
+  });
+}
+
 
 // Auto-connetti Google Drive all'avvio
 function tryAutoConnectDrive() {
@@ -3203,6 +3337,8 @@ function updateDriveConnectBar(connected) {
   if (connected) {
     bar.className = 'drive-connect-bar drive-connected';
     bar.innerHTML = '<div class="drive-icon">✅</div><div class="drive-text"><strong>Google Drive connesso</strong> — Premi "Salva su Drive" per caricare le foto di questa auto.</div><button class="drive-btn" onclick="connectGoogleDrive()" style="background:#1a4fa0;">Riconnetti</button>';
+    // Aggiorna badge dopo connessione
+    setTimeout(refreshDriveBadges, 500);
   }
 }
 
