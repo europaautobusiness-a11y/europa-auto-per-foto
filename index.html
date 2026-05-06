@@ -1353,7 +1353,10 @@ function openGoogleSheet(){
 function showView(view, btn){
   ['editor','ready','archive','provv','foto'].forEach(v => {
     const el = document.getElementById('view-'+v);
-    if(el) el.style.display = v===view ? 'block' : 'none';
+    if(!el) return;
+    el.classList.remove('active');
+    el.style.display = '';  // rimuove override inline
+    if(v === view) el.classList.add('active');
   });
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if(btn) btn.classList.add('active');
@@ -2732,8 +2735,9 @@ function renderFotoGallery() {
   const el = document.getElementById('view-foto');
   if (!el) return;
 
-  // Raccoglie tutte le auto con foto dal localStorage
+  // Raccoglie auto con foto dal localStorage + Drive links salvati
   const cars = [];
+  const targheViste = new Set();
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key && key.startsWith('ea_foto_')) {
@@ -2745,13 +2749,36 @@ function renderFotoGallery() {
           const rec = allRecs.find(r => r.targa && r.targa.toUpperCase() === targa);
           const driveLink = localStorage.getItem('ea_drive_link_' + targa) || '';
           cars.push({
-            targa, photos,
+            targa, photos, photoCount: photos.length,
             marca: rec?.marca || '',
             modello: rec?.modello || '',
-            driveLink
+            driveLink, driveOnly: false
           });
+          targheViste.add(targa);
         }
       } catch(e) {}
+    }
+  }
+
+  // Aggiunge auto che hanno solo il link Drive (senza foto locali)
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('ea_drive_link_')) {
+      const targa = key.replace('ea_drive_link_', '');
+      if (!targheViste.has(targa)) {
+        const driveLink = localStorage.getItem(key) || '';
+        const driveCount = parseInt(localStorage.getItem('ea_drive_count_' + targa) || '0');
+        if (driveLink) {
+          const allRecs = [...(loadReady()||[]), ...(loadSent()||[])];
+          const rec = allRecs.find(r => r.targa && r.targa.toUpperCase() === targa);
+          cars.push({
+            targa, photos: [], photoCount: driveCount,
+            marca: rec?.marca || '', modello: rec?.modello || '',
+            driveLink, driveOnly: true
+          });
+          targheViste.add(targa);
+        }
+      }
     }
   }
 
@@ -2772,7 +2799,7 @@ function renderFotoGallery() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-family:var(--font-cd);font-size:22px;font-weight:700;letter-spacing:.04em;">Cartelle Foto</div>
-        <div style="font-size:13px;color:var(--gray);margin-top:3px;">${cars.length} veicol${cars.length===1?'o':'i'} · ${cars.reduce((s,c)=>s+c.photos.length,0)} foto totali</div>
+        <div style="font-size:13px;color:var(--gray);margin-top:3px;">${cars.length} veicol${cars.length===1?'o':'i'} · ${cars.reduce((s,c)=>s+(c.photoCount||c.photos.length),0)} foto totali</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;">`;
@@ -2781,10 +2808,16 @@ function renderFotoGallery() {
     const thumbs = car.photos.slice(0,4);
     const label = [car.marca, car.modello].filter(Boolean).join(' ') || '—';
     const driveLink = car.driveLink;
+    const totalFotos = car.photoCount || car.photos.length;
 
-    // Folder thumbnail: grid of up to 4 photos
+    // Folder thumbnail
     let thumbHtml = '';
-    if (thumbs.length === 1) {
+    if (car.driveOnly) {
+      thumbHtml = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,.5);gap:8px;">
+        <div style="font-size:2.5rem;">☁️</div>
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">${totalFotos > 0 ? totalFotos + ' foto su Drive' : 'Foto su Drive'}</div>
+      </div>`;
+    } else if (thumbs.length === 1) {
       thumbHtml = `<img src="${thumbs[0].data}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
     } else {
       const cols = thumbs.length >= 4 ? 2 : thumbs.length;
@@ -2813,7 +2846,7 @@ function renderFotoGallery() {
       </div>
       <!-- Actions -->
       <div style="padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <button onclick="apriCartella('${car.targa}')" style="padding:7px 12px;background:var(--blue);color:white;border:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;">📂 Apri</button>
+        ${car.driveOnly ? '' : `<button onclick="apriCartella('${car.targa}')" style="padding:7px 12px;background:var(--blue);color:white;border:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;">📂 Vedi foto</button>`}
         <button onclick="downloadGalleryDirect('${car.targa}','${car.marca}','${car.modello}')" style="padding:7px 12px;background:#27ae60;color:white;border:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;">📱 WhatsApp</button>
         ${driveLink ? `<a href="${driveLink}" target="_blank" style="padding:7px 12px;background:#34a853;color:white;text-decoration:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">☁️ Drive</a>` : ''}
         <button onclick="if(confirm('Eliminare tutte le foto di ${car.targa}?')){localStorage.removeItem('ea_foto_${car.targa}');renderFotoGallery();}" style="margin-left:auto;padding:7px 10px;background:none;border:1px solid var(--bdr);color:var(--gray);font-size:11px;cursor:pointer;">🗑</button>
