@@ -1043,7 +1043,7 @@ html, body{
         <label id="pCardBest" onclick="pSeleziona('best')" style="display:none;align-items:center;gap:14px;background:#27ae60;border-radius:4px;padding:16px 18px;color:white;margin-bottom:8px;cursor:pointer;border:3px solid transparent;transition:border .15s;">
           <input type="radio" name="pFin" value="best" style="width:18px;height:18px;flex-shrink:0;">
           <div style="flex:1;">
-            <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;opacity:.85;margin-bottom:4px;">⭐ Best Provv (60-96m · TAN≥9% · Comm≥500€ + Polizza F/I)</div>
+            <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;opacity:.85;margin-bottom:4px;">⭐ Best Provv (60-96m · TAN≥9% · Comm≥500€ · Polizza F/I 60 Mesi)</div>
             <div id="pRisBest" style="font-size:2.4rem;font-weight:700;line-height:1;">€ —</div>
           </div>
         </label>
@@ -4242,7 +4242,7 @@ function pCalcola() {
   const base    = PS.eta === 'nuova' ? G11 : G11 * 0.75;
   const compass = base * 0.70;
   const dbAvvera = compass * 1.45;
-  const bestCondition = PS.rate === '60-96' && tan >= 9 && comm >= 500 && PS.fi !== 'NO'; // solo F&I (Furto & Incendio), non CPI
+  const bestCondition = PS.rate === '60-96' && tan >= 9 && comm >= 500 && PS.fi !== 'NO'; // solo Furto & Incendio
   const bestProvv = dbAvvera * 1.15;
 
   const compassR = Math.round(compass);
@@ -4332,7 +4332,6 @@ function pSalva() {
     return;
   }
 
-  // Memorizza la selezione PRIMA di ricalcolare (pCalcola la resetterebbe)
   const _savedFinSel = _pFinSelezionata;
   const res = pCalcola();
   _pFinSelezionata = _savedFinSel;
@@ -4447,29 +4446,50 @@ function pModifica(id) {
   const r = reg.find(x => x.id === id);
   if (!r) return;
 
-  // Determina la provvigione corrente
-  let provAttuale = r.provvigione || r.provv || (r.tipo === 'noFin' ? 25 : r.dbAvvera) || '';
+  // Porta l'utente alla sezione provvigioni e precompila il form
+  sidebarNav('provv', document.getElementById('si-provv'));
 
-  const nuova = prompt(
-    'Modifica provvigione per ' + (r.cliente||r.auto||'') + '\n' +
-    'Valore attuale: €' + provAttuale + '\n\nNuova provvigione (€):',
-    provAttuale
-  );
-  if (nuova === null) return;
-  const n = parseFloat(nuova);
-  if (isNaN(n) || n < 0) { alert('Valore non valido.'); return; }
+  // Precompila campi testo
+  const setV = (elId, val) => { const el = document.getElementById(elId); if (el && val !== undefined && val !== null) el.value = val; };
+  setV('pCliente', r.cliente || '');
+  setV('pMarca',   r.marca   || '');
+  setV('pModello', r.modello || '');
+  setV('pValore',  r.valore  || '');
+  setV('pAcconto', r.acconto || '');
+  setV('pComm',    r.comm    || '');
+  setV('pTan',     r.tan     || '');
 
-  // Aggiorna provvigione selezionata
-  r.provvigione = n;
-  if (r.tipo === 'noFin') r.provv = n;
-  else if (r.tipo === 'sotto') r.provv = n;
-  else r.dbAvvera = n;
+  // Helper per cliccare il toggle corretto
+  function clickToggle(groupId, value) {
+    const grp = document.getElementById(groupId);
+    if (!grp) return;
+    grp.querySelectorAll('.ptb').forEach(function(b) {
+      if (b.getAttribute('onclick') && b.getAttribute('onclick').indexOf("'" + value + "'") !== -1) b.click();
+    });
+  }
 
-  pSaveReg(reg);
-  pGsSave(r);  // Aggiorna su GS
+  const finVal = (r.tipo === 'noFin') ? 'NO' : 'SI';
+  clickToggle('ptg-fin', finVal);
+
+  if (r.tipo !== 'noFin') {
+    if (r.eta)   clickToggle('ptg-eta',   r.eta);
+    if (r.sotto) clickToggle('ptg-sotto', r.sotto);
+    if (r.rate)  clickToggle('ptg-rate',  r.rate);
+    if (r.cpi)   clickToggle('ptg-cpi',   r.cpi);
+    if (r.fi)    clickToggle('ptg-fi',    r.fi);
+    if (r.gap)   clickToggle('ptg-gap',   r.gap);
+  }
+
+  // Elimina la vecchia vendita — verra' risalvata tramite pSalva
+  pSaveReg(reg.filter(x => x.id !== id));
+  pGsDelete(id);
   pRenderReg();
   pAggStats();
-  alert('✅ Provvigione aggiornata!');
+
+  // Ricalcola e porta il focus al form
+  pCalcola();
+  const formEl = document.getElementById('pCliente');
+  if (formEl) setTimeout(function() { formEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 200);
 }
 
 function pElimina(id) {
@@ -4509,40 +4529,47 @@ function pRenderReg() {
   const th = s => '<th style="background:var(--blue);color:white;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">' + s + '</th>';
   const td = (s, ex) => '<td style="padding:9px 12px;border-bottom:1px solid var(--bdr);' + (ex||'') + '">' + s + '</td>';
   let h = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr>';
-  h += th('Data') + th('Auto/Cliente') + th('Tipo') + th('TAN') + th('Rate') + th('Compass') + th('DB/Avvera') + th('Best Provv') + th('Provvigione') + th('');
+  h += th('Data') + th('Auto/Cliente') + th('Tipo') + th('TAN') + th('Rate') + th('Finanziaria') + th('Provvigione') + th('');
   h += '</tr></thead><tbody>';
-  // Raggruppa per mese
-  const mesiVisti = [];
-  reg.forEach(r => { if (!mesiVisti.includes(r.mese)) mesiVisti.push(r.mese); });
 
   reg.forEach((r, idx) => {
     // Header mese
     if (idx === 0 || r.mese !== reg[idx-1].mese) {
-      h += '<tr><td colspan="10" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">' +
-           '📅 ' + (pGetMeseLabel(r.mese) || r.mese || 'Mese sconosciuto') + '</td></tr>';
+      h += '<tr><td colspan="8" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">' +
+           '\u{1F4C5} ' + (pGetMeseLabel(r.mese) || r.mese || 'Mese sconosciuto') + '</td></tr>';
     }
-    const bp = r.bestProvv ? '<span style="background:#d4edda;color:#1a7c3e;padding:3px 8px;border-radius:3px;font-weight:700;font-size:12px;">€' + r.bestProvv + '</span>' : '—';
-    let tipoLabel = r.tipo === 'noFin' ? 'Senza fin.' : (r.sotto === 'SI' ? 'Sottocosto' : 'Finanziato');
-    let provvCell = r.tipo === 'noFin' ? '<strong>€25</strong>' : r.tipo === 'sotto' ? '<strong>€' + (r.provv||0) + '</strong>' : '—';
+    const isFin = r.tipo !== 'noFin';
+    const isSotto = r.tipo === 'sotto';
+    const tipoLabel = r.tipo === 'noFin' ? 'Senza fin.' : (isSotto ? 'Sottocosto' : 'Finanziato');
+    const tan  = isFin ? (r.tan  ? r.tan  + '%' : '—') : '—';
+    const rate = isFin ? (r.rate ? r.rate + 'm' : '—') : '—';
+    const finLabel = r.finanziaria || '—';
+    const provvVal = r.provvigione || r.provv || (r.tipo === 'noFin' ? 25 : 0) || 0;
+    const provvCell = '<strong style="font-size:15px;color:var(--grn);">\u20AC' + provvVal + '</strong>';
     const cliente = r.cliente || r.auto || '—';
     const veicolo = [r.marca, r.modello].filter(Boolean).join(' ') || '—';
     h += '<tr>';
     h += td(r.data);
     h += td('<strong>' + cliente + '</strong><br><span style="font-size:11px;color:var(--gray);">' + veicolo + '</span>');
     h += td(tipoLabel);
-    h += td(r.tan ? r.tan + '%' : '—') + td(r.rate ? r.rate + 'm' : '—');
-    h += td(r.compass ? '€' + r.compass : '—');
-    h += td(r.dbAvvera ? '€' + r.dbAvvera : '—');
-    h += td(bp);
+    h += td(tan) + td(rate);
+    h += td(finLabel);
     h += td(provvCell);
     h += td(
-      '<button onclick="pModifica(' + r.id + ')" style="padding:4px 8px;background:none;border:1px solid var(--blue);color:var(--blue);font-size:11px;cursor:pointer;margin-right:4px;">✏️</button>' +
-      '<button onclick="pElimina(' + r.id + ')" style="padding:4px 8px;background:none;border:1px solid var(--red);color:var(--red);font-size:11px;cursor:pointer;">✕</button>'
+      '<button data-modid="' + r.id + '" style="padding:4px 8px;background:none;border:1px solid var(--blue);color:var(--blue);font-size:11px;cursor:pointer;margin-right:4px;">\u270F\uFE0F Modifica</button>' +
+      '<button data-delid="' + r.id + '" style="padding:4px 8px;background:none;border:1px solid var(--red);color:var(--red);font-size:11px;cursor:pointer;">\u2715</button>'
     );
     h += '</tr>';
   });
   h += '</tbody></table></div>';
   el.innerHTML = h;
+  // Attach event listeners (no inline onclick = no syntax issues)
+  el.querySelectorAll('[data-modid]').forEach(function(btn) {
+    btn.addEventListener('click', function() { pModifica(parseInt(btn.getAttribute('data-modid'))); });
+  });
+  el.querySelectorAll('[data-delid]').forEach(function(btn) {
+    btn.addEventListener('click', function() { pElimina(parseInt(btn.getAttribute('data-delid'))); });
+  });
 }
 
 function pAggStats() {
@@ -4563,12 +4590,11 @@ function pAggStats() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// GALLERIA FOTO VEICOLI — vista dedicata
+// GALLERIA FOTO VEICOLI
 // ══════════════════════════════════════════════════════════════
 function renderFotoGallery() {
   var container = document.getElementById('view-foto');
   if (!container) return;
-
   var allRecords = (loadReady() || []).concat(loadSent() || []);
   var vehicleMap = {};
   allRecords.forEach(function(r) {
@@ -4577,7 +4603,6 @@ function renderFotoGallery() {
       if (!vehicleMap[t]) vehicleMap[t] = { marca: r.marca || '', modello: r.modello || '' };
     }
   });
-
   var fotoCars = [];
   for (var i = 0; i < localStorage.length; i++) {
     var key = localStorage.key(i);
@@ -4592,72 +4617,37 @@ function renderFotoGallery() {
       } catch(e) {}
     }
   }
-
-  var html = '<div style="margin-bottom:18px;">';
-  html += '<div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">Galleria Foto Veicoli</div>';
-  html += '<div style="font-size:13px;color:var(--gray);margin-top:4px;">Tutte le foto salvate per ogni veicolo.</div>';
-  html += '</div>';
-
+  var html = '<div style="margin-bottom:18px;"><div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">Galleria Foto Veicoli</div><div style="font-size:13px;color:var(--gray);margin-top:4px;">Tutte le foto salvate per ogni veicolo.</div></div>';
   if (!fotoCars.length) {
-    html += '<div style="background:white;border:1px solid var(--bdr);padding:60px;text-align:center;">';
-    html += '<div style="font-size:3rem;margin-bottom:12px;">&#128247;</div>';
-    html += '<div style="font-size:16px;font-weight:600;color:var(--blk);margin-bottom:6px;">Nessuna foto disponibile</div>';
-    html += '<div style="font-size:13px;color:var(--gray);">Aggiungi foto dal tab Foto Auto durante la compilazione del report.</div>';
-    html += '</div>';
+    html += '<div style="background:white;border:1px solid var(--bdr);padding:60px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">&#128247;</div><div style="font-size:16px;font-weight:600;color:var(--blk);margin-bottom:6px;">Nessuna foto disponibile</div><div style="font-size:13px;color:var(--gray);">Aggiungi foto dal tab Foto Auto durante la compilazione del report.</div></div>';
     container.innerHTML = html;
     return;
   }
-
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">';
-
   fotoCars.forEach(function(car) {
     var driveLink = localStorage.getItem('ea_drive_link_' + car.targa) || null;
     var previewPhotos = car.photos.slice(0, 4);
-    var veicolo = [car.marca, car.modello].filter(Boolean).join(' ') || '\u2014';
+    var veicolo = [car.marca, car.modello].filter(Boolean).join(' ') || '—';
     var gridCols = previewPhotos.length >= 2 ? '1fr 1fr' : '1fr';
-
     html += '<div style="background:white;border:1px solid var(--bdr);overflow:hidden;">';
-
-    // Header blu
     html += '<div style="background:var(--blue);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">';
-    html += '<div>';
-    html += '<div style="font-size:20px;font-weight:700;color:white;letter-spacing:.08em;">' + car.targa + '</div>';
-    html += '<div style="font-size:13px;color:rgba(255,255,255,.75);margin-top:1px;font-weight:600;">' + veicolo + '</div>';
-    html += '</div>';
-    html += '<span style="background:rgba(255,255,255,.15);color:white;font-size:11px;font-weight:700;padding:3px 9px;border-radius:2px;">&#128247; ' + car.count + '</span>';
-    html += '</div>';
-
-    // Griglia anteprime (cliccabili via data-attribute, gestite dopo)
+    html += '<div><div style="font-size:20px;font-weight:700;color:white;letter-spacing:.08em;">' + car.targa + '</div>';
+    html += '<div style="font-size:13px;color:rgba(255,255,255,.75);margin-top:1px;font-weight:600;">' + veicolo + '</div></div>';
+    html += '<span style="background:rgba(255,255,255,.15);color:white;font-size:11px;font-weight:700;padding:3px 9px;border-radius:2px;">&#128247; ' + car.count + '</span></div>';
     html += '<div style="display:grid;grid-template-columns:' + gridCols + ';gap:2px;padding:2px;background:#eee;">';
     previewPhotos.forEach(function(p, idx) {
-      var overlay = (idx === 3 && car.count > 4)
-        ? '<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:white;">+' + (car.count - 3) + '</div>'
-        : '';
-      html += '<div data-open-foto="' + car.targa + '" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#1a1a1a;cursor:pointer;">';
-      html += '<img src="' + p.data + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
-      html += overlay;
-      html += '</div>';
+      var overlay = (idx === 3 && car.count > 4) ? '<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:white;">+' + (car.count - 3) + '</div>' : '';
+      html += '<div data-open-foto="' + car.targa + '" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#1a1a1a;cursor:pointer;"><img src="' + p.data + '" style="width:100%;height:100%;object-fit:cover;display:block;">' + overlay + '</div>';
     });
-    html += '</div>';
-
-    // Azioni
-    html += '<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '</div><div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
     html += '<button data-open-foto="' + car.targa + '" style="padding:6px 13px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128194; Apri</button>';
-    if (driveLink) {
-      html += '<a href="' + driveLink + '" target="_blank" style="padding:6px 13px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:600;text-decoration:none;letter-spacing:.04em;text-transform:uppercase;">&#9729;&#65039; Drive</a>';
-    }
-    html += '</div>';
-    html += '</div>';
+    if (driveLink) { html += '<a href="' + driveLink + '" target="_blank" style="padding:6px 13px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:600;text-decoration:none;letter-spacing:.04em;text-transform:uppercase;">&#9729; Drive</a>'; }
+    html += '</div></div>';
   });
-
   html += '</div>';
   container.innerHTML = html;
-
-  // Attach click handlers after innerHTML (avoids inline onclick issues)
   container.querySelectorAll('[data-open-foto]').forEach(function(el) {
-    el.addEventListener('click', function() {
-      openFotoModal(el.getAttribute('data-open-foto'));
-    });
+    el.addEventListener('click', function() { openFotoModal(el.getAttribute('data-open-foto')); });
   });
 }
 
