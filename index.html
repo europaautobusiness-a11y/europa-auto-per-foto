@@ -1042,6 +1042,7 @@ html, body{
     </div>
   </div>
   <div id="foto-modal-drive-status" style="padding:8px 20px;font-size:12px;color:#1a4fa0;min-height:20px;"></div>
+  <div id="foto-modal-error" style="display:none;padding:8px 20px;font-size:12px;color:#e74c3c;background:#fff0f0;"></div>
   <div class="foto-modal-grid" id="fotoModalGrid"></div>
 </div>
 
@@ -2029,34 +2030,48 @@ function saveFoto(targa,photos){
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
-  var reader = new FileReader();
-  reader.onerror = function() { console.warn('FileReader error:', file.name); cb(null, file.name); };
-  reader.onload = function(e) {
-    var img = new Image();
-    img.onerror = function() { console.warn('Image load error:', file.name); cb(null, file.name); };
-    img.onload = function() {
-      try {
-        // Su mobile riduci di più per evitare crash del canvas
-        var MAX = 1600;
-        var w = img.width, h = img.height;
-        if (w > h) {
-          if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-        } else {
-          if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
-        }
-        var canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        var ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
-        cb(canvas.toDataURL('image/jpeg', 0.92), file.name);
-      } catch(err) {
-        console.warn('Canvas error:', file.name, err.message);
-        cb(null, file.name);
-      }
-    };
-    img.src = e.target.result;
+  // Mostra info file in console per debug
+  console.log('compressImage:', file.name, Math.round(file.size/1024)+'KB', file.type);
+
+  // Usa createObjectURL per evitare il limite di memoria di readAsDataURL
+  var objectUrl = URL.createObjectURL(file);
+  var img = new Image();
+
+  img.onerror = function() {
+    console.warn('Image load error:', file.name);
+    URL.revokeObjectURL(objectUrl);
+    cb(null, file.name);
   };
-  reader.readAsDataURL(file);
+
+  img.onload = function() {
+    URL.revokeObjectURL(objectUrl);
+    try {
+      var MAX = 1600;
+      var w = img.width, h = img.height;
+      console.log('Image size:', w, 'x', h);
+      if (w > h) {
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+      } else {
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      var result = canvas.toDataURL('image/jpeg', 0.92);
+      console.log('Compressed:', Math.round(result.length/1024)+'KB');
+      cb(result, file.name);
+    } catch(err) {
+      console.warn('Canvas error:', file.name, err.message);
+      // Fallback: usa il file originale come base64 senza compressione
+      var fr = new FileReader();
+      fr.onload = function(e) { cb(e.target.result, file.name); };
+      fr.onerror = function() { cb(null, file.name); };
+      fr.readAsDataURL(file);
+    }
+  };
+
+  img.src = objectUrl;
 }
 
 // Upload nel tab editor
@@ -2251,30 +2266,36 @@ function handleFotoModalUpload(files){
   var grid = document.getElementById('fotoModalGrid');
   if(grid) grid.innerHTML = '<div style="color:var(--blue);font-size:14px;text-align:center;padding:40px;grid-column:1/-1;">&#8987; Caricamento ' + validFiles.length + ' foto...</div>';
 
+  var errEl = document.getElementById('foto-modal-error');
+  if(errEl) errEl.style.display = 'none';
+
   function processNext() {
     if(idx >= validFiles.length) {
+      if (!photos.length) {
+        // Nessuna foto caricata — mostra errore
+        if(grid) grid.innerHTML = '<div style="color:#e74c3c;font-size:14px;text-align:center;padding:40px;grid-column:1/-1;">\u274C Nessuna foto elaborata correttamente.<br><small>Prova con foto pi\u00f9 piccole o in formato JPG.</small></div>';
+        if(errEl) { errEl.textContent = 'Errore: nessuna foto elaborata. Prova con immagini JPG/PNG pi\u00f9 piccole.'; errEl.style.display = 'block'; }
+        return;
+      }
       saveFoto(targa, photos);
       renderFotoModal();
-      // Upload su Drive con feedback nel modale
       var statusEl = document.getElementById('foto-modal-drive-status');
-      if(!statusEl) {
-        // Crea elemento status se non esiste
-        statusEl = document.createElement('div');
-        statusEl.id = 'foto-modal-drive-status';
-        statusEl.style.cssText = 'font-size:13px;padding:8px 14px;margin-top:8px;display:none;';
-        var addBtn = document.querySelector('.foto-modal-btn');
-        if(addBtn && addBtn.parentNode) addBtn.parentNode.appendChild(statusEl);
-      }
       if(typeof autoSyncFotoToDrive === 'function' && isDriveConnected()) {
         autoSyncFotoToDrive(targa, 'foto-modal-drive-status');
       }
       return;
     }
     var file = validFiles[idx++];
+    if(grid) grid.innerHTML = '<div style="color:var(--blue);font-size:14px;text-align:center;padding:40px;grid-column:1/-1;">&#8987; ' + idx + '/' + validFiles.length + ' — ' + file.name + '</div>';
     compressImage(file, function(data64, name) {
-      if(data64) photos.push({ data: data64, name: name });
-      if(grid) grid.innerHTML = '<div style="color:var(--blue);font-size:14px;text-align:center;padding:40px;grid-column:1/-1;">&#8987; Elaborazione ' + idx + '/' + validFiles.length + '...</div>';
-      setTimeout(processNext, 50);
+      if(data64) {
+        photos.push({ data: data64, name: name });
+        console.log('Foto aggiunta:', name, photos.length, 'totali');
+      } else {
+        console.warn('Foto saltata (errore):', name);
+        if(errEl) { errEl.textContent = 'Attenzione: "' + name + '" non elaborata.'; errEl.style.display = 'block'; }
+      }
+      setTimeout(processNext, 100);
     });
   }
   processNext();
