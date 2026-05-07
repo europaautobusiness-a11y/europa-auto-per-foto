@@ -2073,10 +2073,7 @@ function loadFoto(targa){
 function saveFoto(targa, photos){
   localStorage.setItem(getFotoKey(targa), JSON.stringify(photos));
   updateFotoBadgeEditor();
-  // Auto-sync su Drive in background (silenzioso, non blocca la UI)
-  if (targa && photos.length > 0) {
-    setTimeout(function() { autoSyncFotoToDrive(targa, null); }, 500);
-  }
+  if (targa && photos.length>0) { setTimeout(function(){autoSyncFotoToDrive(targa,null);},500); }
 }
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
@@ -2113,22 +2110,15 @@ function handleFotoUpload(files){
     compressImage(file, (data64, name) => {
       photos.push({ data: data64, name });
       pending--;
-      if(pending === 0){
-        saveFoto(targa, photos);
-        renderFotoEditor(targa);
-        // Mostra stato sync Drive sotto la zona upload
-        const dsEl = document.getElementById('drive-status-editor');
-        if (dsEl) {
-          dsEl.textContent = '☁️ Salvataggio su Drive...';
-          dsEl.style.color = '#1a4fa0';
-          dsEl.style.display = 'block';
-          // Avvia sync con feedback visivo
-          autoSyncFotoToDrive(targa, 'drive-status-editor');
-        }
+      if(pending===0){
+        saveFoto(targa,photos); renderFotoEditor(targa);
+        const dsEl=document.getElementById('drive-status-editor');
+        if(dsEl){dsEl.textContent='☁️ Salvataggio su Drive...';dsEl.style.color='#1a4fa0';dsEl.style.display='block';}
+        autoSyncFotoToDrive(targa,'drive-status-editor');
       }
     });
   });
-  document.getElementById('foto-file-input').value = '';
+  document.getElementById('foto-file-input').value='';
 }
 
 // Render griglia nel tab editor
@@ -2258,21 +2248,15 @@ function handleFotoModalUpload(files){
     compressImage(file, (data64, name) => {
       photos.push({ data: data64, name });
       pending--;
-      if(pending === 0){
-        saveFoto(_currentFotoTarga, photos);
-        renderFotoModal();
-        // Mostra stato sync Drive nella modale
-        const dsEl = document.getElementById('foto-modal-drive-status');
-        if (dsEl) {
-          dsEl.textContent = '☁️ Salvataggio su Drive...';
-          dsEl.style.color = '#1a4fa0';
-          dsEl.style.display = 'block';
-          autoSyncFotoToDrive(_currentFotoTarga, 'foto-modal-drive-status');
-        }
+      if(pending===0){
+        saveFoto(_currentFotoTarga,photos); renderFotoModal();
+        const dsEl=document.getElementById('foto-modal-drive-status');
+        if(dsEl){dsEl.textContent='☁️ Salvataggio su Drive...';dsEl.style.color='#1a4fa0';dsEl.style.display='block';}
+        autoSyncFotoToDrive(_currentFotoTarga,'foto-modal-drive-status');
       }
     });
   });
-  document.getElementById('foto-modal-file-input').value = '';
+  document.getElementById('foto-modal-file-input').value='';
 }
 
 function openLightboxModal(idx){
@@ -2402,64 +2386,6 @@ function postFotoToScript_DEPRECATED(targa, photoData, photoName) {
 }
 
 // Versione robusta: carica foto una alla volta via iframe POST
-// ══════════════════════════════════════════════════════════════
-// AUTO-UPLOAD: carica le foto su Drive in background
-// Chiamata automaticamente dopo ogni salvataggio foto
-// ══════════════════════════════════════════════════════════════
-async function autoSyncFotoToDrive(targa, statusElId) {
-  if (!targa) return;
-  // Se non connesso a Drive, salta silenziosamente
-  if (!isDriveConnected()) return;
-
-  const photos = loadFoto(targa);
-  if (!photos.length) return;
-
-  const token = _driveAccessToken;
-
-  // Mostra indicatore se richiesto
-  const statusEl = statusElId ? document.getElementById(statusElId) : null;
-  if (statusEl) { statusEl.textContent = '☁️ Salvataggio su Drive...'; statusEl.style.color = '#1a4fa0'; statusEl.style.display = 'block'; }
-
-  try {
-    const rootId = await getOrCreateRootFolder(token);
-    const carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
-
-    // Recupera i file già presenti su Drive per questa targa
-    const existingRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + carFolderId + "' in parents and trashed=false") + '&fields=files(name)',
-      { headers: { Authorization: 'Bearer ' + token } }
-    );
-    const existingData = await existingRes.json();
-    const existingNames = new Set((existingData.files || []).map(f => f.name));
-
-    // Carica solo le foto che non esistono già (per nome)
-    const toUpload = photos.filter(function(p, i) {
-      const name = p.name || ('foto_' + String(i+1).padStart(2,'0') + '.jpg');
-      return !existingNames.has(name);
-    });
-
-    if (toUpload.length > 0) {
-      await Promise.all(toUpload.map(function(p, i) {
-        const name = p.name || ('foto_' + String(photos.indexOf(p)+1).padStart(2,'0') + '.jpg');
-        return uploadSinglePhoto(token, carFolderId, p.data, name);
-      }));
-    }
-
-    // Salva/aggiorna il link Drive
-    const link = await shareFolderPublic(token, carFolderId);
-    localStorage.setItem('ea_drive_link_' + targa.toUpperCase(), link);
-
-    if (statusEl) {
-      statusEl.innerHTML = '&#9989; ' + photos.length + ' foto su Drive';
-      statusEl.style.color = '#27ae60';
-      setTimeout(function() { if (statusEl) statusEl.style.display = 'none'; }, 3000);
-    }
-  } catch(err) {
-    console.warn('autoSyncFotoToDrive error:', err.message);
-    if (statusEl) { statusEl.textContent = '&#9888; Drive non raggiunto — foto salvate localmente'; statusEl.style.color = '#e67e22'; setTimeout(function() { statusEl.style.display = 'none'; }, 4000); }
-  }
-}
-
 async function uploadFotoSequential(targa, statusEl) {
   const photos = loadFoto(targa);
   if (!photos.length) { alert('Nessuna foto da caricare.'); return null; }
@@ -2690,64 +2616,6 @@ async function deleteFotoFromDrive(targa) {
 }
 
 // Funzione principale — carica tutte le foto in parallelo
-// ══════════════════════════════════════════════════════════════
-// AUTO-UPLOAD: carica le foto su Drive in background
-// Chiamata automaticamente dopo ogni salvataggio foto
-// ══════════════════════════════════════════════════════════════
-async function autoSyncFotoToDrive(targa, statusElId) {
-  if (!targa) return;
-  // Se non connesso a Drive, salta silenziosamente
-  if (!isDriveConnected()) return;
-
-  const photos = loadFoto(targa);
-  if (!photos.length) return;
-
-  const token = _driveAccessToken;
-
-  // Mostra indicatore se richiesto
-  const statusEl = statusElId ? document.getElementById(statusElId) : null;
-  if (statusEl) { statusEl.textContent = '☁️ Salvataggio su Drive...'; statusEl.style.color = '#1a4fa0'; statusEl.style.display = 'block'; }
-
-  try {
-    const rootId = await getOrCreateRootFolder(token);
-    const carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
-
-    // Recupera i file già presenti su Drive per questa targa
-    const existingRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + carFolderId + "' in parents and trashed=false") + '&fields=files(name)',
-      { headers: { Authorization: 'Bearer ' + token } }
-    );
-    const existingData = await existingRes.json();
-    const existingNames = new Set((existingData.files || []).map(f => f.name));
-
-    // Carica solo le foto che non esistono già (per nome)
-    const toUpload = photos.filter(function(p, i) {
-      const name = p.name || ('foto_' + String(i+1).padStart(2,'0') + '.jpg');
-      return !existingNames.has(name);
-    });
-
-    if (toUpload.length > 0) {
-      await Promise.all(toUpload.map(function(p, i) {
-        const name = p.name || ('foto_' + String(photos.indexOf(p)+1).padStart(2,'0') + '.jpg');
-        return uploadSinglePhoto(token, carFolderId, p.data, name);
-      }));
-    }
-
-    // Salva/aggiorna il link Drive
-    const link = await shareFolderPublic(token, carFolderId);
-    localStorage.setItem('ea_drive_link_' + targa.toUpperCase(), link);
-
-    if (statusEl) {
-      statusEl.innerHTML = '&#9989; ' + photos.length + ' foto su Drive';
-      statusEl.style.color = '#27ae60';
-      setTimeout(function() { if (statusEl) statusEl.style.display = 'none'; }, 3000);
-    }
-  } catch(err) {
-    console.warn('autoSyncFotoToDrive error:', err.message);
-    if (statusEl) { statusEl.textContent = '&#9888; Drive non raggiunto — foto salvate localmente'; statusEl.style.color = '#e67e22'; setTimeout(function() { statusEl.style.display = 'none'; }, 4000); }
-  }
-}
-
 async function uploadFotoSequential(targa, statusEl) {
   const photos = loadFoto(targa);
   if (!photos.length) { alert('Nessuna foto da caricare.'); return null; }
@@ -4304,8 +4172,8 @@ function ptog(k, v, btn) {
     if (bloc) bloc.style.display = v === 'SI' ? 'block' : 'none';
   }
   if (k === 'fi') {
-    const mesiWrap = document.getElementById('pFiMesiWrap');
-    if (mesiWrap) mesiWrap.style.display = (v !== 'NO') ? 'block' : 'none';
+    const mw = document.getElementById('pFiMesiWrap');
+    if (mw) mw.style.display = (v !== 'NO') ? 'block' : 'none';
   }
   pCalcola();
 }
@@ -4385,11 +4253,7 @@ function pCalcola() {
   const G11base = G12 + pCPI + pFI + pGAP;
   // Moltiplicatore durata polizza F/I: 24-36m=-13%, 48-60m=base, 72m=+5%
   let fiMult = 1;
-  if (PS.fi !== 'NO') {
-    const fm = PS.fiMesi || 48;
-    if (fm <= 36) fiMult = 0.87;
-    else if (fm >= 72) fiMult = 1.05;
-  }
+  if (PS.fi !== 'NO') { const fm = PS.fiMesi||48; if (fm<=36) fiMult=0.87; else if (fm>=72) fiMult=1.05; }
   const G11 = G11base * fiMult;
 
   // ── SOTTOCOSTO → solo provvigione minima ─────────────────
@@ -4407,7 +4271,7 @@ function pCalcola() {
   const base    = PS.eta === 'nuova' ? G11 : G11 * 0.75;
   const compass = base * 0.70;
   const dbAvvera = compass * 1.45;
-  const bestCondition = PS.rate === '60-96' && tan >= 9 && comm >= 500 && PS.fi !== 'NO' && (PS.fiMesi || 48) >= 60;
+  const bestCondition = PS.rate === '60-96' && tan >= 9 && comm >= 500 && PS.fi !== 'NO' && (PS.fiMesi||48) >= 60;
   const bestProvv = dbAvvera * 1.15;
 
   const compassR = Math.round(compass);
@@ -4533,7 +4397,7 @@ function pSalva() {
     finanziaria,
     provvigione: provvSelezionata,
     eta: PS.eta, sotto: PS.sotto, rate: PS.rate,
-    fi: PS.fi, fiMesi: PS.fi !== 'NO' ? (PS.fiMesi||48) : null, cpi: PS.cpi, gap: PS.gap,
+    fi: PS.fi, fiMesi: PS.fi!=='NO'?(PS.fiMesi||48):null, cpi: PS.cpi, gap: PS.gap,
     valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15
   };
   if (res.tipo === 'noFin') { entry.provv = 25; }
@@ -4611,42 +4475,28 @@ function pModifica(id) {
   const r = reg.find(x => x.id === id);
   if (!r) return;
   sidebarNav('provv', document.getElementById('si-provv'));
-  const setV = (elId, val) => { const el = document.getElementById(elId); if (el && val !== undefined && val !== null) el.value = val; };
-  setV('pCliente', r.cliente || '');
-  setV('pMarca',   r.marca   || '');
-  setV('pModello', r.modello || '');
-  setV('pValore',  r.valore  || '');
-  setV('pAcconto', r.acconto || '');
-  setV('pComm',    r.comm    || '');
-  setV('pTan',     r.tan     || '');
+  const setV = (elId, val) => { const el = document.getElementById(elId); if (el && val!==undefined && val!==null) el.value = val; };
+  setV('pCliente', r.cliente||''); setV('pMarca', r.marca||''); setV('pModello', r.modello||'');
+  setV('pValore', r.valore||''); setV('pAcconto', r.acconto||''); setV('pComm', r.comm||''); setV('pTan', r.tan||'');
   function clickToggle(groupId, value) {
-    const grp = document.getElementById(groupId);
-    if (!grp) return;
-    grp.querySelectorAll('.ptb').forEach(function(b) {
-      const oc = b.getAttribute('onclick') || '';
-      if (oc.indexOf("'" + value + "'") !== -1) b.click();
-    });
+    const grp = document.getElementById(groupId); if (!grp) return;
+    grp.querySelectorAll('.ptb').forEach(function(b) { if ((b.getAttribute('onclick')||'').indexOf("'"+value+"'")!==-1) b.click(); });
   }
-  clickToggle('ptg-fin', (r.tipo === 'noFin') ? 'NO' : 'SI');
+  clickToggle('ptg-fin', (r.tipo==='noFin')?'NO':'SI');
   if (r.tipo !== 'noFin') {
     if (r.eta)   clickToggle('ptg-eta',   r.eta);
     if (r.sotto) clickToggle('ptg-sotto', r.sotto);
     if (r.rate)  clickToggle('ptg-rate',  r.rate);
     if (r.cpi)   clickToggle('ptg-cpi',   r.cpi);
     if (r.fi)    clickToggle('ptg-fi',    r.fi);
-    if (r.fi && r.fi !== 'NO' && r.fiMesi) {
+    if (r.fi && r.fi!=='NO' && r.fiMesi) {
       clickToggle('ptg-fiMesi', String(r.fiMesi));
-      const mw = document.getElementById('pFiMesiWrap');
-      if (mw) mw.style.display = 'block';
+      const mw = document.getElementById('pFiMesiWrap'); if (mw) mw.style.display='block';
     }
-    if (r.gap)   clickToggle('ptg-gap',   r.gap);
+    if (r.gap) clickToggle('ptg-gap', r.gap);
   }
-  pSaveReg(reg.filter(x => x.id !== id));
-  pGsDelete(id);
-  pRenderReg();
-  pAggStats();
-  pCalcola();
-  setTimeout(function() { const f = document.getElementById('pCliente'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 200);
+  pSaveReg(reg.filter(x => x.id!==id)); pGsDelete(id); pRenderReg(); pAggStats(); pCalcola();
+  setTimeout(function() { const f=document.getElementById('pCliente'); if(f) f.scrollIntoView({behavior:'smooth',block:'center'}); }, 200);
 }
 
 function pElimina(id) {
@@ -4698,38 +4548,27 @@ function pRenderReg() {
       h += '<tr><td colspan="9" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">' +
            '📅 ' + (pGetMeseLabel(r.mese) || r.mese || 'Mese sconosciuto') + '</td></tr>';
     }
-    const isFin    = r.tipo !== 'noFin';
-    const tipoLabel = r.tipo === 'noFin' ? 'Senza fin.' : (r.sotto === 'SI' ? 'Sottocosto' : 'Finanziato');
-    const tanCell   = isFin ? (r.tan  ? r.tan  + '%' : '—') : '—';
-    const rateCell  = isFin ? (r.rate ? r.rate + 'm' : '—') : '—';
-    const finLabel  = r.finanziaria || '—';
-    const polCell   = (r.fi && r.fi !== 'NO' && r.fiMesi) ? (r.fi + ' ' + r.fiMesi + 'm') : '—';
-    const provvVal  = r.provvigione || r.provv || (r.tipo === 'noFin' ? 25 : 0) || 0;
-    const provvCell = '<strong style="font-size:15px;color:var(--grn);">€' + provvVal + '</strong>';
-    const cliente   = r.cliente || r.auto || '—';
-    const veicolo   = [r.marca, r.modello].filter(Boolean).join(' ') || '—';
-    h += '<tr>';
-    h += td(r.data);
-    h += td('<strong>' + cliente + '</strong><br><span style="font-size:11px;color:var(--gray);">' + veicolo + '</span>');
-    h += td(tipoLabel);
-    h += td(tanCell) + td(rateCell);
-    h += td(finLabel);
-    h += td(polCell);
-    h += td(provvCell);
-    h += td(
-      '<button data-modid="' + r.id + '" style="padding:4px 8px;background:none;border:1px solid var(--blue);color:var(--blue);font-size:11px;cursor:pointer;margin-right:4px;">✏️ Modifica</button>' +
-      '<button data-delid="' + r.id + '" style="padding:4px 8px;background:none;border:1px solid var(--red);color:var(--red);font-size:11px;cursor:pointer;">✕</button>'
-    );
-    h += '</tr>';
+    const isFin=r.tipo!=='noFin';
+    const tipoLabel=r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato');
+    const tanCell=isFin?(r.tan?r.tan+'%':'—'):'—';
+    const rateCell=isFin?(r.rate?r.rate+'m':'—'):'—';
+    const finLabel=r.finanziaria||'—';
+    const polCell=(r.fi&&r.fi!=='NO'&&r.fiMesi)?(r.fi+' '+r.fiMesi+'m'):'—';
+    const provvVal=r.provvigione||r.provv||(r.tipo==='noFin'?25:0)||0;
+    const provvCell='<strong style="font-size:15px;color:var(--grn);">€'+provvVal+'</strong>';
+    const cliente=r.cliente||r.auto||'—';
+    const veicolo=[r.marca,r.modello].filter(Boolean).join(' ')||'—';
+    h+='<tr>';
+    h+=td(r.data);
+    h+=td('<strong>'+cliente+'</strong><br><span style="font-size:11px;color:var(--gray);">'+veicolo+'</span>');
+    h+=td(tipoLabel); h+=td(tanCell)+td(rateCell); h+=td(finLabel); h+=td(polCell); h+=td(provvCell);
+    h+=td('<button data-modid="'+r.id+'" style="padding:4px 8px;background:none;border:1px solid var(--blue);color:var(--blue);font-size:11px;cursor:pointer;margin-right:4px;">✏️ Modifica</button>'+'<button data-delid="'+r.id+'" style="padding:4px 8px;background:none;border:1px solid var(--red);color:var(--red);font-size:11px;cursor:pointer;">✕</button>');
+    h+='</tr>';
   });
   h += '</tbody></table></div>';
   el.innerHTML = h;
-  el.querySelectorAll('[data-modid]').forEach(function(btn) {
-    btn.addEventListener('click', function() { pModifica(parseInt(btn.getAttribute('data-modid'))); });
-  });
-  el.querySelectorAll('[data-delid]').forEach(function(btn) {
-    btn.addEventListener('click', function() { pElimina(parseInt(btn.getAttribute('data-delid'))); });
-  });
+  el.querySelectorAll('[data-modid]').forEach(function(btn){btn.addEventListener('click',function(){pModifica(parseInt(btn.getAttribute('data-modid')));});});
+  el.querySelectorAll('[data-delid]').forEach(function(btn){btn.addEventListener('click',function(){pElimina(parseInt(btn.getAttribute('data-delid')));});});
 }
 
 function pAggStats() {
@@ -4750,78 +4589,31 @@ function pAggStats() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// SYNC DA DRIVE → localStorage (cambio computer)
-// Scarica le foto presenti su Drive ma non ancora locali
+// AUTO-UPLOAD foto su Drive in background dopo ogni salvataggio
 // ══════════════════════════════════════════════════════════════
-async function syncFotoFromDrive() {
-  if (!isDriveConnected()) return;
+async function autoSyncFotoToDrive(targa, statusElId) {
+  if (!targa || !isDriveConnected()) return;
+  const photos = loadFoto(targa);
+  if (!photos.length) return;
   const token = _driveAccessToken;
-
+  const statusEl = statusElId ? document.getElementById(statusElId) : null;
+  if (statusEl) { statusEl.textContent = '\u2601\uFE0F Salvataggio su Drive...'; statusEl.style.color='#1a4fa0'; statusEl.style.display='block'; }
   try {
-    // Trova la cartella root
-    const searchRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='Europa Auto — Foto' and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)',
-      { headers: { Authorization: 'Bearer ' + token } }
-    );
-    const searchData = await searchRes.json();
-    if (!searchData.files || !searchData.files.length) return;
-    const rootId = searchData.files[0].id;
-
-    // Trova tutte le sottocartelle (una per targa)
-    const subRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + rootId + "' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)',
-      { headers: { Authorization: 'Bearer ' + token } }
-    );
-    const subData = await subRes.json();
-    if (!subData.files || !subData.files.length) return;
-
-    // Per ogni cartella targa, scarica le foto mancanti
-    for (var ci = 0; ci < subData.files.length; ci++) {
-      var carFolder = subData.files[ci];
-      var targa = carFolder.name.toUpperCase();
-
-      // Salva link Drive
-      var driveLink = 'https://drive.google.com/drive/folders/' + carFolder.id;
-      localStorage.setItem('ea_drive_link_' + targa, driveLink);
-
-      // Lista file nella cartella
-      var filesRes = await fetch(
-        'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + carFolder.id + "' in parents and trashed=false and mimeType contains 'image/'") + '&fields=files(id,name,mimeType)',
-        { headers: { Authorization: 'Bearer ' + token } }
-      );
-      var filesData = await filesRes.json();
-      if (!filesData.files || !filesData.files.length) continue;
-
-      // Confronta con foto locali
-      var localPhotos = loadFoto(targa);
-      var localNames  = new Set(localPhotos.map(function(p) { return p.name; }));
-      var missing     = filesData.files.filter(function(f) { return !localNames.has(f.name); });
-
-      if (!missing.length) continue;
-
-      // Scarica le foto mancanti come base64
-      for (var fi = 0; fi < missing.length; fi++) {
-        var file = missing[fi];
-        try {
-          var dlRes = await fetch(
-            'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media',
-            { headers: { Authorization: 'Bearer ' + token } }
-          );
-          var blob   = await dlRes.blob();
-          var b64    = await new Promise(function(resolve) {
-            var reader = new FileReader();
-            reader.onload = function() { resolve(reader.result); };
-            reader.readAsDataURL(blob);
-          });
-          localPhotos.push({ data: b64, name: file.name });
-        } catch(e) { console.warn('Download foto fallito:', file.name, e.message); }
-      }
-
-      // Salva localmente senza triggerare auto-upload (evita loop)
-      localStorage.setItem(getFotoKey(targa), JSON.stringify(localPhotos));
+    const rootId = await getOrCreateRootFolder(token);
+    const carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
+    const existingRes = await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("'"+carFolderId+"' in parents and trashed=false")+'&fields=files(name)',{headers:{Authorization:'Bearer '+token}});
+    const existingData = await existingRes.json();
+    const existingNames = new Set((existingData.files||[]).map(function(f){return f.name;}));
+    const toUpload = photos.filter(function(p,i){return !existingNames.has(p.name||('foto_'+String(i+1).padStart(2,'0')+'.jpg'));});
+    if (toUpload.length>0) {
+      await Promise.all(toUpload.map(function(p,i){const name=p.name||('foto_'+String(photos.indexOf(p)+1).padStart(2,'0')+'.jpg');return uploadSinglePhoto(token,carFolderId,p.data,name);}));
     }
+    const link = await shareFolderPublic(token, carFolderId);
+    localStorage.setItem('ea_drive_link_'+targa.toUpperCase(), link);
+    if (statusEl) { statusEl.innerHTML='\u2705 '+photos.length+' foto su Drive'; statusEl.style.color='#27ae60'; setTimeout(function(){statusEl.style.display='none';},3000); }
   } catch(err) {
-    console.warn('syncFotoFromDrive error:', err.message);
+    console.warn('autoSyncFotoToDrive:', err.message);
+    if (statusEl) { statusEl.textContent='\u26A0 Foto salvate localmente (Drive non raggiunto)'; statusEl.style.color='#e67e22'; setTimeout(function(){statusEl.style.display='none';},4000); }
   }
 }
 
@@ -4831,53 +4623,43 @@ async function syncFotoFromDrive() {
 function renderFotoGallery() {
   var container = document.getElementById('view-foto');
   if (!container) return;
-  var allRecords = (loadReady() || []).concat(loadSent() || []);
+  var allRecords = (loadReady()||[]).concat(loadSent()||[]);
   var vehicleMap = {};
-  allRecords.forEach(function(r) {
-    if (r && r.targa) { var t = r.targa.toUpperCase().trim(); if (!vehicleMap[t]) vehicleMap[t] = { marca: r.marca || '', modello: r.modello || '' }; }
-  });
-  var fotoCars = [];
-  for (var i = 0; i < localStorage.length; i++) {
-    var key = localStorage.key(i);
-    if (key && key.startsWith('ea_foto_')) {
-      var targa = key.replace('ea_foto_', '');
-      try {
-        var photos = JSON.parse(localStorage.getItem(key) || '[]');
-        if (photos.length > 0) { var info = vehicleMap[targa] || {}; fotoCars.push({ targa: targa, marca: info.marca || '', modello: info.modello || '', count: photos.length, photos: photos }); }
-      } catch(e) {}
+  allRecords.forEach(function(r){if(r&&r.targa){var t=r.targa.toUpperCase().trim();if(!vehicleMap[t])vehicleMap[t]={marca:r.marca||'',modello:r.modello||''};}});
+  var fotoCars=[];
+  for(var i=0;i<localStorage.length;i++){
+    var key=localStorage.key(i);
+    if(key&&key.startsWith('ea_foto_')){
+      var targa=key.replace('ea_foto_','');
+      try{var photos=JSON.parse(localStorage.getItem(key)||'[]');if(photos.length>0){var info=vehicleMap[targa]||{};fotoCars.push({targa:targa,marca:info.marca||'',modello:info.modello||'',count:photos.length,photos:photos});}}catch(e){}
     }
   }
-  var html = '<div style="margin-bottom:20px;"><div style="font-size:24px;font-weight:700;color:var(--blue);text-transform:uppercase;">Galleria Foto Veicoli</div><div style="font-size:13px;color:var(--gray);margin-top:4px;">Organizzata per veicolo. Le foto si sincronizzano automaticamente con Google Drive.</div></div>';
-  if (!fotoCars.length) {
-    html += '<div style="background:white;border:1px solid var(--bdr);padding:60px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">&#128247;</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;">Nessuna foto disponibile</div><div style="font-size:13px;color:var(--gray);">Aggiungi foto aprendo un report da Report Pronti e cliccando FOTO.</div></div>';
-    container.innerHTML = html; return;
-  }
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;">';
-  fotoCars.forEach(function(car) {
-    var driveLink = localStorage.getItem('ea_drive_link_' + car.targa) || null;
-    var veicolo = [car.marca, car.modello].filter(Boolean).join(' ') || '\u2014';
-    var preview = car.photos.slice(0, 4);
-    var gridCols = preview.length >= 2 ? '1fr 1fr' : '1fr';
-    html += '<div style="background:white;border:1px solid var(--bdr);overflow:hidden;">';
-    html += '<div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;">';
-    html += '<div style="min-width:0;overflow:hidden;"><div style="font-size:16px;font-weight:700;color:white;letter-spacing:.06em;">&#128193; ' + car.targa + '</div>';
-    if (veicolo !== '\u2014') html += '<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:2px;">' + veicolo + '</div>';
-    html += '</div><span style="background:rgba(255,255,255,.18);color:white;font-size:11px;font-weight:700;padding:3px 9px;border-radius:2px;flex-shrink:0;margin-left:8px;">&#128247; ' + car.count + '</span></div>';
-    html += '<div style="display:grid;grid-template-columns:' + gridCols + ';gap:2px;padding:2px;background:#ddd;">';
-    preview.forEach(function(p, idx) {
-      var ov = (idx === 3 && car.count > 4) ? '<div style="position:absolute;inset:0;background:rgba(0,0,0,.52);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:white;">+' + (car.count - 3) + '</div>' : '';
-      html += '<div data-open-foto="' + car.targa + '" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#111;cursor:pointer;"><img src="' + p.data + '" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">' + ov + '</div>';
+  var html='<div style="margin-bottom:20px;"><div style="font-size:24px;font-weight:700;color:var(--blue);text-transform:uppercase;">Galleria Foto Veicoli</div><div style="font-size:13px;color:var(--gray);margin-top:4px;">Le foto si sincronizzano automaticamente con Google Drive.</div></div>';
+  if(!fotoCars.length){html+='<div style="background:white;border:1px solid var(--bdr);padding:60px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">&#128247;</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;">Nessuna foto disponibile</div><div style="font-size:13px;color:var(--gray);">Aggiungi foto aprendo un report da Report Pronti e cliccando FOTO.</div></div>';container.innerHTML=html;return;}
+  html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;">';
+  fotoCars.forEach(function(car){
+    var driveLink=localStorage.getItem('ea_drive_link_'+car.targa)||null;
+    var veicolo=[car.marca,car.modello].filter(Boolean).join(' ')||'\u2014';
+    var preview=car.photos.slice(0,4);
+    var gridCols=preview.length>=2?'1fr 1fr':'1fr';
+    html+='<div style="background:white;border:1px solid var(--bdr);overflow:hidden;">';
+    html+='<div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;">';
+    html+='<div style="min-width:0;overflow:hidden;"><div style="font-size:16px;font-weight:700;color:white;letter-spacing:.06em;">&#128193; '+car.targa+'</div>';
+    if(veicolo!=='\u2014')html+='<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:2px;">'+veicolo+'</div>';
+    html+='</div><span style="background:rgba(255,255,255,.18);color:white;font-size:11px;font-weight:700;padding:3px 9px;border-radius:2px;flex-shrink:0;margin-left:8px;">&#128247; '+car.count+'</span></div>';
+    html+='<div style="display:grid;grid-template-columns:'+gridCols+';gap:2px;padding:2px;background:#ddd;">';
+    preview.forEach(function(p,idx){
+      var ov=(idx===3&&car.count>4)?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.52);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:white;">+'+(car.count-3)+'</div>':'';
+      html+='<div data-open-foto="'+car.targa+'" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#111;cursor:pointer;"><img src="'+p.data+'" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">'+ov+'</div>';
     });
-    html += '</div><div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
-    html += '<button data-open-foto="' + car.targa + '" style="padding:7px 14px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128194; Apri Gallery</button>';
-    if (driveLink) html += '<a href="' + driveLink + '" target="_blank" style="padding:7px 14px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:700;text-decoration:none;text-transform:uppercase;">&#9729; Drive</a>';
-    html += '<span style="font-size:11px;color:var(--gray);margin-left:auto;">' + car.count + ' foto</span></div></div>';
+    html+='</div><div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    html+='<button data-open-foto="'+car.targa+'" style="padding:7px 14px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128194; Apri Gallery</button>';
+    if(driveLink)html+='<a href="'+driveLink+'" target="_blank" style="padding:7px 14px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:700;text-decoration:none;text-transform:uppercase;">&#9729; Drive</a>';
+    html+='<span style="font-size:11px;color:var(--gray);margin-left:auto;">'+car.count+' foto</span></div></div>';
   });
-  html += '</div>';
-  container.innerHTML = html;
-  container.querySelectorAll('[data-open-foto]').forEach(function(el) {
-    el.addEventListener('click', function() { openFotoModal(el.getAttribute('data-open-foto')); });
-  });
+  html+='</div>';
+  container.innerHTML=html;
+  container.querySelectorAll('[data-open-foto]').forEach(function(el){el.addEventListener('click',function(){openFotoModal(el.getAttribute('data-open-foto'));});});
 }
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
@@ -4901,12 +4683,17 @@ function sidebarNav(view, btn) {
   if (btn) btn.classList.add('active');
   const t = document.getElementById('contentTitle');
   if (t) t.textContent = SIDEBAR_TITLES[view] || view;
+  if (view === 'editor')  {
+    buildEditor();
+    buildSubjGroup(testGroups, 'testGrid');
+    buildSubjGroup(roadGroups, 'roadGrid');
+    updateSummary();
+  }
   if (view === 'ready')   { updateCounts(); renderReady(''); }
   if (view === 'archive') { updateCounts(); renderArchive(''); }
   if (view === 'provv')   { pLoadFromGS(); pCalcola(); }
   if (view === 'foto')    {
     renderFotoGallery();
-    // Se Drive connesso, scarica foto mancanti da Drive e aggiorna galleria
     if (isDriveConnected()) {
       syncFotoFromDrive().then(function() { renderFotoGallery(); });
     }
@@ -4927,8 +4714,14 @@ function toggleSidebar() {
   }
 })();
 
-// ── AVVIO: carica da Google Sheets all'apertura ──────────────
+// ── AVVIO: inizializza editor e carica da Google Sheets ──────
 document.addEventListener('DOMContentLoaded', function() {
+  // Costruisce subito Componenti, Verifica e Test, Prova su Strada
+  buildEditor();
+  buildSubjGroup(testGroups, 'testGrid');
+  buildSubjGroup(roadGroups, 'roadGrid');
+  updateSummary();
+
   // Carica report da GS dopo 1.5s (attende Drive login)
   setTimeout(function() {
     if (GS_URL) {
