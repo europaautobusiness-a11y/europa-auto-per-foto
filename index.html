@@ -1395,24 +1395,23 @@ function fotoCountInline(targa) {
 }
 
 async function downloadGalleryDirect(targa, marca, modello) {
-  // Prima controlla se ci sono foto in locale
   let photos = loadFoto(targa);
-  
-  // Se non ci sono in locale ma Drive è connesso, sincronizza prima
+
+  // Se non ci sono in locale, prova a scaricarle da Drive
   if (!photos.length && isDriveConnected()) {
     const btn = document.getElementById('fotobtn-' + targa);
-    if (btn) btn.textContent = '⏳';
-    await syncFotoFromDrive(targa, null);
-    photos = loadFoto(targa);
-    if (btn) btn.textContent = photos.length + ' foto';
+    if (btn) { btn.textContent = '⏳ Drive...'; btn.disabled = true; }
+    try {
+      await syncFotoFromDrive(targa.toUpperCase(), null);
+      photos = loadFoto(targa);
+    } catch(e) { console.warn('syncFotoFromDrive error:', e.message); }
+    if (btn) { btn.textContent = photos.length ? photos.length + ' foto' : 'Foto'; btn.disabled = false; }
   }
-  
+
   if (!photos.length) {
-    alert('Nessuna foto disponibile per ' + targa + '.\nCarica prima le foto dal tab 📸 Foto Auto.');
+    alert('Nessuna foto trovata per ' + targa + '.\n\nSe hai caricato foto su Drive, premi prima il tasto "☁️ Salva su Drive" nella modale foto, poi riprova.');
     return;
   }
-  
-  // Genera e scarica galleria HTML
   generateGalleryHTML(targa, marca, modello);
 }
 
@@ -2188,9 +2187,24 @@ document.addEventListener('DOMContentLoaded', function(){
 // Modale foto da archivio/pronti
 function openFotoModal(targa){
   _currentFotoTarga = targa.toUpperCase().trim();
-  document.getElementById('fotoModalTitle').textContent = '📸 Foto Auto — ' + _currentFotoTarga;
+  document.getElementById('fotoModalTitle').textContent = '\uD83D\uDCF8 Foto Auto — ' + _currentFotoTarga;
   renderFotoModal();
   document.getElementById('fotoModal').classList.add('active');
+  // Se non ci sono foto in locale ma Drive è connesso, scaricale
+  if (!loadFoto(_currentFotoTarga).length && isDriveConnected()) {
+    var statusEl = document.getElementById('foto-modal-drive-status');
+    if (statusEl) { statusEl.textContent = '\u2601\uFE0F Cerco foto su Drive...'; statusEl.style.color = '#1a4fa0'; }
+    syncFotoFromDrive(_currentFotoTarga, statusEl).then(function() {
+      renderFotoModal();
+      if (statusEl && loadFoto(_currentFotoTarga).length) {
+        statusEl.textContent = '\u2705 Foto caricate da Drive';
+        statusEl.style.color = '#27ae60';
+        setTimeout(function(){ statusEl.textContent = ''; }, 3000);
+      } else if (statusEl) {
+        statusEl.textContent = '';
+      }
+    });
+  }
 }
 
 function closeFotoModal(){
@@ -4617,8 +4631,44 @@ async function autoSyncFotoToDrive(targa, statusElId) {
   }
 }
 
-async function syncFotoFromDrive(){if(!isDriveConnected())return;const tk=_driveAccessToken;try{const sr=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='Europa Auto \u2014 Foto' and mimeType='application/vnd.google-apps.folder' and trashed=false")+'&fields=files(id)',{headers:{Authorization:'Bearer '+tk}});const sd=await sr.json();if(!sd.files?.length)return;const subR=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("'"+sd.files[0].id+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false")+'&fields=files(id,name)',{headers:{Authorization:'Bearer '+tk}});const subD=await subR.json();if(!subD.files?.length)return;for(const cf of subD.files){const tg=cf.name.toUpperCase();localStorage.setItem('ea_drive_link_'+tg,'https://drive.google.com/drive/folders/'+cf.id);const fR=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("'"+cf.id+"' in parents and trashed=false and mimeType contains 'image/'")+'&fields=files(id,name)',{headers:{Authorization:'Bearer '+tk}});const fD=await fR.json();if(!fD.files?.length)continue;const lp=loadFoto(tg),ln=new Set(lp.map(p=>p.name));const ms=fD.files.filter(f=>!ln.has(f.name));for(const f of ms){try{const r=await fetch('https://www.googleapis.com/drive/v3/files/'+f.id+'?alt=media',{headers:{Authorization:'Bearer '+tk}});const b=await r.blob();const d=await new Promise(res=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.readAsDataURL(b);});lp.push({data:d,name:f.name});}catch(e){}}if(ms.length)localStorage.setItem(getFotoKey(tg),JSON.stringify(lp));}}catch(e){console.warn(e);}}
+// syncFotoFromDrive: usa quella originale con (targa, statusEl)
 function renderFotoGallery(){const c=document.getElementById('view-foto');if(!c)return;const ar=(loadReady()||[]).concat(loadSent()||[]);const vm={};ar.forEach(r=>{if(r?.targa){const t=r.targa.toUpperCase().trim();if(!vm[t])vm[t]={marca:r.marca||'',modello:r.modello||''};}});const fc=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith('ea_foto_')){const tg=k.replace('ea_foto_','');try{const ph=JSON.parse(localStorage.getItem(k)||'[]');if(ph.length){const inf=vm[tg]||{};fc.push({targa:tg,marca:inf.marca||'',modello:inf.modello||'',count:ph.length,photos:ph});}}catch(e){}}}let h='<div style="margin-bottom:20px;"><div style="font-size:24px;font-weight:700;color:var(--blue);text-transform:uppercase;">Galleria Foto Veicoli</div></div>';if(!fc.length){h+='<div style="background:white;border:1px solid var(--bdr);padding:40px;text-align:center;"><div style="font-size:3rem;">&#128247;</div><div style="font-size:16px;font-weight:600;margin:12px 0 8px;">Nessuna foto disponibile</div></div>';c.innerHTML=h;return;}h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">';fc.forEach(car=>{const dl=localStorage.getItem('ea_drive_link_'+car.targa)||null;const vei=[car.marca,car.modello].filter(Boolean).join(' ')||'\u2014';const pv=car.photos.slice(0,4),gc=pv.length>=2?'1fr 1fr':'1fr';h+='<div style="background:white;border:1px solid var(--bdr);overflow:hidden;"><div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;"><div><div style="font-size:16px;font-weight:700;color:white;">&#128193; '+car.targa+'</div>';if(vei!=='\u2014')h+='<div style="font-size:12px;color:rgba(255,255,255,.8);">'+vei+'</div>';h+='</div><span style="background:rgba(255,255,255,.18);color:white;font-size:11px;font-weight:700;padding:3px 9px;flex-shrink:0;margin-left:8px;">&#128247; '+car.count+'</span></div>';h+='<div style="display:grid;grid-template-columns:'+gc+';gap:2px;padding:2px;background:#ddd;">';pv.forEach((p,i)=>{const ov=i===3&&car.count>4?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:white;">+'+(car.count-3)+'</div>':'';h+='<div data-open-foto="'+car.targa+'" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#111;cursor:pointer;"><img src="'+p.data+'" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">'+ov+'</div>';});h+='</div><div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;"><button data-open-foto="'+car.targa+'" style="padding:7px 14px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128194; Apri</button>';if(dl)h+='<a href="'+dl+'" target="_blank" style="padding:7px 14px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:700;text-decoration:none;text-transform:uppercase;">&#9729; Drive</a>';h+='</div></div>';});h+='</div>';c.innerHTML=h;c.querySelectorAll('[data-open-foto]').forEach(el=>el.addEventListener('click',()=>openFotoModal(el.getAttribute('data-open-foto'))));}
+
+// Scarica da Drive tutte le cartelle (usata dalla galleria)
+async function syncAllFotoFromDrive() {
+  if (!isDriveConnected()) return;
+  try {
+    const token = _driveAccessToken;
+    const rootId = await getOrCreateRootFolder(token);
+    const subRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + rootId + "' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const subData = await subRes.json();
+    if (!subData.files || !subData.files.length) return;
+    for (const cf of subData.files) {
+      const tg = cf.name.toUpperCase();
+      localStorage.setItem('ea_drive_link_' + tg, 'https://drive.google.com/drive/folders/' + cf.id);
+      const localPhotos = loadFoto(tg);
+      const localNames = new Set(localPhotos.map(p => p.name));
+      const fRes = await fetch(
+        'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + cf.id + "' in parents and trashed=false and mimeType contains 'image/'") + '&fields=files(id,name)',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      const fData = await fRes.json();
+      const missing = (fData.files || []).filter(f => !localNames.has(f.name));
+      for (const f of missing) {
+        try {
+          const r = await fetch('https://www.googleapis.com/drive/v3/files/' + f.id + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
+          const blob = await r.blob();
+          const b64 = await new Promise(res => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.readAsDataURL(blob); });
+          localPhotos.push({ data: b64, name: f.name });
+        } catch(e) { console.warn('download fallito:', f.name); }
+      }
+      if (missing.length) localStorage.setItem(getFotoKey(tg), JSON.stringify(localPhotos));
+    }
+  } catch(e) { console.warn('syncAllFotoFromDrive:', e.message); }
+}
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 const SIDEBAR_TITLES = {
@@ -4646,7 +4696,7 @@ function sidebarNav(view,btn){
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
-  if(view==='foto'){renderFotoGallery();if(isDriveConnected())syncFotoFromDrive().then(()=>renderFotoGallery());}
+  if(view==='foto'){renderFotoGallery();if(isDriveConnected())syncAllFotoFromDrive().then(function(){renderFotoGallery();});}
 }
 
 // ── SIDEBAR TOGGLE ─────────────────────────────────────────
