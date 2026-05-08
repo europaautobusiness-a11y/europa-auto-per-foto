@@ -819,7 +819,7 @@ html, body{
 
 
 <!-- ══ SEZIONE PROVVIGIONI ══ -->
-<div class="view" id="view-provv">
+<div class="view" id="view-provv" style="display:none;padding:22px 16px;">
 
   <div style="background:white;border:1px solid var(--bdr);padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
     <div style="text-align:center;"><div id="pStatN" style="font-size:1.7rem;font-weight:700;color:var(--blue);line-height:1;">0</div><div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Vendite</div></div>
@@ -1021,7 +1021,7 @@ html, body{
 </div>
 
 <!-- PERMESSI -->
-<div class="view" id="view-permessi" style="padding:22px 16px;">
+<div class="view" id="view-permessi" style="display:none;padding:22px 16px;">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
     <div>
       <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128203; Permessi</div>
@@ -2844,7 +2844,13 @@ setTimeout(initApp, 600);
 
 
 const GDRIVE_CLIENT_ID = '776430136931-pgjrq8jf2c0rkqqt6hco1s6g5qi5cr96.apps.googleusercontent.com';
-const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/spreadsheets.readonly'
+].join(' ');
 const GDRIVE_FOLDER_NAME = 'Europa Auto — Foto';
 let _driveAccessToken = null;
 let _driveTokenExpiry = 0;
@@ -4345,28 +4351,41 @@ function pSaveReg(r) { localStorage.setItem('ea_provv3', JSON.stringify(r)); }
 function pLoadFromGS() {
   if (!GS_URL) { pRenderReg(); pAggStats(); return; }
   var el = document.getElementById('pRegistro');
-  if (el) el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray);">&#9203; Caricamento...</div>';
+  if (el) el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:14px;">&#9203; Caricamento provvigioni da Google Sheets...</div>';
+
   var cb = 'pGsCb_' + Date.now();
   var timer = setTimeout(function() {
     delete window[cb];
     var s = document.getElementById(cb);
     if (s && s.parentNode) s.parentNode.removeChild(s);
+    console.warn('pLoadFromGS: timeout');
     pRenderReg(); pAggStats();
-  }, 12000);
+  }, 15000);
+
   window[cb] = function(data) {
     clearTimeout(timer);
     delete window[cb];
     var s = document.getElementById(cb);
     if (s && s.parentNode) s.parentNode.removeChild(s);
-    if (Array.isArray(data) && data.length > 0) pSaveReg(data);
-    pRenderReg(); pAggStats();
+    if (Array.isArray(data) && data.length > 0) {
+      pSaveReg(data);
+      console.log('pLoadFromGS: caricate', data.length, 'provvigioni');
+    } else {
+      console.log('pLoadFromGS: nessun dato da GS, uso locale');
+    }
+    pRenderReg();
+    pAggStats();
   };
+
+  // Fallback: se GS_URL non è configurato o script fallisce
   var s = document.createElement('script');
   s.id = cb;
   s.src = GS_URL + '?sheet=Provvigioni&callback=' + cb;
   s.onerror = function() {
-    clearTimeout(timer); delete window[cb];
+    clearTimeout(timer);
+    delete window[cb];
     if (s.parentNode) s.parentNode.removeChild(s);
+    console.warn('pLoadFromGS: script error, uso dati locali');
     pRenderReg(); pAggStats();
   };
   document.body.appendChild(s);
@@ -5112,28 +5131,36 @@ const SIDEBAR_TITLES = {
   'archive': 'Report Inviati a Clienti',
   'foto':    'Galleria Foto Veicoli',
   'provv':   'Provvigioni Venditori',
-  'permessi': ['📋 Permessi', 'Gestione Permessi Praticauto']
+  'permessi': 'Permessi Praticauto'
 };
 
 function sidebarNav(view,btn){
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
-  ['editor','ready','archive','provv','foto','permessi'].forEach(v=>{
-    const el = document.getElementById('view-' + v);
+  ['editor','ready','archive','provv','foto','permessi'].forEach(function(v){
+    var el = document.getElementById('view-' + v);
     if (!el) return;
     el.classList.remove('active');
-    el.style.display = '';
-    if (v === view) el.classList.add('active');
+    el.style.display = 'none'; // nascondi tutte
   });
-  document.querySelectorAll('.sidebar-item').forEach(b => b.classList.remove('active'));
+  // Mostra solo quella attiva
+  var activeEl = document.getElementById('view-' + view);
+  if (activeEl) {
+    activeEl.classList.add('active');
+    activeEl.style.display = 'block';
+  }
+  document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
-  const t = document.getElementById('contentTitle');
-  if (t) t.textContent = SIDEBAR_TITLES[view] || view;
+  var t = document.getElementById('contentTitle');
+  var title = SIDEBAR_TITLES[view];
+  if (t) t.textContent = (Array.isArray(title) ? title[0] : title) || view;
+  var sub = document.getElementById('contentSub');
+  if (sub && Array.isArray(title)) sub.textContent = title[1] || '';
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
-  if(view==='foto'){renderFotoGallery();if(isDriveConnected())syncAllFotoFromDrive().then(function(){renderFotoGallery();});}
-  if(view==='permessi'){renderPermessi();if(isDriveConnected()&&document.getElementById('permessi-grid').children.length<=1)syncPermessiDaGmail(false);}
+  if(view==='foto'){renderFotoGallery();if(isDriveConnected()&&typeof syncAllFotoFromDrive==='function')syncAllFotoFromDrive().then(function(){renderFotoGallery();});}
+  if(view==='permessi'){renderPermessi();if(isDriveConnected())syncPermessiDaGmail(false);}
 }
 
 // ── SIDEBAR TOGGLE ─────────────────────────────────────────
