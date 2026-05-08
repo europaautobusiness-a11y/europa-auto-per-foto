@@ -653,12 +653,16 @@ html, body{
         <div id="foto-targa-avviso" style="display:none;background:#fffbea;border:1px solid #f39c12;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#e67e22;">
           ⚠ Inserisci prima la <strong>Targa</strong> nel tab "Dati Veicolo" per associare le foto all'auto.
         </div>
-        <label for="foto-file-input" style="display:block;border:2px dashed #bbb;border-radius:4px;padding:32px;text-align:center;cursor:pointer;background:#fafafa;-webkit-tap-highlight-color:transparent;">
+        <div id="foto-upload-zone" style="border:2px dashed #bbb;border-radius:4px;padding:32px;text-align:center;cursor:pointer;background:#fafafa;transition:border-color .2s,background .2s;"
+             onclick="document.getElementById('foto-file-input').click()"
+             ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='#f0f7ff';"
+             ondragleave="this.style.borderColor='#bbb';this.style.background='#fafafa';"
+             ondrop="event.preventDefault();this.style.borderColor='#bbb';this.style.background='#fafafa';handleFotoUpload(event.dataTransfer.files)">
           <div style="font-size:2rem;margin-bottom:8px;">📷</div>
           <div style="font-size:15px;font-weight:600;color:var(--blk);margin-bottom:4px;">Carica foto dell'auto</div>
           <div style="font-size:12px;color:var(--gray);">Tocca qui per selezionare le foto</div>
-          <input type="file" id="foto-file-input" name="foto-file-input" multiple accept="image/*" style="position:fixed;top:-9999px;left:-9999px;opacity:0;" onchange="handleFotoUpload(this.files)">
-        </label>
+          <input type="file" id="foto-file-input" multiple accept="image/*" style="display:none" onchange="handleFotoUpload(this.files)">
+        </div>
         <div id="drive-status-editor" style="display:none;font-size:12px;padding:6px 10px;margin-top:6px;border-radius:3px;background:#f0f7ff;"></div>
         <div id="foto-grid-container" style="margin-top:16px;"></div>
 
@@ -2039,105 +2043,41 @@ function saveFoto(targa,photos){
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
-  var name = file.name || ('foto_' + Date.now() + '.jpg');
-  var fr = new FileReader();
-  fr.onload = function(e){ cb(e.target.result, name); };
-  fr.onerror = function(){ cb(null, name); };
-  fr.readAsDataURL(file);
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1200;
+      let w = img.width, h = img.height;
+      if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(canvas.toDataURL('image/jpeg', 0.85), file.name);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 }
+
 // Upload nel tab editor
 function handleFotoUpload(files){
-  var container = document.getElementById('foto-grid-container');
-
-  // Debug: conferma che la funzione è stata chiamata
-  var nFiles = files ? files.length : 0;
-  if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">📂 File ricevuti: ' + nFiles + '</div>';
-
-  var targa = (document.getElementById('targa').value||'').trim().toUpperCase();
+  const targa = (document.getElementById('targa').value||'').trim().toUpperCase();
   if(!targa){
     document.getElementById('foto-targa-avviso').style.display = 'block';
-    if(container) container.innerHTML = '<div style="color:#e74c3c;font-size:13px;text-align:center;padding:20px;">⚠️ Inserisci prima la targa!</div>';
     return;
   }
   document.getElementById('foto-targa-avviso').style.display = 'none';
-
-  // Accetta tutti i file con size > 0
-  var validFiles = Array.from(files || []).filter(function(f){ return f && f.size > 0; });
-  if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">⏳ Elaborazione ' + validFiles.length + ' foto per targa ' + targa + '...</div>';
-  if(!validFiles.length){
-    if(container) container.innerHTML = '<div style="color:#e74c3c;font-size:13px;text-align:center;padding:20px;">⚠️ Nessun file valido ricevuto.</div>';
-    return;
-  }
-
-  // Elabora in sequenza
-  var existingPhotos = loadFoto(targa);
-  var newPhotos = [];
-  var idx = 0;
-
-  // Mostra stato caricamento
-  var container = document.getElementById('foto-grid-container');
-  if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">&#8987; Caricamento foto ' + validFiles.length + '...</div>';
-
-  // Timer globale: dopo 12s salva comunque quello che c'è
-  var globalTimer = setTimeout(function(){
-    if(newPhotos.length > 0) saveAndRender();
-  }, 12000);
-
-  function saveAndRender(){
-    clearTimeout(globalTimer);
-    if(!newPhotos.length){
-      if(container) container.innerHTML = '<div style="color:#e74c3c;font-size:13px;text-align:center;padding:20px;">⚠️ Nessuna foto elaborata.</div>';
-      return;
-    }
-    var allPhotos = existingPhotos.concat(newPhotos);
-    saveFoto(targa, allPhotos);
-    renderFotoEditor(targa);
-    if(typeof autoSyncFotoToDrive === 'function' && isDriveConnected()){
-      autoSyncFotoToDrive(targa, 'drive-status-editor');
-    }
-  }
-
-  function processNext() {
-    if(idx >= validFiles.length){
-      saveAndRender();
-      return;
-    }
-    var file = validFiles[idx];
-    idx++;
-    var currentIdx = idx;
-    if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">⏳ ' + currentIdx + ' di ' + validFiles.length + '...</div>';
-
-    var blobUrl = URL.createObjectURL(file);
-    fetch(blobUrl)
-      .then(function(r){ return r.blob(); })
-      .then(function(blob){
-        return new Promise(function(resolve, reject){
-          var fr = new FileReader();
-          fr.onload = function(e){ resolve(e.target.result); };
-          fr.onerror = reject;
-          fr.readAsDataURL(blob);
-        });
-      })
-      .then(function(data){
-        URL.revokeObjectURL(blobUrl);
-        if(data) newPhotos.push({ data: data, name: file.name || ('foto_'+currentIdx+'.jpg') });
-        if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
-      })
-      .catch(function(){
-        URL.revokeObjectURL(blobUrl);
-        // Ultimo tentativo: FileReader diretto
-        var fr2 = new FileReader();
-        fr2.onload = function(e){
-          if(e.target.result) newPhotos.push({ data: e.target.result, name: file.name || ('foto_'+currentIdx+'.jpg') });
-          if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
-        };
-        fr2.onerror = function(){
-          if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
-        };
-        fr2.readAsDataURL(file);
-      });
-  }
-  processNext();
+  const photos = loadFoto(targa);
+  let pending = files.length;
+  [...files].forEach(file => {
+    compressImage(file, (data64, name) => {
+      if(data64) photos.push({ data: data64, name });
+      pending--;
+      if(pending === 0){ saveFoto(targa, photos); renderFotoEditor(targa); }
+    });
+  });
+  document.getElementById('foto-file-input').value = '';
 }
 
 // Render griglia nel tab editor
