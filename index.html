@@ -4818,24 +4818,49 @@ function estraiIntestatario(t) {
 }
 
 // ── Leggi testo da PDF (pdf.js) ───────────────────────────────
+async function caricaPdfJs() {
+  if (window.pdfjsLib) return;
+  await new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s);
+  });
+  pdfjsLib.GlobalWorkerOptions.workerSrc=
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
 async function leggiTestoPdf(b64) {
-  if (!window.pdfjsLib) {
-    await new Promise(function(res,rej){
-      var s=document.createElement('script');
-      s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      s.onload=res; s.onerror=rej; document.head.appendChild(s);
-    });
-    pdfjsLib.GlobalWorkerOptions.workerSrc=
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  }
+  await caricaPdfJs();
+  var pure=b64.replace(/^data:[^;]+;base64,/,'');
+  var bin=atob(pure), bytes=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
   try {
-    var pure=b64.replace(/^data:[^;]+;base64,/,'');
-    var bin=atob(pure), bytes=new Uint8Array(bin.length);
-    for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
     var pdf=await pdfjsLib.getDocument({data:bytes}).promise, testo='';
-    for(var p=1;p<=Math.min(pdf.numPages,3);p++){
+    for(var p=1;p<=Math.min(pdf.numPages,2);p++){
       var pg=await pdf.getPage(p), ct=await pg.getTextContent();
       testo+=ct.items.map(function(it){return it.str;}).join(' ')+'\n';
+    }
+    // PDF scansionato (testo vuoto) -> OCR
+    if (testo.trim().length < 50) {
+      console.log('PDF scansionato -> OCR');
+      var page=await pdf.getPage(1);
+      var vp=page.getViewport({scale:2.5});
+      var canvas=document.createElement('canvas');
+      canvas.width=vp.width; canvas.height=vp.height;
+      await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+      var imgData=canvas.toDataURL('image/png');
+      if (!window.Tesseract) {
+        await new Promise(function(res,rej){
+          var s=document.createElement('script');
+          s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+          s.onload=res; s.onerror=rej; document.head.appendChild(s);
+        });
+      }
+      var worker=await Tesseract.createWorker('eng');
+      var result=await worker.recognize(imgData);
+      await worker.terminate();
+      testo=result.data.text;
+      console.log('OCR ok:', testo.length, 'chars');
     }
     return testo;
   } catch(e){ console.warn('leggiTestoPdf:',e.message); return ''; }
@@ -4895,8 +4920,8 @@ async function syncPermessiDaDrive(statusEl) {
       var blob=await dlR.blob();
       var pdfB64=await new Promise(function(res){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.readAsDataURL(blob);});
       var testo=await leggiTestoPdf(pdfB64);
-      var targa=estraiTarga(testo)||df.name.split('_')[0]||'SCONOSCIUTA';
-      var intestatario=estraiIntestatario(testo)||df.name.split('_')[1]||'Sconosciuto';
+      var targa=estraiTarga(testo)||(df.name.match(/([A-Z]{2}\d{3}[A-Z]{2})/i)||[])[1]||df.name.split('_')[0]||'SCONOSCIUTA';
+      var intestatario=(testo.length>50?estraiIntestatario(testo):null)||df.name.split('_')[1]||'Da verificare';
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
         targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:pdfB64,
@@ -4953,8 +4978,10 @@ async function syncPermessiDaGmail(mostraStatus) {
         var pdfB64='data:application/pdf;base64,'+b64;
         if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD0D Lettura PDF...';
         var testo=await leggiTestoPdf(pdfB64);
-        var targa=estraiTarga(testo)||'SCONOSCIUTA';
-        var intestatario=estraiIntestatario(testo);
+        var targa=estraiTarga(testo);
+        var intestatario=(testo&&testo.length>50)?estraiIntestatario(testo):null;
+        if(!targa){var fn=part.filename.match(/([A-Z]{2}\d{3}[A-Z]{2})/i);targa=fn?fn[1].toUpperCase():'SCONOSCIUTA';}
+        if(!intestatario||intestatario==='Sconosciuto')intestatario='Da verificare';
         var driveFileId=null;
         try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
         esistenti.push({
@@ -5071,6 +5098,13 @@ async function inviaPermessoEmail(id) {
       body:JSON.stringify({raw:encoded})
     });
     if (sr.ok){
+      var list2=loadPermessi(), entry=list2.find(function(x){return x.id===id;});
+      if(entry){
+        var ora=new Date();
+        entry.inviatoA=emailDest;
+        entry.inviatoIl=ora.toLocaleDateString('it-IT')+' alle '+ora.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+        savePermessi(list2); renderPermessi();
+      }
       alert('\u2705 Permesso inviato a '+emailDest);
     } else {
       var err=await sr.json();
@@ -5127,7 +5161,14 @@ function renderPermessi() {
     html+='<div style="display:flex;justify-content:space-between;margin-bottom:4px;">';
     html+='<span>&#128197; Ricevuto: <strong>'+p.ricevutoLabel+'</strong></span>';
     html+='<span style="color:'+(urgente?'#e74c3c':'#27ae60')+';">Scade: <strong>'+p.scadeLabel+'</strong></span>';
-    html+='</div><div>&#128196; '+(p.fileName||'permesso.pdf')+'</div></div>';
+    html+='</div>';
+    html+='<div>&#128196; '+(p.fileName||'permesso.pdf')+'</div>';
+    if(p.inviatoIl){
+      html+='<div style="margin-top:6px;padding:5px 8px;background:#f0fff4;border-left:3px solid #27ae60;color:#1a7c3e;">';
+      html+='&#9989; Inviato a <strong>'+p.inviatoA+'</strong> il '+p.inviatoIl;
+      html+='</div>';
+    }
+    html+='</div>';
     html+='<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
     html+='<button data-pid="'+p.id+'" data-action="view" style="padding:7px 12px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#128065; Apri</button>';
     html+='<button data-pid="'+p.id+'" data-action="send" style="padding:7px 12px;background:#27ae60;color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#9993;&#65039; Invia PDF</button>';
@@ -5148,8 +5189,14 @@ function renderPermessi() {
 function visualizzaPermesso(id){
   var p=loadPermessi().find(function(x){return x.id===id;});
   if(!p||!p.pdfBase64) return;
-  var w=window.open('');
-  w.document.write('<iframe src="'+p.pdfBase64+'" style="width:100%;height:100vh;border:none;"></iframe>');
+  // Converti base64 in blob e apri direttamente
+  var b64 = p.pdfBase64.replace(/^data:[^;]+;base64,/,'');
+  var bin = atob(b64);
+  var bytes = new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  var blob = new Blob([bytes],{type:'application/pdf'});
+  var url = URL.createObjectURL(blob);
+  window.open(url,'_blank');
 }
 
 function eliminaPermesso(id){
@@ -5181,8 +5228,19 @@ function importaPermessiManuali(files) {
     reader.onload = function(e) {
       var b64 = e.target.result;
       leggiTestoPdf(b64).then(function(testo) {
-        var targa = estraiTarga(testo) || 'SCONOSCIUTA';
-        var intest = estraiIntestatario(testo);
+        var targa = estraiTarga(testo);
+        var intest = (testo.length > 50) ? estraiIntestatario(testo) : null;
+        // Se non riesce a leggere (PDF scansionato), chiedi all'utente
+        if (!targa) {
+          targa = prompt('Targa non rilevata nel file "'+file.name+'" - Inserisci la targa manualmente:','');
+          if (!targa) targa = 'SCONOSCIUTA';
+          targa = targa.toUpperCase().trim();
+        }
+        if (!intest || intest === 'Sconosciuto') {
+          intest = prompt('Intestatario non rilevato per "'+targa+'" - Inserisci il nome del cliente:','');
+          if (!intest) intest = 'Sconosciuto';
+          intest = intest.trim();
+        }
         var now = Date.now();
         if (!esistenti.find(function(p){ return p.fileName===file.name; })) {
           var entry = {
