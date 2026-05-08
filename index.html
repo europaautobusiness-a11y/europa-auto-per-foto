@@ -1027,7 +1027,13 @@ html, body{
       <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128203; Permessi</div>
       <div style="font-size:13px;color:var(--gray);margin-top:4px;">Sync automatica da <strong>gammaservicesas@gmail.com</strong> e <strong>amministrazione@europaautosrl.it</strong> &middot; Drive &middot; Eliminazione dopo 29 giorni</div>
     </div>
-    <button onclick="syncPermessiManuale(this)" style="padding:9px 18px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128260; Sincronizza ora</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button onclick="syncPermessiManuale(this)" style="padding:9px 18px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128260; Sincronizza Gmail</button>
+      <label style="padding:9px 18px;background:#27ae60;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;">
+        &#128196; Carica PDF
+        <input type="file" accept="application/pdf" multiple style="position:absolute;opacity:0;width:1px;height:1px;" onchange="importaPermessiManuali(this.files)">
+      </label>
+    </div>
   </div>
   <!-- Barra email mittente -->
   <div id="permessi-email-bar" style="background:white;border:1px solid var(--bdr);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"></div>
@@ -4769,22 +4775,25 @@ function pulisciPermessiScaduti() {
 
 // ── Estrai targa e intestatario da testo PDF ──────────────────
 function estraiTarga(t) {
-  var m = t.match(/\b([A-Z]{2}\d{3}[A-Z]{2})\b/);
+  var m = t.match(/targa\s+([A-Z]{2}\d{3}[A-Z]{2})\b/i);
+  if (m) return m[1];
+  m = t.match(/\b([A-Z]{2}\d{3}[A-Z]{2})\b/);
   return m ? m[1] : null;
 }
 function estraiIntestatario(t) {
+  // "in favore di NOME COGNOME RESIDENTE/NATO/VIA..." (Praticauto)
+  var m = t.match(/in favore di\s+([A-Z][A-Z\s]{3,50})(?=\s+RESIDENTE|\s+NATO|\s+VIA|\s+\d)/);
+  if (m) return m[1].trim().replace(/\s+/g,' ');
+  // "intestato a NOME" 
+  m = t.match(/intestato\s+a\s+([A-Z][A-Z\s]{3,40})/i);
+  if (m) return m[1].trim().replace(/\s+/g,' ');
+  // Etichette standard
   var pp = [
     /intestatario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
     /proprietario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
-    /cliente[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
-    /sig(?:\.|\s|nore|ra)[\s.]+([A-Z][a-zA-Z\s']{3,40})/i
+    /cliente[\s:]+([A-Z][a-zA-Z\s']{3,40})/i
   ];
-  for (var i=0;i<pp.length;i++) { var m=t.match(pp[i]); if(m) return m[1].trim().replace(/\s+/g,' '); }
-  var lines=t.split('\n');
-  for (var j=0;j<Math.min(lines.length,20);j++) {
-    var l=lines[j].trim();
-    if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(l)&&l.length<50) return l;
-  }
+  for (var i=0;i<pp.length;i++) { m=t.match(pp[i]); if(m) return m[1].trim().replace(/\s+/g,' '); }
   return 'Sconosciuto';
 }
 
@@ -5131,6 +5140,54 @@ function eliminaPermesso(id){
       {method:'DELETE',headers:{Authorization:'Bearer '+_driveAccessToken}}).catch(function(){});
   savePermessi(list.filter(function(x){return x.id!==id;}));
   renderPermessi();
+}
+
+function importaPermessiManuali(files) {
+  if (!files || !files.length) return;
+  var arr = Array.from(files);
+  var statusEl = document.getElementById('permessi-status');
+  if (statusEl) { statusEl.style.display='block'; statusEl.style.color='var(--blue)'; statusEl.textContent='Lettura PDF in corso...'; }
+  var esistenti = loadPermessi();
+  var processed = 0;
+  function processNext(i) {
+    if (i >= arr.length) {
+      savePermessi(esistenti);
+      renderPermessi();
+      if (statusEl) { statusEl.textContent = processed + ' permessi caricati'; setTimeout(function(){statusEl.style.display='none';},3000); }
+      return;
+    }
+    var file = arr[i];
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var b64 = e.target.result;
+      leggiTestoPdf(b64).then(function(testo) {
+        var targa = estraiTarga(testo) || 'SCONOSCIUTA';
+        var intest = estraiIntestatario(testo);
+        var now = Date.now();
+        if (!esistenti.find(function(p){ return p.fileName===file.name; })) {
+          var entry = {
+            id:'manual_'+now+'_'+i, gmailMsgId:null, driveFileId:null,
+            targa:targa, intestatario:intest, fileName:file.name, pdfBase64:b64,
+            ricevutoMs:now,
+            ricevutoLabel:new Date(now).toLocaleDateString('it-IT'),
+            scadeLabel:new Date(now+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
+          };
+          esistenti.push(entry);
+          processed++;
+          if (isDriveConnected()) {
+            getOrCreatePermessiFolder(_driveAccessToken).then(function(fid){
+              salvaPermessoSuDrive(_driveAccessToken,fid,targa,intest,b64,file.name)
+                .then(function(did){if(did){entry.driveFileId=did;savePermessi(esistenti);}}).catch(function(){});
+            }).catch(function(){});
+          }
+        }
+        if (statusEl) statusEl.textContent=(i+1)+'/'+arr.length+': '+targa;
+        processNext(i+1);
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+  processNext(0);
 }
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
