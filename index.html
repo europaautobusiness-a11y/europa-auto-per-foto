@@ -2043,28 +2043,23 @@ function saveFoto(targa,photos){
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
-  // Prima leggi sempre il file con FileReader — funziona su tutti i dispositivi e formati
   var fr = new FileReader();
-  fr.onerror = function(){ cb(null, file.name); };
+  fr.onerror = function(){ cb(null, file.name || 'foto'); };
   fr.onload = function(e){
     var originalData = e.target.result;
-    if(!originalData || originalData.length < 100){ cb(null, file.name); return; }
-
-    // HEIC/HEIF: canvas non supportato, salva direttamente
-    var isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
-                 file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
-    if(isHeic){ cb(originalData, file.name); return; }
+    if(!originalData || originalData.length < 50){ cb(null, file.name || 'foto'); return; }
 
     // Prova ridimensionamento con canvas
     var img = new Image();
     var done = false;
+
     var fallbackTimer = setTimeout(function(){
-      if(!done){ done = true; cb(originalData, file.name); }
-    }, 6000);
+      if(!done){ done = true; cb(originalData, file.name || 'foto'); }
+    }, 8000);
 
     img.onerror = function(){
       clearTimeout(fallbackTimer);
-      if(!done){ done = true; cb(originalData, file.name); }
+      if(!done){ done = true; cb(originalData, file.name || 'foto'); }
     };
 
     img.onload = function(){
@@ -2074,7 +2069,7 @@ function compressImage(file, cb){
       try {
         var MAX = 1600;
         var w = img.width, h = img.height;
-        if(!w || !h){ cb(originalData, file.name); return; }
+        if(!w || !h){ cb(originalData, file.name || 'foto'); return; }
         if(w > h){ if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; } }
         else { if(h > MAX){ w = Math.round(w * MAX / h); h = MAX; } }
         var canvas = document.createElement('canvas');
@@ -2082,18 +2077,16 @@ function compressImage(file, cb){
         var ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, w, h);
         var result = canvas.toDataURL('image/jpeg', 0.85);
-        // Se il canvas è vuoto o corrotto usa l'originale
-        if(!result || result.length < 1000){ cb(originalData, file.name); return; }
-        cb(result, file.name);
+        if(!result || result.length < 500){ cb(originalData, file.name || 'foto'); return; }
+        cb(result, file.name || 'foto');
       } catch(err){
-        cb(originalData, file.name);
+        cb(originalData, file.name || 'foto');
       }
     };
     img.src = originalData;
   };
   fr.readAsDataURL(file);
 }
-
 // Upload nel tab editor
 function handleFotoUpload(files){
   var targa = (document.getElementById('targa').value||'').trim().toUpperCase();
@@ -2104,16 +2097,9 @@ function handleFotoUpload(files){
   document.getElementById('foto-targa-avviso').style.display = 'none';
   document.getElementById('foto-file-input').value = '';
 
-  // Su Android il type può essere vuoto — accetta tutto e filtra per estensione
-  var imgExts = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i;
-  var validFiles = Array.from(files).filter(function(f){
-    return f.type.startsWith('image/') || f.type === '' || imgExts.test(f.name);
-  });
-  if(!validFiles.length){
-    var container = document.getElementById('foto-grid-container');
-    if(container) container.innerHTML = '<div style="color:#e74c3c;font-size:13px;text-align:center;padding:20px;">Nessun file immagine riconosciuto. Prova a selezionare di nuovo.</div>';
-    return;
-  }
+  // Accetta tutti i file selezionati — su Android il type arriva spesso vuoto
+  var validFiles = Array.from(files).filter(function(f){ return f && f.size > 0; });
+  if(!validFiles.length) return;
 
   // Elabora in sequenza (non in parallelo) per evitare crash su mobile
   var photos = loadFoto(targa);
