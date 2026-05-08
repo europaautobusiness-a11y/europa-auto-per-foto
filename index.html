@@ -2040,25 +2040,10 @@ function saveFoto(targa,photos){
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
   var name = file.name || ('foto_' + Date.now() + '.jpg');
-  var url = URL.createObjectURL(file);
-  var img = new Image();
-  img.onerror = function(){
-    URL.revokeObjectURL(url);
-    cb(null, name);
-  };
-  img.onload = function(){
-    URL.revokeObjectURL(url);
-    try {
-      var MAX = 1400, w = img.naturalWidth, h = img.naturalHeight;
-      if(w > h){ if(w > MAX){ h = Math.round(h*MAX/w); w = MAX; } }
-      else      { if(h > MAX){ w = Math.round(w*MAX/h); h = MAX; } }
-      var cv = document.createElement('canvas');
-      cv.width = w; cv.height = h;
-      cv.getContext('2d').drawImage(img, 0, 0, w, h);
-      cb(cv.toDataURL('image/jpeg', 0.82), name);
-    } catch(e){ cb(null, name); }
-  };
-  img.src = url;
+  var fr = new FileReader();
+  fr.onload = function(e){ cb(e.target.result, name); };
+  fr.onerror = function(){ cb(null, name); };
+  fr.readAsDataURL(file);
 }
 // Upload nel tab editor
 function handleFotoUpload(files){
@@ -2109,10 +2094,17 @@ function handleFotoUpload(files){
     var file = validFiles[idx++];
     if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">⏳ Foto ' + idx + ' di ' + validFiles.length + '...</div>';
 
-    compressImage(file, function(data64, name) {
-      if(data64) photos.push({ data: data64, name: name });
+    var fr = new FileReader();
+    fr.onload = function(e){
+      if(e.target.result) photos.push({ data: e.target.result, name: file.name || ('foto_'+idx+'.jpg') });
+      if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">✅ Salvata ' + photos.length + ' — prossima...</div>';
       setTimeout(processNext, 100);
-    });
+    };
+    fr.onerror = function(){
+      if(container) container.innerHTML = '<div style="color:#e74c3c;font-size:13px;text-align:center;padding:20px;">❌ Errore lettura foto ' + idx + '</div>';
+      setTimeout(processNext, 100);
+    };
+    fr.readAsDataURL(file);
   }
   processNext();
 }
