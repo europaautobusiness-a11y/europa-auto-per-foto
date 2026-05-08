@@ -4775,25 +4775,45 @@ function pulisciPermessiScaduti() {
 
 // ── Estrai targa e intestatario da testo PDF ──────────────────
 function estraiTarga(t) {
-  var m = t.match(/targa\s+([A-Z]{2}\d{3}[A-Z]{2})\b/i);
-  if (m) return m[1];
-  m = t.match(/\b([A-Z]{2}\d{3}[A-Z]{2})\b/);
-  return m ? m[1] : null;
+  // Cerca tutte le occorrenze di targa italiana nel testo
+  // pdf.js spesso separa le parole con spazi multipli o newline
+  var patterns = [
+    /targa\s*([A-Z]{2}\d{3}[A-Z]{2})/i,
+    /\b([A-Z]{2}\d{3}[A-Z]{2})\b/g
+  ];
+  var m = t.match(patterns[0]);
+  if (m) return m[1].toUpperCase();
+  // Fallback: prima targa trovata, escludi numeri di telaio (più lunghi)
+  var all = t.match(patterns[1]);
+  if (all && all.length) return all[0].toUpperCase();
+  return null;
 }
 function estraiIntestatario(t) {
-  // "in favore di NOME COGNOME RESIDENTE/NATO/VIA..." (Praticauto)
-  var m = t.match(/in favore di\s+([A-Z][A-Z\s]{3,50})(?=\s+RESIDENTE|\s+NATO|\s+VIA|\s+\d)/);
-  if (m) return m[1].trim().replace(/\s+/g,' ');
-  // "intestato a NOME" 
-  m = t.match(/intestato\s+a\s+([A-Z][A-Z\s]{3,40})/i);
-  if (m) return m[1].trim().replace(/\s+/g,' ');
-  // Etichette standard
+  var m, nome;
+
+  // Pattern 1: "intestato a NOME COGNOME" — campo anagrafici Praticauto
+  // pdf.js potrebbe separare con spazi multipli
+  m = t.match(/intestato\s+a\s+([A-Z][A-Z\s]{2,40}?)(?=\s*\n|\s*indirizzo|\s*$)/im);
+  if (m) { nome = m[1].trim().replace(/\s+/g,' '); if (nome.length > 3) return nome; }
+
+  // Pattern 2: "in favore di NOME COGNOME RESIDENTE/NATO/VIA"
+  m = t.match(/in favore di\s+([A-Z][A-Z\s]{3,50})(?=\s+RESIDENTE|\s+NATO|\s+VIA|\s+\()/);
+  if (m) { nome = m[1].trim().replace(/\s+/g,' '); if (nome.length > 3) return nome; }
+
+  // Pattern 3: "PASSAGGIO DI PROPRIETA'" seguito da nome
+  m = t.match(/PASSAGGIO\s+DI\s+PROPRIET[A\u00C0][^a-z]{0,20}([A-Z]{2,}(?:\s+[A-Z]{2,}){1,3})/);
+  if (m) { nome = m[1].trim().replace(/\s+/g,' '); if (nome.length > 3) return nome; }
+
+  // Pattern 4: etichette generiche
   var pp = [
     /intestatario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
     /proprietario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
     /cliente[\s:]+([A-Z][a-zA-Z\s']{3,40})/i
   ];
-  for (var i=0;i<pp.length;i++) { m=t.match(pp[i]); if(m) return m[1].trim().replace(/\s+/g,' '); }
+  for (var i = 0; i < pp.length; i++) {
+    m = t.match(pp[i]);
+    if (m) return m[1].trim().replace(/\s+/g,' ');
+  }
   return 'Sconosciuto';
 }
 
