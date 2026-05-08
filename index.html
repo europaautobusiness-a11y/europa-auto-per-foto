@@ -2042,45 +2042,55 @@ function saveFoto(targa,photos){
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
-  // Mostra info file in console per debug
-  console.log('compressImage:', file.name, Math.round(file.size/1024)+'KB', file.type);
+  // Prima leggi sempre il file con FileReader — funziona su tutti i dispositivi e formati
+  var fr = new FileReader();
+  fr.onerror = function(){ cb(null, file.name); };
+  fr.onload = function(e){
+    var originalData = e.target.result;
+    if(!originalData || originalData.length < 100){ cb(null, file.name); return; }
 
-  // Usa createObjectURL per evitare il limite di memoria di readAsDataURL
-  var objectUrl = URL.createObjectURL(file);
-  var img = new Image();
+    // HEIC/HEIF: canvas non supportato, salva direttamente
+    var isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
+                 file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+    if(isHeic){ cb(originalData, file.name); return; }
 
-  img.onerror = function() {
-    alert('\u274C Impossibile leggere l\'immagine: ' + file.name + '\nFormato non supportato o file corrotto.');
-    URL.revokeObjectURL(objectUrl);
-    cb(null, file.name);
-  };
+    // Prova ridimensionamento con canvas
+    var img = new Image();
+    var done = false;
+    var fallbackTimer = setTimeout(function(){
+      if(!done){ done = true; cb(originalData, file.name); }
+    }, 6000);
 
-  img.onload = function() {
-    URL.revokeObjectURL(objectUrl);
-    try {
-      var MAX = 1600;
-      var w = img.width, h = img.height;
-      if (w > h) {
-        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-      } else {
-        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+    img.onerror = function(){
+      clearTimeout(fallbackTimer);
+      if(!done){ done = true; cb(originalData, file.name); }
+    };
+
+    img.onload = function(){
+      clearTimeout(fallbackTimer);
+      if(done) return;
+      done = true;
+      try {
+        var MAX = 1600;
+        var w = img.width, h = img.height;
+        if(!w || !h){ cb(originalData, file.name); return; }
+        if(w > h){ if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; } }
+        else { if(h > MAX){ w = Math.round(w * MAX / h); h = MAX; } }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        var result = canvas.toDataURL('image/jpeg', 0.85);
+        // Se il canvas è vuoto o corrotto usa l'originale
+        if(!result || result.length < 1000){ cb(originalData, file.name); return; }
+        cb(result, file.name);
+      } catch(err){
+        cb(originalData, file.name);
       }
-      var canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      var result = canvas.toDataURL('image/jpeg', 0.92);
-      cb(result, file.name);
-    } catch(err) {
-      // Fallback diretto: leggi il file originale senza canvas
-      var fr = new FileReader();
-      fr.onload = function(e) { cb(e.target.result, file.name); };
-      fr.onerror = function() { cb(null, file.name); };
-      fr.readAsDataURL(file);
-    }
+    };
+    img.src = originalData;
   };
-
-  img.src = objectUrl;
+  fr.readAsDataURL(file);
 }
 
 // Upload nel tab editor
