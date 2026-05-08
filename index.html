@@ -2107,28 +2107,35 @@ function handleFotoUpload(files){
     var currentIdx = idx;
     if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">⏳ ' + currentIdx + ' di ' + validFiles.length + '...</div>';
 
-    var done = false;
-    var t = setTimeout(function(){
-      if(done) return;
-      done = true;
-      setTimeout(processNext, 50);
-    }, 8000);
-
-    var fr = new FileReader();
-    fr.onload = function(e){
-      if(done) return;
-      done = true;
-      clearTimeout(t);
-      if(e.target.result) newPhotos.push({ data: e.target.result, name: file.name || ('foto_'+currentIdx+'.jpg') });
-      if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
-    };
-    fr.onerror = function(){
-      if(done) return;
-      done = true;
-      clearTimeout(t);
-      if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
-    };
-    try { fr.readAsDataURL(file); } catch(e){ done=true; clearTimeout(t); if(idx>=validFiles.length){saveAndRender();}else{setTimeout(processNext,50);} }
+    var blobUrl = URL.createObjectURL(file);
+    fetch(blobUrl)
+      .then(function(r){ return r.blob(); })
+      .then(function(blob){
+        return new Promise(function(resolve, reject){
+          var fr = new FileReader();
+          fr.onload = function(e){ resolve(e.target.result); };
+          fr.onerror = reject;
+          fr.readAsDataURL(blob);
+        });
+      })
+      .then(function(data){
+        URL.revokeObjectURL(blobUrl);
+        if(data) newPhotos.push({ data: data, name: file.name || ('foto_'+currentIdx+'.jpg') });
+        if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
+      })
+      .catch(function(){
+        URL.revokeObjectURL(blobUrl);
+        // Ultimo tentativo: FileReader diretto
+        var fr2 = new FileReader();
+        fr2.onload = function(e){
+          if(e.target.result) newPhotos.push({ data: e.target.result, name: file.name || ('foto_'+currentIdx+'.jpg') });
+          if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
+        };
+        fr2.onerror = function(){
+          if(idx >= validFiles.length){ saveAndRender(); } else { setTimeout(processNext, 50); }
+        };
+        fr2.readAsDataURL(file);
+      });
   }
   processNext();
 }
