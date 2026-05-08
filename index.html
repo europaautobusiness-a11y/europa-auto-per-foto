@@ -454,6 +454,10 @@ html, body{
     <button class="sidebar-item si-provv" id="si-provv" onclick="sidebarNav('provv',this)">
       <span class="si-icon">💶</span><span class="si-label"> Provvigioni</span>
     </button>
+    <button class="sidebar-item" id="si-permessi" onclick="sidebarNav('permessi',this)" style="color:rgba(255,255,255,.6);">
+      <span class="si-icon">📋</span><span class="si-label"> Permessi</span>
+      <span class="si-badge" id="permessi-badge" style="display:none;">0</span>
+    </button>
   </div>
 
   <div class="sidebar-sync">
@@ -635,15 +639,6 @@ html, body{
           <div style="display:flex;gap:8px;align-items:center;">
             <input type="text" id="gsSheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/..." style="flex:1;font-size:12px;">
             <button onclick="saveGsUrl()" style="padding:9px 14px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">💾 Salva</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- TAB FOTO AUTO -->
-  <div class="tab-content" id="tab-foto">
-    <div class="card">
       <div class="card-hd">📸 Galleria Foto Auto</div>
       <div class="card-bd">
 
@@ -653,16 +648,15 @@ html, body{
         <div id="foto-targa-avviso" style="display:none;background:#fffbea;border:1px solid #f39c12;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#e67e22;">
           ⚠ Inserisci prima la <strong>Targa</strong> nel tab "Dati Veicolo" per associare le foto all'auto.
         </div>
-        <div id="foto-upload-zone" style="border:2px dashed #bbb;border-radius:4px;padding:32px;text-align:center;cursor:pointer;background:#fafafa;transition:border-color .2s,background .2s;"
-             onclick="document.getElementById('foto-file-input').click()"
+        <label style="display:block;border:2px dashed #bbb;border-radius:4px;padding:32px;text-align:center;cursor:pointer;background:#fafafa;transition:border-color .2s,background .2s;"
              ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='#f0f7ff';"
              ondragleave="this.style.borderColor='#bbb';this.style.background='#fafafa';"
              ondrop="event.preventDefault();this.style.borderColor='#bbb';this.style.background='#fafafa';handleFotoUpload(event.dataTransfer.files)">
           <div style="font-size:2rem;margin-bottom:8px;">📷</div>
           <div style="font-size:15px;font-weight:600;color:var(--blk);margin-bottom:4px;">Carica foto dell'auto</div>
           <div style="font-size:12px;color:var(--gray);">Tocca qui per selezionare le foto</div>
-          <input type="file" id="foto-file-input" multiple accept="image/*" style="display:none" onchange="handleFotoUpload(this.files)">
-        </div>
+          <input type="file" id="foto-file-input" multiple accept="image/*" style="position:absolute;opacity:0;width:1px;height:1px;" onchange="handleFotoUpload(this.files)">
+        </label>
         <div id="drive-status-editor" style="display:none;font-size:12px;padding:6px 10px;margin-top:6px;border-radius:3px;background:#f0f7ff;"></div>
         <div id="foto-grid-container" style="margin-top:16px;"></div>
 
@@ -1024,6 +1018,21 @@ html, body{
 </div>
 <!-- ── GALLERIA FOTO VIEW ── -->
 <div class="view" id="view-foto" style="padding:22px 16px;">
+</div>
+
+<!-- PERMESSI -->
+<div class="view" id="view-permessi" style="padding:22px 16px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+    <div>
+      <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128203; Permessi</div>
+      <div style="font-size:13px;color:var(--gray);margin-top:4px;">Sync automatica da <strong>gammaservicesas@gmail.com</strong> e Drive &middot; Eliminazione dopo 29 giorni</div>
+    </div>
+    <button onclick="syncPermessiManuale(this)" style="padding:9px 18px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128260; Sincronizza ora</button>
+  </div>
+  <!-- Barra email mittente -->
+  <div id="permessi-email-bar" style="background:white;border:1px solid var(--bdr);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"></div>
+  <div id="permessi-status" style="display:none;padding:10px 14px;background:#f0f7ff;border-left:3px solid var(--blue);font-size:13px;color:var(--blue);margin-bottom:16px;"></div>
+  <div id="permessi-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;"></div>
 </div>
 
 <!-- MODALE FOTO AUTO (da archivio/pronti) -->
@@ -1520,22 +1529,13 @@ async function syncFotoFromDrive(targa, statusEl) {
       return false;
     }
 
-    // Scarica solo le foto non ancora presenti in locale (merge, non sovrascrittura)
-    const existingPhotos = loadFoto(targa);
-    const existingNames = new Set(existingPhotos.map(p => p.name));
-    const filesToDownload = files.filter(f => !existingNames.has(f.name));
+    if (statusEl) { statusEl.textContent = '⬇️ Download ' + files.length + ' foto da Drive…'; }
 
-    if (!filesToDownload.length) {
-      if (statusEl) { statusEl.innerHTML = '✅ Foto già sincronizzate (' + existingPhotos.length + ')'; statusEl.style.color = '#27ae60'; }
-      return true;
-    }
-
-    if (statusEl) { statusEl.textContent = '⬇️ Download ' + filesToDownload.length + ' foto da Drive…'; }
-
-    const newPhotos = [];
-    for (let i = 0; i < filesToDownload.length; i++) {
-      const f = filesToDownload[i];
-      if (statusEl) { statusEl.textContent = '⬇️ Download foto ' + (i+1) + ' di ' + filesToDownload.length + '…'; }
+    // Scarica ogni foto e convertila in base64
+    const photos = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (statusEl) { statusEl.textContent = '⬇️ Download foto ' + (i+1) + ' di ' + files.length + '…'; }
       const imgRes = await fetch(
         'https://www.googleapis.com/drive/v3/files/' + f.id + '?alt=media',
         { headers: { Authorization: 'Bearer ' + token } }
@@ -1546,16 +1546,12 @@ async function syncFotoFromDrive(targa, statusEl) {
         reader.onload = () => resolve(reader.result);
         reader.readAsDataURL(blob);
       });
-      newPhotos.push({ data: base64, name: f.name });
+      photos.push({ data: base64, name: f.name });
     }
 
-    // Merge con le foto già presenti — scrivi direttamente su localStorage
-    // senza chiamare saveFoto() per evitare il loop di autoSyncFotoToDrive
-    const merged = existingPhotos.concat(newPhotos);
-    localStorage.setItem(getFotoKey(targa), JSON.stringify(merged));
-    updateFotoBadgeEditor();
-
-    if (statusEl) { statusEl.innerHTML = '✅ ' + merged.length + ' foto disponibili (' + newPhotos.length + ' nuove da Drive)'; statusEl.style.color = '#27ae60'; }
+    // Salva nel localStorage
+    saveFoto(targa, photos);
+    if (statusEl) { statusEl.innerHTML = '✅ ' + photos.length + ' foto sincronizzate da Drive'; statusEl.style.color = '#27ae60'; }
     return true;
   } catch(err) {
     if (statusEl) { statusEl.textContent = '⚠ Errore sincronizzazione: ' + err.message; statusEl.style.color = '#e74c3c'; }
@@ -2043,41 +2039,89 @@ function saveFoto(targa,photos){
 
 // Compress image to base64 (max 1200px wide, quality 0.85)
 function compressImage(file, cb){
-  const reader = new FileReader();
-  reader.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      const MAX = 1200;
-      let w = img.width, h = img.height;
-      if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      cb(canvas.toDataURL('image/jpeg', 0.85), file.name);
-    };
-    img.src = e.target.result;
+  // Mostra info file in console per debug
+  console.log('compressImage:', file.name, Math.round(file.size/1024)+'KB', file.type);
+
+  // Usa createObjectURL per evitare il limite di memoria di readAsDataURL
+  var objectUrl = URL.createObjectURL(file);
+  var img = new Image();
+
+  img.onerror = function() {
+    alert('\u274C Impossibile leggere l\'immagine: ' + file.name + '\nFormato non supportato o file corrotto.');
+    URL.revokeObjectURL(objectUrl);
+    cb(null, file.name);
   };
-  reader.readAsDataURL(file);
+
+  img.onload = function() {
+    URL.revokeObjectURL(objectUrl);
+    try {
+      var MAX = 1600;
+      var w = img.width, h = img.height;
+      if (w > h) {
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+      } else {
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      var result = canvas.toDataURL('image/jpeg', 0.92);
+      cb(result, file.name);
+    } catch(err) {
+      // Fallback diretto: leggi il file originale senza canvas
+      var fr = new FileReader();
+      fr.onload = function(e) { cb(e.target.result, file.name); };
+      fr.onerror = function() { cb(null, file.name); };
+      fr.readAsDataURL(file);
+    }
+  };
+
+  img.src = objectUrl;
 }
 
 // Upload nel tab editor
 function handleFotoUpload(files){
-  const targa = (document.getElementById('targa').value||'').trim().toUpperCase();
+  var targa = (document.getElementById('targa').value||'').trim().toUpperCase();
   if(!targa){
     document.getElementById('foto-targa-avviso').style.display = 'block';
     return;
   }
   document.getElementById('foto-targa-avviso').style.display = 'none';
-  const photos = loadFoto(targa);
-  let pending = files.length;
-  [...files].forEach(file => {
-    compressImage(file, (data64, name) => {
-      if(data64) photos.push({ data: data64, name });
-      pending--;
-      if(pending === 0){ saveFoto(targa, photos); renderFotoEditor(targa); }
-    });
-  });
   document.getElementById('foto-file-input').value = '';
+
+  var validFiles = Array.from(files).filter(function(f){ return f.type.startsWith('image/'); });
+  if(!validFiles.length) return;
+
+  // Elabora in sequenza (non in parallelo) per evitare crash su mobile
+  var photos = loadFoto(targa);
+  var idx = 0;
+
+  // Mostra stato caricamento
+  var container = document.getElementById('foto-grid-container');
+  if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">&#8987; Caricamento foto ' + validFiles.length + '...</div>';
+
+  function processNext() {
+    if(idx >= validFiles.length) {
+      // Tutte le foto processate
+      saveFoto(targa, photos);
+      renderFotoEditor(targa);
+      // Upload su Drive con feedback
+      if(typeof autoSyncFotoToDrive === 'function' && isDriveConnected()) {
+        autoSyncFotoToDrive(targa, 'drive-status-editor');
+      }
+      return;
+    }
+    var file = validFiles[idx++];
+    compressImage(file, function(data64, name) {
+      if(data64) photos.push({ data: data64, name: name });
+      // Aggiorna contatore durante elaborazione
+      if(container) container.innerHTML = '<div style="color:var(--blue);font-size:13px;text-align:center;padding:20px;">&#8987; Elaborazione ' + idx + '/' + validFiles.length + '...</div>';
+      // Piccolo delay tra una foto e l'altra per non saturare la memoria
+      setTimeout(processNext, 50);
+    });
+  }
+  processNext();
 }
 
 // Render griglia nel tab editor
@@ -4298,26 +4342,10 @@ function pLoadReg() { try { return JSON.parse(localStorage.getItem('ea_provv3') 
 function pSaveReg(r) { localStorage.setItem('ea_provv3', JSON.stringify(r)); }
 
 // Carica da Google Sheets e aggiorna locale
-async function pLoadFromGS() {
+function pLoadFromGS() {
   if (!GS_URL) { pRenderReg(); pAggStats(); return; }
   var el = document.getElementById('pRegistro');
   if (el) el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray);">&#9203; Caricamento...</div>';
-
-  // Metodo 1: fetch diretto (stesso approccio di gsLoad che funziona per i report)
-  try {
-    var r = await fetch(GS_URL + '?sheet=Provvigioni', { method: 'GET', redirect: 'follow', cache: 'no-cache' });
-    var text = await r.text();
-    if (text.startsWith('[') || text.startsWith('{')) {
-      var data = JSON.parse(text);
-      if (Array.isArray(data) && data.length > 0) pSaveReg(data);
-      pRenderReg(); pAggStats();
-      return;
-    }
-  } catch(e1) {
-    console.warn('pLoadFromGS fetch failed:', e1.message);
-  }
-
-  // Metodo 2: JSONP fallback
   var cb = 'pGsCb_' + Date.now();
   var timer = setTimeout(function() {
     delete window[cb];
@@ -4633,79 +4661,7 @@ async function autoSyncFotoToDrive(targa, statusElId) {
 }
 
 // syncFotoFromDrive: usa quella originale con (targa, statusEl)
-function renderFotoGallery(){
-  const c=document.getElementById('view-foto');
-  if(!c)return;
-  // Rimuovi eventuale indicatore di sync
-  const syncMsg=document.getElementById('foto-sync-status');
-  if(syncMsg)syncMsg.remove();
-
-  const ar=(loadReady()||[]).concat(loadSent()||[]);
-  const vm={};
-  ar.forEach(r=>{if(r&&r.targa){const t=r.targa.toUpperCase().trim();if(!vm[t])vm[t]={marca:r.marca||'',modello:r.modello||''};}});
-
-  // Leggi anche le targhe direttamente dal localStorage (anche senza report associato)
-  const fc=[];
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(k&&k.startsWith('ea_foto_')){
-      const tg=k.replace('ea_foto_','');
-      try{
-        const ph=JSON.parse(localStorage.getItem(k)||'[]');
-        if(ph.length){
-          const inf=vm[tg]||{};
-          fc.push({targa:tg,marca:inf.marca||'',modello:inf.modello||'',count:ph.length,photos:ph});
-        }
-      }catch(e){}
-    }
-  }
-
-  let h='<div style="margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">';
-  h+='<div style="font-size:24px;font-weight:700;color:var(--blue);text-transform:uppercase;">Galleria Foto Veicoli</div>';
-  if(isDriveConnected()){
-    h+='<button onclick="syncAllFotoFromDrive().then(function(){renderFotoGallery();})" style="padding:8px 14px;background:var(--blue);border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#8635; Aggiorna da Drive</button>';
-  }
-  h+='</div>';
-
-  if(!fc.length){
-    h+='<div style="background:white;border:1px solid var(--bdr);padding:40px;text-align:center;">';
-    h+='<div style="font-size:3rem;">&#128247;</div>';
-    h+='<div style="font-size:16px;font-weight:600;margin:12px 0 8px;">Nessuna foto disponibile</div>';
-    if(!isDriveConnected()){
-      h+='<div style="font-size:13px;color:var(--gray);">Connetti Google Drive per scaricare le foto.</div>';
-    } else {
-      h+='<div style="font-size:13px;color:var(--gray);">Le foto verranno scaricate da Drive automaticamente.</div>';
-    }
-    h+='</div>';
-    c.innerHTML=h;
-    return;
-  }
-
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">';
-  fc.forEach(car=>{
-    const dl=localStorage.getItem('ea_drive_link_'+car.targa)||null;
-    const vei=[car.marca,car.modello].filter(Boolean).join(' ')||'\u2014';
-    const pv=car.photos.slice(0,4),gc=pv.length>=2?'1fr 1fr':'1fr';
-    h+='<div style="background:white;border:1px solid var(--bdr);overflow:hidden;">';
-    h+='<div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;">';
-    h+='<div><div style="font-size:16px;font-weight:700;color:white;">&#128193; '+car.targa+'</div>';
-    if(vei!=='\u2014')h+='<div style="font-size:12px;color:rgba(255,255,255,.8);">'+vei+'</div>';
-    h+='</div><span style="background:rgba(255,255,255,.18);color:white;font-size:11px;font-weight:700;padding:3px 9px;flex-shrink:0;margin-left:8px;">&#128247; '+car.count+'</span></div>';
-    h+='<div style="display:grid;grid-template-columns:'+gc+';gap:2px;padding:2px;background:#ddd;">';
-    pv.forEach((p,i)=>{
-      const ov=i===3&&car.count>4?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:white;">+'+(car.count-3)+'</div>':'';
-      h+='<div data-open-foto="'+car.targa+'" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#111;cursor:pointer;"><img src="'+p.data+'" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">'+ov+'</div>';
-    });
-    h+='</div>';
-    h+='<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
-    h+='<button data-open-foto="'+car.targa+'" style="padding:7px 14px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128194; Apri</button>';
-    if(dl)h+='<a href="'+dl+'" target="_blank" style="padding:7px 14px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:700;text-decoration:none;text-transform:uppercase;">&#9729; Drive</a>';
-    h+='</div></div>';
-  });
-  h+='</div>';
-  c.innerHTML=h;
-  c.querySelectorAll('[data-open-foto]').forEach(el=>el.addEventListener('click',()=>openFotoModal(el.getAttribute('data-open-foto'))));
-}
+function renderFotoGallery(){const c=document.getElementById('view-foto');if(!c)return;const ar=(loadReady()||[]).concat(loadSent()||[]);const vm={};ar.forEach(r=>{if(r?.targa){const t=r.targa.toUpperCase().trim();if(!vm[t])vm[t]={marca:r.marca||'',modello:r.modello||''};}});const fc=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith('ea_foto_')){const tg=k.replace('ea_foto_','');try{const ph=JSON.parse(localStorage.getItem(k)||'[]');if(ph.length){const inf=vm[tg]||{};fc.push({targa:tg,marca:inf.marca||'',modello:inf.modello||'',count:ph.length,photos:ph});}}catch(e){}}}let h='<div style="margin-bottom:20px;"><div style="font-size:24px;font-weight:700;color:var(--blue);text-transform:uppercase;">Galleria Foto Veicoli</div></div>';if(!fc.length){h+='<div style="background:white;border:1px solid var(--bdr);padding:40px;text-align:center;"><div style="font-size:3rem;">&#128247;</div><div style="font-size:16px;font-weight:600;margin:12px 0 8px;">Nessuna foto disponibile</div></div>';c.innerHTML=h;return;}h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">';fc.forEach(car=>{const dl=localStorage.getItem('ea_drive_link_'+car.targa)||null;const vei=[car.marca,car.modello].filter(Boolean).join(' ')||'\u2014';const pv=car.photos.slice(0,4),gc=pv.length>=2?'1fr 1fr':'1fr';h+='<div style="background:white;border:1px solid var(--bdr);overflow:hidden;"><div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;"><div><div style="font-size:16px;font-weight:700;color:white;">&#128193; '+car.targa+'</div>';if(vei!=='\u2014')h+='<div style="font-size:12px;color:rgba(255,255,255,.8);">'+vei+'</div>';h+='</div><span style="background:rgba(255,255,255,.18);color:white;font-size:11px;font-weight:700;padding:3px 9px;flex-shrink:0;margin-left:8px;">&#128247; '+car.count+'</span></div>';h+='<div style="display:grid;grid-template-columns:'+gc+';gap:2px;padding:2px;background:#ddd;">';pv.forEach((p,i)=>{const ov=i===3&&car.count>4?'<div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:white;">+'+(car.count-3)+'</div>':'';h+='<div data-open-foto="'+car.targa+'" style="position:relative;aspect-ratio:4/3;overflow:hidden;background:#111;cursor:pointer;"><img src="'+p.data+'" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">'+ov+'</div>';});h+='</div><div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;"><button data-open-foto="'+car.targa+'" style="padding:7px 14px;border:1.5px solid var(--blue);background:var(--blue);color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128194; Apri</button>';if(dl)h+='<a href="'+dl+'" target="_blank" style="padding:7px 14px;border:1.5px solid #34a853;background:#34a853;color:white;font-family:var(--font);font-size:12px;font-weight:700;text-decoration:none;text-transform:uppercase;">&#9729; Drive</a>';h+='</div></div>';});h+='</div>';c.innerHTML=h;c.querySelectorAll('[data-open-foto]').forEach(el=>el.addEventListener('click',()=>openFotoModal(el.getAttribute('data-open-foto'))));}
 
 // Scarica da Drive tutte le cartelle (usata dalla galleria)
 async function syncAllFotoFromDrive() {
@@ -4743,18 +4699,425 @@ async function syncAllFotoFromDrive() {
   } catch(e) { console.warn('syncAllFotoFromDrive:', e.message); }
 }
 
+// ══════════════════════════════════════════════════════════════
+// PERMESSI PRATICAUTO — modulo completo
+// ══════════════════════════════════════════════════════════════
+
+var PERMESSI_SENDER      = 'gammaservicesas@gmail.com';
+var PERMESSI_DAYS        = 29;
+var PERMESSI_KEY         = 'ea_permessi_v1';
+var PERMESSI_EMAIL_KEY   = 'ea_permessi_email';
+var PERMESSI_BODY_KEY    = 'ea_permessi_body';
+var PERMESSI_FOLDER_NAME = 'Europa Auto \u2014 Permessi';
+
+var PERMESSI_BODY_DEFAULT =
+  'Gentile {{INTESTATARIO}},\n\n' +
+  'in allegato trova il permesso di circolazione per il veicolo con targa {{TARGA}}.\n\n' +
+  'Cordiali saluti,\nEuropa Auto';
+
+function loadPermessi()  { try { return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]'); } catch(e){ return []; } }
+function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); updatePermessiBadge(); }
+function getPermessiEmail() { return localStorage.getItem(PERMESSI_EMAIL_KEY)||''; }
+function setPermessiEmail(v){ localStorage.setItem(PERMESSI_EMAIL_KEY, v); }
+function getPermessiBody()  { return localStorage.getItem(PERMESSI_BODY_KEY)||PERMESSI_BODY_DEFAULT; }
+function setPermessiBody(v) { localStorage.setItem(PERMESSI_BODY_KEY, v); }
+
+function updatePermessiBadge() {
+  var l = loadPermessi();
+  var b = document.getElementById('permessi-badge');
+  if (!b) return;
+  if (l.length) { b.textContent = l.length; b.style.display = ''; }
+  else b.style.display = 'none';
+}
+
+// ── Pulizia automatica scaduti ─────────────────────────────────
+function pulisciPermessiScaduti() {
+  var list = loadPermessi(), now = Date.now();
+  var validi = list.filter(function(p) {
+    if ((now - p.ricevutoMs) / 86400000 >= PERMESSI_DAYS) {
+      if (p.driveFileId && isDriveConnected())
+        fetch('https://www.googleapis.com/drive/v3/files/' + p.driveFileId,
+          { method:'DELETE', headers:{ Authorization:'Bearer '+_driveAccessToken } }).catch(function(){});
+      return false;
+    }
+    return true;
+  });
+  if (validi.length !== list.length) savePermessi(validi);
+}
+
+// ── Estrai targa e intestatario da testo PDF ──────────────────
+function estraiTarga(t) {
+  var m = t.match(/\b([A-Z]{2}\d{3}[A-Z]{2})\b/);
+  return m ? m[1] : null;
+}
+function estraiIntestatario(t) {
+  var pp = [
+    /intestatario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
+    /proprietario[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
+    /cliente[\s:]+([A-Z][a-zA-Z\s']{3,40})/i,
+    /sig(?:\.|\s|nore|ra)[\s.]+([A-Z][a-zA-Z\s']{3,40})/i
+  ];
+  for (var i=0;i<pp.length;i++) { var m=t.match(pp[i]); if(m) return m[1].trim().replace(/\s+/g,' '); }
+  var lines=t.split('\n');
+  for (var j=0;j<Math.min(lines.length,20);j++) {
+    var l=lines[j].trim();
+    if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(l)&&l.length<50) return l;
+  }
+  return 'Sconosciuto';
+}
+
+// ── Leggi testo da PDF (pdf.js) ───────────────────────────────
+async function leggiTestoPdf(b64) {
+  if (!window.pdfjsLib) {
+    await new Promise(function(res,rej){
+      var s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload=res; s.onerror=rej; document.head.appendChild(s);
+    });
+    pdfjsLib.GlobalWorkerOptions.workerSrc=
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  try {
+    var pure=b64.replace(/^data:[^;]+;base64,/,'');
+    var bin=atob(pure), bytes=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    var pdf=await pdfjsLib.getDocument({data:bytes}).promise, testo='';
+    for(var p=1;p<=Math.min(pdf.numPages,3);p++){
+      var pg=await pdf.getPage(p), ct=await pg.getTextContent();
+      testo+=ct.items.map(function(it){return it.str;}).join(' ')+'\n';
+    }
+    return testo;
+  } catch(e){ console.warn('leggiTestoPdf:',e.message); return ''; }
+}
+
+// ── Cartella Drive permessi ────────────────────────────────────
+async function getOrCreatePermessiFolder(token) {
+  var q="name='"+PERMESSI_FOLDER_NAME+"' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+  var r=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent(q)+'&fields=files(id)',
+    {headers:{Authorization:'Bearer '+token}});
+  var d=await r.json();
+  if (d.files&&d.files.length) return d.files[0].id;
+  var cr=await fetch('https://www.googleapis.com/drive/v3/files',{
+    method:'POST', headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({name:PERMESSI_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})
+  });
+  return (await cr.json()).id;
+}
+
+// ── Salva PDF su Drive ────────────────────────────────────────
+async function salvaPermessoSuDrive(token, folderId, targa, intestatario, pdfB64, fileName) {
+  var pure=pdfB64.replace(/^data:[^;]+;base64,/,'');
+  var bin=atob(pure), bytes=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  var name=(targa+'_'+intestatario+'.pdf').replace(/[^a-zA-Z0-9_.]/g,'_');
+  var form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify({name:name,parents:[folderId]})],{type:'application/json'}));
+  form.append('file',new Blob([bytes],{type:'application/pdf'}));
+  var up=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+    {method:'POST',headers:{Authorization:'Bearer '+token},body:form});
+  return (await up.json()).id||null;
+}
+
+// ── Sync da Drive (multi-device) ──────────────────────────────
+async function syncPermessiDaDrive(statusEl) {
+  if (!isDriveConnected()) return;
+  var token=_driveAccessToken;
+  try {
+    var folderId=await getOrCreatePermessiFolder(token);
+    var fr=await fetch('https://www.googleapis.com/drive/v3/files?q='+
+      encodeURIComponent("'"+folderId+"' in parents and trashed=false and mimeType='application/pdf'")+
+      '&fields=files(id,name,createdTime)&orderBy=createdTime desc',
+      {headers:{Authorization:'Bearer '+token}});
+    var fd=await fr.json(), driveFiles=fd.files||[];
+    if (!driveFiles.length) return;
+    var esistenti=loadPermessi();
+    var driveIds=new Set(esistenti.map(function(p){return p.driveFileId;}));
+    var nuovi=0;
+    for (var i=0;i<driveFiles.length;i++) {
+      var df=driveFiles[i];
+      if (driveIds.has(df.id)) continue;
+      var ricevutoMs=new Date(df.createdTime).getTime();
+      if ((Date.now()-ricevutoMs)/86400000>=PERMESSI_DAYS) continue;
+      if (statusEl) statusEl.textContent='\u2601\uFE0F Carico da Drive: '+df.name+'...';
+      var dlR=await fetch('https://www.googleapis.com/drive/v3/files/'+df.id+'?alt=media',
+        {headers:{Authorization:'Bearer '+token}});
+      var blob=await dlR.blob();
+      var pdfB64=await new Promise(function(res){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.readAsDataURL(blob);});
+      var testo=await leggiTestoPdf(pdfB64);
+      var targa=estraiTarga(testo)||df.name.split('_')[0]||'SCONOSCIUTA';
+      var intestatario=estraiIntestatario(testo)||df.name.split('_')[1]||'Sconosciuto';
+      esistenti.push({
+        id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
+        targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:pdfB64,
+        ricevutoMs:ricevutoMs,
+        ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
+        scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
+      });
+      nuovi++;
+    }
+    if (nuovi>0) savePermessi(esistenti);
+  } catch(e){ console.warn('syncPermessiDaDrive:',e.message); }
+}
+
+// ── Sync da Gmail (senza duplicati) ───────────────────────────
+async function syncPermessiDaGmail(mostraStatus) {
+  if (!isDriveConnected()) return;
+  pulisciPermessiScaduti();
+  var statusEl=document.getElementById('permessi-status');
+  if (mostraStatus&&statusEl){ statusEl.style.display='block'; statusEl.style.color='var(--blue)'; statusEl.textContent='\uD83D\uDD04 Connessione...'; }
+  await syncPermessiDaDrive(statusEl);
+  try {
+    var token=_driveAccessToken;
+    var folderId=await getOrCreatePermessiFolder(token);
+    var esistenti=loadPermessi();
+    var msgIds=new Set(esistenti.filter(function(p){return p.gmailMsgId;}).map(function(p){return p.gmailMsgId;}));
+    if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD04 Ricerca email...';
+    var lr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='+
+      encodeURIComponent('from:'+PERMESSI_SENDER+' has:attachment filename:pdf')+'&maxResults=50',
+      {headers:{Authorization:'Bearer '+token}});
+    var ld=await lr.json(), messages=ld.messages||[], nuovi=0;
+    for (var i=0;i<messages.length;i++) {
+      var msgId=messages[i].id;
+      if (msgIds.has(msgId)) continue;
+      if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD04 Email '+(i+1)+'/'+messages.length+'...';
+      var mr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId+'?format=full',
+        {headers:{Authorization:'Bearer '+token}});
+      var msg=await mr.json();
+      var dh=(msg.payload.headers||[]).find(function(h){return h.name==='Date';});
+      var ricevutoMs=dh?new Date(dh.value).getTime():Date.now();
+      if ((Date.now()-ricevutoMs)/86400000>=PERMESSI_DAYS) continue;
+      function trovaParts(pl){
+        var res=[];
+        if(pl.filename&&pl.filename.toLowerCase().endsWith('.pdf')&&pl.body&&pl.body.attachmentId) res.push(pl);
+        if(pl.parts) pl.parts.forEach(function(p){res=res.concat(trovaParts(p));});
+        return res;
+      }
+      var parts=trovaParts(msg.payload);
+      for (var j=0;j<parts.length;j++) {
+        var part=parts[j];
+        var ar=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId+'/attachments/'+part.body.attachmentId,
+          {headers:{Authorization:'Bearer '+token}});
+        var ad=await ar.json();
+        var b64=(ad.data||'').replace(/-/g,'+').replace(/_/g,'/');
+        var pdfB64='data:application/pdf;base64,'+b64;
+        if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD0D Lettura PDF...';
+        var testo=await leggiTestoPdf(pdfB64);
+        var targa=estraiTarga(testo)||'SCONOSCIUTA';
+        var intestatario=estraiIntestatario(testo);
+        var driveFileId=null;
+        try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
+        esistenti.push({
+          id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
+          targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:pdfB64,
+          ricevutoMs:ricevutoMs,
+          ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
+          scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
+        });
+        msgIds.add(msgId); nuovi++;
+      }
+    }
+    savePermessi(esistenti);
+    renderPermessi();
+    if (mostraStatus&&statusEl){
+      statusEl.textContent=nuovi>0?'\u2705 '+nuovi+' nuovi permessi':'\u2705 Tutto aggiornato';
+      setTimeout(function(){statusEl.style.display='none';},4000);
+    }
+  } catch(e){
+    console.warn('syncPermessiDaGmail:',e.message);
+    if (mostraStatus&&statusEl){
+      statusEl.textContent='\u26A0 Errore: '+e.message; statusEl.style.color='#e74c3c';
+      setTimeout(function(){statusEl.style.display='none';statusEl.style.color='';},5000);
+    }
+  }
+}
+
+function syncPermessiManuale(btn) {
+  if(btn){btn.disabled=true;btn.textContent='\uD83D\uDD04 Sincronizzazione...';}
+  syncPermessiDaGmail(true).then(function(){if(btn){btn.disabled=false;btn.textContent='\uD83D\uDD04 Sincronizza ora';}});
+}
+
+// ── Impostazioni email e corpo ────────────────────────────────
+function apriImpostazioniPermessi() {
+  var emailFrom=getPermessiEmail();
+  var nuovaEmail=prompt('Email mittente (da cui invii i permessi ai clienti):', emailFrom||'');
+  if (nuovaEmail===null) return;
+  if (!nuovaEmail.includes('@')){alert('Email non valida.');return;}
+  setPermessiEmail(nuovaEmail);
+
+  var corpoCorrente=getPermessiBody();
+  var nuovoCorpo=prompt(
+    'Testo del corpo email\n(usa {{TARGA}} e {{INTESTATARIO}} come segnaposto):',
+    corpoCorrente
+  );
+  if (nuovoCorpo===null) return;
+  setPermessiBody(nuovoCorpo||corpoCorrente);
+  alert('\u2705 Impostazioni salvate!');
+  renderPermessi();
+}
+
+// ── Invio PDF via Gmail API ────────────────────────────────────
+async function inviaPermessoEmail(id) {
+  var list=loadPermessi();
+  var p=list.find(function(x){return x.id===id;});
+  if (!p) return;
+
+  var emailDest=prompt('Email del cliente per '+p.targa+' — '+p.intestatario+':','');
+  if (!emailDest||!emailDest.includes('@')){alert('Email non valida.');return;}
+
+  var emailFrom=getPermessiEmail();
+  if (!emailFrom){
+    emailFrom=prompt('Inserisci la tua email mittente (verrà salvata):','');
+    if (!emailFrom||!emailFrom.includes('@')){alert('Email non valida.');return;}
+    setPermessiEmail(emailFrom);
+    // Chiedi anche il corpo se non configurato
+    if (!localStorage.getItem(PERMESSI_BODY_KEY)){
+      var corpo=prompt('Testo del corpo email\n(usa {{TARGA}} e {{INTESTATARIO}}):',PERMESSI_BODY_DEFAULT);
+      if (corpo) setPermessiBody(corpo);
+    }
+  }
+
+  if (!isDriveConnected()){alert('Devi essere connesso a Google per inviare email.');return;}
+
+  var btn=document.querySelector('[data-pid="'+id+'"][data-action="send"]');
+  if (btn){btn.disabled=true;btn.textContent='\uD83D\uDCE4 Invio...';}
+
+  try {
+    var token=_driveAccessToken;
+    var pureB64=p.pdfBase64.replace(/^data:[^;]+;base64,/,'');
+    var safeName=(p.targa+'_'+p.intestatario+'.pdf').replace(/[^a-zA-Z0-9_.]/g,'_');
+    var subject='Permesso di Circolazione \u2014 '+p.targa;
+    var bodyTemplate=getPermessiBody();
+    var bodyText=bodyTemplate
+      .replace(/\{\{TARGA\}\}/g, p.targa)
+      .replace(/\{\{INTESTATARIO\}\}/g, p.intestatario);
+    var boundary='boundary_'+Date.now();
+    var mime=[
+      'MIME-Version: 1.0',
+      'From: '+emailFrom,
+      'To: '+emailDest,
+      'Subject: =?UTF-8?B?'+btoa(unescape(encodeURIComponent(subject)))+'?=',
+      'Content-Type: multipart/mixed; boundary="'+boundary+'"',
+      '',
+      '--'+boundary,
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      bodyText,
+      '',
+      '--'+boundary,
+      'Content-Type: application/pdf; name="'+safeName+'"',
+      'Content-Transfer-Encoding: base64',
+      'Content-Disposition: attachment; filename="'+safeName+'"',
+      '',
+      pureB64,
+      '',
+      '--'+boundary+'--'
+    ].join('\r\n');
+    var encoded=btoa(unescape(encodeURIComponent(mime))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    var sr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+      method:'POST',
+      headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+      body:JSON.stringify({raw:encoded})
+    });
+    if (sr.ok){
+      alert('\u2705 Permesso inviato a '+emailDest);
+    } else {
+      var err=await sr.json();
+      throw new Error(err.error&&err.error.message?err.error.message:'Errore invio');
+    }
+  } catch(e){
+    console.warn('inviaPermessoEmail:',e.message);
+    alert('\u274C Errore invio: '+e.message);
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent='\u2709\uFE0F Invia PDF';}
+  }
+}
+
+// ── Render griglia permessi ────────────────────────────────────
+function renderPermessi() {
+  pulisciPermessiScaduti();
+  var list=loadPermessi();
+  var grid=document.getElementById('permessi-grid');
+  if (!grid) return;
+  updatePermessiBadge();
+  var emailFrom=getPermessiEmail();
+  var emailBar=document.getElementById('permessi-email-bar');
+  if (emailBar){
+    emailBar.innerHTML='<span style="font-size:12px;color:var(--gray);">&#128231; Mittente: </span>'
+      +'<strong style="font-size:12px;">'+(emailFrom||'<em style="color:#e74c3c;">non configurata</em>')+'</strong>'
+      +'&nbsp;<button onclick="apriImpostazioniPermessi()" style="padding:3px 10px;border:1px solid var(--blue);background:none;color:var(--blue);font-size:11px;font-family:var(--font);cursor:pointer;margin-left:6px;">&#9998; Impostazioni email</button>';
+  }
+  if (!list.length){
+    grid.innerHTML='<div style="padding:60px;text-align:center;grid-column:1/-1;">'
+      +'<div style="font-size:3rem;margin-bottom:12px;">&#128203;</div>'
+      +'<div style="font-size:16px;font-weight:600;color:var(--blk);margin-bottom:6px;">Nessun permesso presente</div>'
+      +'<div style="font-size:13px;color:var(--gray);">Verranno sincronizzati automaticamente da gammaservicesas@gmail.com e da Drive.</div>'
+      +'</div>';
+    return;
+  }
+  var html='';
+  list.forEach(function(p){
+    var ageDays=Math.floor((Date.now()-p.ricevutoMs)/86400000);
+    var rimanenti=PERMESSI_DAYS-ageDays;
+    var urgente=rimanenti<=5;
+    html+='<div style="background:white;border:1px solid var(--bdr);overflow:hidden;">';
+    html+='<div style="background:var(--blue);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;">';
+    html+='<div><div style="font-size:20px;font-weight:700;color:white;letter-spacing:.08em;">'+p.targa+'</div>';
+    html+='<div style="font-size:13px;color:rgba(255,255,255,.8);margin-top:2px;">'+p.intestatario+'</div></div>';
+    html+='<span style="background:'+(urgente?'#e74c3c':'rgba(255,255,255,.15)')+';color:white;font-size:11px;font-weight:700;padding:4px 10px;border-radius:2px;">'+(urgente?'\u26A0\uFE0F ':'\u23F3 ')+rimanenti+' gg</span>';
+    html+='</div>';
+    html+='<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);font-size:12px;color:var(--gray);">';
+    html+='<div style="display:flex;justify-content:space-between;margin-bottom:4px;">';
+    html+='<span>&#128197; Ricevuto: <strong>'+p.ricevutoLabel+'</strong></span>';
+    html+='<span style="color:'+(urgente?'#e74c3c':'#27ae60')+';">Scade: <strong>'+p.scadeLabel+'</strong></span>';
+    html+='</div><div>&#128196; '+(p.fileName||'permesso.pdf')+'</div></div>';
+    html+='<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
+    html+='<button data-pid="'+p.id+'" data-action="view" style="padding:7px 12px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#128065; Apri</button>';
+    html+='<button data-pid="'+p.id+'" data-action="send" style="padding:7px 12px;background:#27ae60;color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#9993;&#65039; Invia PDF</button>';
+    html+='<button data-pid="'+p.id+'" data-action="del" style="padding:7px 12px;background:none;border:1px solid var(--red);color:var(--red);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#10005;</button>';
+    html+='</div></div>';
+  });
+  grid.innerHTML=html;
+  grid.querySelectorAll('[data-pid]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var id=btn.getAttribute('data-pid'), action=btn.getAttribute('data-action');
+      if(action==='view') visualizzaPermesso(id);
+      else if(action==='send') inviaPermessoEmail(id);
+      else if(action==='del') eliminaPermesso(id);
+    });
+  });
+}
+
+function visualizzaPermesso(id){
+  var p=loadPermessi().find(function(x){return x.id===id;});
+  if(!p||!p.pdfBase64) return;
+  var w=window.open('');
+  w.document.write('<iframe src="'+p.pdfBase64+'" style="width:100%;height:100vh;border:none;"></iframe>');
+}
+
+function eliminaPermesso(id){
+  if(!confirm('Eliminare questo permesso?')) return;
+  var list=loadPermessi(), p=list.find(function(x){return x.id===id;});
+  if(p&&p.driveFileId&&isDriveConnected())
+    fetch('https://www.googleapis.com/drive/v3/files/'+p.driveFileId,
+      {method:'DELETE',headers:{Authorization:'Bearer '+_driveAccessToken}}).catch(function(){});
+  savePermessi(list.filter(function(x){return x.id!==id;}));
+  renderPermessi();
+}
+
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 const SIDEBAR_TITLES = {
   'editor':  'Nuovo Report',
   'ready':   'Report Pronti',
   'archive': 'Report Inviati a Clienti',
   'foto':    'Galleria Foto Veicoli',
-  'provv':   'Provvigioni Venditori'
+  'provv':   'Provvigioni Venditori',
+  'permessi': ['📋 Permessi', 'Gestione Permessi Praticauto']
 };
 
 function sidebarNav(view,btn){
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
-  ['editor','ready','archive','provv','foto'].forEach(v=>{
+  ['editor','ready','archive','provv','foto','permessi'].forEach(v=>{
     const el = document.getElementById('view-' + v);
     if (!el) return;
     el.classList.remove('active');
@@ -4769,14 +5132,8 @@ function sidebarNav(view,btn){
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
-  if(view==='foto'){
-    renderFotoGallery();
-    if(isDriveConnected()){
-      var c=document.getElementById('view-foto');
-      if(c){var syncMsg=document.createElement('div');syncMsg.id='foto-sync-status';syncMsg.style.cssText='text-align:center;padding:12px;font-size:13px;color:#1a4fa0;';syncMsg.textContent='☁️ Sincronizzazione foto da Drive…';c.appendChild(syncMsg);}
-      syncAllFotoFromDrive().then(function(){renderFotoGallery();}).catch(function(){renderFotoGallery();});
-    }
-  }
+  if(view==='foto'){renderFotoGallery();if(isDriveConnected())syncAllFotoFromDrive().then(function(){renderFotoGallery();});}
+  if(view==='permessi'){renderPermessi();if(isDriveConnected()&&document.getElementById('permessi-grid').children.length<=1)syncPermessiDaGmail(false);}
 }
 
 // ── SIDEBAR TOGGLE ─────────────────────────────────────────
@@ -4794,6 +5151,10 @@ function closeSidebarMobile(){document.querySelector('.sidebar').classList.remov
 document.addEventListener('DOMContentLoaded',function(){
   buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();
   setTimeout(function(){if(GS_URL)manualSync(null);},1500);
+  // Sync permessi automatico all'avvio (dopo 3s per attendere login Drive)
+  setTimeout(function(){syncPermessiDaGmail(false);},3000);
+  // Render iniziale permessi (mostra badge e email bar)
+  updatePermessiBadge();
   window.addEventListener('resize',function(){if(window.innerWidth>768){const s=document.querySelector('.sidebar');const ov=document.getElementById('sidebarOverlay');if(s)s.classList.remove('mobile-open');if(ov)ov.classList.remove('active');}});
 });
 </script>
