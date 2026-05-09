@@ -5488,47 +5488,7 @@ function presenzeSalva() {
 }
 
 // ── Render tabella mensile ────────────────────────────────────
-function presenzeRenderTabella() {
-  var meseC = presenzeGetMese();
-  var reg   = presenzeLoadReg().filter(function(r){ return r.mese === meseC; });
-  var dip   = presenzeLoadDipendenti();
-  var el    = document.getElementById('presenze-tabella');
-  if (!el) return;
 
-  if (!reg.length) {
-    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">Nessuna presenza registrata per '+presenzeGetMeseLabel()+'.</div>';
-    return;
-  }
-
-  var TH = function(s,w){ return '<th style="background:var(--blue);color:white;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;white-space:nowrap;'+(w?'width:'+w:'')+'">'+ s+'</th>'; };
-  var TD = function(s){ return '<td style="padding:9px 12px;border-bottom:1px solid #e0e0e0;font-size:12px;white-space:nowrap;">'+s+'</td>'; };
-
-  var h = '<table style="min-width:500px;width:100%;border-collapse:collapse;"><thead><tr>';
-  h += TH('Data')+''+TH('Dipendente')+''+TH('Entrata')+''+TH('Uscita')+''+TH('Ore Lavorate');
-  h += '</tr></thead><tbody>';
-
-  reg.forEach(function(r) {
-    var dataFmt = r.data.split('-').reverse().join('/');
-    h += '<tr>'+TD(dataFmt)+TD('<strong>'+r.dipendente+'</strong>')+TD(r.entrata)+TD(r.uscita)+'<td style="padding:9px 12px;border-bottom:1px solid #e0e0e0;font-size:12px;white-space:nowrap;font-weight:700;color:var(--blue);">'+r.ore+'</td></tr>';
-  });
-
-  // Riepilogo per dipendente
-  h += '<tr><td colspan="5" style="background:#f8f8f8;padding:6px 12px;"></td></tr>';
-  dip.forEach(function(d) {
-    var presD = reg.filter(function(r){ return r.dipendente===d; });
-    var totMin = presD.reduce(function(s,r){
-      if(!r.entrata||!r.uscita||r.ore==='—') return s;
-      var e=r.entrata.split(':').map(Number), u=r.uscita.split(':').map(Number);
-      return s+(u[0]*60+u[1])-(e[0]*60+e[1]);
-    },0);
-    var totOre = Math.floor(totMin/60)+'h '+String(totMin%60).padStart(2,'0')+'m';
-    h += '<tr style="background:#f0f7ff;"><td colspan="2" style="padding:8px 12px;font-size:12px;font-weight:700;">'+d+' — '+presD.length+' giorni</td>'
-      +'<td colspan="3" style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--blue);">Totale: '+totOre+'</td></tr>';
-  });
-
-  h += '</tbody></table>';
-  el.innerHTML = h;
-}
 
 // ── Google Sheets ─────────────────────────────────────────────
 function presenzeGsSave(entry) {
@@ -6015,8 +5975,30 @@ function presenzeRenderTabella() {
   var reg=presenzeLoadReg().filter(function(r){return r.mese===meseC;});
   var el=document.getElementById('presenze-tabella');
   if(!el)return;
+  // Sezione forzatura — sempre visibile anche senza presenze
+  function buildForzaturaBox() {
+    var dipList = loadDipendenti();
+    if (!dipList.length) return '';
+    var oggi2 = new Date().toISOString().split('T')[0];
+    var box = '<tr><td colspan="7" style="padding:12px;background:#f0f7ff;border-top:2px solid var(--blue);">'
+      +'<div style="font-size:12px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">&#128272; Forzatura Timbratura — Oggi '+oggi2.split('-').reverse().join('/')+'</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    dipList.forEach(function(d){
+      box += '<button data-forza-email="'+d.email+'" style="padding:8px 16px;background:white;border:2px solid var(--blue);color:var(--blue);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;">'+d.nome+'</button>';
+    });
+    box += '</div></td></tr>';
+    return box;
+  }
+
   if(!reg.length){
-    el.innerHTML='<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">Nessuna presenza registrata per '+presenzeGetMeseLabel()+'.</div>';
+    var emptyHtml = '<table style="width:100%;border-collapse:collapse;"><tbody>';
+    emptyHtml += buildForzaturaBox();
+    emptyHtml += '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">Nessuna presenza registrata per '+presenzeGetMeseLabel()+'.</td></tr>';
+    emptyHtml += '</tbody></table>';
+    el.innerHTML = emptyHtml;
+    el.querySelectorAll('[data-forza-email]').forEach(function(btn){
+      btn.addEventListener('click', function(){ apriTimbraturaForzata(btn.getAttribute('data-forza-email')); });
+    });
     return;
   }
   var TH=function(s){return '<th style="background:var(--blue);color:white;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;white-space:nowrap;">'+s+'</th>';};
@@ -6029,15 +6011,9 @@ function presenzeRenderTabella() {
     var nome=getDipendenteNome(r.dipendente);
     h+='<tr>'+TD(r.data.split('-').reverse().join('/'))+TD('<strong>'+nome+'</strong>')+TD(r.entrata||'--')+TD(r.uscita_pranzo||'--')+TD(r.rientro_pranzo||'--')+TD(r.uscita||'--')+'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;font-weight:700;color:var(--blue);">'+(r.ore||'--')+'</td></tr>';
   });
-  // Riga "Timbra per..." per ogni dipendente oggi
+  // Riga forzatura — con presenze
   var oggiAdmin=new Date().toISOString().split('T')[0];
-  h+='<tr><td colspan="7" style="padding:10px 12px;background:#f8f8f8;">';
-  h+='<span style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.04em;">&#128272; Forzatura Timbratura Admin — Oggi</span>';
-  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">';
-  loadDipendenti().forEach(function(d){
-    h+='<button data-forza-email="'+d.email+'" style="padding:6px 12px;background:white;border:2px solid var(--blue);color:var(--blue);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">'+d.nome+'</button>';
-  });
-  h+='</div></td></tr>';
+  h+=buildForzaturaBox();
   h+='</tbody></table>';
   el.innerHTML=h;
   // Listener forzatura timbratura admin
