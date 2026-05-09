@@ -841,6 +841,7 @@ html, body{
     <div style="margin-left:auto;display:flex;gap:8px;">
       <button onclick="pNuovoMese()" style="padding:7px 14px;background:var(--blue);border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">🔄 Nuovo Mese</button>
       <button onclick="pClearAll()" style="padding:7px 14px;background:none;border:1px solid var(--red);color:var(--red);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">🗑 Svuota</button>
+      <button onclick="pSincronizzaManuale(this)" style="padding:7px 14px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">☁️ Sincronizza da Sheets</button>
     </div>
   </div>
 
@@ -2927,7 +2928,11 @@ function hideWelcomeScreen() {
   if (ws) {
     ws.style.opacity = '0';
     ws.style.transition = 'opacity 0.4s';
-    setTimeout(() => { ws.style.display = 'none'; }, 400);
+    setTimeout(() => {
+      ws.style.display = 'none';
+      // Dopo che la welcome sparisce, applica il routing corretto per il ruolo
+      if (typeof applyRoleUI === 'function') applyRoleUI();
+    }, 400);
   }
 }
 
@@ -4614,7 +4619,26 @@ function pSeleziona(tipo) {
   document.getElementById('pSelWarn').style.display = 'none';
 }
 
-function pSalva() {
+function pSincronizzaManuale(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Caricamento...'; }
+  pLoadFromGS();
+  setTimeout(function() {
+    if (btn) { btn.disabled = false; btn.textContent = '☁️ Sincronizza da Sheets'; }
+  }, 8000);
+}
+
+// ── Alias per compatibilità vecchia versione ─────────────────
+function presenzeLoadDipendenti() { return loadDipendenti(); }
+function presenzeSaveDipendenti(list) { saveDipendenti(list); }
+function presenzeRenderDipendenti() {
+  // Popola il select (vista vecchia) se esiste
+  var sel = document.getElementById('presenze-sel-dip');
+  if (sel) {
+    var list = loadDipendenti();
+    sel.innerHTML = '<option value="">— Seleziona dipendente —</option>';
+    list.forEach(function(d){ sel.innerHTML += '<option value="'+d.email+'">'+d.nome+'</option>'; });
+  }
+}
   // Validazione campi obbligatori
   const cliente = document.getElementById('pCliente')?.value.trim() || '';
   const marca   = document.getElementById('pMarca')?.value.trim() || '';
@@ -4781,33 +4805,25 @@ function pNuovoMese() {
 function pRenderReg() {
   var tuttiReg = pLoadReg();
   var meseCorrente = pGetMese();
-  // Mostra SOLO il mese corrente
-  var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; });
   var el  = document.getElementById('pRegistro');
-  if (!el) {
-    console.warn('pRegistro not found');
-    return;
-  }
-  var tuttiCount = tuttiReg.length;
+  if (!el) { console.warn('pRegistro not found'); return; }
+
+  // Mostra SOLO il mese corrente, ordinato per data decrescente
+  var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; })
+    .slice().sort(function(a,b){ return (b.id - a.id); });
+
   if (!reg.length) {
-    var msg = tuttiCount > 0
-      ? 'Nessuna vendita per <strong>' + presenzeGetMeseLabel ? presenzeGetMeseLabel() : meseCorrente
-        + '</strong> nel registro locale.<br><small style="color:#999;">Ci sono ' + tuttiCount
-        + ' vendite in altri mesi. Mese atteso: ' + meseCorrente + '</small>'
-      : 'Nessuna vendita registrata questo mese.';
-    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">' + msg + '</div>';
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">Nessuna vendita registrata per ' + pGetMeseLabel(meseCorrente) + '. Premi "🔄 Sincronizza" per caricare da Google Sheets.</div>';
     return;
   }
   var TH = function(s){return '<th style="background:var(--blue);color:white;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;">'+s+'</th>';};
   var TD = function(s){return '<td style="padding:9px 12px;border-bottom:1px solid #e0e0e0;white-space:nowrap;font-size:12px;">'+s+'</td>';};
   var h = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;">';
+  h += '<div style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">📅 ' + pGetMeseLabel(meseCorrente) + ' ✦ MESE CORRENTE</div>';
   h += '<table style="min-width:540px;width:100%;border-collapse:collapse;"><thead><tr>';
   h += TH('Data')+TH('Cliente / Auto')+TH('Tipo')+TH('TAN')+TH('Rate')+TH('Finanziaria')+TH('Provvigione')+TH('');
   h += '</tr></thead><tbody>';
-  reg.forEach(function(r, idx) {
-    if (idx === 0 || r.mese !== reg[idx-1].mese) {
-      h += '<tr><td colspan="8" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
-    }
+  reg.forEach(function(r) {
     var isFin = r.tipo !== 'noFin';
     var tipoLabel = r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato');
     var tanC  = isFin?(r.tan ?r.tan +'%':'—'):'—';
@@ -4830,17 +4846,16 @@ function pAggStats() {
   const reg = pLoadReg();
   const meseCorrente = pGetMese();
   const regMese = reg.filter(r => r.mese === meseCorrente);
-
-  // Calcola totale provvigioni mese corrente
-  const tot = regMese.reduce((s,r) => s + (r.provvigione || r.provv || 25), 0);
-  const med = regMese.length ? tot / regMese.length : 0;
+  const totMese = regMese.reduce((s,r) => s + (r.provvigione || r.provv || 25), 0);
+  const medMese = regMese.length ? totMese / regMese.length : 0;
+  const totAll  = reg.reduce((s,r) => s + (r.provvigione || r.provv || 25), 0);
 
   const sN = document.getElementById('pStatN');
   const sT = document.getElementById('pStatTot');
   const sM = document.getElementById('pStatMed');
-  if (sN) sN.textContent = regMese.length + ' (' + reg.length + ' tot)';
-  if (sT) sT.textContent = '€ ' + Math.round(tot);
-  if (sM) sM.textContent = '€ ' + Math.round(med);
+  if (sN) sN.textContent = regMese.length + ' mese · ' + reg.length + ' tot';
+  if (sT) sT.textContent = '€ ' + Math.round(totMese) + ' (tot: € ' + Math.round(totAll) + ')';
+  if (sM) sM.textContent = '€ ' + Math.round(medMese);
 }
 
 async function autoSyncFotoToDrive(targa, statusElId) {
@@ -5753,13 +5768,15 @@ function setCurrentUser(email) {
     _currentUserRole = dip.ruolo;
   } else if (_currentUserEmail === 'noreply.europaauto@gmail.com') {
     _currentUserRole = 'admin';
-  } else if (_currentUserEmail === 'bassodavide114@gmail.com') {
-    _currentUserRole = 'dipendente_report';
   } else {
-    _currentUserRole = 'dipendente'; // default
+    _currentUserRole = 'dipendente'; // default — tutti i non-admin vedono solo presenze
   }
   console.log('User:', _currentUserEmail, 'Role:', _currentUserRole);
-  applyRoleUI();
+  // applyRoleUI verrà chiamata da hideWelcomeScreen o da fetchUserEmailAndSetRole
+  var ws = document.getElementById('welcome-screen');
+  if (!ws || ws.style.display === 'none') {
+    applyRoleUI();
+  }
 }
 
 function getCurrentRole() { return _currentUserRole || 'dipendente'; }
@@ -5770,10 +5787,10 @@ function isManager() { return _currentUserRole === 'admin' || _currentUserRole =
 function applyRoleUI() {
   var role = getCurrentRole();
   var ROLE_VIEWS = {
-    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze'],
-    'manager':    ['ready','archive','provv','presenze'],
-    'dipendente': ['presenze'],
-    'dipendente_report': ['ready','archive','presenze']
+    'admin':             ['editor','ready','archive','provv','foto','permessi','presenze'],
+    'manager':           ['ready','archive','provv','presenze'],
+    'dipendente':        ['presenze'],
+    'dipendente_report': ['presenze','ready','archive']
   };
   var allowed = ROLE_VIEWS[role] || ['presenze'];
 
@@ -5782,16 +5799,23 @@ function applyRoleUI() {
     if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
 
+  // Naviga sempre sulla prima vista permessa dopo il login
+  var firstView = allowed[0]; // sempre 'presenze' per dipendente/dipendente_report
+  var firstBtn  = document.getElementById('si-' + firstView);
+
   var activeEl = document.querySelector('.view.active');
-  if (activeEl) {
-    var activeId = activeEl.id.replace('view-','');
-    if (allowed.indexOf(activeId) === -1) {
-      var firstBtn = document.getElementById('si-' + allowed[0]);
-      if (firstBtn) firstBtn.click();
-    } else if (activeId === 'presenze') {
-      // Ruolo appena caricato mentre siamo su presenze: re-init
-      presenzeInit();
-    }
+  var activeId = activeEl ? activeEl.id.replace('view-','') : '';
+
+  if (allowed.indexOf(activeId) === -1) {
+    // Vista corrente non permessa → vai alla prima permessa
+    if (firstBtn) firstBtn.click();
+    else sidebarNav(firstView, null);
+  } else if (activeId === 'presenze') {
+    presenzeInit();
+  } else if (role === 'dipendente' || role === 'dipendente_report') {
+    // Dipendente: forza sempre su presenze dopo login
+    if (firstBtn) firstBtn.click();
+    else sidebarNav(firstView, null);
   }
 }
 
@@ -6100,10 +6124,8 @@ function presenzeInit() {
   var vistaAdmin = document.getElementById('presenze-vista-admin');
   var vistaDip   = document.getElementById('presenze-vista-dipendente');
 
-  // Se il ruolo non è ancora caricato, aspetta il login e riprova
   if (!_currentUserRole) {
-    // Mostra messaggio di attesa
-    if (vistaAdmin) { vistaAdmin.style.display = 'block'; vistaAdmin.innerHTML = '<div style="text-align:center;padding:60px;color:var(--gray);font-size:14px;">&#9203; Accedi con Google per vedere le presenze.</div>'; }
+    if (vistaAdmin) { vistaAdmin.style.display = 'block'; vistaAdmin.innerHTML = '<div style="text-align:center;padding:60px;color:var(--gray);font-size:14px;">⏳ Accedi con Google per vedere le presenze.</div>'; }
     if (vistaDip)   vistaDip.style.display = 'none';
     return;
   }
@@ -6111,17 +6133,66 @@ function presenzeInit() {
   if (isAdmin()) {
     if (vistaAdmin) vistaAdmin.style.display = 'block';
     if (vistaDip)   vistaDip.style.display   = 'none';
-    // Ripristina contenuto admin se era stato sovrascritto dal messaggio di attesa
     var lbl = document.getElementById('presenze-mese-label');
     if (lbl) lbl.textContent = presenzeGetMeseLabel();
     presenzeRenderDipendentiAdmin();
     presenzeRenderTabella();
     presenzeLoadDaSheets();
   } else {
+    // Dipendente: controlla se è registrato in anagrafica
     if (vistaDip)   vistaDip.style.display   = 'block';
     if (vistaAdmin) vistaAdmin.style.display  = 'none';
+
+    var dip = getDipendenteByEmail(_currentUserEmail);
+    if (!dip) {
+      // Non ancora registrato: mostra messaggio di attesa (niente auto-registrazione)
+      var tcWrap = document.querySelector('.tc-wrap');
+      if (tcWrap && !document.getElementById('tc-not-registered')) {
+        var nomeEl = document.getElementById('tc-nome');
+        if (nomeEl) nomeEl.textContent = _currentUserEmail;
+
+        var notReg = document.createElement('div');
+        notReg.id = 'tc-not-registered';
+        notReg.style.cssText = 'background:#fff8e1;border:2px solid #f39c12;border-radius:12px;padding:24px;margin-bottom:18px;text-align:center;';
+        notReg.innerHTML = '<div style="font-size:24px;margin-bottom:10px;">⏳</div>'
+          + '<div style="font-size:15px;font-weight:700;color:#e67e22;margin-bottom:6px;">Account non ancora registrato</div>'
+          + '<div style="font-size:13px;color:#6b6b6b;line-height:1.5;">Il tuo account <strong>' + _currentUserEmail + '</strong> non è ancora in anagrafica.<br>Contatta l\'amministratore per essere abilitato alle timbrature.</div>';
+
+        // Nascondi i bottoni di timbratura
+        var btnGrid = document.getElementById('tc-btn-grid');
+        if (btnGrid) btnGrid.style.display = 'none';
+        var gpsStrip = document.getElementById('tc-gps-strip');
+        if (gpsStrip) gpsStrip.style.display = 'none';
+
+        var gpsEl = document.getElementById('tc-gps-strip');
+        if (gpsEl) gpsEl.parentNode.insertBefore(notReg, gpsEl);
+        else tcWrap.insertBefore(notReg, tcWrap.firstChild);
+      }
+      return; // non chiamare presenzeRenderTimbra
+    }
+
     presenzeRenderTimbra();
   }
+}
+
+function tcSelfRegister() {
+  var nome = (document.getElementById('tc-self-nome').value || '').trim();
+  var errEl = document.getElementById('tc-self-err');
+  if (!nome || nome.length < 2) {
+    if (errEl) { errEl.textContent = 'Inserisci il tuo nome e cognome.'; errEl.style.display = 'block'; }
+    return;
+  }
+  var list = loadDipendenti();
+  if (!list.find(function(d){ return d.email === _currentUserEmail; })) {
+    list.push({ nome: nome, email: _currentUserEmail, ruolo: getCurrentRole(), sede: 'sede_a' });
+    saveDipendenti(list);
+    gsJsonp({ action:'upsert', sheet:PRESENZE_SHEET, record:{ tipo:'dipendente', nome:nome, email:_currentUserEmail, ruolo:getCurrentRole(), sede:'sede_a' } });
+  }
+  // Rimuovi form e ricarica
+  var reg = document.getElementById('tc-selfregister');
+  if (reg) reg.remove();
+  presenzeRenderTimbra();
+  tcToast('✅ Benvenuto/a, ' + nome + '!');
 }
 
 function _presenzeRebuildAdminView() {
@@ -6402,6 +6473,7 @@ function sidebarNav(view,btn){
     renderPermessi();
     if(isDriveConnected()) syncPermessiDaGmail(false);
   }
+  if(view==='presenze'){ presenzeInit(); }
 }
 
 // ── SIDEBAR TOGGLE ─────────────────────────────────────────
