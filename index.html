@@ -2988,11 +2988,24 @@ async function welcomeLogin() {
 }
 
 // All'avvio: prova silenzioso, se fallisce mostra welcome screen
+let _initAppAttempts = 0;
 function initApp() {
   // Se già skippato in precedenza, prova silenzioso
   const skipped = localStorage.getItem('ea_drive_skipped');
 
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    _initAppAttempts++;
+    if (_initAppAttempts > 30) {
+      // Timeout: Google non si è caricato dopo 9 secondi
+      const err = document.getElementById('welcome-error');
+      const btn = document.getElementById('welcome-login-btn');
+      if (err) {
+        err.textContent = '⚠ Errore caricamento Google. Verifica la connessione internet e ricarica la pagina.';
+        err.style.display = 'block';
+      }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg> Riprova'; }
+      return;
+    }
     setTimeout(initApp, 300);
     return;
   }
@@ -3408,35 +3421,39 @@ async function manualSync(btn){
       gsLoad('ReportInviati')
     ]);
 
-    // Step 2: merge intelligente
-    // - Sheets è la fonte di verità COMPLETA
-    // - Il locale aggiunge solo report nuovi non ancora sincronizzati (creati negli ultimi 30 min)
+    // Step 2: merge CONSERVATIVO — il locale non viene MAI cancellato
+    // Sheets aggiunge al locale ciò che manca, ma non rimuove nulla
     function mergeById(local, remote){
       const map = {};
-      const remoteIds = new Set((remote||[]).map(r => r && r.id).filter(Boolean));
-      // Sheets è sempre la fonte di verità — carica TUTTI i record da Sheets
-      (remote||[]).forEach(r => { if(r && r.id) map[r.id] = r; });
-      // Aggiunge dal locale SOLO i report nuovi non ancora su Sheets (ultimi 30 minuti)
-      const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
-      (local||[]).forEach(r => { 
-        if(r && r.id && !remoteIds.has(r.id)){
-          // Aggiunge solo se creato di recente (non eliminato da altro dispositivo)
-          if(r.id > thirtyMinAgo) map[r.id] = r;
-        }
-      });
+      // Prima il locale (fonte primaria, non si tocca mai)
+      (local||[]).forEach(r => { if(r && r.id) map[r.id] = r; });
+      // Poi da Sheets solo i record NON già presenti in locale
+      (remote||[]).forEach(r => { if(r && r.id && !map[r.id]) map[r.id] = r; });
       return Object.values(map).sort((a,b) => (b.id||0)-(a.id||0));
     }
 
-    const mergedReady = mergeById(loadReady(), remoteReady || []);
-    const mergedSent  = mergeById(loadSent(),  remoteSent  || []);
+    const localReady = loadReady();
+    const localSent  = loadSent();
 
-    // Step 3: salva il merge in locale
+    // Applica merge solo se Sheets ha dati reali (array vuoto = Sheets non ha risposto correttamente)
+    const mergedReady = (remoteReady && remoteReady.length > 0)
+      ? mergeById(localReady, remoteReady)
+      : localReady;
+    const mergedSent = (remoteSent && remoteSent.length > 0)
+      ? mergeById(localSent, remoteSent)
+      : localSent;
+
+    // Step 3: salva in locale SENZA chiamare saveReady/saveSent (evita riscrittura Sheets)
     localStorage.setItem(READY_KEY, JSON.stringify(mergedReady));
     localStorage.setItem(SENT_KEY, JSON.stringify(mergedSent));
+    updateCounts();
 
-    // Step 4: carica il merge su Sheets (così altri dispositivi vedono tutto)
-    if(mergedReady.length > 0) gsSave('ReportPronti', mergedReady);
-    if(mergedSent.length > 0)  gsSave('ReportInviati', mergedSent);
+    // Step 4: riscrivi su Sheets SOLO se avviato manualmente (btn != null)
+    // Il sync automatico all'avvio NON riscrive su Sheets
+    if(btn){
+      if(mergedReady.length > 0) gsSave('ReportPronti', mergedReady);
+      if(mergedSent.length > 0)  gsSave('ReportInviati', mergedSent);
+    }
 
     renderReady('');
     renderArchive('');
@@ -3476,8 +3493,9 @@ async function syncFromSheets(){
   if(st){ st.textContent='🔄 Sincronizzazione...'; st.style.color='var(--gray)'; }
   try{
     const [ready, sent] = await Promise.all([gsLoad('ReportPronti'), gsLoad('ReportInviati')]);
-    if(ready !== null){ saveReady(ready); }
-    if(sent  !== null){ saveSent(sent); }
+    // Usa localStorage diretto per evitare che saveReady/saveSent riscriva su Sheets
+    if(ready !== null && ready.length > 0){ localStorage.setItem(READY_KEY, JSON.stringify(ready)); updateCounts(); }
+    if(sent  !== null && sent.length > 0){ localStorage.setItem(SENT_KEY, JSON.stringify(sent)); updateCounts(); }
     renderReady(''); renderArchive('');
     if(st){ st.textContent='🟢 Google Sheets connesso'; st.style.color='#27ae60'; }
   }catch(e){
