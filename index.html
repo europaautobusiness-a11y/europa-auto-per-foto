@@ -1058,7 +1058,7 @@ html, body{
   </div>
 
   <!-- VISTA ADMIN: gestione completa -->
-  <div id="presenze-vista-admin" style="display:none;">
+  <div id="presenze-vista-admin">
 
     <!-- Header admin -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
@@ -4469,11 +4469,23 @@ function pLoadFromGS() {
     delete window[cb];
     var s = document.getElementById(cb);
     if (s && s.parentNode) s.parentNode.removeChild(s);
-    if (Array.isArray(data) && data.length > 0) {
-      // Salva tutti i dati da Sheets (pRenderReg mostra solo il mese corrente)
-      pSaveReg(data);
-      console.log('pLoadFromGS: caricate', data.length, 'provvigioni totali');
+
+    if (!Array.isArray(data) || data.length === 0) {
+      console.warn('pLoadFromGS: dati vuoti o non array', data);
+      if (el) el.innerHTML = '<div style="text-align:center;padding:40px;color:#e67e22;font-size:13px;">'
+        + '&#9888; Google Sheets non ha restituito dati.<br>'
+        + '<small style="color:#999;">Verifica che il foglio "Provvigioni" abbia dati e che lo script sia pubblicato.</small>'
+        + '</div>';
+      pAggStats();
+      return;
     }
+
+    // Log primo record per debug
+    console.log('pLoadFromGS: ricevuti', data.length, 'record. Primo:', JSON.stringify(data[0]).substring(0,120));
+    console.log('mese corrente atteso:', pGetMese());
+
+    // Salva tutti
+    pSaveReg(data);
     pRenderReg();
     pAggStats();
   };
@@ -4680,8 +4692,14 @@ function pRenderReg() {
     console.warn('pRegistro not found');
     return;
   }
+  var tuttiCount = tuttiReg.length;
   if (!reg.length) {
-    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">Nessuna vendita per il mese corrente.<br><small style="color:#999;">Le vendite dei mesi precedenti sono archiviate su Google Sheets.</small></div>';
+    var msg = tuttiCount > 0
+      ? 'Nessuna vendita per <strong>' + presenzeGetMeseLabel ? presenzeGetMeseLabel() : meseCorrente
+        + '</strong> nel registro locale.<br><small style="color:#999;">Ci sono ' + tuttiCount
+        + ' vendite in altri mesi. Mese atteso: ' + meseCorrente + '</small>'
+      : 'Nessuna vendita registrata questo mese.';
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray);font-size:13px;">' + msg + '</div>';
     return;
   }
   var TH = function(s){return '<th style="background:var(--blue);color:white;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;">'+s+'</th>';};
@@ -5747,19 +5765,20 @@ function applyRoleUI() {
   };
   var allowed = ROLE_VIEWS[role] || ['presenze'];
 
-  // Sidebar: mostra/nascondi voci
   ['editor','ready','archive','provv','foto','permessi','presenze'].forEach(function(v){
     var btn = document.getElementById('si-' + v);
     if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
 
-  // Se la view corrente non è permessa → vai alla prima permessa
   var activeEl = document.querySelector('.view.active');
   if (activeEl) {
     var activeId = activeEl.id.replace('view-','');
     if (allowed.indexOf(activeId) === -1) {
       var firstBtn = document.getElementById('si-' + allowed[0]);
       if (firstBtn) firstBtn.click();
+    } else if (activeId === 'presenze') {
+      // Ruolo appena caricato mentre siamo su presenze: re-init
+      presenzeInit();
     }
   }
 }
@@ -5986,23 +6005,63 @@ function presenzeGetMeseLabel(){var n=new Date();var m=['Gennaio','Febbraio','Ma
 // INIT VISTA
 // ══════════════════════════════════════════════════════════════
 function presenzeInit() {
-  var role=getCurrentRole();
-  var vistaAdmin=document.getElementById('presenze-vista-admin');
-  var vistaDip  =document.getElementById('presenze-vista-dipendente');
+  var vistaAdmin = document.getElementById('presenze-vista-admin');
+  var vistaDip   = document.getElementById('presenze-vista-dipendente');
+
+  // Se il ruolo non è ancora caricato, aspetta il login e riprova
+  if (!_currentUserRole) {
+    // Mostra messaggio di attesa
+    if (vistaAdmin) { vistaAdmin.style.display = 'block'; vistaAdmin.innerHTML = '<div style="text-align:center;padding:60px;color:var(--gray);font-size:14px;">&#9203; Accedi con Google per vedere le presenze.</div>'; }
+    if (vistaDip)   vistaDip.style.display = 'none';
+    return;
+  }
 
   if (isAdmin()) {
-    if(vistaAdmin)vistaAdmin.style.display='block';
-    if(vistaDip)  vistaDip.style.display='none';
-    var lbl=document.getElementById('presenze-mese-label');
-    if(lbl)lbl.textContent=presenzeGetMeseLabel();
+    if (vistaAdmin) vistaAdmin.style.display = 'block';
+    if (vistaDip)   vistaDip.style.display   = 'none';
+    // Ripristina contenuto admin se era stato sovrascritto dal messaggio di attesa
+    var lbl = document.getElementById('presenze-mese-label');
+    if (lbl) lbl.textContent = presenzeGetMeseLabel();
     presenzeRenderDipendentiAdmin();
     presenzeRenderTabella();
     presenzeLoadDaSheets();
   } else {
-    if(vistaDip)  vistaDip.style.display='block';
-    if(vistaAdmin)vistaAdmin.style.display='none';
+    if (vistaDip)   vistaDip.style.display   = 'block';
+    if (vistaAdmin) vistaAdmin.style.display  = 'none';
     presenzeRenderTimbra();
   }
+}
+
+function _presenzeRebuildAdminView() {
+  var va = document.getElementById('presenze-vista-admin');
+  if (!va || va.querySelector('#presenze-mese-label')) return; // già costruita
+  va.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
+      <div>
+        <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128101; Presenze</div>
+        <div style="font-size:13px;color:var(--gray);margin-top:4px;" id="presenze-mese-label"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="presenzeEsportaPDF()" style="padding:9px 16px;background:#e74c3c;color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128196; PDF</button>
+        <button onclick="presenzeEsportaExcel()" style="padding:9px 16px;background:#27ae60;color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">&#128200; Excel</button>
+      </div>
+    </div>
+    <div style="background:white;border:1px solid var(--bdr);padding:16px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:var(--blk);margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em;">&#128101; Dipendenti</div>
+      <div id="presenze-dipendenti-list" style="margin-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;align-items:end;">
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">NOME</label><input id="dip-nome" type="text" placeholder="Es. Arianna" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">EMAIL GMAIL</label><input id="dip-email" type="email" placeholder="arianna@gmail.com" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">RUOLO</label><select id="dip-ruolo" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="dipendente">Dipendente (2 timbrature)</option><option value="manager">Manager (4 timbrature)</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">SEDE GPS</label><select id="dip-sede" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="sede_a">Sede A</option><option value="sede_b">Sede B</option></select></div>
+        <button onclick="presenzeAggiungiDipendente()" style="padding:10px 16px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">+ Aggiungi</button>
+      </div>
+      <div id="presenze-err-dip" style="display:none;color:#e74c3c;font-size:12px;margin-top:6px;"></div>
+    </div>
+    <div style="background:white;border:1px solid var(--bdr);overflow:hidden;">
+      <div style="background:#1e2d3d;color:white;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Registro Mensile</div>
+      <div id="presenze-tabella" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><div style="text-align:center;padding:40px;color:var(--gray);">Caricamento...</div></div>
+    </div>`;
 }
 
 // ══════════════════════════════════════════════════════════════
