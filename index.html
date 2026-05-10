@@ -497,6 +497,9 @@ html, body{
     <button class="sidebar-item" id="si-utenti" onclick="apriGestioneUtenti()" style="color:rgba(255,255,255,.75);">
       <span class="si-icon">👤</span><span class="si-label"> Gestione Utenti</span>
     </button>
+    <button class="sidebar-item" id="si-sedi" onclick="apriGestioneSedi()" style="color:rgba(255,255,255,.75);">
+      <span class="si-icon">📍</span><span class="si-label"> Gestione Sedi GPS</span>
+    </button>
   </div>
 
   <div class="sidebar-sync">
@@ -1826,6 +1829,7 @@ function tryAutoConnectDrive() {
   try {
     silentClient.requestAccessToken({ prompt: '' });
   } catch(e) {
+    // Silently fail — welcome screen rimane visibile
     forceGoogleLogin();
   }
 }
@@ -6021,12 +6025,19 @@ var PRESENZE_DIP_KEY = 'ea_dipendenti_v1';
 var PRESENZE_SHEET   = 'Presenze';
 var GPS_RAGGIO       = 10; // metri
 
-// ══ COORDINATE GPS SEDE EUROPA AUTO ══
-// Bovisio Masciago (MB) — coordinate verificate
+// ══ COORDINATE GPS SEDI EUROPA AUTO ══
+// ⚠ Aggiungere le sedi con nome e coordinate GPS da Google Maps
+// Formato: 'sede_X': { lat: XX.XXXXXX, lng: X.XXXXXX, nome: 'Nome Sede' }
 var GPS_SEDI = {
-  'sede_a': { lat: 45.6095513, lng: 9.1583038, nome: 'Europa Auto — Via Nigra, Bovisio Masciago (MB)' }
+  'sede_a': { lat: 45.6095513, lng: 9.1583038, nome: 'Sede Principale — Bovisio Masciago (MB)' }
+  // AGGIUNGI ALTRE SEDI QUI — l'admin le vedrà nel menu dipendenti
+  // Esempio: 'sede_b': { lat: 45.5000000, lng: 9.2000000, nome: 'Sede Milano' }
 };
-function getGpsSede(email){return GPS_SEDI['sede_a'];} // Unica sede
+function getGpsSede(email){
+  var d = getDipendenteByEmail(email);
+  var s = (d && d.sede) ? d.sede : 'sede_a';
+  return GPS_SEDI[s] || GPS_SEDI['sede_a'];
+}
 
 var _currentUserEmail = null;
 var _currentUserRole  = null;
@@ -6098,7 +6109,7 @@ function applyRoleUI() {
     var activeId = activeEl.id.replace('view-','');
     if (allowed.indexOf(activeId) === -1) {
       var firstBtn = document.getElementById('si-' + allowed[0]);
-      if (firstBtn) firstBtn.click();
+      if (firstBtn) setTimeout(function(){ firstBtn.click(); }, 100);
     } else if (activeId === 'presenze') {
       // Ruolo appena caricato mentre siamo su presenze: re-init
       presenzeInit();
@@ -6113,12 +6124,14 @@ function fetchUserEmailAndSetRole(token) {
   }).then(function(r){ return r.json(); }).then(function(info){
     if (info && info.email) {
       setCurrentUser(info.email);
-      // Carica tutti i dati da Drive/Sheets all'avvio
+      // Carica tutti i dati da Drive/Sheets (con ritardo per non bloccare il login)
       setTimeout(function(){
         try{ presenzeLoadDaSheets(); }catch(e){}
+      }, 2000);
+      setTimeout(function(){
         try{ pLoadFromGS(); }catch(e){}
         try{ if(GS_URL)manualSync(null); }catch(e){}
-      }, 500);
+      }, 3000);
       // Aggiorna UI sidebar
       var sInfo = document.getElementById('sidebar-user-info');
       var sName = document.getElementById('sidebar-user-name');
@@ -6221,6 +6234,149 @@ function presenzeRenderDipendentiAdmin() {
 }
 
 
+
+// ══════════════════════════════════════════════════════════════
+// GESTIONE SEDI GPS — multi-sede
+// ══════════════════════════════════════════════════════════════
+
+function populateSedeDropdowns() {
+  var options = Object.keys(GPS_SEDI).map(function(k){
+    return '<option value="'+k+'">'+GPS_SEDI[k].nome+'</option>';
+  }).join('');
+  ['dip-sede','gu-sede','dip-sede-select','gu-sede-select'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = options;
+  });
+}
+
+function apriGestioneSedi() {
+  if (!isAdmin()) return;
+  var existing = document.getElementById('modal-sedi');
+  if (existing) { existing.style.display='flex'; renderSediList(); return; }
+  
+  var modal = document.createElement('div');
+  modal.id = 'modal-sedi';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:white;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;border-top:5px solid #1a4fa0;">
+      <div style="background:#1a4fa0;color:white;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:18px;font-weight:700;">📍 Gestione Sedi GPS</div>
+          <div style="font-size:12px;opacity:.7;">Configura i punti di timbratura</div>
+        </div>
+        <button onclick="document.getElementById('modal-sedi').style.display='none'"
+          style="background:none;border:none;color:white;font-size:24px;cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:20px;">
+        <div id="sedi-lista" style="margin-bottom:20px;"></div>
+        <div style="background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;">
+          <div style="font-size:13px;font-weight:700;color:#1a4fa0;margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em;">➕ Aggiungi Sede</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">ID SEDE (es. sede_b)</label>
+              <input id="sede-id" type="text" placeholder="sede_b" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">NOME SEDE</label>
+              <input id="sede-nome" type="text" placeholder="Es. Sede Milano" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;box-sizing:border-box;">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">LATITUDINE</label>
+              <input id="sede-lat" type="number" step="any" placeholder="es. 45.6095513" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">LONGITUDINE</label>
+              <input id="sede-lng" type="number" step="any" placeholder="es. 9.1583038" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;box-sizing:border-box;">
+            </div>
+            <button onclick="aggiungiSede()" style="padding:10px 16px;background:#1a4fa0;color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;">+ Aggiungi</button>
+          </div>
+          <div id="sede-err" style="display:none;color:#e74c3c;font-size:12px;margin-top:8px;"></div>
+        </div>
+        <div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border-left:4px solid #f39c12;font-size:12px;color:#856404;">
+          <strong>💡 Come trovare le coordinate:</strong> Apri Google Maps, tieni premuto sul punto esatto della sede → copia le coordinate che appaiono in basso (formato: 45.XXXX, 9.XXXX).
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e){ if(e.target===modal) modal.style.display='none'; });
+  renderSediList();
+}
+
+function renderSediList() {
+  var el = document.getElementById('sedi-lista');
+  if (!el) return;
+  var keys = Object.keys(GPS_SEDI);
+  if (!keys.length) { el.innerHTML = '<p style="color:#999;text-align:center;">Nessuna sede</p>'; return; }
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  html += '<thead><tr style="background:#f5f5f5;"><th style="padding:8px 12px;text-align:left;">ID</th><th style="padding:8px 12px;text-align:left;">Nome</th><th style="padding:8px 12px;text-align:left;">Coordinate</th><th></th></tr></thead><tbody>';
+  keys.forEach(function(k){
+    var s = GPS_SEDI[k];
+    var canDelete = k !== 'sede_a';
+    html += '<tr style="border-bottom:1px solid #eee;">';
+    html += '<td style="padding:8px 12px;font-weight:700;color:#1a4fa0;">'+k+'</td>';
+    html += '<td style="padding:8px 12px;">'+s.nome+'</td>';
+    html += '<td style="padding:8px 12px;font-size:11px;color:#666;">'+s.lat.toFixed(6)+', '+s.lng.toFixed(6)+'</td>';
+    html += '<td style="padding:8px 12px;">'+(canDelete?'<button data-sede-key="'+k+'" onclick="rimuoviSede(this.getAttribute('data-sede-key'))" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:3px 8px;font-size:11px;cursor:pointer;">✕</button>':'<span style="font-size:11px;color:#999;">principale</span>')+'</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function aggiungiSede() {
+  var id   = (document.getElementById('sede-id').value||'').trim().replace(/\s+/g,'_').toLowerCase();
+  var nome = (document.getElementById('sede-nome').value||'').trim();
+  var lat  = parseFloat(document.getElementById('sede-lat').value);
+  var lng  = parseFloat(document.getElementById('sede-lng').value);
+  var errEl = document.getElementById('sede-err');
+  
+  if (!id || !nome || isNaN(lat) || isNaN(lng)) {
+    errEl.textContent = '⚠ Tutti i campi sono obbligatori.'; errEl.style.display='block'; return;
+  }
+  if (GPS_SEDI[id]) {
+    errEl.textContent = '⚠ ID sede già esistente. Usa un ID diverso.'; errEl.style.display='block'; return;
+  }
+  errEl.style.display = 'none';
+  
+  GPS_SEDI[id] = { lat: lat, lng: lng, nome: nome };
+  
+  // Salva sedi su localStorage per persistenza
+  try { localStorage.setItem('ea_sedi_gps', JSON.stringify(GPS_SEDI)); } catch(e){}
+  
+  document.getElementById('sede-id').value = '';
+  document.getElementById('sede-nome').value = '';
+  document.getElementById('sede-lat').value = '';
+  document.getElementById('sede-lng').value = '';
+  
+  populateSedeDropdowns();
+  renderSediList();
+  alert('✅ Sede "'+nome+'" aggiunta. Ora puoi assegnarla ai dipendenti.');
+}
+
+function rimuoviSede(key) {
+  if (!isAdmin() || key === 'sede_a') return;
+  if (!confirm('Rimuovere la sede "'+GPS_SEDI[key].nome+'"?')) return;
+  delete GPS_SEDI[key];
+  try { localStorage.setItem('ea_sedi_gps', JSON.stringify(GPS_SEDI)); } catch(e){}
+  populateSedeDropdowns();
+  renderSediList();
+}
+
+// Carica sedi salvate da localStorage all'avvio
+(function loadSavedSedi() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('ea_sedi_gps') || 'null');
+    if (saved && typeof saved === 'object') {
+      // Merge mantenendo sede_a originale
+      Object.keys(saved).forEach(function(k){
+        GPS_SEDI[k] = saved[k];
+      });
+    }
+  } catch(e) {}
+})();
+
 // ══════════════════════════════════════════════════════════════
 // GESTIONE UTENTI — pannello admin
 // ══════════════════════════════════════════════════════════════
@@ -6269,8 +6425,8 @@ function apriGestioneUtenti() {
             </div>
             <div>
               <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">SEDE GPS</label>
-              <select id="gu-sede" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;">
-                <option value="sede_a">Sede Europa Auto (Bovisio Masciago)</option>
+              <select id="gu-sede" style="width:100%;padding:9px 10px;border:1px solid #ddd;font-family:var(--font);font-size:13px;" id="gu-sede-select">
+                <option value="sede_a">Sede Principale — Bovisio Masciago (MB)</option>
               </select>
             </div>
             <button onclick="aggiungiUtente()" 
@@ -6545,7 +6701,9 @@ function _presenzeRebuildAdminView() {
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">NOME</label><input id="dip-nome" type="text" placeholder="Es. Arianna" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">EMAIL GMAIL</label><input id="dip-email" type="email" placeholder="arianna@gmail.com" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">RUOLO</label><select id="dip-ruolo" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="dipendente">Dipendente (2 timbrature)</option><option value="manager">Manager (4 timbrature)</option></select></div>
-        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">SEDE GPS</label><select id="dip-sede" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="sede_a">Bovisio Masciago (Sede Principale)</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">SEDE GPS</label><select id="dip-sede" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;" id="dip-sede-select">
+  <option value="sede_a">Sede Principale — Bovisio Masciago (MB)</option>
+</select></div>
         <button onclick="presenzeAggiungiDipendente()" style="padding:10px 16px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">+ Aggiungi</button>
       </div>
       <div id="presenze-err-dip" style="display:none;color:#e74c3c;font-size:12px;margin-top:6px;"></div>
@@ -6821,6 +6979,8 @@ function closeSidebarMobile(){document.querySelector('.sidebar').classList.remov
 
 document.addEventListener('DOMContentLoaded',function(){
   try{buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}catch(e){console.warn('init:',e);}
+  // Popola dropdown sedi all'avvio
+  try{ populateSedeDropdowns(); }catch(e){}
   // Sync Drive all'avvio — dopo login Google
   setTimeout(function(){
     try{if(GS_URL)manualSync(null);}catch(e){}
