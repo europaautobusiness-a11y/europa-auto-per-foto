@@ -2997,49 +2997,63 @@ function skipWelcome() {
   localStorage.setItem('ea_drive_skipped', '1');
 }
 
-async function welcomeLogin() {
-  const btn = document.getElementById('welcome-login-btn');
-  const err = document.getElementById('welcome-error');
-  if (btn) { btn.textContent = 'Connessione in corso…'; btn.disabled = true; }
+function welcomeLogin() {
+  var btn = document.getElementById('welcome-login-btn');
+  var err = document.getElementById('welcome-error');
+  var SVG_BTN = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg> Accedi con Google';
+
+  if (btn) { btn.textContent = 'Connessione…'; btn.disabled = true; }
   if (err) err.style.display = 'none';
 
-  // Aspetta che Google sia caricato
-  let attempts = 0;
-  while ((typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) && attempts < 20) {
-    await new Promise(r => setTimeout(r, 200));
-    attempts++;
-  }
-
-  if (typeof google === 'undefined' || !google.accounts) {
-    if (err) { err.textContent = 'Errore: libreria Google non caricata. Riprova.'; err.style.display = 'block'; }
-    if (btn) { btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg> Accedi con Google'; btn.disabled = false; }
-    return;
-  }
-
-  try {
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: GDRIVE_CLIENT_ID,
-      scope: GDRIVE_SCOPES,
-      callback: (response) => {
-        if (response.error) {
-          if (err) { err.textContent = 'Accesso negato. Riprova.'; err.style.display = 'block'; }
-          if (btn) { btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg> Accedi con Google'; btn.disabled = false; }
-          return;
+  function doLogin() {
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+      if (err) { err.textContent = 'Libreria Google non caricata. Ricarica la pagina.'; err.style.display = 'block'; }
+      if (btn) { btn.innerHTML = SVG_BTN; btn.disabled = false; }
+      return;
+    }
+    try {
+      var client = google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_CLIENT_ID,
+        scope: GDRIVE_SCOPES,
+        callback: function(response) {
+          if (response.error) {
+            if (err) { err.textContent = 'Accesso negato: ' + response.error; err.style.display = 'block'; }
+            if (btn) { btn.innerHTML = SVG_BTN; btn.disabled = false; }
+            return;
+          }
+          _driveAccessToken = response.access_token;
+          _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+          if (typeof fetchUserEmailAndSetRole === 'function') fetchUserEmailAndSetRole(response.access_token);
+          if (typeof updateDriveConnectBar === 'function') updateDriveConnectBar(true);
+          if (typeof hideDriveLoginBar === 'function') hideDriveLoginBar();
+          hideWelcomeScreen();
+          localStorage.setItem('ea_drive_skipped', '0');
+          setTimeout(function(){ if(typeof refreshFotoButtons==='function') refreshFotoButtons(); }, 800);
         }
-        _driveAccessToken = response.access_token;
-        if(typeof fetchUserEmailAndSetRole==='function') fetchUserEmailAndSetRole(response.access_token);
-        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
-        updateDriveConnectBar(true);
-        hideDriveLoginBar();
-        hideWelcomeScreen();
-        localStorage.setItem('ea_drive_skipped', '0');
-        setTimeout(refreshFotoButtons, 800);
+      });
+      client.requestAccessToken({ prompt: 'select_account' });
+    } catch(e) {
+      if (err) { err.textContent = 'Errore: ' + e.message; err.style.display = 'block'; }
+      if (btn) { btn.innerHTML = SVG_BTN; btn.disabled = false; }
+    }
+  }
+
+  // Se Google non è ancora caricato, aspetta fino a 4 secondi
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    var attempts = 0;
+    var waitGoogle = setInterval(function() {
+      attempts++;
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+        clearInterval(waitGoogle);
+        doLogin();
+      } else if (attempts >= 20) {
+        clearInterval(waitGoogle);
+        if (err) { err.textContent = 'Errore: Google non caricato. Ricarica la pagina.'; err.style.display = 'block'; }
+        if (btn) { btn.innerHTML = SVG_BTN; btn.disabled = false; }
       }
-    });
-    client.requestAccessToken({ prompt: 'select_account' });
-  } catch(e) {
-    if (err) { err.textContent = 'Errore: ' + e.message; err.style.display = 'block'; }
-    if (btn) { btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg> Accedi con Google'; btn.disabled = false; }
+    }, 200);
+  } else {
+    doLogin();
   }
 }
 
@@ -6132,7 +6146,7 @@ function disconnettiUtente() {
   var sInfo = document.getElementById('sidebar-user-info');
   if (sInfo) sInfo.style.display = 'none';
   // Torna alla welcome screen
-  var welcome = document.getElementById('welcomeOverlay');
+  var welcome = document.getElementById('welcome-screen');
   if (welcome) welcome.style.display = 'flex';
   // Reset UI
   ['editor','ready','archive','provv','foto','permessi','presenze'].forEach(function(v){
@@ -6293,7 +6307,7 @@ function renderSediList() {
     html += '<td style="padding:8px 12px;font-weight:700;color:#1a4fa0;">'+k+'</td>';
     html += '<td style="padding:8px 12px;">'+s.nome+'</td>';
     html += '<td style="padding:8px 12px;font-size:11px;color:#666;">'+s.lat.toFixed(6)+', '+s.lng.toFixed(6)+'</td>';
-    html += '<td style="padding:8px 12px;">'+(canDelete?'<button data-sede-key="'+k+'" onclick="rimuoviSede(this.getAttribute('data-sede-key'))" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:3px 8px;font-size:11px;cursor:pointer;">✕</button>':'<span style="font-size:11px;color:#999;">principale</span>')+'</td>';
+    html += '<td style="padding:8px 12px;">'+(canDelete?'<button onclick="rimuoviSede(\''+k+'\');" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:3px 8px;font-size:11px;cursor:pointer;">✕</button>':'<span style="font-size:11px;color:#999;">principale</span>')+'</td>';
     html += '</tr>';
   });
   html += '</tbody></table>';
@@ -6451,7 +6465,7 @@ function renderGestioneUtenti() {
     html += '<td style="padding:10px 12px;color:#666;">'+d.email+'</td>';
     html += '<td style="padding:10px 12px;"><span style="background:'+rc+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[d.ruolo]+'</span></td>';
     html += '<td style="padding:10px 12px;font-size:12px;color:#666;">'+(d.sede||'sede_a')+'</td>';
-    html += '<td style="padding:10px 12px;"><button data-email="'+d.email+'" onclick="rimuoviUtente(this.getAttribute('data-email'))" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:4px 10px;font-size:11px;cursor:pointer;font-family:var(--font);">✕ Rimuovi</button></td>';
+    html += '<td style="padding:10px 12px;"><button onclick="rimuoviUtente(\''+d.email+'\');" style="background:none;border:1px solid #e74c3c;color:#e74c3c;padding:4px 10px;font-size:11px;cursor:pointer;font-family:var(--font);">✕ Rimuovi</button></td>';
     html += '</tr>';
   });
   html += '</tbody></table>';
