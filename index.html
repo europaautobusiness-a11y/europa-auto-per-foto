@@ -1117,6 +1117,21 @@ html, body{
           <div id="tc-logrows"><div style="font-size:13px;color:#475569;text-align:center;padding:12px 0;">Nessuna timbratura ancora</div></div>
           <div class="tc-orebox" id="tc-orebox" style="display:none;"></div>
         </div>
+
+        <!-- REGISTRO MENSILE DIPENDENTE -->
+        <div style="margin:16px 16px 0;background:#1e293b;border-radius:16px;padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.09em;">📅 Il mio mese</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button onclick="dipMesePrec()" style="background:none;border:1px solid #334155;color:#94a3b8;padding:4px 10px;font-size:14px;cursor:pointer;border-radius:6px;">‹</button>
+              <span id="dip-mese-label" style="font-size:12px;color:#94a3b8;min-width:80px;text-align:center;"></span>
+              <button onclick="dipMeseSucc()" style="background:none;border:1px solid #334155;color:#94a3b8;padding:4px 10px;font-size:14px;cursor:pointer;border-radius:6px;">›</button>
+            </div>
+          </div>
+          <div id="dip-registro-mensile" style="font-size:12px;"></div>
+          <div id="dip-totale-ore" style="margin-top:10px;padding:10px;background:#0f172a;border-radius:8px;text-align:center;font-size:13px;font-weight:700;color:#22c55e;"></div>
+        </div>
+
       </div>
     </div>
     <div class="tc-toast" id="tc-toast"></div>
@@ -3409,9 +3424,9 @@ async function manualSync(btn){
     localStorage.setItem(READY_KEY, JSON.stringify(mergedReady));
     localStorage.setItem(SENT_KEY, JSON.stringify(mergedSent));
 
-    // Step 4: NON riscrivere su Sheets durante sync — solo leggere
-    // gsSave viene chiamata solo quando si crea/modifica/elimina un report
-    // per evitare di sovrascrivere dati di altri dispositivi
+    // Step 4: scrivi su Sheets SOLO se i dati remoti erano disponibili
+    if(remoteReady !== null && mergedReady.length > 0) gsSave('ReportPronti', mergedReady);
+    if(remoteSent  !== null && mergedSent.length  > 0) gsSave('ReportInviati', mergedSent);
 
     renderReady('');
     renderArchive('');
@@ -5523,6 +5538,8 @@ function tcInit() {
   tcBuildButtons();
   tcRenderLog();
   tcBadge();
+  // Inizializza registro mensile
+  setTimeout(dipMeseInit, 300);
 }
 
 function tcBadge() {
@@ -5682,6 +5699,91 @@ function presenzeInit() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// REGISTRO MENSILE DIPENDENTE
+// ══════════════════════════════════════════════════════════════
+
+var _dipMeseCorrente = null; // formato YYYY-MM
+
+function dipMeseInit() {
+  _dipMeseCorrente = presenzeGetMese(); // mese corrente
+  dipRenderMese();
+}
+
+function dipMesePrec() {
+  var d = new Date(_dipMeseCorrente + '-01');
+  d.setMonth(d.getMonth() - 1);
+  _dipMeseCorrente = d.toISOString().substring(0, 7);
+  dipRenderMese();
+}
+
+function dipMeseSucc() {
+  var d = new Date(_dipMeseCorrente + '-01');
+  d.setMonth(d.getMonth() + 1);
+  var oggi = presenzeGetMese();
+  if (_dipMeseCorrente >= oggi) return; // non andare oltre il mese corrente
+  _dipMeseCorrente = d.toISOString().substring(0, 7);
+  dipRenderMese();
+}
+
+function dipRenderMese() {
+  var lbl = document.getElementById('dip-mese-label');
+  var box = document.getElementById('dip-registro-mensile');
+  var tot = document.getElementById('dip-totale-ore');
+  if (!box) return;
+
+  if (!_dipMeseCorrente) _dipMeseCorrente = presenzeGetMese();
+
+  // Label mese
+  var d = new Date(_dipMeseCorrente + '-01');
+  var mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+              'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  if (lbl) lbl.textContent = mesi[d.getMonth()] + ' ' + d.getFullYear();
+
+  // Filtra le timbrature del dipendente per il mese selezionato
+  var email = _currentUserEmail;
+  var reg = presenzeLoadReg().filter(function(r) {
+    return r.dipendente === email && r.mese === _dipMeseCorrente;
+  }).sort(function(a, b) { return a.data > b.data ? 1 : -1; });
+
+  if (!reg.length) {
+    box.innerHTML = '<div style="text-align:center;padding:16px;color:#475569;font-size:13px;">Nessuna timbratura questo mese</div>';
+    if (tot) tot.textContent = '';
+    return;
+  }
+
+  // Calcola totale ore mese
+  var totMinuti = 0;
+  var html = '';
+  reg.forEach(function(r) {
+    var dataFmt = new Date(r.data).toLocaleDateString('it-IT', {weekday:'short', day:'numeric', month:'short'});
+    var ore = r.ore && r.ore !== '--' ? r.ore : '—';
+    var coloreOre = r.ore && r.ore !== '--' ? '#22c55e' : '#ef4444';
+
+    // Calcola minuti per il totale
+    if (r.ore && r.ore !== '--') {
+      var parts = r.ore.match(/(\d+)h\s*(\d+)m/);
+      if (parts) totMinuti += parseInt(parts[1]) * 60 + parseInt(parts[2]);
+    }
+
+    html += '<div style="display:grid;grid-template-columns:90px 1fr 1fr 1fr 1fr 50px;gap:4px;align-items:center;padding:8px 0;border-bottom:1px solid #1e3a5f;">';
+    html += '<div style="color:#94a3b8;font-size:11px;">' + dataFmt + '</div>';
+    html += '<div style="text-align:center;"><div style="font-size:10px;color:#475569;">Entrata</div><div style="font-size:12px;font-weight:700;color:#fff;">' + (r.entrata||'—') + '</div></div>';
+    html += '<div style="text-align:center;"><div style="font-size:10px;color:#475569;">Uscita P.</div><div style="font-size:12px;color:#94a3b8;">' + (r.uscita_pranzo||'—') + '</div></div>';
+    html += '<div style="text-align:center;"><div style="font-size:10px;color:#475569;">Rientro</div><div style="font-size:12px;color:#94a3b8;">' + (r.rientro_pranzo||'—') + '</div></div>';
+    html += '<div style="text-align:center;"><div style="font-size:10px;color:#475569;">Uscita</div><div style="font-size:12px;font-weight:700;color:#fff;">' + (r.uscita||'—') + '</div></div>';
+    html += '<div style="text-align:right;font-size:12px;font-weight:700;color:' + coloreOre + ';">' + ore + '</div>';
+    html += '</div>';
+  });
+
+  box.innerHTML = html;
+
+  // Totale ore mese
+  var totH = Math.floor(totMinuti / 60);
+  var totM = totMinuti % 60;
+  if (tot) tot.textContent = '🕐 Totale mese: ' + totH + 'h ' + String(totM).padStart(2,'0') + 'm';
+}
+
 // ── Gestione dipendenti ───────────────────────────────────────
 
 
@@ -5758,14 +5860,19 @@ function presenzeLoadDaSheets() {
     var s=document.getElementById(cb); if(s&&s.parentNode)s.parentNode.removeChild(s);
     if (!Array.isArray(data)) return;
     // Separa dipendenti da presenze
-    var dipDaGS = data.filter(function(r){ return r.tipo==='dipendente'; }).map(function(r){ return r.nome; });
+    var dipDaGS = data.filter(function(r){ return r.tipo==='dipendente'; });
     var presDaGS = data.filter(function(r){ return !r.tipo && r.mese===meseC; });
-    // Merge dipendenti
+    // Merge dipendenti — usa oggetti completi {nome,email,ruolo,sede}
     if (dipDaGS.length) {
-      var dipLocali = presenzeLoadDipendenti();
-      dipDaGS.forEach(function(d){ if(!dipLocali.includes(d)) dipLocali.push(d); });
-      presenzeSaveDipendenti(dipLocali);
-      presenzeRenderDipendenti();
+      var dipLocali = loadDipendenti();
+      var emailLocali = dipLocali.map(function(d){ return d.email; });
+      dipDaGS.forEach(function(d){
+        if (!emailLocali.includes(d.email)) {
+          dipLocali.push({ nome: d.nome, email: d.email||'', ruolo: d.ruolo||'dipendente', sede: d.sede||'sede_a' });
+        }
+      });
+      localStorage.setItem(PRESENZE_DIP_KEY, JSON.stringify(dipLocali));
+      presenzeRenderDipendentiAdmin();
     }
     // Merge presenze mese corrente
     if (presDaGS.length) {
@@ -5876,10 +5983,30 @@ var _timbraPerConto   = null; // email dipendente per forzatura admin
 
 // ── Dipendenti salvati da admin ───────────────────────────────
 function loadDipendenti() {
-  try { return JSON.parse(localStorage.getItem(PRESENZE_DIP_KEY)||'[]'); } catch(e){ return []; }
+  try {
+    var data = JSON.parse(localStorage.getItem(PRESENZE_DIP_KEY)||'[]');
+    // Se è array di stringhe (vecchio formato), converti in oggetti
+    if (data.length && typeof data[0] === 'string') {
+      data = data.map(function(nome){ return {nome:nome, email:'', ruolo:'dipendente', sede:'sede_a'}; });
+    }
+    return data;
+  } catch(e){ return []; }
 }
 function saveDipendenti(list) {
   localStorage.setItem(PRESENZE_DIP_KEY, JSON.stringify(list));
+  // Salva su Sheets — ogni dipendente come record con tipo:'dipendente'
+  if (GS_URL && list && list.length) {
+    list.forEach(function(d) {
+      gsJsonp({ action:'upsert', sheet: PRESENZE_SHEET, record: {
+        tipo: 'dipendente',
+        id: 'dip_' + (d.email || d.nome).replace(/[^a-z0-9]/gi,'_'),
+        nome: d.nome,
+        email: d.email || '',
+        ruolo: d.ruolo || 'dipendente',
+        sede: d.sede || 'sede_a'
+      }});
+    });
+  }
 }
 
 function getDipendenteByEmail(email) {
@@ -5943,6 +6070,13 @@ function fetchUserEmailAndSetRole(token) {
   }).then(function(r){ return r.json(); }).then(function(info){
     if (info && info.email) {
       setCurrentUser(info.email);
+      // Carica tutti i dati da Sheets all'apertura
+      setTimeout(function(){
+        try { presenzeLoadDaSheets(); } catch(e) {}
+      }, 800);
+      setTimeout(function(){
+        try { if(GS_URL) manualSync(null); } catch(e) {}
+      }, 1500);
       var sInfo = document.getElementById('sidebar-user-info');
       var sName = document.getElementById('sidebar-user-name');
       var sRole = document.getElementById('sidebar-user-role');
@@ -6176,7 +6310,11 @@ function presenzeRenderTimbra() {
 // PRESENZE — STORAGE
 // ══════════════════════════════════════════════════════════════
 function presenzeLoadReg(){try{return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]');}catch(e){return[];}}
-function presenzeSaveReg(l){localStorage.setItem(PRESENZE_KEY,JSON.stringify(l));}
+function presenzeSaveReg(l){
+  localStorage.setItem(PRESENZE_KEY,JSON.stringify(l));
+  // Aggiorna il registro mensile dipendente in tempo reale
+  setTimeout(function(){ try{ dipRenderMese(); }catch(e){} }, 100);
+}
 
 function presenzeGetMese(){var n=new Date();return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0');}
 function presenzeGetMeseLabel(){var n=new Date();var m=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];return m[n.getMonth()]+' '+n.getFullYear();}
@@ -6480,6 +6618,8 @@ function closeSidebarMobile(){document.querySelector('.sidebar').classList.remov
 
 document.addEventListener('DOMContentLoaded',function(){
   try{buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}catch(e){console.warn('init:',e);}
+  // Dopo login Google, i dati vengono caricati in fetchUserEmailAndSetRole
+  // Qui carichiamo solo se già loggati (token salvato)
   setTimeout(function(){try{if(GS_URL)manualSync(null);}catch(e){}},1500);
   setTimeout(function(){try{syncPermessiDaGmail(false);}catch(e){}},3500);
   setTimeout(function(){try{updatePermessiBadge();}catch(e){}},500);
