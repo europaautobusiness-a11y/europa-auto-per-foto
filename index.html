@@ -5156,6 +5156,11 @@ async function syncPermessiDaDrive(statusEl) {
       var testo=await leggiTestoPdf(pdfB64);
       var targa=estraiTarga(testo)||(df.name.match(/([A-Z]{2}\d{3}[A-Z]{2})/i)||[])[1]||df.name.split('_')[0]||'SCONOSCIUTA';
       var intestatario=(testo.length>50?estraiIntestatario(testo):null)||df.name.split('_')[1]||'Da verificare';
+      // Salta se non riconosce targa né intestatario
+      if (targa === 'SCONOSCIUTA' && intestatario === 'Da verificare') {
+        console.log('Permesso saltato: targa e intestatario non riconosciuti -', df.name);
+        continue;
+      }
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
         targa:targa, intestatario:intestatario, fileName:df.name,
@@ -5220,6 +5225,11 @@ async function syncPermessiDaGmail(mostraStatus) {
         if(!intestatario||intestatario==='Sconosciuto')intestatario='Da verificare';
         var driveFileId=null;
         try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
+        // Salta se non riconosce targa né intestatario
+        if (targa === 'SCONOSCIUTA' && (intestatario === 'Da verificare' || intestatario === 'Sconosciuto')) {
+          console.log('Gmail permesso saltato: non riconosciuto -', part.filename);
+          continue;
+        }
         // Evita duplicati per fileName
         if (!fileNames.has(part.filename)) {
           esistenti.push({
@@ -5697,8 +5707,8 @@ function presenzeInit() {
   var vistaDip   = document.getElementById('presenze-vista-dipendente');
 
   if (!_currentUserRole) {
-    // Non ancora loggato
-    if (vistaAdmin) { vistaAdmin.style.display='block'; }
+    // Non ancora loggato — nascondi tutto
+    if (vistaAdmin) vistaAdmin.style.display='none';
     if (vistaDip)   vistaDip.style.display='none';
     return;
   }
@@ -6063,6 +6073,11 @@ function setCurrentUser(email) {
   }
   console.log('User:', _currentUserEmail, 'Role:', _currentUserRole);
   applyRoleUI();
+  // Se siamo sulla sezione presenze, reinizializza con ruolo corretto
+  var vp = document.getElementById('view-presenze');
+  if (vp && vp.classList.contains('active')) {
+    setTimeout(presenzeInit, 150);
+  }
 }
 
 function getCurrentRole() { return _currentUserRole || 'dipendente'; }
