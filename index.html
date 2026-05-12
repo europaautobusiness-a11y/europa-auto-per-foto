@@ -4981,7 +4981,18 @@ var PERMESSI_BODY_DEFAULT =
   'in allegato trova il permesso di circolazione per il veicolo con targa {{TARGA}}.\n\n' +
   'Cordiali saluti,\nEuropa Auto';
 
-function loadPermessi()  { try { return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]'); } catch(e){ return []; } }
+function loadPermessi() {
+  try {
+    var data = JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
+    // Rimuovi pdfBase64 dai record esistenti per liberare spazio localStorage
+    var changed = false;
+    data.forEach(function(p){
+      if(p.pdfBase64 && p.pdfBase64.length > 100) { p.pdfBase64 = null; changed = true; }
+    });
+    if(changed) { try { localStorage.setItem(PERMESSI_KEY, JSON.stringify(data)); } catch(e) {} }
+    return data;
+  } catch(e){ return []; }
+}
 function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); updatePermessiBadge(); }
 function getPermessiEmail() { return localStorage.getItem(PERMESSI_EMAIL_KEY)||''; }
 function setPermessiEmail(v){ localStorage.setItem(PERMESSI_EMAIL_KEY, v); }
@@ -5147,7 +5158,8 @@ async function syncPermessiDaDrive(statusEl) {
       var intestatario=(testo.length>50?estraiIntestatario(testo):null)||df.name.split('_')[1]||'Da verificare';
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
-        targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:pdfB64,
+        targa:targa, intestatario:intestatario, fileName:df.name,
+        pdfBase64: null, // non salvato in localStorage per risparmiare spazio
         ricevutoMs:ricevutoMs,
         ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
         scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -5212,7 +5224,7 @@ async function syncPermessiDaGmail(mostraStatus) {
         if (!fileNames.has(part.filename)) {
           esistenti.push({
             id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
-            targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:pdfB64,
+            targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null, // caricato da Drive on-demand
             ricevutoMs:ricevutoMs,
             ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
             scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -5413,17 +5425,30 @@ function renderPermessi() {
   });
 }
 
-function visualizzaPermesso(id){
+async function visualizzaPermesso(id){
   var p=loadPermessi().find(function(x){return x.id===id;});
-  if(!p||!p.pdfBase64) return;
-  // Converti base64 in blob e apri direttamente
-  var b64 = p.pdfBase64.replace(/^data:[^;]+;base64,/,'');
-  var bin = atob(b64);
-  var bytes = new Uint8Array(bin.length);
-  for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-  var blob = new Blob([bytes],{type:'application/pdf'});
-  var url = URL.createObjectURL(blob);
-  window.open(url,'_blank');
+  if(!p) return;
+  // Se abbiamo il base64 in memoria, usalo direttamente
+  if(p.pdfBase64) {
+    var b64 = p.pdfBase64.replace(/^data:[^;]+;base64,/,'');
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    var blob = new Blob([bytes],{type:'application/pdf'});
+    window.open(URL.createObjectURL(blob),'_blank');
+    return;
+  }
+  // Altrimenti carica da Drive on-demand
+  if(p.driveFileId && isDriveConnected()) {
+    try {
+      var r = await fetch('https://www.googleapis.com/drive/v3/files/'+p.driveFileId+'?alt=media',
+        {headers:{Authorization:'Bearer '+_driveAccessToken}});
+      var blob = await r.blob();
+      window.open(URL.createObjectURL(blob),'_blank');
+    } catch(e) { alert('Errore apertura PDF da Drive: '+e.message); }
+    return;
+  }
+  alert('PDF non disponibile. Riconnetti Google Drive.');
 }
 
 function eliminaPermesso(id){
