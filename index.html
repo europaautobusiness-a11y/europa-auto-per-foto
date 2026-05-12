@@ -3424,9 +3424,18 @@ async function manualSync(btn){
     localStorage.setItem(READY_KEY, JSON.stringify(mergedReady));
     localStorage.setItem(SENT_KEY, JSON.stringify(mergedSent));
 
-    // Step 4: scrivi su Sheets SOLO se i dati remoti erano disponibili
-    if(remoteReady !== null && mergedReady.length > 0) gsSave('ReportPronti', mergedReady);
-    if(remoteSent  !== null && mergedSent.length  > 0) gsSave('ReportInviati', mergedSent);
+    // Step 4: scrivi su Sheets SOLO se:
+    // 1. I dati remoti erano disponibili (non null)
+    // 2. Il merge ha almeno tanti record quanti ne aveva Sheets (non cancellare!)
+    // 3. C'è almeno 1 record da salvare
+    var remoteReadyLen = (remoteReady||[]).length;
+    var remoteSentLen  = (remoteSent||[]).length;
+    if(remoteReady !== null && mergedReady.length > 0 && mergedReady.length >= remoteReadyLen) {
+      gsSave('ReportPronti', mergedReady);
+    }
+    if(remoteSent !== null && mergedSent.length > 0 && mergedSent.length >= remoteSentLen) {
+      gsSave('ReportInviati', mergedSent);
+    }
 
     renderReady('');
     renderArchive('');
@@ -6070,13 +6079,10 @@ function fetchUserEmailAndSetRole(token) {
   }).then(function(r){ return r.json(); }).then(function(info){
     if (info && info.email) {
       setCurrentUser(info.email);
-      // Carica tutti i dati da Sheets all'apertura
+      // Carica presenze da Sheets (non i report — per evitare sync automatico)
       setTimeout(function(){
         try { presenzeLoadDaSheets(); } catch(e) {}
       }, 800);
-      setTimeout(function(){
-        try { if(GS_URL) manualSync(null); } catch(e) {}
-      }, 1500);
       var sInfo = document.getElementById('sidebar-user-info');
       var sName = document.getElementById('sidebar-user-name');
       var sRole = document.getElementById('sidebar-user-role');
@@ -6620,7 +6626,7 @@ document.addEventListener('DOMContentLoaded',function(){
   try{buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}catch(e){console.warn('init:',e);}
   // Dopo login Google, i dati vengono caricati in fetchUserEmailAndSetRole
   // Qui carichiamo solo se già loggati (token salvato)
-  setTimeout(function(){try{if(GS_URL)manualSync(null);}catch(e){}},1500);
+  // manualSync solo su richiesta utente — non automatico all'avvio
   setTimeout(function(){try{syncPermessiDaGmail(false);}catch(e){}},3500);
   setTimeout(function(){try{updatePermessiBadge();}catch(e){}},500);
   window.addEventListener('resize',function(){if(window.innerWidth>768){var s=document.querySelector('.sidebar');var ov=document.getElementById('sidebarOverlay');if(s)s.classList.remove('mobile-open');if(ov)ov.classList.remove('active');}});
