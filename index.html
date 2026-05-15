@@ -1073,6 +1073,7 @@ html, body{
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button onclick="syncPermessiManuale(this)" style="padding:9px 18px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128260; Sincronizza Gmail</button>
+      <button onclick="eliminaDuplicatiPermessi()" style="padding:9px 18px;background:#e67e22;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">🧹 Elimina Duplicati</button>
       <label style="padding:9px 18px;background:#27ae60;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;">
         &#128196; Carica PDF
         <input type="file" accept="application/pdf" multiple style="position:absolute;opacity:0;width:1px;height:1px;" onchange="importaPermessiManuali(this.files)">
@@ -5116,21 +5117,72 @@ var PERMESSI_BODY_DEFAULT =
   'in allegato trova il permesso di circolazione per il veicolo con targa {{TARGA}}.\n\n' +
   'Cordiali saluti,\nEuropa Auto';
 
+
+// ══ DEDUPLICAZIONE PERMESSI ══
+function deduplicaPermessi() {
+  var data = JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
+  var prima = data.length;
+  
+  // Deduplica per driveFileId
+  var driveIds = new Set();
+  // Deduplica per fileName
+  var fileNames = new Set();
+  // Deduplica per targa+giorno
+  var targheGiorni = new Set();
+  // Deduplica per msgId
+  var msgIds = new Set();
+  
+  var deduped = data.filter(function(p) {
+    // Rimuovi pdfBase64 per risparmiare spazio
+    if (p.pdfBase64 && p.pdfBase64.length > 100) p.pdfBase64 = null;
+    
+    // Controlla driveFileId
+    if (p.driveFileId) {
+      if (driveIds.has(p.driveFileId)) return false;
+      driveIds.add(p.driveFileId);
+    }
+    // Controlla fileName
+    if (p.fileName) {
+      if (fileNames.has(p.fileName)) return false;
+      fileNames.add(p.fileName);
+    }
+    // Controlla targa+giorno
+    if (p.targa && p.ricevutoMs) {
+      var giorno = new Date(p.ricevutoMs).toISOString().split('T')[0];
+      var k = p.targa + '_' + giorno;
+      if (targheGiorni.has(k)) return false;
+      targheGiorni.add(k);
+    }
+    // Controlla gmailMsgId
+    if (p.gmailMsgId) {
+      if (msgIds.has(p.gmailMsgId)) return false;
+      msgIds.add(p.gmailMsgId);
+    }
+    return true;
+  });
+  
+  var rimossi = prima - deduped.length;
+  if (rimossi > 0) {
+    try { localStorage.setItem(PERMESSI_KEY, JSON.stringify(deduped)); } catch(e) {}
+    console.log('Deduplicazione permessi: rimossi', rimossi, 'duplicati');
+  }
+  return { prima: prima, dopo: deduped.length, rimossi: rimossi };
+}
+
+
+function eliminaDuplicatiPermessi() {
+  var result = deduplicaPermessi();
+  renderPermessi();
+  if (result.rimossi > 0) {
+    alert('✅ Eliminati ' + result.rimossi + ' duplicati. Rimasti ' + result.dopo + ' permessi.');
+  } else {
+    alert('ℹ️ Nessun duplicato trovato. Hai ' + result.dopo + ' permessi.');
+  }
+}
 function loadPermessi() {
   try {
-    var data = JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
-    var changed = false;
-    // Rimuovi pdfBase64 per liberare spazio
-    data.forEach(function(p){ if(p.pdfBase64&&p.pdfBase64.length>100){p.pdfBase64=null;changed=true;} });
-    // Deduplicazione per targa+giorno
-    var seen = new Set();
-    var deduped = data.filter(function(p){
-      var k = p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:p.id);
-      if(seen.has(k)){changed=true;return false;}
-      seen.add(k);return true;
-    });
-    if(changed){try{localStorage.setItem(PERMESSI_KEY,JSON.stringify(deduped));}catch(e){}}
-    return deduped;
+    deduplicaPermessi();
+    return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
   } catch(e){ return []; }
 }
 function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); updatePermessiBadge(); }
