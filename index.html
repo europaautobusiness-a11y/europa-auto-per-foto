@@ -469,7 +469,7 @@ html, body{
       <span class="si-icon">💶</span><span class="si-label"> Provvigioni</span>
     </button>
     <button class="sidebar-item" id="si-permessi" onclick="sidebarNav('permessi',this)" style="color:rgba(255,255,255,.6);">
-      <span class="si-icon">📋</span><span class="si-label"> Permessi</span>
+      <span class="si-icon">📋</span><span class="si-label"> Permessini</span>
       <span class="si-badge" id="permessi-badge" style="display:none;">0</span>
     </button>
     <button class="sidebar-item" id="si-presenze" onclick="sidebarNav('presenze',this)" style="color:rgba(255,255,255,.6);">
@@ -479,6 +479,7 @@ html, body{
 
   <div class="sidebar-sync">
     <button onclick="manualSync(this)">🔄 Aggiorna Dati</button>
+    <button id="btn-credenziali" onclick="apriGestioneCredenziali()" style="display:none;margin-top:6px;width:100%;padding:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;cursor:pointer;border-radius:3px;">🔑 Credenziali Utenti</button>
   </div>
 
   <div id="sidebar-user-info" style="padding:12px;border-top:1px solid rgba(255,255,255,.15);margin-top:8px;">
@@ -850,8 +851,6 @@ html, body{
     <div style="text-align:center;"><div id="pStatN" style="font-size:1.7rem;font-weight:700;color:var(--blue);line-height:1;">0</div><div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Vendite</div></div>
     <div style="width:1px;height:36px;background:var(--bdr);"></div>
     <div style="text-align:center;"><div id="pStatTot" style="font-size:1.7rem;font-weight:700;color:var(--blue);line-height:1;">€ 0</div><div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Totale provvigioni</div></div>
-    <div style="width:1px;height:36px;background:var(--bdr);"></div>
-    <div style="text-align:center;"><div id="pStatMed" style="font-size:1.7rem;font-weight:700;color:var(--blue);line-height:1;">€ 0</div><div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Media per vendita</div></div>
     <div style="margin-left:auto;display:flex;gap:8px;">
       <button onclick="pNuovoMese()" style="padding:7px 14px;background:var(--blue);border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">🔄 Nuovo Mese</button>
       <button onclick="pForzaAggiornamento(this)" style="padding:7px 14px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">☁️ Aggiorna da Sheets</button>
@@ -1062,13 +1061,19 @@ html, body{
   </div>
 </div>
 <!-- ── GALLERIA FOTO VIEW ── -->
-<div class="view" id="view-foto" style="padding:22px 16px;"><div style="text-align:center;padding:60px 20px;color:#6b6b6b;font-size:14px;">&#9203; Caricamento...</div></div>
+<div class="view" id="view-foto" style="padding:22px 16px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+    <div style="font-size:22px;font-weight:800;color:#1a4fa0;">🖼 Galleria Foto</div>
+    <button onclick="sincronizzaFotoDaDrive(this)" style="padding:10px 20px;background:#1a4fa0;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;border-radius:6px;">☁️ Carica da Drive</button>
+  </div>
+  <div id="foto-gallery-content"><div style="text-align:center;padding:60px 20px;color:#6b6b6b;font-size:14px;">Premi "Carica da Drive" per vedere tutte le foto</div></div>
+</div>
 
 <!-- PERMESSI -->
 <div class="view" id="view-permessi" style="padding:22px 16px;">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
     <div>
-      <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128203; Permessi</div>
+      <div style="font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;">&#128203; Permessini</div>
       <div style="font-size:13px;color:var(--gray);margin-top:4px;">Sync automatica da <strong>gammaservicesas@gmail.com</strong> e <strong>amministrazione@europaautosrl.it</strong> &middot; Drive &middot; Eliminazione dopo 29 giorni</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -2730,6 +2735,40 @@ function isDriveConnected() {
 }
 
 // Login Google e ottieni access token
+
+// Connessione Google Drive senza popup (silent)
+function connectGoogleDriveSilent() {
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    // Google non ancora caricato — riprova
+    setTimeout(connectGoogleDriveSilent, 500);
+    return;
+  }
+  var silentClient = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID,
+    scope: GDRIVE_SCOPES,
+    prompt: '',  // nessun popup
+    callback: function(response) {
+      if (!response.error && response.access_token) {
+        _driveAccessToken = response.access_token;
+        _driveTokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+        fetchUserEmailAndSetRole(response.access_token);
+        updateDriveConnectBar(true);
+        hideDriveLoginBar();
+        console.log('Drive connesso silenziosamente ✅');
+      } else {
+        // Silent fallito — mostra pulsante manuale nella barra Drive
+        console.warn('Silent Drive connect fallito:', response.error);
+        updateDriveConnectBar(false);
+      }
+    }
+  });
+  try {
+    silentClient.requestAccessToken({ prompt: '' });
+  } catch(e) {
+    console.warn('Silent connect error:', e);
+  }
+}
+
 function connectGoogleDrive() {
   return new Promise((resolve, reject) => {
     const client = google.accounts.oauth2.initTokenClient({
@@ -2998,11 +3037,139 @@ async function welcomeLogin() {
 // SISTEMA LOGIN CUSTOM
 // ══════════════════════════════════════════════════════════════
 
-var UTENTI_APP = [
+var UTENTI_APP_DEFAULT = [
   { email:'no.reply.europaauto@gmail.com', password:'Michele300564!', nome:'Michele', ruolo:'admin' },
   { email:'bassodavide114@gmail.com',       password:'Davide123',      nome:'Davide Basso', ruolo:'dipendente' }
-  // Aggiungi altri dipendenti qui oppure dal pannello admin
 ];
+var UTENTI_APP = (function(){
+  try {
+    var saved = JSON.parse(localStorage.getItem('ea_utenti_app') || 'null');
+    return saved || UTENTI_APP_DEFAULT;
+  } catch(e) { return UTENTI_APP_DEFAULT; }
+})();
+function salvaUtentiApp() {
+  try { localStorage.setItem('ea_utenti_app', JSON.stringify(UTENTI_APP)); } catch(e) {}
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// GESTIONE CREDENZIALI UTENTI — solo admin
+// ══════════════════════════════════════════════════════════════
+function apriGestioneCredenziali() {
+  if (!isAdmin()) return;
+  var existing = document.getElementById('modal-credenziali');
+  if (existing) { existing.style.display='flex'; renderCredenzialiLista(); return; }
+
+  var modal = document.createElement('div');
+  modal.id = 'modal-credenziali';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:white;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;border-top:5px solid #1a4fa0;">
+      <div style="background:#1a4fa0;color:white;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:18px;font-weight:700;">🔑 Credenziali Utenti</div>
+          <div style="font-size:12px;opacity:.7;">Gestisci email e password di tutti gli utenti</div>
+        </div>
+        <button onclick="document.getElementById('modal-credenziali').style.display='none'"
+          style="background:none;border:none;color:white;font-size:24px;cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:20px;">
+        <div id="cred-lista" style="margin-bottom:20px;"></div>
+
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+          <div style="font-size:12px;font-weight:700;color:#1a4fa0;margin-bottom:12px;text-transform:uppercase;">➕ Aggiungi Utente</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">NOME</label>
+              <input id="cred-nome" type="text" placeholder="Mario Rossi" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">EMAIL</label>
+              <input id="cred-email" type="email" placeholder="mario@gmail.com" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">PASSWORD</label>
+              <input id="cred-pass" type="text" placeholder="Password123" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RUOLO</label>
+              <select id="cred-ruolo" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;">
+                <option value="dipendente">Dipendente</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <button onclick="credAggiungi()" style="padding:10px 20px;background:#1a4fa0;color:white;border:none;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;border-radius:6px;">+ Aggiungi</button>
+          <div id="cred-err" style="display:none;color:#ef4444;font-size:12px;margin-top:8px;"></div>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(e){ if(e.target===modal) modal.style.display='none'; });
+  renderCredenzialiLista();
+}
+
+function renderCredenzialiLista() {
+  var el = document.getElementById('cred-lista');
+  if (!el) return;
+  var roleColors = {admin:'#e74c3c', manager:'#e67e22', dipendente:'#27ae60'};
+  var roleLabels = {admin:'Admin', manager:'Manager', dipendente:'Dipendente'};
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Password</th><th style="padding:10px;text-align:left;">Ruolo</th><th></th></tr></thead><tbody>';
+  UTENTI_APP.forEach(function(u, i) {
+    html += '<tr style="border-bottom:1px solid #f1f5f9;">';
+    html += '<td style="padding:9px 10px;font-weight:600;">'+u.nome+'</td>';
+    html += '<td style="padding:9px 10px;color:#64748b;font-size:12px;">'+u.email+'</td>';
+    html += '<td style="padding:9px 10px;">';
+    html += '<input type="text" value="'+u.password+'" onchange="credCambiaPassword('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;width:130px;">';
+    html += '</td>';
+    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[u.ruolo]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[u.ruolo]+'</span></td>';
+    html += '<td style="padding:9px 10px;">';
+    if (u.email !== 'no.reply.europaauto@gmail.com') {
+      html += '<button data-idx="'+i+'" onclick="credRimuovi(parseInt(this.dataset.idx))" style="background:none;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;">✕</button>';
+    }
+    html += '</td></tr>';
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function credCambiaPassword(idx, nuovaPass) {
+  if (!nuovaPass.trim()) return;
+  UTENTI_APP[idx].password = nuovaPass.trim();
+  salvaUtentiApp();
+  alert('✅ Password aggiornata per ' + UTENTI_APP[idx].nome);
+}
+
+function credAggiungi() {
+  var nome  = (document.getElementById('cred-nome').value||'').trim();
+  var email = (document.getElementById('cred-email').value||'').toLowerCase().trim();
+  var pass  = (document.getElementById('cred-pass').value||'').trim();
+  var ruolo = document.getElementById('cred-ruolo').value;
+  var err   = document.getElementById('cred-err');
+
+  if (!nome||!email||!pass) { err.textContent='Tutti i campi sono obbligatori.'; err.style.display='block'; return; }
+  if (!email.includes('@')) { err.textContent='Email non valida.'; err.style.display='block'; return; }
+  if (UTENTI_APP.find(function(u){return u.email===email;})) { err.textContent='Email già presente.'; err.style.display='block'; return; }
+  err.style.display='none';
+
+  UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
+  salvaUtentiApp();
+  document.getElementById('cred-nome').value='';
+  document.getElementById('cred-email').value='';
+  document.getElementById('cred-pass').value='';
+  renderCredenzialiLista();
+  alert('✅ Utente '+nome+' aggiunto.');
+}
+
+function credRimuovi(idx) {
+  if (!confirm('Rimuovere '+UTENTI_APP[idx].nome+'?')) return;
+  UTENTI_APP.splice(idx, 1);
+  salvaUtentiApp();
+  renderCredenzialiLista();
+}
 
 function doLogin() {
   var email = (document.getElementById('login-email-input').value||'').toLowerCase().trim();
@@ -3049,10 +3216,10 @@ function doLogin() {
 
   applyRoleUI();
 
-  // Connetti Drive/Sheets in background
+  // Connetti Drive/Sheets in silenzio (senza popup)
   setTimeout(function(){
-    try { connectGoogleDrive().catch(function(){}); } catch(e) {}
-  }, 500);
+    try { connectGoogleDriveSilent(); } catch(e) {}
+  }, 800);
 }
 
 function disconnettiUtente() {
@@ -5041,9 +5208,85 @@ async function autoSyncFotoToDrive(targa, statusElId) {
 }
 
 // syncFotoFromDrive: usa quella originale con (targa, statusEl)
+
+// Carica TUTTE le foto da Drive e mostra in galleria
+async function sincronizzaFotoDaDrive(btn) {
+  if (!isDriveConnected()) {
+    alert('Connetti Google Drive prima');
+    return;
+  }
+  if (btn) { btn.textContent = '⏳ Caricamento...'; btn.disabled = true; }
+  var content = document.getElementById('foto-gallery-content');
+  if (content) content.innerHTML = '<div style="text-align:center;padding:40px;color:#6b6b6b;">⏳ Carico le foto da Drive...</div>';
+
+  try {
+    var token = _driveAccessToken;
+    var rootId = await getOrCreateRootFolder(token);
+    
+    // Ottieni tutte le cartelle (una per auto)
+    var subRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + rootId + "' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false") + '&fields=files(id,name)&pageSize=100',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    var subData = await subRes.json();
+    var cartelle = subData.files || [];
+    
+    if (!cartelle.length) {
+      if (content) content.innerHTML = '<div style="text-align:center;padding:40px;color:#6b6b6b;">Nessuna foto trovata su Drive</div>';
+      if (btn) { btn.textContent = '☁️ Carica da Drive'; btn.disabled = false; }
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < cartelle.length; i++) {
+      var cartella = cartelle[i];
+      var targa = cartella.name.toUpperCase();
+      
+      // Carica foto dalla cartella
+      var fRes = await fetch(
+        'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + cartella.id + "' in parents and trashed=false and mimeType contains 'image/'" ) + '&fields=files(id,name,thumbnailLink,webViewLink)&pageSize=50',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      var fData = await fRes.json();
+      var foto = fData.files || [];
+      if (!foto.length) continue;
+
+      // Recupera info auto dal localStorage
+      var localFoto = loadFoto(targa);
+      var infoAuto = targa;
+      if (localFoto.length && localFoto[0].intestatario) infoAuto = targa + ' — ' + localFoto[0].intestatario;
+
+      html += '<div style="background:white;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-bottom:20px;">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+      html += '<div style="font-size:16px;font-weight:700;color:#1a4fa0;">' + infoAuto + '</div>';
+      html += '<div style="font-size:12px;color:#999;">' + foto.length + ' foto</div>';
+      html += '</div>';
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+      foto.forEach(function(f) {
+        var thumb = f.thumbnailLink ? f.thumbnailLink.replace('s220','s400') : '';
+        html += '<a href="' + f.webViewLink + '" target="_blank" style="display:block;aspect-ratio:4/3;overflow:hidden;border-radius:6px;background:#f5f5f5;">';
+        if (thumb) {
+          html += '<img src="' + thumb + '" style="width:100%;height:100%;object-fit:cover;" loading="lazy">';
+        } else {
+          html += '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:12px;">🖼</div>';
+        }
+        html += '</a>';
+      });
+      html += '</div></div>';
+    }
+
+    if (content) content.innerHTML = html || '<div style="text-align:center;padding:40px;color:#6b6b6b;">Nessuna foto trovata</div>';
+    if (btn) { btn.textContent = '☁️ Carica da Drive'; btn.disabled = false; }
+
+  } catch(e) {
+    if (content) content.innerHTML = '<div style="text-align:center;padding:40px;color:#e74c3c;">Errore: ' + e.message + '</div>';
+    if (btn) { btn.textContent = '☁️ Carica da Drive'; btn.disabled = false; }
+  }
+}
+
 function renderFotoGallery(){
-  var c=document.getElementById('view-foto');
-  if(!c){console.warn('view-foto not found');return;}
+  var c=document.getElementById('foto-gallery-content');
+  if(!c){console.warn('foto-gallery-content not found');return;}
   // Costruisci mappa targa->veicolo da report
   var ar=(loadReady()||[]).concat(loadSent()||[]);
   var vm={};
@@ -5102,7 +5345,7 @@ async function syncAllFotoFromDrive() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// PERMESSI PRATICAUTO — modulo completo
+// PERMESSINI PRATICAUTO — modulo completo
 // ══════════════════════════════════════════════════════════════
 
 var PERMESSI_SENDER      = ['gammaservicesas@gmail.com', 'amministrazione@europaautosrl.it'];
@@ -5441,7 +5684,7 @@ async function syncPermessiDaGmail(mostraStatus) {
     savePermessi(esistenti);
     renderPermessi();
     if (mostraStatus&&statusEl){
-      statusEl.textContent=nuovi>0?'\u2705 '+nuovi+' nuovi permessi':'\u2705 Tutto aggiornato';
+      statusEl.textContent=nuovi>0?'\u2705 '+nuovi+' nuovi permessini':'\u2705 Tutto aggiornato';
       setTimeout(function(){statusEl.style.display='none';},4000);
     }
   } catch(e){
@@ -5461,7 +5704,7 @@ function syncPermessiManuale(btn) {
 // ── Impostazioni email e corpo ────────────────────────────────
 function apriImpostazioniPermessi() {
   var emailFrom=getPermessiEmail();
-  var nuovaEmail=prompt('Email mittente (da cui invii i permessi ai clienti):', emailFrom||'');
+  var nuovaEmail=prompt('Email mittente (da cui invii i permessini ai clienti):', emailFrom||'');
   if (nuovaEmail===null) return;
   if (!nuovaEmail.includes('@')){alert('Email non valida.');return;}
   setPermessiEmail(nuovaEmail);
@@ -6748,7 +6991,12 @@ function sidebarNav(view,btn){
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
   if(view==='foto'){
-    renderFotoGallery();
+    // Carica automaticamente da Drive se connesso
+    if(isDriveConnected()) {
+      setTimeout(function(){ sincronizzaFotoDaDrive(null); }, 300);
+    } else {
+      renderFotoGallery();
+    }
     if(isDriveConnected()&&typeof syncAllFotoFromDrive==='function')
       syncAllFotoFromDrive().then(function(){renderFotoGallery();});
   }
