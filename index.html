@@ -1032,11 +1032,30 @@ html, body{
         <div id="pSelWarn" style="display:none;background:#fff3cd;border:1px solid var(--yel);padding:10px 14px;font-size:13px;color:#856404;margin-top:8px;">⚠ Seleziona la finanziaria prima di salvare.</div>
       </div>
 
+      <div style="margin-bottom:14px;">
+        <label class="lbl">📊 Come ci ha trovato il cliente?</label>
+        <div class="ptg" id="ptg-fonte" style="flex-wrap:wrap;">
+          <button class="ptb" onclick="ptog('fonte','AutoScout24',this)" style="flex:1;min-width:calc(50% - 4px);">🌐 AutoScout24</button>
+          <button class="ptb" onclick="ptog('fonte','Conoscenze',this)" style="flex:1;min-width:calc(50% - 4px);">👥 Conoscenze/Clienti</button>
+          <button class="ptb" onclick="ptog('fonte','Passaggio',this)" style="flex:1;min-width:calc(50% - 4px);">🚶 Di passaggio</button>
+          <button class="ptb" onclick="ptog('fonte','Altro',this)" style="flex:1;min-width:calc(50% - 4px);">❓ Altro</button>
+        </div>
+      </div>
+
       <button onclick="pSalva()" style="width:100%;padding:14px;background:var(--grn);border:none;color:white;font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;">✅ Salva nel registro</button>
     </div>
 
     <div style="grid-column:1/-1;" class="card">
       <div class="card-hd" style="border-left:4px solid var(--grn);">📊 Registro Vendite</div>
+      <!-- GRAFICO FONTE CONTATTI -->
+      <div id="p-fonte-chart-wrap" style="padding:16px;margin-bottom:16px;border-bottom:1px solid var(--bdr);display:none;">
+        <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em;">📊 Come ci trovano i clienti</div>
+        <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+          <canvas id="p-fonte-canvas" width="160" height="160" style="max-width:160px;flex-shrink:0;"></canvas>
+          <div id="p-fonte-legenda" style="flex:1;min-width:140px;"></div>
+        </div>
+      </div>
+
       <div class="card-bd"><div id="pRegContainer" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><div id="pRegistro"><div style="text-align:center;padding:60px 20px;color:#6b6b6b;font-size:14px;">&#9203; Caricamento...</div></div></div></div>
     </div>
 
@@ -4440,7 +4459,7 @@ function buildReportHTML(marca, targa, dataIspezione){
 // PROVVIGIONI — Formule da Excel
 // ══════════════════════════════════════════════════════════════
 
-const PS = {fin:'SI', eta:'nuova', sotto:'NO', rate:'36-59', cpi:'NO', fi:'NO', fiMesi:48, gap:'NO'};
+const PS = {fin:'SI', eta:'nuova', sotto:'NO', rate:'36-59', cpi:'NO', fi:'NO', fiMesi:48, gap:'NO', fonte:''};
 
 function ptog(k,v,btn){
   PS[k]=(k==='fiMesi')?parseInt(v):v;
@@ -4592,7 +4611,7 @@ function pForzaAggiornamento(btn) {
   if (!GS_URL) { alert('Google Sheets non configurato'); return; }
   if (btn) { btn.textContent = '⏳ Caricamento...'; btn.disabled = true; }
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats();
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
   // Ricarica da Sheets
   var cb = 'pForzaCb_' + Date.now();
   var script = document.createElement('script');
@@ -4601,7 +4620,7 @@ function pForzaAggiornamento(btn) {
     if (btn) { btn.textContent = '☁️ Aggiorna da Sheets'; btn.disabled = false; }
     if (!data || !Array.isArray(data)) { alert('Nessun dato da Sheets'); return; }
     localStorage.setItem('ea_provv3', JSON.stringify(data));
-    pRenderReg(); pAggStats();
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
     alert('✅ Provvigioni aggiornate: ' + data.length + ' record');
   };
   script.src = GS_URL + '?sheet=Provvigioni&callback=' + cb + '&_t=' + Date.now();
@@ -4619,7 +4638,7 @@ function pLoadFromGS() {
     var s = document.getElementById(cb);
     if (s && s.parentNode) s.parentNode.removeChild(s);
     console.warn('pLoadFromGS: timeout');
-    pRenderReg(); pAggStats();
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
   }, 15000);
 
   window[cb] = function(data) {
@@ -4657,7 +4676,7 @@ function pLoadFromGS() {
     delete window[cb];
     if (s.parentNode) s.parentNode.removeChild(s);
     console.warn('pLoadFromGS: script error, uso dati locali');
-    pRenderReg(); pAggStats();
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
   };
   document.body.appendChild(s);
 }
@@ -4725,7 +4744,8 @@ function pSalva() {
     provvigione: provvSelezionata,
     eta: PS.eta, sotto: PS.sotto, rate: PS.rate,
     fi: PS.fi, fiMesi: PS.fi!=='NO'?(PS.fiMesi||48):null, cpi: PS.cpi, gap: PS.gap,
-    valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15
+    valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15,
+    fonte: PS.fonte || 'Non specificato'
   };
   if (res.tipo === 'noFin') { entry.provv = 25; }
   else if (res.tipo === 'sotto') { entry.provv = res.provv; }
@@ -4818,13 +4838,13 @@ function pElimina(id) {
   if (!confirm('Eliminare questa vendita?')) return;
   pSaveReg(pLoadReg().filter(r => r.id !== id));
   pGsDelete(id);
-  pRenderReg(); pAggStats();
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
 }
 
 function pClearAll() {
   if (!confirm('Svuotare tutto il registro locale? Lo storico su Google Sheets rimane intatto.')) return;
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats();
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
 }
 
 function pNuovoMese() {
@@ -4836,8 +4856,64 @@ function pNuovoMese() {
   // Lo storico è già su GS (ogni vendita viene salvata in tempo reale)
   // Svuota solo il locale
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats();
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
   alert('✅ Nuovo mese avviato!');
+}
+
+
+// ══ GRAFICO FONTE CONTATTI ══
+function pRenderFonteChart() {
+  var reg = pLoadReg();
+  if (!reg.length) return;
+  
+  var fonti = {};
+  reg.forEach(function(r) {
+    var f = r.fonte || 'Non specificato';
+    fonti[f] = (fonti[f] || 0) + 1;
+  });
+  
+  var labels = Object.keys(fonti);
+  var valori = Object.values(fonti);
+  var totale = valori.reduce(function(a,b){return a+b;},0);
+  
+  if (!totale) return;
+  
+  var wrap = document.getElementById('p-fonte-chart-wrap');
+  if (wrap) wrap.style.display = 'block';
+  
+  var canvas = document.getElementById('p-fonte-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  
+  var colori = ['#1a4fa0','#27ae60','#e67e22','#e74c3c','#9b59b6','#1abc9c'];
+  var tot = 0, cx = 100, cy = 100, r = 90;
+  ctx.clearRect(0,0,200,200);
+  
+  valori.forEach(function(v, i) {
+    var startAngle = (tot/totale) * Math.PI * 2 - Math.PI/2;
+    var endAngle   = ((tot+v)/totale) * Math.PI * 2 - Math.PI/2;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,startAngle,endAngle);
+    ctx.closePath();
+    ctx.fillStyle = colori[i % colori.length];
+    ctx.fill();
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    tot += v;
+  });
+  
+  // Legenda
+  var leg = document.getElementById('p-fonte-legenda');
+  if (!leg) return;
+  leg.innerHTML = labels.map(function(l, i) {
+    var perc = Math.round((fonti[l]/totale)*100);
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+      '<div style="width:14px;height:14px;border-radius:3px;background:'+colori[i%colori.length]+';flex-shrink:0;"></div>' +
+      '<div style="font-size:13px;"><strong>'+l+'</strong><br>' +
+      '<span style="color:#666;font-size:12px;">'+fonti[l]+' vendite ('+perc+'%)</span></div></div>';
+  }).join('');
 }
 
 function pRenderReg() {
@@ -5965,28 +6041,75 @@ function tcTimbra(tipo) {
   document.querySelectorAll('.tc-btn').forEach(function(b){b.disabled=true;});
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
   if(ring){ring.className='tc-gps-ring loading';ring.textContent='📡';}
-  if(lbl){lbl.className='tc-gps-label loading';lbl.textContent='Rilevamento GPS...';}
-  if(sub)sub.textContent='Attendi...';
-  navigator.geolocation.getCurrentPosition(function(pos){
-    var sede=tcGetSede(_currentUserEmail);
-    var dist=gpsDistanza(pos.coords.latitude,pos.coords.longitude,sede.lat,sede.lng);
-    var acc=Math.round(pos.coords.accuracy);
-    if(dist>GPS_RAGGIO+Math.min(acc,20)){
-      if(ring){ring.className='tc-gps-ring err';ring.textContent='❌';}
-      if(lbl){lbl.className='tc-gps-label err';lbl.textContent='Fuori dalla sede';}
-      if(sub)sub.textContent='Distanza: '+Math.round(dist)+'m — max '+GPS_RAGGIO+'m da '+sede.nome;
-      tcToastNew('❌ Troppo lontano: '+Math.round(dist)+'m',false);
-      tcAggiornaPulsanti(); return;
+  if(lbl){lbl.className='tc-gps-label loading';lbl.textContent='Ricerca segnale GPS...';}
+  if(sub)sub.textContent='Attendi all aperto per un segnale migliore...';
+
+  var MAX_PRECISIONE = 100; // metri — soglia accettabile
+  var tentativi = 0;
+  var maxTentativi = 10;
+  var watchId = null;
+
+  function aggiornaSub(acc, dist) {
+    if(sub) sub.textContent = 'Precisione: '+Math.round(acc)+'m · Distanza sede: '+Math.round(dist)+'m · (serve < '+MAX_PRECISIONE+'m)';
+  }
+
+  watchId = navigator.geolocation.watchPosition(function(pos){
+    tentativi++;
+    var acc  = pos.coords.accuracy;
+    var lat  = pos.coords.latitude;
+    var lng  = pos.coords.longitude;
+    var sede = tcGetSede(_currentUserEmail);
+    var dist = gpsDistanza(lat, lng, sede.lat, sede.lng);
+
+    aggiornaSub(acc, dist);
+
+    // Aggiorna pannello live
+    var elLat=document.getElementById('tc-pos-lat'), elLng=document.getElementById('tc-pos-lng');
+    var elAcc=document.getElementById('tc-pos-acc'), elDist=document.getElementById('tc-pos-dist');
+    if(elLat) elLat.textContent=lat.toFixed(6);
+    if(elLng) elLng.textContent=lng.toFixed(6);
+    if(elAcc) { elAcc.textContent=Math.round(acc)+'m'; elAcc.style.color=acc<20?'#22c55e':acc<100?'#f59e0b':'#ef4444'; }
+    if(elDist){ elDist.textContent=Math.round(dist)+'m'; elDist.style.color=dist<=GPS_RAGGIO?'#22c55e':'#ef4444'; }
+
+    if(lbl){ lbl.className='tc-gps-label loading'; lbl.textContent='Precisione: '+Math.round(acc)+'m'; }
+
+    // Precisione accettabile
+    if(acc <= MAX_PRECISIONE) {
+      navigator.geolocation.clearWatch(watchId);
+
+      if(dist > GPS_RAGGIO) {
+        if(ring){ring.className='tc-gps-ring err';ring.textContent='❌';}
+        if(lbl){lbl.className='tc-gps-label err';lbl.textContent='Fuori dalla sede';}
+        if(sub)sub.textContent='Sei a '+Math.round(dist)+'m dalla sede (max '+GPS_RAGGIO+'m) · Precisione GPS: '+Math.round(acc)+'m';
+        tcToastNew('❌ Fuori sede: '+Math.round(dist)+'m (GPS: '+Math.round(acc)+'m)',false);
+        tcAggiornaPulsanti(); return;
+      }
+
+      if(ring){ring.className='tc-gps-ring ok';ring.textContent='✅';}
+      if(lbl){lbl.className='tc-gps-label ok';lbl.textContent='Posizione verificata ✅';}
+      if(sub)sub.textContent=sede.nome+' · '+Math.round(dist)+'m · Precisione: '+Math.round(acc)+'m';
+      tcSalvaTimbrata(_currentUserEmail,tipo,null,null);
+      return;
     }
-    if(ring){ring.className='tc-gps-ring ok';ring.textContent='✅';}
-    if(lbl){lbl.className='tc-gps-label ok';lbl.textContent='Posizione OK';}
-    if(sub)sub.textContent=sede.nome+' · '+Math.round(dist)+'m';
-    tcSalvaTimbrata(_currentUserEmail,tipo,null,null);
+
+    // Troppi tentativi — segnale troppo debole
+    if(tentativi >= maxTentativi) {
+      navigator.geolocation.clearWatch(watchId);
+      if(ring){ring.className='tc-gps-ring err';ring.textContent='📡';}
+      if(lbl){lbl.className='tc-gps-label err';lbl.textContent='Segnale GPS debole';}
+      if(sub)sub.textContent='Precisione insufficiente: '+Math.round(acc)+'m - Vai all aperto e riprova';
+      tcToastNew('⚠️ GPS impreciso ('+Math.round(acc)+'m) - vai all aperto',false);
+      tcAggiornaPulsanti();
+    }
+
   },function(err){
+    if(watchId) navigator.geolocation.clearWatch(watchId);
     if(ring){ring.className='tc-gps-ring err';ring.textContent='❌';}
     if(lbl){lbl.className='tc-gps-label err';lbl.textContent='Errore GPS';}
-    tcToastNew('❌ GPS: '+err.message,false); tcAggiornaPulsanti();
-  },{timeout:15000,enableHighAccuracy:true,maximumAge:0});
+    if(sub)sub.textContent=err.message;
+    tcToastNew('❌ GPS: '+err.message,false);
+    tcAggiornaPulsanti();
+  },{enableHighAccuracy:true, maximumAge:0, timeout:30000});
 }
 
 function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride) {
