@@ -5365,45 +5365,36 @@ var PERMESSI_BODY_DEFAULT =
 function deduplicaPermessi() {
   var data = JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
   var prima = data.length;
-  
-  // Deduplica per driveFileId
-  var driveIds = new Set();
-  // Deduplica per fileName
-  var fileNames = new Set();
-  // Deduplica per targa+giorno
-  var targheGiorni = new Set();
-  // Deduplica per msgId
-  var msgIds = new Set();
-  
-  var deduped = data.filter(function(p) {
-    // Rimuovi pdfBase64 per risparmiare spazio
-    if (p.pdfBase64 && p.pdfBase64.length > 100) p.pdfBase64 = null;
-    
-    // Controlla driveFileId
-    if (p.driveFileId) {
-      if (driveIds.has(p.driveFileId)) return false;
-      driveIds.add(p.driveFileId);
+
+  // Rimuovi pdfBase64
+  data.forEach(function(p){ if(p.pdfBase64&&p.pdfBase64.length>100) p.pdfBase64=null; });
+
+  // Per ogni targa: tieni solo il permesso con data più recente
+  var perTarga = {};
+  data.forEach(function(p) {
+    var t = (p.targa||'').toUpperCase().trim();
+    if (!t || t === 'SCONOSCIUTA') return;
+    if (!perTarga[t]) {
+      perTarga[t] = p;
+    } else {
+      // Tieni quello con ricevutoMs più VECCHIO (data originale ricezione)
+      if ((p.ricevutoMs||0) < (perTarga[t].ricevutoMs||0)) {
+        perTarga[t] = p;
+      }
     }
-    // Controlla fileName
-    if (p.fileName) {
-      if (fileNames.has(p.fileName)) return false;
-      fileNames.add(p.fileName);
-    }
-    // Controlla targa+giorno
-    if (p.targa && p.ricevutoMs) {
-      var giorno = new Date(p.ricevutoMs).toISOString().split('T')[0];
-      var k = p.targa + '_' + giorno;
-      if (targheGiorni.has(k)) return false;
-      targheGiorni.add(k);
-    }
-    // Controlla gmailMsgId
-    if (p.gmailMsgId) {
-      if (msgIds.has(p.gmailMsgId)) return false;
-      msgIds.add(p.gmailMsgId);
-    }
-    return true;
   });
-  
+
+  // Aggiungi quelli senza targa riconoscibile (SCONOSCIUTA) — tienili tutti
+  var sconosciuti = data.filter(function(p){
+    var t = (p.targa||'').toUpperCase().trim();
+    return !t || t === 'SCONOSCIUTA';
+  });
+
+  var deduped = Object.values(perTarga).concat(sconosciuti);
+
+  // Ordina per ricevutoMs decrescente
+  deduped.sort(function(a,b){ return (b.ricevutoMs||0)-(a.ricevutoMs||0); });
+
   var rimossi = prima - deduped.length;
   if (rimossi > 0) {
     try { localStorage.setItem(PERMESSI_KEY, JSON.stringify(deduped)); } catch(e) {}
@@ -5748,7 +5739,21 @@ async function inviaPermessoEmail(id) {
 
   try {
     var token=_driveAccessToken;
+    // Se pdfBase64 è null, scarica da Drive
+    if (!p.pdfBase64 && p.driveFileId) {
+      if (btn){btn.textContent='⏳ Scarico PDF...';}
+      var dlR = await fetch('https://www.googleapis.com/drive/v3/files/'+p.driveFileId+'?alt=media',
+        {headers:{Authorization:'Bearer '+token}});
+      if (!dlR.ok) { alert('❌ Impossibile scaricare PDF da Drive'); if(btn){btn.disabled=false;btn.textContent='📤 Invia PDF';} return; }
+      var blob = await dlR.blob();
+      p.pdfBase64 = await new Promise(function(res){
+        var rd=new FileReader(); rd.onload=function(){res(rd.result);}; rd.readAsDataURL(blob);
+      });
+      if(btn){btn.textContent='📤 Invio...';}
+    }
+    if (!p.pdfBase64) { alert('❌ PDF non disponibile.'); if(btn){btn.disabled=false;btn.textContent='📤 Invia PDF';} return; }
     var pureB64=p.pdfBase64.replace(/^data:[^;]+;base64,/,'');
+    p.pdfBase64 = null; // Non salvare in memoria dopo l'uso
     var safeName=(p.targa+'_'+p.intestatario+'.pdf').replace(/[^a-zA-Z0-9_.]/g,'_');
     var subject='Permesso di Circolazione \u2014 '+p.targa;
     var bodyTemplate=getPermessiBody();
