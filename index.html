@@ -1135,6 +1135,36 @@ html, body{
       <div class="tc-gps-label" id="tc-gps-label">In attesa GPS</div>
       <div class="tc-gps-sub" id="tc-gps-sub">Premi un pulsante per timbrare</div>
     </div>
+
+    <!-- POSIZIONE LIVE -->
+    <div id="tc-pos-live" style="width:100%;max-width:480px;margin-bottom:16px;display:none;">
+      <div style="background:#1e293b;border-radius:12px;padding:12px 16px;font-size:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="color:#475569;font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:10px;">📡 Posizione rilevata</span>
+          <button onclick="tcStartPosLive()" style="background:none;border:1px solid #334155;color:#64748b;padding:3px 10px;font-size:10px;border-radius:6px;cursor:pointer;">🔄 Aggiorna</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:#0f172a;border-radius:8px;padding:8px;">
+            <div style="font-size:10px;color:#475569;margin-bottom:2px;">Latitudine</div>
+            <div id="tc-pos-lat" style="font-size:13px;font-weight:700;color:#fff;">--</div>
+          </div>
+          <div style="background:#0f172a;border-radius:8px;padding:8px;">
+            <div style="font-size:10px;color:#475569;margin-bottom:2px;">Longitudine</div>
+            <div id="tc-pos-lng" style="font-size:13px;font-weight:700;color:#fff;">--</div>
+          </div>
+          <div style="background:#0f172a;border-radius:8px;padding:8px;">
+            <div style="font-size:10px;color:#475569;margin-bottom:2px;">Precisione</div>
+            <div id="tc-pos-acc" style="font-size:13px;font-weight:700;color:#f59e0b;">--</div>
+          </div>
+          <div style="background:#0f172a;border-radius:8px;padding:8px;">
+            <div style="font-size:10px;color:#475569;margin-bottom:2px;">Distanza sede</div>
+            <div id="tc-pos-dist" style="font-size:13px;font-weight:700;color:#22c55e;">--</div>
+          </div>
+        </div>
+        <div id="tc-pos-sede" style="margin-top:8px;font-size:11px;color:#475569;text-align:center;"></div>
+      </div>
+    </div>
+
     <div class="tc-btns">
       <button class="tc-btn entrata" id="tc-btn-entrata" onclick="tcTimbra('entrata')"><span class="tc-btn-ico">🟢</span><span class="tc-btn-lbl">Entrata</span><span class="tc-btn-sub">Timbra ingresso</span></button>
       <button class="tc-btn uscita" id="tc-btn-uscita" onclick="tcTimbra('uscita')" disabled><span class="tc-btn-ico">🔴</span><span class="tc-btn-lbl">Uscita</span><span class="tc-btn-sub">Fine giornata</span></button>
@@ -5526,7 +5556,7 @@ function importaPermessiManuali(files) {
 
 var GPS_RAGGIO = 30;
 var GPS_SEDI = {
-  'sede_a': { lat: 45.6095513, lng: 9.1583038, nome: 'Sede A — Bovisio Masciago (MB)' },
+  'sede_a': { lat: 45.609389, lng: 9.158183, nome: 'Sede A — Bovisio Masciago (MB)' },
   'sede_b': { lat: 45.5960401, lng: 9.1318555, nome: 'Sede B' }
 };
 function getGpsSede(email){var d=getDipendenteByEmail(email);var s=(d&&d.sede)?d.sede:'sede_a';return GPS_SEDI[s]||GPS_SEDI['sede_a'];}
@@ -5826,6 +5856,40 @@ function presenzeInit() {
   }
 }
 
+function tcStartPosLive() {
+  var panel = document.getElementById('tc-pos-live');
+  if (panel) panel.style.display = 'block';
+  if (!navigator.geolocation) return;
+  
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    var lat = pos.coords.latitude;
+    var lng = pos.coords.longitude;
+    var acc = Math.round(pos.coords.accuracy);
+    var sede = tcGetSede(_currentUserEmail);
+    var dist = Math.round(gpsDistanza(lat, lng, sede.lat, sede.lng));
+    
+    var elLat  = document.getElementById('tc-pos-lat');
+    var elLng  = document.getElementById('tc-pos-lng');
+    var elAcc  = document.getElementById('tc-pos-acc');
+    var elDist = document.getElementById('tc-pos-dist');
+    var elSede = document.getElementById('tc-pos-sede');
+    
+    if(elLat)  elLat.textContent  = lat.toFixed(6);
+    if(elLng)  elLng.textContent  = lng.toFixed(6);
+    if(elAcc)  elAcc.textContent  = acc + 'm';
+    if(elAcc)  elAcc.style.color  = acc < 20 ? '#22c55e' : acc < 50 ? '#f59e0b' : '#ef4444';
+    if(elDist) {
+      elDist.textContent = dist + 'm';
+      elDist.style.color = dist <= GPS_RAGGIO ? '#22c55e' : '#ef4444';
+    }
+    if(elSede) elSede.textContent = 'Sede: ' + sede.nome + ' — max ' + GPS_RAGGIO + 'm';
+    
+  }, function(err) {
+    var elLat = document.getElementById('tc-pos-lat');
+    if(elLat) elLat.textContent = 'Errore: ' + err.message;
+  }, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+}
+
 function tcInitDipendente() {
   var email=_currentUserEmail, nome=tcGetNome(email), primo=nome.split(' ')[0];
   var el=document.getElementById('tc-nome-dip'); if(el) el.textContent='Ciao, '+primo+' 👋';
@@ -5836,6 +5900,8 @@ function tcInitDipendente() {
   tcRenderLog(); tcAggiornaPulsanti();
   _tcMeseCorrente=_tcMeseCorrente||tcGetMese(); tcRenderMese();
   presenzeLoadDaSheets();
+  // Mostra posizione live automaticamente
+  setTimeout(tcStartPosLive, 500);
 }
 
 function tcAggiornaClock() {
