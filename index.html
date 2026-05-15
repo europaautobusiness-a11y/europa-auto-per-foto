@@ -893,8 +893,8 @@ html, body{
         <div style="margin-bottom:14px;">
           <label class="lbl">Età Veicolo *</label>
           <div class="ptg" id="ptg-eta">
-            <button class="ptb on" onclick="ptog('eta','nuova',this)">Da nuova a 3 anni</button>
-            <button class="ptb" onclick="ptog('eta','vecchia',this)">Da 3 a 7 anni</button>
+            <button class="ptb on" onclick="ptog('eta','nuova',this)">Da nuova a 4 anni</button>
+            <button class="ptb" onclick="ptog('eta','vecchia',this)">Oltre i 4 anni</button>
           </div>
         </div>
 
@@ -5116,7 +5116,23 @@ var PERMESSI_BODY_DEFAULT =
   'in allegato trova il permesso di circolazione per il veicolo con targa {{TARGA}}.\n\n' +
   'Cordiali saluti,\nEuropa Auto';
 
-function loadPermessi()  { try { return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]'); } catch(e){ return []; } }
+function loadPermessi() {
+  try {
+    var data = JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
+    var changed = false;
+    // Rimuovi pdfBase64 per liberare spazio
+    data.forEach(function(p){ if(p.pdfBase64&&p.pdfBase64.length>100){p.pdfBase64=null;changed=true;} });
+    // Deduplicazione per targa+giorno
+    var seen = new Set();
+    var deduped = data.filter(function(p){
+      var k = p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:p.id);
+      if(seen.has(k)){changed=true;return false;}
+      seen.add(k);return true;
+    });
+    if(changed){try{localStorage.setItem(PERMESSI_KEY,JSON.stringify(deduped));}catch(e){}}
+    return deduped;
+  } catch(e){ return []; }
+}
 function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); updatePermessiBadge(); }
 function getPermessiEmail() { return localStorage.getItem(PERMESSI_EMAIL_KEY)||''; }
 function setPermessiEmail(v){ localStorage.setItem(PERMESSI_EMAIL_KEY, v); }
@@ -5280,9 +5296,15 @@ async function syncPermessiDaDrive(statusEl) {
       var testo=await leggiTestoPdf(pdfB64);
       var targa=estraiTarga(testo)||(df.name.match(/([A-Z]{2}\d{3}[A-Z]{2})/i)||[])[1]||df.name.split('_')[0]||'SCONOSCIUTA';
       var intestatario=(testo.length>50?estraiIntestatario(testo):null)||df.name.split('_')[1]||'Da verificare';
+      // Salta se non riconosce targa né intestatario
+      if (targa==='SCONOSCIUTA' && intestatario==='Da verificare') { continue; }
+      // Controllo duplicato per targa+giorno
+      var giornoDrive=new Date(ricevutoMs).toISOString().split('T')[0];
+      var targheDrive=new Set(esistenti.map(function(p){return p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:'');}));
+      if (targheDrive.has(targa+'_'+giornoDrive)) { console.log('Duplicato targa+data Drive skip:',targa); continue; }
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
-        targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:pdfB64,
+        targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:null,
         ricevutoMs:ricevutoMs,
         ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
         scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -5313,7 +5335,10 @@ async function syncPermessiDaGmail(mostraStatus) {
     var ld=await lr.json(), messages=ld.messages||[], nuovi=0;
     for (var i=0;i<messages.length;i++) {
       var msgId=messages[i].id;
+      // Se questo messaggio Gmail è già stato importato, salta
       if (msgIds.has(msgId)) continue;
+      // Se tutti i PDF di questo messaggio sono già presenti per fileName, salta
+      // (controllo fatto dopo aver letto i parts)
       if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD04 Email '+(i+1)+'/'+messages.length+'...';
       var mr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId+'?format=full',
         {headers:{Authorization:'Bearer '+token}});
@@ -5343,11 +5368,16 @@ async function syncPermessiDaGmail(mostraStatus) {
         if(!intestatario||intestatario==='Sconosciuto')intestatario='Da verificare';
         var driveFileId=null;
         try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
-        // Evita duplicati per fileName
-        if (!fileNames.has(part.filename)) {
+        // Salta permessi senza targa riconoscibile
+        if (targa === 'SCONOSCIUTA' && intestatario === 'Da verificare') { continue; }
+        // Controllo duplicati robusto: fileName, driveFileId, targa+giorno
+        var giornoRicevuto = new Date(ricevutoMs).toISOString().split('T')[0];
+        var chiaveTarga = targa + '_' + giornoRicevuto;
+        var targheDuplicati = new Set(esistenti.map(function(p){ return p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:''); }));
+        if (!fileNames.has(part.filename) && !targheDuplicati.has(chiaveTarga)) {
           esistenti.push({
             id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
-            targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:pdfB64,
+            targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null,
             ricevutoMs:ricevutoMs,
             ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
             scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -6672,7 +6702,7 @@ function sidebarNav(view,btn){
   }
   if(view==='permessi'){
     renderPermessi();
-    if(isDriveConnected()) syncPermessiDaGmail(false);
+    // Sync solo su richiesta — non automatica all'apertura
   }
   if(view==='presenze'){ presenzeInit(); }
 }
@@ -6694,7 +6724,7 @@ document.addEventListener('DOMContentLoaded',function(){
   // Dopo login Google, i dati vengono caricati in fetchUserEmailAndSetRole
   // Qui carichiamo solo se già loggati (token salvato)
   // manualSync solo su richiesta utente — non automatico all'avvio
-  setTimeout(function(){try{syncPermessiDaGmail(false);}catch(e){}},3500);
+  // sync permessi rimossa dall'avvio automatico — solo su richiesta manuale
   setTimeout(function(){try{updatePermessiBadge();}catch(e){}},500);
   window.addEventListener('resize',function(){if(window.innerWidth>768){var s=document.querySelector('.sidebar');var ov=document.getElementById('sidebarOverlay');if(s)s.classList.remove('mobile-open');if(ov)ov.classList.remove('active');}});
 });
