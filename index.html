@@ -2313,6 +2313,41 @@ function compressImage(file, cb){
 }
 
 // Upload nel tab editor
+
+// Upload diretto file su Drive senza convertire in base64
+async function uploadFileDirettoSuDrive(file, targa, statusEl) {
+  if (!isDriveConnected()) {
+    if (statusEl) statusEl.textContent = '⚠ Drive non connesso';
+    return false;
+  }
+  try {
+    var token = _driveAccessToken;
+    var rootId = await getOrCreateRootFolder(token);
+    var carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
+
+    // Upload multipart diretto
+    var metadata = { name: file.name, parents: [carFolderId] };
+    var form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], {type:'application/json'}));
+    form.append('file', file);
+
+    var resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: form
+    });
+
+    if (!resp.ok) throw new Error('Upload fallito: ' + resp.status);
+    var result = await resp.json();
+    console.log('Foto caricata su Drive:', result.id, file.name);
+    return true;
+  } catch(e) {
+    console.error('Errore upload Drive:', e);
+    if (statusEl) statusEl.textContent = '❌ Errore upload: ' + e.message;
+    return false;
+  }
+}
+
 function handleFotoUpload(files){
   var targa = (document.getElementById('targa').value||'').trim().toUpperCase();
   if(!targa){
@@ -2340,16 +2375,71 @@ function handleFotoUpload(files){
 
   function processNext() {
     if(idx >= validFiles.length) {
-      // Tutte le foto processate
       saveFoto(targa, photos);
       renderFotoEditor(targa);
-      // Upload su Drive con feedback
       if(typeof autoSyncFotoToDrive === 'function' && isDriveConnected()) {
         autoSyncFotoToDrive(targa, 'drive-status-editor');
       }
       return;
     }
     var file = validFiles[idx++];
+    
+    // Per file molto grandi: upload diretto su Drive, mostra anteprima locale
+    if (file.size > 5 * 1024 * 1024) {
+      var statusEl = document.getElementById('drive-status-editor');
+      if (statusEl) { statusEl.style.display='block'; statusEl.textContent='⬆️ Caricamento ' + file.name + ' su Drive...'; }
+      // Crea anteprima locale piccola
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        // Crea thumbnail 400px per visualizzazione locale
+        var img = new Image();
+        img.onload = function() {
+          var canvas = document.createElement('canvas');
+          var MAX_THUMB = 400;
+          var w = img.width > img.height ? MAX_THUMB : Math.round(img.width * MAX_THUMB / img.height);
+          var h = img.height > img.width ? MAX_THUMB : Math.round(img.height * MAX_THUMB / img.width);
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          var thumb = canvas.toDataURL('image/jpeg', 0.7);
+          canvas.width = 1; canvas.height = 1;
+          photos.push({ data: thumb, name: file.name });
+          // Upload originale su Drive
+          uploadFileDirettoSuDrive(file, targa, statusEl).then(function() {
+            if (statusEl) statusEl.textContent = '✅ ' + file.name + ' caricata su Drive';
+            idx; // già incrementato
+            processNext();
+          });
+        };
+        img.src = e.target.result;
+      };
+      // Leggi solo per thumbnail (ridimensiona prima)
+      var smallReader = new FileReader();
+      smallReader.onload = function(e) {
+        var img2 = new Image();
+        img2.onload = function() {
+          var canvas2 = document.createElement('canvas');
+          var MAX2 = 400;
+          var w2 = img2.width > img2.height ? MAX2 : Math.round(img2.width * MAX2 / img2.height);
+          var h2 = img2.height > img2.width ? MAX2 : Math.round(img2.height * MAX2 / img2.width);
+          canvas2.width = w2; canvas2.height = h2;
+          canvas2.getContext('2d').drawImage(img2, 0, 0, w2, h2);
+          var thumb2 = canvas2.toDataURL('image/jpeg', 0.7);
+          canvas2.width = 1; canvas2.height = 1;
+          photos.push({ data: thumb2, name: file.name });
+          var statusEl2 = document.getElementById('drive-status-editor');
+          uploadFileDirettoSuDrive(file, targa, statusEl2).then(function(ok) {
+            if (statusEl2) statusEl2.textContent = ok ? '✅ ' + file.name + ' caricata su Drive' : '❌ Upload fallito: ' + file.name;
+            processNext();
+          });
+        };
+        img2.onerror = function() { processNext(); };
+        img2.src = e.target.result;
+      };
+      smallReader.onerror = function() { processNext(); };
+      smallReader.readAsDataURL(file);
+      return;
+    }
+    
     compressImage(file, function(data64, name) {
       if(data64) photos.push({ data: data64, name: name });
       // Aggiorna contatore durante elaborazione
