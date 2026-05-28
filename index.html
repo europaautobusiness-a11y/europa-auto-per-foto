@@ -2310,16 +2310,6 @@ function saveFoto(targa,photos){
 function compressImage(file, cb){
   console.log('compressImage:', file.name, Math.round(file.size/1024/1024*10)/10+'MB', file.type);
 
-  // Per file molto grandi (>8MB), leggi direttamente senza canvas
-  if (file.size > 8 * 1024 * 1024) {
-    console.log('File grande - lettura diretta senza canvas');
-    var fr = new FileReader();
-    fr.onload = function(e) { cb(e.target.result, file.name); };
-    fr.onerror = function() { cb(null, file.name); };
-    fr.readAsDataURL(file);
-    return;
-  }
-
   var objectUrl = URL.createObjectURL(file);
   var img = new Image();
 
@@ -2450,6 +2440,39 @@ function handleFotoUpload(files){
     }
     var file = validFiles[idx++];
     
+    // Per file >5MB: upload diretto su Drive + thumbnail piccola
+    if (file.size > 5 * 1024 * 1024) {
+      var statusEl = document.getElementById('drive-status-editor');
+      if (statusEl) { statusEl.style.display='block'; statusEl.textContent='⬆️ Caricamento ' + file.name + ' in corso...'; }
+      
+      // Crea thumbnail 800px per visualizzazione locale
+      var objUrl = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function() {
+        URL.revokeObjectURL(objUrl);
+        var MAX = 800;
+        var w = img.width, h = img.height;
+        if (w > h) { if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} } else { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        var thumb = canvas.toDataURL('image/jpeg', 0.75);
+        canvas.width = 1; canvas.height = 1;
+        photos.push({ data: thumb, name: file.name });
+        // Upload originale su Drive
+        uploadFileDirettoSuDrive(file, targa, statusEl).then(function(ok) {
+          processNext();
+        });
+      };
+      img.onerror = function() {
+        URL.revokeObjectURL(objUrl);
+        // Fallback: upload diretto senza thumbnail
+        uploadFileDirettoSuDrive(file, targa, statusEl).then(function() { processNext(); });
+      };
+      img.src = objUrl;
+      return;
+    }
+
     compressImage(file, function(data64, name) {
       if(data64) photos.push({ data: data64, name: name });
       // Aggiorna contatore durante elaborazione
