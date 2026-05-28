@@ -2332,10 +2332,8 @@ function compressImage(file, cb){
   img.onload = function() {
     URL.revokeObjectURL(objectUrl);
     try {
-      // Adatta MAX e qualità in base alla dimensione del file
-      var fileSizeMB = file.size / (1024 * 1024);
-      var MAX = fileSizeMB > 10 ? 1200 : fileSizeMB > 5 ? 1400 : 1600;
-      var quality = fileSizeMB > 10 ? 0.80 : fileSizeMB > 5 ? 0.85 : 0.92;
+      var MAX = 1600;
+      var quality = 0.92;
       
       var w = img.width, h = img.height;
       if (w > h) {
@@ -2378,25 +2376,40 @@ async function uploadFileDirettoSuDrive(file, targa, statusEl) {
     var rootId = await getOrCreateRootFolder(token);
     var carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
 
-    // Upload multipart diretto
+    // Step 1: Avvia resumable upload session
     var metadata = { name: file.name, parents: [carFolderId] };
-    var form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], {type:'application/json'}));
-    form.append('file', file);
+    var initResp = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': file.type,
+          'X-Upload-Content-Length': file.size
+        },
+        body: JSON.stringify(metadata)
+      }
+    );
+    if (!initResp.ok) throw new Error('Init upload fallito: ' + initResp.status);
+    var uploadUrl = initResp.headers.get('Location');
+    if (!uploadUrl) throw new Error('No upload URL');
 
-    var resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token },
-      body: form
+    // Step 2: Upload del file
+    if (statusEl) statusEl.textContent = '⬆️ Upload ' + file.name + ' (' + Math.round(file.size/1024/1024*10)/10 + 'MB)...';
+    var uploadResp = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file
     });
-
-    if (!resp.ok) throw new Error('Upload fallito: ' + resp.status);
-    var result = await resp.json();
-    console.log('Foto caricata su Drive:', result.id, file.name);
+    if (!uploadResp.ok) throw new Error('Upload fallito: ' + uploadResp.status);
+    var result = await uploadResp.json();
+    console.log('✅ Foto caricata su Drive:', result.id, file.name);
+    if (statusEl) statusEl.textContent = '✅ ' + file.name + ' caricata';
     return true;
   } catch(e) {
-    console.error('Errore upload Drive:', e);
-    if (statusEl) statusEl.textContent = '❌ Errore upload: ' + e.message;
+    console.error('Errore upload Drive:', e.message);
+    if (statusEl) statusEl.textContent = '❌ Errore: ' + e.message;
     return false;
   }
 }
@@ -2436,62 +2449,6 @@ function handleFotoUpload(files){
       return;
     }
     var file = validFiles[idx++];
-    
-    // Per file molto grandi: upload diretto su Drive, mostra anteprima locale
-    if (file.size > 5 * 1024 * 1024) {
-      var statusEl = document.getElementById('drive-status-editor');
-      if (statusEl) { statusEl.style.display='block'; statusEl.textContent='⬆️ Caricamento ' + file.name + ' su Drive...'; }
-      // Crea anteprima locale piccola
-      var reader = new FileReader();
-      reader.onload = function(e) {
-        // Crea thumbnail 400px per visualizzazione locale
-        var img = new Image();
-        img.onload = function() {
-          var canvas = document.createElement('canvas');
-          var MAX_THUMB = 400;
-          var w = img.width > img.height ? MAX_THUMB : Math.round(img.width * MAX_THUMB / img.height);
-          var h = img.height > img.width ? MAX_THUMB : Math.round(img.height * MAX_THUMB / img.width);
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          var thumb = canvas.toDataURL('image/jpeg', 0.7);
-          canvas.width = 1; canvas.height = 1;
-          photos.push({ data: thumb, name: file.name });
-          // Upload originale su Drive
-          uploadFileDirettoSuDrive(file, targa, statusEl).then(function() {
-            if (statusEl) statusEl.textContent = '✅ ' + file.name + ' caricata su Drive';
-            idx; // già incrementato
-            processNext();
-          });
-        };
-        img.src = e.target.result;
-      };
-      // Leggi solo per thumbnail (ridimensiona prima)
-      var smallReader = new FileReader();
-      smallReader.onload = function(e) {
-        var img2 = new Image();
-        img2.onload = function() {
-          var canvas2 = document.createElement('canvas');
-          var MAX2 = 400;
-          var w2 = img2.width > img2.height ? MAX2 : Math.round(img2.width * MAX2 / img2.height);
-          var h2 = img2.height > img2.width ? MAX2 : Math.round(img2.height * MAX2 / img2.width);
-          canvas2.width = w2; canvas2.height = h2;
-          canvas2.getContext('2d').drawImage(img2, 0, 0, w2, h2);
-          var thumb2 = canvas2.toDataURL('image/jpeg', 0.7);
-          canvas2.width = 1; canvas2.height = 1;
-          photos.push({ data: thumb2, name: file.name });
-          var statusEl2 = document.getElementById('drive-status-editor');
-          uploadFileDirettoSuDrive(file, targa, statusEl2).then(function(ok) {
-            if (statusEl2) statusEl2.textContent = ok ? '✅ ' + file.name + ' caricata su Drive' : '❌ Upload fallito: ' + file.name;
-            processNext();
-          });
-        };
-        img2.onerror = function() { processNext(); };
-        img2.src = e.target.result;
-      };
-      smallReader.onerror = function() { processNext(); };
-      smallReader.readAsDataURL(file);
-      return;
-    }
     
     compressImage(file, function(data64, name) {
       if(data64) photos.push({ data: data64, name: name });
