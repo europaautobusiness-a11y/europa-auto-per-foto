@@ -2068,8 +2068,61 @@ function exportFotoToDriveFromEditor() {
 // ══════════════════════════════════════════════════════════════
 // GENERA GALLERIA HTML CONDIVISIBILE
 // ══════════════════════════════════════════════════════════════
-function generateGalleryHTML(targa, marca, modello){
-  const photos = loadFoto(targa);
+async function generateGalleryHTML(targa, marca, modello){
+  // Mostra loading
+  var btn = document.querySelector('[onclick*="shareGallery"]');
+  var origText = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ Scarico foto da Drive...'; btn.disabled = true; }
+
+  var photos = loadFoto(targa);
+  
+  // Se connesso a Drive, scarica le foto originali in alta qualità
+  if (isDriveConnected() && _driveAccessToken) {
+    try {
+      var token = _driveAccessToken;
+      var rootId = await getOrCreateRootFolder(token);
+      var carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
+      
+      // Lista file nella cartella Drive
+      var listResp = await fetch(
+        'https://www.googleapis.com/drive/v3/files?q=' + 
+        encodeURIComponent("'" + carFolderId + "' in parents and trashed=false and mimeType contains 'image/'") +
+        '&fields=files(id,name)&orderBy=createdTime',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      var listData = await listResp.json();
+      var driveFiles = listData.files || [];
+      
+      if (driveFiles.length > 0) {
+        if (btn) btn.textContent = '⏳ Scarico ' + driveFiles.length + ' foto HQ...';
+        var hqPhotos = [];
+        for (var i = 0; i < driveFiles.length; i++) {
+          try {
+            if (btn) btn.textContent = '⏳ Foto ' + (i+1) + '/' + driveFiles.length + '...';
+            var imgResp = await fetch(
+              'https://www.googleapis.com/drive/v3/files/' + driveFiles[i].id + '?alt=media',
+              { headers: { Authorization: 'Bearer ' + token } }
+            );
+            if (imgResp.ok) {
+              var blob = await imgResp.blob();
+              var base64 = await new Promise(function(res) {
+                var fr = new FileReader();
+                fr.onload = function() { res(fr.result); };
+                fr.readAsDataURL(blob);
+              });
+              hqPhotos.push({ data: base64, name: driveFiles[i].name });
+            }
+          } catch(e) { console.warn('Errore foto HQ:', e); }
+        }
+        if (hqPhotos.length > 0) photos = hqPhotos;
+      }
+    } catch(e) {
+      console.warn('Errore scarico HQ da Drive, uso foto locali:', e);
+    }
+  }
+
+  if (btn) { btn.textContent = origText; btn.disabled = false; }
+
   if(!photos.length){
     alert('Nessuna foto disponibile per questa auto.');
     return;
@@ -2147,8 +2200,8 @@ document.addEventListener('keydown',function(e){if(!document.getElementById('lb'
 </html>`;
 
   // Download + mostra reminder
-  const blob = new Blob([html], {type:'text/html;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
+  const htmlBlob = new Blob([html], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(htmlBlob);
   const a = document.createElement('a');
   const safeTarga = targa.replace(/[^A-Z0-9]/gi,'_');
   a.href = url;
@@ -2488,9 +2541,41 @@ function renderFotoEditor(targa){
   });
 }
 
-function deleteFotoEditor(targa, idx){
+async function deleteFotoEditor(targa, idx){
   if(!confirm('Eliminare questa foto?')) return;
   const photos = loadFoto(targa);
+  const foto = photos[idx];
+  
+  // Elimina da Drive se connesso
+  if (foto && isDriveConnected() && _driveAccessToken) {
+    try {
+      var token = _driveAccessToken;
+      var rootId = await getOrCreateRootFolder(token);
+      var carFolderId = await getOrCreateCarFolder(token, rootId, targa.toUpperCase());
+      
+      // Cerca il file su Drive per nome
+      var listResp = await fetch(
+        'https://www.googleapis.com/drive/v3/files?q=' +
+        encodeURIComponent("'" + carFolderId + "' in parents and name='" + (foto.name||'').replace(/'/g,"\'") + "' and trashed=false") +
+        '&fields=files(id,name)',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      var listData = await listResp.json();
+      var driveFiles = listData.files || [];
+      
+      // Elimina il file da Drive
+      for (var i = 0; i < driveFiles.length; i++) {
+        await fetch('https://www.googleapis.com/drive/v3/files/' + driveFiles[i].id, {
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer ' + token }
+        });
+        console.log('Foto eliminata da Drive:', driveFiles[i].name);
+      }
+    } catch(e) {
+      console.warn('Errore eliminazione da Drive:', e);
+    }
+  }
+  
   photos.splice(idx, 1);
   saveFoto(targa, photos);
   renderFotoEditor(targa);
