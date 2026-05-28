@@ -1070,6 +1070,16 @@ html, body{
     </div>
 
   </div>
+
+  <!-- STORICO ANNUALE -->
+  <div style="background:white;border:1px solid var(--bdr);padding:20px;margin-top:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div style="font-size:16px;font-weight:700;color:#1a4fa0;">📅 Storico Annuale</div>
+      <button onclick="pRenderStorico()" style="padding:7px 14px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">🔄 Aggiorna</button>
+    </div>
+    <div id="pStorico"></div>
+  </div>
+
 </div>
 <!-- ── GALLERIA FOTO VIEW ── -->
 <div class="view" id="view-foto" style="padding:22px 16px;">
@@ -2261,18 +2271,26 @@ function compressImage(file, cb){
   img.onload = function() {
     URL.revokeObjectURL(objectUrl);
     try {
-      var MAX = 1600;
+      // Adatta MAX e qualità in base alla dimensione del file
+      var fileSizeMB = file.size / (1024 * 1024);
+      var MAX = fileSizeMB > 10 ? 1200 : fileSizeMB > 5 ? 1400 : 1600;
+      var quality = fileSizeMB > 10 ? 0.80 : fileSizeMB > 5 ? 0.85 : 0.92;
+      
       var w = img.width, h = img.height;
       if (w > h) {
         if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
       } else {
         if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
       }
+      
+      // Per foto molto grandi, usa setTimeout per non bloccare la UI
       var canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       var ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      var result = canvas.toDataURL('image/jpeg', 0.92);
+      var result = canvas.toDataURL('image/jpeg', quality);
+      // Libera memoria canvas
+      canvas.width = 1; canvas.height = 1;
       cb(result, file.name);
     } catch(err) {
       // Fallback diretto: leggi il file originale senza canvas
@@ -2297,6 +2315,11 @@ function handleFotoUpload(files){
   document.getElementById('foto-file-input').value = '';
 
   var validFiles = Array.from(files).filter(function(f){ return f.type.startsWith('image/'); });
+  // Avvisa per file molto grandi
+  var bigFiles = validFiles.filter(function(f){ return f.size > 20 * 1024 * 1024; });
+  if (bigFiles.length > 0) {
+    console.log('Foto grandi rilevate:', bigFiles.map(function(f){ return f.name + ' (' + Math.round(f.size/1024/1024) + 'MB)'; }));
+  }
   if(!validFiles.length) return;
 
   // Elabora in sequenza (non in parallelo) per evitare crash su mobile
@@ -2484,6 +2507,11 @@ function handleFotoModalUpload(files){
   document.getElementById('foto-modal-file-input').value = '';
 
   var validFiles = Array.from(files).filter(function(f){ return f.type.startsWith('image/'); });
+  // Avvisa per file molto grandi
+  var bigFiles = validFiles.filter(function(f){ return f.size > 20 * 1024 * 1024; });
+  if (bigFiles.length > 0) {
+    console.log('Foto grandi rilevate:', bigFiles.map(function(f){ return f.name + ' (' + Math.round(f.size/1024/1024) + 'MB)'; }));
+  }
   if(!validFiles.length) {
     alert('Nessun file immagine selezionato. Tipi ricevuti: ' + Array.from(files).map(function(f){return f.type||'sconosciuto';}).join(', '));
     return;
@@ -4863,7 +4891,7 @@ function pForzaAggiornamento(btn) {
   if (!GS_URL) { alert('Google Sheets non configurato'); return; }
   if (btn) { btn.textContent = '⏳ Caricamento...'; btn.disabled = true; }
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
   // Ricarica da Sheets
   var cb = 'pForzaCb_' + Date.now();
   var script = document.createElement('script');
@@ -4871,9 +4899,12 @@ function pForzaAggiornamento(btn) {
     delete window[cb]; script.remove();
     if (btn) { btn.textContent = '☁️ Aggiorna da Sheets'; btn.disabled = false; }
     if (!data || !Array.isArray(data)) { alert('Nessun dato da Sheets'); return; }
-    localStorage.setItem('ea_provv3', JSON.stringify(data));
-    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
-    alert('✅ Provvigioni aggiornate: ' + data.length + ' record');
+    // Filtra solo il mese corrente
+    var meseAtt = pGetMese();
+    var soloPresenteMese = data.filter(function(r){ return r.mese === meseAtt; });
+    localStorage.setItem('ea_provv3', JSON.stringify(soloPresenteMese));
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
+    alert('✅ Provvigioni aggiornate: ' + soloPresenteMese.length + ' record per ' + meseAtt);
   };
   script.src = GS_URL + '?sheet=Provvigioni&callback=' + cb + '&_t=' + Date.now();
   document.head.appendChild(script);
@@ -4890,7 +4921,7 @@ function pLoadFromGS() {
     var s = document.getElementById(cb);
     if (s && s.parentNode) s.parentNode.removeChild(s);
     console.warn('pLoadFromGS: timeout');
-    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
   }, 15000);
 
   window[cb] = function(data) {
@@ -4928,7 +4959,7 @@ function pLoadFromGS() {
     delete window[cb];
     if (s.parentNode) s.parentNode.removeChild(s);
     console.warn('pLoadFromGS: script error, uso dati locali');
-    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
   };
   document.body.appendChild(s);
 }
@@ -5091,13 +5122,13 @@ function pElimina(id) {
   if (!confirm('Eliminare questa vendita?')) return;
   pSaveReg(pLoadReg().filter(r => r.id !== id));
   pGsDelete(id);
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
 }
 
 function pClearAll() {
   if (!confirm('Svuotare tutto il registro locale? Lo storico su Google Sheets rimane intatto.')) return;
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
 }
 
 function pNuovoMese() {
@@ -5109,7 +5140,7 @@ function pNuovoMese() {
   // Lo storico è già su GS (ogni vendita viene salvata in tempo reale)
   // Svuota solo il locale
   localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){}
+  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
   alert('✅ Nuovo mese avviato!');
 }
 
@@ -5169,12 +5200,77 @@ function pRenderFonteChart() {
   }).join('');
 }
 
+
+// ══ STORICO ANNUALE PROVVIGIONI ══
+function pRenderStorico() {
+  var el = document.getElementById('pStorico');
+  if (!el) return;
+
+  var tutti = pLoadReg();
+  var anno = new Date().getFullYear();
+  var mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+              'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+
+  // Raggruppa per mese
+  var perMese = {};
+  tutti.forEach(function(r) {
+    if (!r.mese) return;
+    var parts = r.mese.split('-');
+    if (parseInt(parts[0]) !== anno) return; // solo anno corrente
+    if (!perMese[r.mese]) perMese[r.mese] = { vendite: 0, totale: 0 };
+    perMese[r.mese].vendite++;
+    perMese[r.mese].totale += parseFloat(r.provvigione) || 0;
+  });
+
+  if (!Object.keys(perMese).length) {
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;font-size:13px;">Nessun dato per ' + anno + '</div>';
+    return;
+  }
+
+  var totaleAnno = 0;
+  var venditeAnno = 0;
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  html += '<thead><tr style="background:#f8fafc;">';
+  html += '<th style="padding:10px 12px;text-align:left;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Mese</th>';
+  html += '<th style="padding:10px 12px;text-align:center;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Vendite</th>';
+  html += '<th style="padding:10px 12px;text-align:right;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Totale Provvigioni</th>';
+  html += '<th style="padding:10px 12px;text-align:right;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Media</th>';
+  html += '</tr></thead><tbody>';
+
+  // Ordina per mese
+  Object.keys(perMese).sort().forEach(function(ym) {
+    var m = perMese[ym];
+    var mIdx = parseInt(ym.split('-')[1]) - 1;
+    var media = m.vendite > 0 ? (m.totale / m.vendite) : 0;
+    var isMeseAtt = ym === pGetMese();
+    totaleAnno += m.totale;
+    venditeAnno += m.vendite;
+    html += '<tr style="border-bottom:1px solid #f1f5f9;'+(isMeseAtt?'background:#f0f7ff;':'')+'">';
+    html += '<td style="padding:10px 12px;font-weight:'+(isMeseAtt?'700':'600')+';">'+(isMeseAtt?'▶ ':'')+mesi[mIdx]+'</td>';
+    html += '<td style="padding:10px 12px;text-align:center;color:#64748b;">'+m.vendite+'</td>';
+    html += '<td style="padding:10px 12px;text-align:right;font-weight:700;color:#16a34a;">€ '+m.totale.toFixed(2)+'</td>';
+    html += '<td style="padding:10px 12px;text-align:right;color:#64748b;">€ '+media.toFixed(2)+'</td>';
+    html += '</tr>';
+  });
+
+  // Totale anno
+  html += '<tr style="background:#1a4fa0;">';
+  html += '<td style="padding:10px 12px;font-weight:800;color:white;">TOTALE '+anno+'</td>';
+  html += '<td style="padding:10px 12px;text-align:center;font-weight:700;color:white;">'+venditeAnno+'</td>';
+  html += '<td style="padding:10px 12px;text-align:right;font-weight:800;color:#fbbf24;">€ '+totaleAnno.toFixed(2)+'</td>';
+  html += '<td style="padding:10px 12px;text-align:right;color:rgba(255,255,255,.7);">€ '+(venditeAnno>0?(totaleAnno/venditeAnno).toFixed(2):'0.00')+'</td>';
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
 function pRenderReg() {
   var tuttiReg = pLoadReg();
   var meseCorrente = pGetMese();
   // Prova prima con il mese corrente, se vuoto mostra tutti
   var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; });
-  if (!reg.length && tuttiReg.length) reg = tuttiReg; // fallback: mostra tutto
+  // Nessun fallback — mostra solo il mese correntetto
   var el  = document.getElementById('pRegistro');
   if (!el) {
     console.warn('pRegistro not found');
@@ -7104,7 +7200,12 @@ function sidebarNav(view,btn){
   }
   if(view==='permessi'){
     renderPermessi();
-    // Sync solo su richiesta — non automatica all'apertura
+    // Sync automatica all'apertura (deduplicazione gestita)
+    if(isDriveConnected()) {
+      setTimeout(function(){
+        try { sincronizzaPermessiManuale(null); } catch(e) {}
+      }, 800);
+    }
   }
   if(view==='presenze'){ presenzeInit(); }
 }
