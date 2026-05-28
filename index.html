@@ -812,7 +812,7 @@ html, body{
 
   <div class="tab-content" id="tab-foto">
     <div class="card">
-      <div class="card-hd">📸 Galleria Foto Auto</div>
+      <div class="card-hd" style="display:flex;align-items:center;justify-content:space-between;"><span>📸 Galleria Foto Auto</span><button onclick="eliminaCartellaDalReport()" style="padding:4px 14px;background:none;border:1px solid #ef4444;color:#ef4444;font-size:12px;font-weight:700;cursor:pointer;border-radius:4px;">🗑 Elimina tutto</button></div>
       <div class="card-bd">
 
         <div style="background:#f0f7ff;border:1px solid #c0d8f0;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1a4fa0;line-height:1.6;">
@@ -3226,6 +3226,12 @@ async function welcomeLogin() {
         hideWelcomeScreen();
         localStorage.setItem('ea_drive_skipped', '0');
         setTimeout(refreshFotoButtons, 800);
+        // Sync automatica dopo login
+        setTimeout(function(){
+          try { sincronizzaPermessiManuale(null); } catch(e) {}
+          setTimeout(function(){ try { pRenderStorico(); } catch(e) {} }, 2000);
+          setTimeout(function(){ try { sincronizzaFotoDaDrive(null); } catch(e) {} }, 3500);
+        }, 1200);
       }
     });
     client.requestAccessToken({ prompt: 'select_account' });
@@ -3483,6 +3489,12 @@ function doLogin() {
   setTimeout(function(){
     try { connectGoogleDriveSilent(); } catch(e) {}
   }, 800);
+  // Sync automatica dopo login credenziali
+  setTimeout(function(){
+    try { sincronizzaPermessiManuale(null); } catch(e) {}
+    setTimeout(function(){ try { pRenderStorico(); } catch(e) {} }, 1500);
+    setTimeout(function(){ try { sincronizzaFotoDaDrive(null); } catch(e) {} }, 3000);
+  }, 2000);
 }
 
 function disconnettiUtente() {
@@ -4028,10 +4040,12 @@ function switchTab(tabId, btn){
       document.getElementById('foto-targa-avviso').style.display='none';
       const localPhotos = loadFoto(targa);
       const statusEl = document.getElementById('drive-status-editor');
-      if(statusEl) { statusEl.style.display='block'; statusEl.textContent='🔍 Cerco foto per ' + targa + '...'; }
-      // Se non ci sono foto in locale ma c'è Drive connesso, sincronizza automaticamente
-      if(!localPhotos.length && isDriveConnected()){
-        if(statusEl) { statusEl.textContent = '☁️ Cerco foto su Drive…'; statusEl.style.color = '#1a4fa0'; }
+      // Se le foto sono già in locale, mostra direttamente
+      if(localPhotos.length) {
+        if(statusEl) { statusEl.style.display='block'; statusEl.textContent='✅ ' + localPhotos.length + ' foto caricate'; statusEl.style.color='#16a34a'; }
+        renderFotoEditor(targa);
+      } else if(isDriveConnected()){
+        if(statusEl) { statusEl.style.display='block'; statusEl.textContent='☁️ Cerco foto su Drive…'; statusEl.style.color='#1a4fa0'; }
         syncFotoFromDrive(targa, statusEl).then(synced => {
           renderFotoEditor(targa);
           if(synced && statusEl) {
@@ -5554,6 +5568,57 @@ async function autoSyncFotoToDrive(targa, statusElId) {
 // syncFotoFromDrive: usa quella originale con (targa, statusEl)
 
 // Carica TUTTE le foto da Drive e mostra in galleria
+async 
+// Elimina tutta la cartella foto di un'auto da Drive e localStorage
+
+async function eliminaCartellaDalReport() {
+  var targa = (document.getElementById('targa').value||'').trim().toUpperCase();
+  if (!targa) { alert('Nessuna auto selezionata.'); return; }
+  if (!confirm('Eliminare TUTTE le foto di ' + targa + ' da Drive e dall\'app?')) return;
+  
+  try {
+    var token = _driveAccessToken;
+    var rootId = await getOrCreateRootFolder(token);
+    var carFolderId = await getOrCreateCarFolder(token, rootId, targa);
+    
+    var resp = await fetch('https://www.googleapis.com/drive/v3/files/' + carFolderId, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    
+    localStorage.removeItem('ea_foto_' + targa);
+    renderFotoEditor(targa);
+    alert('✅ Foto di ' + targa + ' eliminate.');
+  } catch(e) {
+    alert('❌ Errore: ' + e.message);
+  }
+}
+
+async function eliminaCartellaFoto(folderId, targa, btn) {
+  if (!confirm('Eliminare TUTTE le foto di ' + targa + ' da Drive e dall\'app?')) return;
+  if (btn) { btn.textContent = '⏳...'; btn.disabled = true; }
+  
+  try {
+    var token = _driveAccessToken;
+    // Elimina la cartella da Drive (sposta nel cestino)
+    var resp = await fetch('https://www.googleapis.com/drive/v3/files/' + folderId, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (!resp.ok && resp.status !== 204) throw new Error('Errore eliminazione: ' + resp.status);
+    
+    // Elimina da localStorage
+    localStorage.removeItem('ea_foto_' + targa.toUpperCase());
+    
+    alert('✅ Cartella foto di ' + targa + ' eliminata.');
+    // Ricarica galleria
+    sincronizzaFotoDaDrive(null);
+  } catch(e) {
+    alert('❌ Errore: ' + e.message);
+    if (btn) { btn.textContent = '🗑 Elimina tutto'; btn.disabled = false; }
+  }
+}
+
 async function sincronizzaFotoDaDrive(btn) {
   if (!isDriveConnected()) {
     alert('Connetti Google Drive prima');
@@ -5603,7 +5668,10 @@ async function sincronizzaFotoDaDrive(btn) {
       html += '<div style="background:white;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-bottom:20px;">';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
       html += '<div style="font-size:16px;font-weight:700;color:#1a4fa0;">' + infoAuto + '</div>';
+      html += '<div style="display:flex;align-items:center;gap:10px;">';
       html += '<div style="font-size:12px;color:#999;">' + foto.length + ' foto</div>';
+      html += '<button data-folderid="' + cartella.id + '" data-targa="' + targa + '" onclick="eliminaCartellaFoto(this.dataset.folderid, this.dataset.targa, this)" style="padding:4px 12px;background:none;border:1px solid #ef4444;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;border-radius:4px;">🗑 Elimina tutto</button>';
+      html += '</div>';
       html += '</div>';
       html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
       foto.forEach(function(f) {
