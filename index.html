@@ -2336,11 +2336,28 @@ function compressImage(file, cb){
       var canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      var result = canvas.toDataURL('image/jpeg', quality);
-      // Libera memoria canvas
-      canvas.width = 1; canvas.height = 1;
-      cb(result, file.name);
+      if (!ctx) {
+        // Canvas context non disponibile — usa URL diretto
+        cb(URL.createObjectURL(file), file.name);
+        return;
+      }
+      try {
+        ctx.drawImage(img, 0, 0, w, h);
+        var result = canvas.toDataURL('image/jpeg', quality);
+        // Libera memoria canvas immediatamente
+        ctx.clearRect(0, 0, w, h);
+        canvas.width = 1; canvas.height = 1;
+        canvas = null;
+        cb(result, file.name);
+      } catch(canvasErr) {
+        console.warn('Canvas error, fallback FileReader:', canvasErr);
+        canvas.width = 1; canvas.height = 1;
+        // Fallback: leggi file direttamente
+        var fr2 = new FileReader();
+        fr2.onload = function(e) { cb(e.target.result, file.name); };
+        fr2.onerror = function() { cb(null, file.name); };
+        fr2.readAsDataURL(file);
+      }
     } catch(err) {
       // Fallback diretto: leggi il file originale senza canvas
       var fr = new FileReader();
@@ -2455,9 +2472,20 @@ function handleFotoUpload(files){
         if (w > h) { if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} } else { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
         var canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        var thumb = canvas.toDataURL('image/jpeg', 0.75);
-        canvas.width = 1; canvas.height = 1;
+        var ctx2 = canvas.getContext('2d');
+        var thumb;
+        if (ctx2) {
+          try {
+            ctx2.drawImage(img, 0, 0, w, h);
+            thumb = canvas.toDataURL('image/jpeg', 0.75);
+          } catch(e) {
+            thumb = null;
+          }
+          ctx2.clearRect(0, 0, w, h);
+          canvas.width = 1; canvas.height = 1;
+        }
+        // Se thumbnail fallisce, usa placeholder
+        if (!thumb) thumb = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="%231a4fa0"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="12">📷</text></svg>';
         photos.push({ data: thumb, name: file.name });
         // Upload originale su Drive
         uploadFileDirettoSuDrive(file, targa, statusEl).then(function(ok) {
