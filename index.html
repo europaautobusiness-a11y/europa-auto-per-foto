@@ -2413,7 +2413,7 @@ async function uploadFileDirettoSuDrive(file, targa, statusEl) {
     var result = await uploadResp.json();
     console.log('✅ Foto caricata su Drive:', result.id, file.name);
     if (statusEl) statusEl.textContent = '✅ ' + file.name + ' caricata';
-    return true;
+    return result.id;
   } catch(e) {
     console.error('Errore upload Drive:', e.message);
     if (statusEl) statusEl.textContent = '❌ Errore: ' + e.message;
@@ -2487,8 +2487,11 @@ function handleFotoUpload(files){
         // Se thumbnail fallisce, usa placeholder
         if (!thumb) thumb = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="%231a4fa0"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="12">📷</text></svg>';
         photos.push({ data: thumb, name: file.name });
-        // Upload originale su Drive
-        uploadFileDirettoSuDrive(file, targa, statusEl).then(function(ok) {
+        // Upload su Drive - NON salvare thumbnail in localStorage (evita quota)
+        uploadFileDirettoSuDrive(file, targa, statusEl).then(function(driveId) {
+          if (driveId && typeof driveId === 'string') {
+            photos.push({ data: 'drive:' + driveId, driveFileId: driveId, name: file.name });
+          }
           processNext();
         });
       };
@@ -2528,8 +2531,9 @@ function renderFotoEditor(targa){
   if(shareWrap) shareWrap.style.display = 'block';
   var gridHtml = '<div class="foto-grid">';
   photos.forEach(function(p, i) {
+    var imgSrc = (p.data && !p.data.startsWith('drive:')) ? p.data : (p.driveFileId ? 'https://drive.google.com/thumbnail?id=' + p.driveFileId + '&sz=w400' : '');
     gridHtml += '<div class="foto-item" data-targa="' + targa + '" data-idx="' + i + '">'
-      + '<img src="' + p.data + '" alt="' + (p.name||'') + '">'
+      + '<img src="' + imgSrc + '" alt="' + (p.name||'') + '">'
       + '<button class="foto-del" data-targa="' + targa + '" data-idx="' + i + '">&#10005;</button>'
       + '</div>';
   });
