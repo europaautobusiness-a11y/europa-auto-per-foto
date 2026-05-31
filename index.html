@@ -2301,7 +2301,19 @@ function loadFoto(targa){
 }
 
 function saveFoto(targa,photos){
-  localStorage.setItem(getFotoKey(targa),JSON.stringify(photos));
+  // Salva solo riferimenti Drive — non dati base64 per evitare quota
+  var toSave = photos.map(function(p){
+    return { name: p.name, driveFileId: p.driveFileId||null, data: p.driveFileId ? null : p.data };
+  });
+  try {
+    localStorage.setItem(getFotoKey(targa), JSON.stringify(toSave));
+  } catch(e) {
+    // Quota exceeded: salva solo i driveFileId
+    try {
+      var onlyIds = photos.map(function(p){ return { name: p.name, driveFileId: p.driveFileId||null, data: null }; });
+      localStorage.setItem(getFotoKey(targa), JSON.stringify(onlyIds));
+    } catch(e2) { console.warn('saveFoto: impossibile salvare', e2); }
+  }
   updateFotoBadgeEditor();
   if(targa&&photos.length>0)setTimeout(()=>{if(typeof autoSyncFotoToDrive==='function')autoSyncFotoToDrive(targa,null);},500);
 }
@@ -2457,8 +2469,8 @@ function handleFotoUpload(files){
     }
     var file = validFiles[idx++];
     
-    // Per file >5MB: upload diretto su Drive + thumbnail piccola
-    if (file.size > 5 * 1024 * 1024) {
+    // Tutte le foto: upload su Drive, nessuna in localStorage
+    if (true) {
       var statusEl = document.getElementById('drive-status-editor');
       if (statusEl) { statusEl.style.display='block'; statusEl.textContent='⬆️ Caricamento ' + file.name + ' in corso...'; }
       
