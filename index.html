@@ -7203,11 +7203,85 @@ function tcRenderMese() {
 function tcMesePrec(){var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()-1);_tcMeseCorrente=d.toISOString().substring(0,7);tcRenderMese();}
 function tcMeseSucc(){if(_tcMeseCorrente>=tcGetMese())return;var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()+1);_tcMeseCorrente=d.toISOString().substring(0,7);tcRenderMese();}
 
+
+// ══ CONFIGURAZIONE RETI WIFI AUTORIZZATE ══
+var RETI_AUTORIZZATE = [
+  { nome: 'Sede A — Paderno Dugnano', subnet: '192.168.1.' },
+  // Aggiungi Sede B quando disponibile:
+  // { nome: 'Sede B', subnet: '192.168.X.' },
+];
+
+// Rileva IP locale tramite WebRTC
+function getLocalIP() {
+  return new Promise(function(resolve) {
+    try {
+      var pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.createOffer().then(function(offer) { return pc.setLocalDescription(offer); });
+      var found = false;
+      pc.onicecandidate = function(ice) {
+        if (!ice || !ice.candidate || !ice.candidate.candidate) return;
+        var m = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(ice.candidate.candidate);
+        if (m && !found) {
+          found = true;
+          pc.close();
+          resolve(m[1]);
+        }
+      };
+      setTimeout(function() { if (!found) resolve(null); }, 3000);
+    } catch(e) { resolve(null); }
+  });
+}
+
+// Verifica se l'IP è in una rete autorizzata
+function verificaReteAutorizzata(ip) {
+  if (!ip) return null;
+  for (var i = 0; i < RETI_AUTORIZZATE.length; i++) {
+    if (ip.startsWith(RETI_AUTORIZZATE[i].subnet)) {
+      return RETI_AUTORIZZATE[i].nome;
+    }
+  }
+  return null;
+}
+
 function tcTimbra(tipo) {
-  if(!navigator.geolocation){tcToastNew('❌ GPS non disponibile',false);return;}
   document.querySelectorAll('.tc-btn').forEach(function(b){b.disabled=true;});
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
-  if(ring){ring.className='tc-gps-ring loading';ring.textContent='📡';}
+  if(ring){ring.className='tc-gps-ring loading';ring.textContent='📶';}
+  if(lbl) lbl.textContent='Verifica rete WiFi...';
+
+  // Controlla IP di rete
+  getLocalIP().then(function(ip) {
+    var sede = verificaReteAutorizzata(ip);
+    if (!sede) {
+      document.querySelectorAll('.tc-btn').forEach(function(b){b.disabled=false;});
+      if(ring){ring.className='tc-gps-ring error';ring.textContent='❌';}
+      if(lbl) lbl.textContent='Rete non autorizzata';
+      if(sub) sub.textContent = ip ? 'IP: ' + ip + ' — non sei in sede' : 'Impossibile rilevare la rete';
+      tcToastNew('❌ Non sei connesso alla rete della sede', false);
+      return;
+    }
+    // Rete autorizzata — procedi con timbratura
+    if(ring){ring.className='tc-gps-ring ok';ring.textContent='✅';}
+    if(lbl) lbl.textContent='Rete autorizzata: ' + sede;
+    if(sub) sub.textContent='IP: ' + ip;
+    // Salva timbratura
+    var now = new Date();
+    var entry = {
+      tipo: tipo,
+      ts: now.getTime(),
+      ora: now.toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'}),
+      sede: sede,
+      ip: ip
+    };
+    tcSalvaTimbratura(entry);
+    tcToastNew('✅ ' + tipo + ' registrato — ' + sede, true);
+    setTimeout(function(){
+      document.querySelectorAll('.tc-btn').forEach(function(b){b.disabled=false;});
+      tcRenderTimbrature();
+    }, 1500);
+  });
+
   if(lbl){lbl.className='tc-gps-label loading';lbl.textContent='Ricerca segnale GPS...';}
   if(sub)sub.textContent='Attendi all aperto per un segnale migliore...';
 
