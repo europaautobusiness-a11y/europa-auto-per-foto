@@ -385,29 +385,16 @@ html, body{
     <div style="font-size:32px;font-weight:900;color:white;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;">Europa Auto</div>
     <div style="font-size:12px;color:rgba(255,255,255,.4);letter-spacing:.2em;text-transform:uppercase;margin-bottom:40px;">S.r.l. — Gestionale</div>
     
-    <div style="background:rgba(255,255,255,.06);border-radius:16px;padding:28px;text-align:left;">
-      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.08em;margin-bottom:20px;text-align:center;">Accedi</div>
+    <div style="background:rgba(255,255,255,.06);border-radius:16px;padding:28px;">
+      <div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:24px;">Accedi con il tuo account Google</div>
       
-      <div style="margin-bottom:14px;">
-        <label style="font-size:11px;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px;">Email</label>
-        <input id="login-email-input" type="email" placeholder="tuaemail@gmail.com" 
-          style="width:100%;padding:12px 14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:white;font-size:14px;font-family:inherit;box-sizing:border-box;outline:none;"
-          onkeydown="if(event.key==='Enter')doLogin()">
-      </div>
-      
-      <div style="margin-bottom:24px;">
-        <label style="font-size:11px;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px;">Password</label>
-        <input id="login-pass-input" type="password" placeholder="••••••••"
-          style="width:100%;padding:12px 14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:white;font-size:14px;font-family:inherit;box-sizing:border-box;outline:none;"
-          onkeydown="if(event.key==='Enter')doLogin()">
-      </div>
-      
-      <button onclick="doLogin()" 
-        style="width:100%;padding:14px;background:#1a4fa0;border:none;border-radius:8px;color:white;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;">
-        Entra
+      <button id="welcome-login-btn" onclick="welcomeLogin()"
+        style="width:100%;padding:14px;background:white;border:none;border-radius:8px;color:#333;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;">
+        <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/><path fill="#FF3D00" d="M6.3 14.7l7 5.1C15.1 16.5 19.2 14 24 14c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 16.2 2 9.4 6.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 46c5.5 0 10.6-1.9 14.6-5l-6.7-5.5C29.9 37 27.1 38 24 38c-6 0-11.1-3.9-13.1-9.4l-7 5.4C7.4 41.6 15.1 46 24 46z"/><path fill="#1976D2" d="M43.6 20H24v8.5h11.8c-.8 2.9-2.6 5.4-5 7l6.7 5.5C41.2 37.1 44 31 44 24c0-1.3-.2-2.7-.4-4z"/></svg>
+        Accedi con Google
       </button>
       
-      <div id="login-error" style="display:none;margin-top:12px;padding:10px;background:rgba(231,76,60,.2);border-radius:6px;color:#ff6b6b;font-size:13px;text-align:center;"></div>
+      <div id="welcome-error" style="display:none;margin-top:12px;padding:10px;background:rgba(231,76,60,.2);border-radius:6px;color:#ff6b6b;font-size:13px;"></div>
     </div>
   </div>
 </div>
@@ -3579,18 +3566,16 @@ function disconnettiUtente() {
   _currentUserEmail = null;
   _currentUserRole  = null;
   _driveAccessToken = null;
-  // Mostra login
+  _driveTokenExpiry = 0;
+  var loginDisplay = document.getElementById('login-email-display');
+  if (loginDisplay) loginDisplay.style.display = 'none';
   var ws = document.getElementById('welcome-screen');
   if(ws) { ws.style.display = 'flex'; }
-  document.getElementById('login-email-input').value = '';
-  document.getElementById('login-pass-input').value  = '';
-  document.getElementById('login-error').style.display = 'none';
 }
 
 function initApp() {
-  // Mostra schermata di login
   var ws = document.getElementById('welcome-screen');
-  if(ws) ws.style.display = 'flex';
+  if(ws) { ws.style.display = 'flex'; ws.style.opacity = '1'; }
 }
 
 setTimeout(initApp, 600);
@@ -5147,8 +5132,9 @@ function pForzaAggiornamento(btn) {
     if (!data || !Array.isArray(data)) { alert('Nessun dato da Sheets'); return; }
     // Filtra solo il mese corrente
     var meseAtt = pGetMese();
-    var meseStart = localStorage.getItem('ea_provv_mese_start') || meseAtt;
-    // Carica solo il mese corrente (non i precedenti archiviati)
+    // Salva tutti i dati in cache memoria per pModifica
+    _pRegCache = data;
+    // Salva solo il mese corrente in localStorage
     var soloPresenteMese = data.filter(function(r){ return r.mese === meseAtt; });
     localStorage.setItem('ea_provv3', JSON.stringify(soloPresenteMese));
     pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){}
@@ -5528,7 +5514,10 @@ function _pRenderStoricoConDati(tutti) {
 
 function pRenderReg() {
   var tuttiReg = pLoadReg();
-  _pRegCache = tuttiReg; // salva in memoria per pModifica
+  // Aggiorna cache solo se non è già stata popolata da Sheets (che ha più dati)
+  if (_pRegCache.length === 0 || _pRegCache.length <= tuttiReg.length) {
+    _pRegCache = tuttiReg;
+  }
   var meseCorrente = pGetMese();
   // Prova prima con il mese corrente, se vuoto mostra tutti
   var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; });
