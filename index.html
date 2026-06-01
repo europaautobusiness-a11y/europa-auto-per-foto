@@ -5184,7 +5184,7 @@ function pCalcola() {
   }
 
   // ── NORMALE con finanziamento ────────────────────────────
-  const base    = PS.eta === 'nuova' ? G11 : G11 * 0.75;
+  const base    = PS.eta === 'nuova' ? G11 : G11 * 0.80;
   // Fascia alta (60-120 mesi) ha provvigione leggermente maggiore
   const rateNum = parseInt(PS.rate) || 36;
   const isAltaFascia = rateNum >= 60;
@@ -5854,11 +5854,11 @@ function pRenderReg() {
   var TD = function(s){return '<td style="padding:9px 12px;border-bottom:1px solid #e0e0e0;white-space:nowrap;font-size:12px;">'+s+'</td>';};
   var h = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;">';
   h += '<table style="min-width:540px;width:100%;border-collapse:collapse;"><thead><tr>';
-  h += TH('Data')+TH('Cliente / Auto')+TH('Tipo')+TH('TAN')+TH('Rate')+TH('Finanziaria')+TH('Polizza')+TH('Durata')+TH('Comm. Fin.')+TH('Provvigione')+TH('');
+  h += TH('Data')+TH('Cliente / Auto')+TH('Tipo')+TH('TAN')+TH('Rate')+TH('Finanziaria')+TH('Polizza')+TH('Durata')+TH('CPI')+TH('Comm. Fin.')+TH('Provvigione')+TH('');
   h += '</tr></thead><tbody>';
   reg.forEach(function(r, idx) {
     if (idx === 0 || r.mese !== reg[idx-1].mese) {
-      h += '<tr><td colspan="10" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
+      h += '<tr><td colspan="11" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
     }
     var isFin = r.tipo !== 'noFin';
     var tipoLabel = r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato');
@@ -5874,8 +5874,9 @@ function pRenderReg() {
     var btnD  = '<button onclick="pElimina('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #e74c3c;color:#e74c3c;font-size:11px;cursor:pointer;white-space:nowrap;">&#10005;</button>';
     var polizzaC = (r.fi && r.fi !== 'NO') ? r.fi : '—';
     var durataC = r.fiMesi ? r.fiMesi + ' mesi' : '—';
+    var cpiC = r.cpi && r.cpi !== 'NO' ? '<span style="color:#27ae60;font-weight:700;">✓ ' + r.cpi + '</span>' : '—';
     var commFinC = r.comm ? '<strong style="color:#1a4fa0;">€ ' + parseFloat(r.comm).toFixed(0) + '</strong>' : '—';
-    h += '<tr>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
+    h += '<tr>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(cpiC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
   });
   h += '</tbody></table></div>';
   el.innerHTML = h;
@@ -6259,6 +6260,7 @@ function pulisciPermessiScaduti() {
 
 // ── Estrai targa e intestatario da testo PDF ──────────────────
 function estraiTarga(t) {
+  if (!t || typeof t !== 'string') return null;
   // Cerca tutte le occorrenze di targa italiana nel testo
   // pdf.js spesso separa le parole con spazi multipli o newline
   var patterns = [
@@ -6273,6 +6275,7 @@ function estraiTarga(t) {
   return null;
 }
 function estraiIntestatario(t) {
+  if (!t || typeof t !== 'string') return null;
   var m, nome;
   // PRIORITA': "in favore di NOME COGNOME" — si ferma prima di RESIDENTE/NATO/VIA
   m = t.match(/in favore di\s+((?:[A-Z]+\s+){1,4}[A-Z]+)(?=\s+RESIDENTE|\s+NATO|\s+VIA|\s+\()/i);
@@ -6440,7 +6443,8 @@ async function syncPermessiDaGmail(mostraStatus) {
       var mr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId+'?format=full',
         {headers:{Authorization:'Bearer '+token}});
       var msg=await mr.json();
-      var dh=(msg.payload.headers||[]).find(function(h){return h.name==='Date';});
+      if (!msg || !msg.payload) { console.warn('Messaggio senza payload:', msgId); continue; }
+      var dh=((msg.payload.headers)||[]).find(function(h){return h.name==='Date';});
       var ricevutoMs=dh?new Date(dh.value).getTime():Date.now();
       if ((Date.now()-ricevutoMs)/86400000>=PERMESSI_DAYS) continue;
       function trovaParts(pl){
