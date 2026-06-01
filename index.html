@@ -5116,6 +5116,8 @@ function pCalcola() {
 }
 
 // ── REGISTRO PROVVIGIONI (Google Sheets first) ─────────────────
+var _pRegCache = []; // cache in memoria del registro
+
 function pLoadReg() {
   try {
     var data = JSON.parse(localStorage.getItem('ea_provv3') || '[]');
@@ -5346,7 +5348,10 @@ async function pGsSaveAndReload(entry, currentReg) {
 
 // ── MODIFICA VENDITA ────────────────────────────────────────
 function pModifica(id){
-  const reg=pLoadReg(),r=reg.find(x=>x.id===id);if(!r)return;
+  // Cerca prima nella cache in memoria, poi nel localStorage
+  let r = _pRegCache.find(x => String(x.id) === String(id));
+  if (!r) r = pLoadReg().find(x => String(x.id) === String(id));
+  if(!r) { alert('Dati non trovati. Premi "Aggiorna da Sheets" e riprova.'); return; }
   _pEditingId=id;
   sidebarNav('provv',document.getElementById('si-provv'));
   const sv=(eid,val)=>{const e=document.getElementById(eid);if(e&&val!=null)e.value=val;};
@@ -5523,6 +5528,7 @@ function _pRenderStoricoConDati(tutti) {
 
 function pRenderReg() {
   var tuttiReg = pLoadReg();
+  _pRegCache = tuttiReg; // salva in memoria per pModifica
   var meseCorrente = pGetMese();
   // Prova prima con il mese corrente, se vuoto mostra tutti
   var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; });
@@ -6316,7 +6322,8 @@ async function inviaPermessoEmail(id) {
 // ── Render griglia permessi ────────────────────────────────────
 function renderPermessi() {
   try { pulisciPermessiScaduti(); } catch(e) { console.warn('pulisci error:', e); }
-  var list = loadPermessi();
+  var list;
+  try { list = loadPermessi(); } catch(e) { list = []; console.warn('loadPermessi error:', e); }
   var grid = document.getElementById('permessi-grid');
   if (!grid) {
     console.warn('permessi-grid not found in DOM');
@@ -7513,7 +7520,13 @@ function sidebarNav(view,btn){
     // Sync automatica all'apertura (deduplicazione gestita)
     if(isDriveConnected()) {
       setTimeout(function(){
-        try { sincronizzaPermessiManuale(null); } catch(e) {}
+        try { 
+          renderPermessi(); // Prima renderizza quello che c'è
+          sincronizzaPermessiManuale(null); 
+        } catch(e) { 
+          console.warn('Sync permessini errore:', e);
+          try { renderPermessi(); } catch(e2) {}
+        }
       }, 800);
     }
   }
