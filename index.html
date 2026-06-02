@@ -3591,6 +3591,7 @@ function apriGestioneCredenziali() {
               <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RUOLO</label>
               <select id="cred-ruolo" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;">
                 <option value="dipendente">Dipendente</option>
+                <option value="staff">Staff (vede tutto, tranne admin)</option>
                 <option value="manager">Manager</option>
                 <option value="admin">Admin</option>
               </select>
@@ -3610,8 +3611,8 @@ function apriGestioneCredenziali() {
 function renderCredenzialiLista() {
   var el = document.getElementById('cred-lista');
   if (!el) return;
-  var roleColors = {admin:'#e74c3c', manager:'#e67e22', dipendente:'#27ae60'};
-  var roleLabels = {admin:'Admin', manager:'Manager', dipendente:'Dipendente'};
+  var roleColors = {admin:'#e74c3c', staff:'#0ea5e9', manager:'#e67e22', dipendente:'#27ae60'};
+  var roleLabels = {admin:'Admin', staff:'Staff', manager:'Manager', dipendente:'Dipendente'};
   var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
   html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Password</th><th style="padding:10px;text-align:left;">Ruolo</th><th></th></tr></thead><tbody>';
   UTENTI_APP.forEach(function(u, i) {
@@ -3646,10 +3647,11 @@ function credAggiungi() {
   var ruolo = document.getElementById('cred-ruolo').value;
   var err   = document.getElementById('cred-err');
 
-  if (!nome||!email||!pass) { err.textContent='Tutti i campi sono obbligatori.'; err.style.display='block'; return; }
+  if (!nome||!email) { err.textContent='Nome ed email sono obbligatori.'; err.style.display='block'; return; }
   if (!email.includes('@')) { err.textContent='Email non valida.'; err.style.display='block'; return; }
   if (UTENTI_APP.find(function(u){return u.email===email;})) { err.textContent='Email già presente.'; err.style.display='block'; return; }
   err.style.display='none';
+  if (!pass) pass = '-'; // accesso via Google: password non usata
 
   UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
   salvaUtentiApp();
@@ -6821,12 +6823,14 @@ function setCurrentUser(email) {
   var dip = getDipendenteByEmail(_currentUserEmail);
   if (_currentUserEmail === 'europaautobusiness@gmail.com') {
     _currentUserRole = 'admin';                 // Davide — amministratore
+  } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
+    _currentUserRole = 'staff';                 // Rudy — vede tutto tranne la parte admin
   } else if (dip) {
     _currentUserRole = dip.ruolo;
-  } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
-    _currentUserRole = 'dipendente';            // Rudy — utente normale
   } else {
-    _currentUserRole = 'dipendente'; // default
+    var _u = null;
+    try { _u = UTENTI_APP.find(function(x){ return x.email && x.email.toLowerCase() === _currentUserEmail; }); } catch(e){}
+    _currentUserRole = _u ? _u.ruolo : 'dipendente';
   }
   console.log('User:', _currentUserEmail, 'Role:', _currentUserRole);
   applyRoleUI();
@@ -6846,6 +6850,7 @@ function applyRoleUI() {
   var role = getCurrentRole();
   var ROLE_VIEWS = {
     'admin':      ['editor','ready','archive','provv','foto','permessi','presenze'],
+    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze'],
     'manager':    ['editor','ready','archive','provv','presenze'],
     'dipendente': ['presenze']
   };
@@ -6882,6 +6887,9 @@ function fetchUserEmailAndSetRole(token) {
   }).then(function(r){ return r.json(); }).then(function(info){
     if (info && info.email) {
       setCurrentUser(info.email);
+      var _resolved = eaNomeDaMail(info.email);
+      var _prefix = info.email.split('@')[0];
+      var displayName = (_resolved === _prefix && info.name) ? info.name : _resolved;
       // Carica presenze da Sheets (non i report — per evitare sync automatico)
       setTimeout(function(){
         try { presenzeLoadDaSheets(); } catch(e) {}
@@ -6890,11 +6898,11 @@ function fetchUserEmailAndSetRole(token) {
       var sName = document.getElementById('sidebar-user-name');
       var sRole = document.getElementById('sidebar-user-role');
       if (sInfo) sInfo.style.display = 'block';
-      if (sName) sName.textContent = info.name || info.email.split('@')[0];
+      if (sName) sName.textContent = displayName;
       var sEmail = document.getElementById('sidebar-user-email');
       if (sEmail) sEmail.textContent = info.email;
       if (sRole) {
-        var labels = {admin:'Amministratore', manager:'Manager', dipendente:'Dipendente'};
+        var labels = {admin:'Amministratore', staff:'Staff', manager:'Manager', dipendente:'Dipendente'};
         sRole.textContent = labels[_currentUserRole] || _currentUserRole;
       }
       // Mostra info login sotto il logo
@@ -6903,10 +6911,10 @@ function fetchUserEmailAndSetRole(token) {
       var loginAddr    = document.getElementById('login-email-addr');
       var loginRole    = document.getElementById('login-email-role');
       if (loginDisplay) loginDisplay.style.display = 'block';
-      if (loginName)    loginName.textContent = info.name || info.email.split('@')[0];
+      if (loginName)    loginName.textContent = displayName;
       if (loginAddr)    loginAddr.textContent = info.email;
       if (loginRole) {
-        var roleLabels = {admin:'👑 Amministratore', manager:'📊 Manager', dipendente:'👤 Dipendente'};
+        var roleLabels = {admin:'👑 Amministratore', staff:'🧑‍💼 Staff', manager:'📊 Manager', dipendente:'👤 Dipendente'};
         loginRole.textContent = roleLabels[_currentUserRole] || _currentUserRole;
       }
       // Reinizializza presenze con il ruolo corretto
@@ -7043,9 +7051,18 @@ function tcCalcOre(r) {
   if (r.pausa&&r.rientro) min-=(toMin(r.rientro)-toMin(r.pausa));
   return min>0 ? Math.floor(min/60)+'h '+String(min%60).padStart(2,'0')+'m' : null;
 }
+function eaNomeDaMail(email) {
+  if (!email) return 'Utente';
+  var e = (''+email).toLowerCase().trim();
+  if (e === 'europaautobusiness@gmail.com') return 'Davide';
+  if (e === 'no.reply.europaauto@gmail.com') return 'Rudy';
+  var d = tcLoadDip().find(function(x){ return (x.email||'').toLowerCase() === e; });
+  if (d && d.nome) return d.nome;
+  try { var u = (typeof UTENTI_APP !== 'undefined') ? UTENTI_APP.find(function(x){ return (x.email||'').toLowerCase() === e; }) : null; if (u && u.nome) return u.nome; } catch(_){}
+  return e.split('@')[0];
+}
 function tcGetNome(email) {
-  var d=tcLoadDip().find(function(x){return x.email===email;});
-  return d?d.nome:(email?email.split('@')[0]:'Utente');
+  return eaNomeDaMail(email);
 }
 function tcGetSede(email) {
   var d=tcLoadDip().find(function(x){return x.email===email;});
