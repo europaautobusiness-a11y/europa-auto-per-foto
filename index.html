@@ -7797,5 +7797,486 @@ document.addEventListener('DOMContentLoaded',function(){
   window.addEventListener('resize',function(){if(window.innerWidth>768){var s=document.querySelector('.sidebar');var ov=document.getElementById('sidebarOverlay');if(s)s.classList.remove('mobile-open');if(ov)ov.classList.remove('active');}});
 });
 </script>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  MODULO CALENDARIO COMPITI  (integrato — namespace "cc")       ║
+     ║  Usa: login reale (ccUtente), dipendenti (tcLoadDip),          ║
+     ║  Google Sheets (gsJsonp/gsDelete) sul foglio "Compiti".         ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<script>
+(function(){
+  /* ---- evita doppia iniezione ---- */
+  if (window.__ccInjected) return;
+  window.__ccInjected = true;
+
+  var CC_SHEET = 'Compiti';
+  var CC_KEY   = 'ea_compiti_v1';
+  var ccGiornoSel = null;
+  var ccIntervalOn = false;
+  var MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+
+  /* ===================== CSS (scoped #cc-app) ===================== */
+  var css = ''
+  + '#cc-app{font-family:var(--font,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif);color:#1f2733}'
+  + '#cc-app .cc-sub{font-size:13px;color:#64748b;margin:0 0 14px}'
+  + '#cc-app .cc-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}'
+  + '#cc-app .cc-nav{display:flex;align-items:center;gap:6px}'
+  + '#cc-app .cc-btn{padding:8px 14px;border:1px solid #e4e9f2;background:#fff;border-radius:8px;cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;color:#1f2733}'
+  + '#cc-app .cc-btn:hover{background:#e8f0fc;border-color:#1a4fa0}'
+  + '#cc-app .cc-btn-primary{background:#1a4fa0;color:#fff;border-color:#1a4fa0}'
+  + '#cc-app .cc-btn-primary:hover{background:#143f82}'
+  + '#cc-app .cc-mese{font-size:15px;font-weight:700;color:#1a4fa0;min-width:140px;text-align:center}'
+  + '#cc-app select,#cc-app input[type=text],#cc-app input[type=datetime-local],#cc-app textarea{padding:9px 11px;border:1px solid #e4e9f2;border-radius:8px;font-family:inherit;font-size:14px;background:#fff;color:#1f2733}'
+  + '#cc-app .cc-cal{background:#fff;border:1px solid #e4e9f2;border-radius:12px;overflow:hidden}'
+  + '#cc-app .cc-dow{display:grid;grid-template-columns:repeat(7,1fr);background:#e8f0fc}'
+  + '#cc-app .cc-dow div{padding:8px 4px;text-align:center;font-size:11px;font-weight:700;color:#1a4fa0;text-transform:uppercase;letter-spacing:.03em}'
+  + '#cc-app .cc-grid{display:grid;grid-template-columns:repeat(7,1fr)}'
+  + '#cc-app .cc-cell{min-height:66px;border-right:1px solid #e4e9f2;border-bottom:1px solid #e4e9f2;padding:5px;cursor:pointer;position:relative;display:flex;flex-direction:column;gap:3px}'
+  + '#cc-app .cc-cell:nth-child(7n){border-right:none}'
+  + '#cc-app .cc-cell:hover{background:#f8fafc}'
+  + '#cc-app .cc-cell.cc-empty{background:#fafbfd;cursor:default}'
+  + '#cc-app .cc-cell.cc-today .cc-num{background:#1a4fa0;color:#fff;border-radius:50%}'
+  + '#cc-app .cc-cell.cc-sel{background:#e8f0fc;box-shadow:inset 0 0 0 2px #1a4fa0}'
+  + '#cc-app .cc-num{font-size:13px;font-weight:600;width:24px;height:24px;display:flex;align-items:center;justify-content:center}'
+  + '#cc-app .cc-dots{display:flex;flex-wrap:wrap;gap:3px;margin-top:auto}'
+  + '#cc-app .cc-dot{width:7px;height:7px;border-radius:50%}'
+  + '#cc-app .cc-dot.cc-done{background:#16a34a}#cc-app .cc-dot.cc-todo{background:#0ea5e9}'
+  + '#cc-app .cc-cnt{position:absolute;top:5px;right:6px;font-size:10px;font-weight:700;color:#64748b}'
+  + '#cc-app .cc-panel{background:#fff;border:1px solid #e4e9f2;border-radius:12px;margin-top:16px;padding:16px}'
+  + '#cc-app .cc-dayhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}'
+  + '#cc-app .cc-daydate{font-size:16px;font-weight:700}'
+  + '#cc-app .cc-emptymsg{text-align:center;color:#64748b;padding:18px;font-size:14px}'
+  + '#cc-app .cc-task{display:flex;gap:10px;padding:11px;border:1px solid #e4e9f2;border-radius:10px;margin-bottom:8px;align-items:flex-start}'
+  + '#cc-app .cc-task.cc-done{background:#dcfce7;border-color:#bbf7d0}'
+  + '#cc-app .cc-check{width:22px;height:22px;border:2px solid #e4e9f2;border-radius:6px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#fff;font-size:14px;color:#fff;margin-top:1px}'
+  + '#cc-app .cc-check.cc-on{background:#16a34a;border-color:#16a34a}'
+  + '#cc-app .cc-tbody{flex:1;min-width:0}'
+  + '#cc-app .cc-tt{font-size:14px;font-weight:600;line-height:1.35;word-break:break-word}'
+  + '#cc-app .cc-task.cc-done .cc-tt{text-decoration:line-through;color:#64748b}'
+  + '#cc-app .cc-meta{font-size:11px;color:#64748b;margin-top:3px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}'
+  + '#cc-app .cc-note{font-size:12px;color:#64748b;margin-top:4px;font-style:italic}'
+  + '#cc-app .cc-callink{color:#1a4fa0;font-weight:700;cursor:pointer;text-decoration:underline}'
+  + '#cc-app .cc-del{background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:18px;padding:0 4px;flex-shrink:0}'
+  + '#cc-app .cc-del:hover{color:#dc2626}'
+  + '#cc-app .cc-addbox{margin-top:14px;border-top:1px dashed #e4e9f2;padding-top:14px}'
+  + '#cc-app .cc-addtitle{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}'
+  + '#cc-app .cc-field{margin-bottom:10px}'
+  + '#cc-app .cc-field label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:4px}'
+  + '#cc-app .cc-inputmic{display:flex;gap:8px;align-items:stretch}'
+  + '#cc-app .cc-field input[type=text],#cc-app .cc-field input[type=datetime-local],#cc-app .cc-field textarea,#cc-app .cc-field select{width:100%}'
+  + '#cc-app textarea{resize:vertical;min-height:46px}'
+  + '#cc-app .cc-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}'
+  + '#cc-app .cc-mic{flex-shrink:0;width:46px;border:1px solid #e4e9f2;background:#fff;border-radius:8px;cursor:pointer;font-size:20px;display:flex;align-items:center;justify-content:center}'
+  + '#cc-app .cc-mic:hover{background:#e8f0fc}'
+  + '#cc-app .cc-mic.cc-rec{background:#fee2e2;border-color:#dc2626;animation:ccpulse 1.1s infinite}'
+  + '@keyframes ccpulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}'
+  + '#cc-app .cc-hint{font-size:11px;color:#64748b;margin-top:4px}'
+  + '#cc-app .cc-hint.cc-live{color:#dc2626;font-weight:600}'
+  + '#cc-app .cc-inserito{font-size:12px;color:#64748b;margin-bottom:10px;padding:7px 10px;background:#e8f0fc;border-radius:8px;font-weight:600}'
+  + '.cc-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:#1f2733;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:.3s;z-index:99999}'
+  + '.cc-toast.cc-show{transform:translateX(-50%) translateY(0);opacity:1}';
+  var st = document.createElement('style'); st.id = 'cc-style'; st.textContent = css; document.head.appendChild(st);
+
+  /* ===================== HTML del modulo ===================== */
+  var html = ''
+  + '<div id="cc-app" style="max-width:780px;margin:0 auto;padding:18px 14px">'
+  +   '<div class="cc-sub">Bacheca condivisa: tutti vedono i compiti di tutti — aggiungi al volo, anche a voce</div>'
+  +   '<div class="cc-toolbar">'
+  +     '<div class="cc-nav">'
+  +       '<button class="cc-btn" id="cc-prev">‹</button>'
+  +       '<span class="cc-mese" id="cc-meselbl"></span>'
+  +       '<button class="cc-btn" id="cc-next">›</button>'
+  +     '</div>'
+  +     '<select id="cc-filtro"><option value="">Tutti i dipendenti</option></select>'
+  +     '<button class="cc-btn" id="cc-refresh" title="Aggiorna dal cloud">🔄</button>'
+  +   '</div>'
+  +   '<div class="cc-cal">'
+  +     '<div class="cc-dow"><div>Lun</div><div>Mar</div><div>Mer</div><div>Gio</div><div>Ven</div><div>Sab</div><div>Dom</div></div>'
+  +     '<div class="cc-grid" id="cc-grid"></div>'
+  +   '</div>'
+  +   '<div class="cc-panel" id="cc-daypanel" style="display:none">'
+  +     '<div class="cc-dayhead"><div class="cc-daydate" id="cc-daydate"></div><button class="cc-btn" id="cc-close">Chiudi</button></div>'
+  +     '<div id="cc-list"></div>'
+  +     '<div class="cc-addbox">'
+  +       '<div class="cc-addtitle">➕ Nuovo compito</div>'
+  +       '<div class="cc-field"><label>Compito (scrivi o detta con 🎤)</label>'
+  +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Consegnare materiale al cliente"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
+  +         '<div class="cc-hint" id="cc-hint-titolo">Tocca il microfono e parla.</div>'
+  +       '</div>'
+  +       '<div class="cc-row2">'
+  +         '<div class="cc-field"><label>Assegna a</label><select id="cc-dip"></select></div>'
+  +         '<div class="cc-field"><label>Ora compito (opzionale)</label><input type="text" id="cc-ora" placeholder="Es. 14:30"></div>'
+  +       '</div>'
+  +       '<div class="cc-field"><label>🔔 Ricordamelo (opzionale)</label>'
+  +         '<div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"><button class="cc-mic" id="cc-mic-ricorda" title="Detta data e ora">🎤</button></div>'
+  +         '<div class="cc-hint" id="cc-hint-ricorda">Scrivi, oppure detta: "domani alle 9", "venerdì alle 14:30", "tra 2 ore".</div>'
+  +       '</div>'
+  +       '<div class="cc-field"><label>Nota (opzionale)</label><textarea id="cc-nota" placeholder="Dettagli aggiuntivi…"></textarea></div>'
+  +       '<div class="cc-inserito" id="cc-inserito"></div>'
+  +       '<button class="cc-btn cc-btn-primary" id="cc-salva" style="width:100%">Salva compito</button>'
+  +     '</div>'
+  +   '</div>'
+  + '</div>';
+
+  var pres = document.getElementById('view-presenze');
+  var parent = pres ? pres.parentNode : document.body;
+  var view = document.createElement('div');
+  view.className = 'view'; view.id = 'view-compiti'; view.style.padding = '0';
+  view.innerHTML = html;
+  parent.appendChild(view);
+
+  var toast = document.createElement('div'); toast.className = 'cc-toast'; toast.id = 'cc-toast';
+  document.body.appendChild(toast);
+
+  /* ===================== Voce sidebar ===================== */
+  var fotoBtn = document.getElementById('si-foto');
+  var fotoSec = fotoBtn ? (fotoBtn.closest ? fotoBtn.closest('.sidebar-section') : fotoBtn.parentNode) : null;
+  var sec = document.createElement('div'); sec.className = 'sidebar-section';
+  sec.innerHTML = '<span class="sidebar-section-label">Organizzazione</span>'
+    + '<button class="sidebar-item" id="si-compiti" onclick="sidebarNav(\'compiti\',this)">'
+    + '<span class="si-icon">🗓️</span><span class="si-label"> Compiti</span>'
+    + '<span class="si-badge" id="cc-badge" style="display:none;">0</span></button>';
+  if (fotoSec && fotoSec.parentNode) fotoSec.parentNode.insertBefore(sec, fotoSec.nextSibling);
+  else if (parent) document.querySelector('.sidebar') ? document.querySelector('.sidebar').appendChild(sec) : null;
+
+  /* ===================== Wrap di sidebarNav ===================== */
+  if (typeof sidebarNav === 'function') {
+    var ccOrigNav = sidebarNav;
+    sidebarNav = function(v, btn){
+      var cc = document.getElementById('view-compiti'); if (cc) cc.classList.remove('active');
+      var ccBtn = document.getElementById('si-compiti'); if (ccBtn) ccBtn.classList.remove('active');
+      if (v === 'compiti') {
+        ['editor','ready','archive','provv','foto','permessi','presenze'].forEach(function(x){ var el=document.getElementById('view-'+x); if(el) el.classList.remove('active'); });
+        document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+        if (cc) cc.classList.add('active');
+        var t = document.getElementById('contentTitle'); if (t) t.textContent = 'Calendario Compiti';
+        if (typeof isMobile === 'function' && isMobile() && typeof closeSidebarMobile === 'function') closeSidebarMobile();
+        ccRender();
+        return;
+      }
+      return ccOrigNav.call(this, v, btn);
+    };
+  }
+
+  /* ===================== Utente / dipendenti ===================== */
+  function ccUtente(){
+    var nomeEl = document.getElementById('login-email-name');
+    var nome = (nomeEl && nomeEl.textContent.trim()) || '';
+    var email = (typeof _currentUserEmail !== 'undefined' && _currentUserEmail) ? _currentUserEmail : '';
+    var ruolo = (typeof getCurrentRole === 'function') ? getCurrentRole() : 'dipendente';
+    if (!nome) {
+      var list = (typeof tcLoadDip === 'function') ? tcLoadDip() : [];
+      var d = list.filter(function(x){ return x.email === email; })[0];
+      nome = d ? d.nome : (email || 'Utente');
+    }
+    return { nome:nome, email:email, ruolo:ruolo };
+  }
+  function ccDips(){
+    var list = (typeof tcLoadDip === 'function') ? tcLoadDip() : [];
+    return list.map(function(d){ return { nome:d.nome, email:d.email }; });
+  }
+
+  /* ===================== Storage + sync ===================== */
+  function ccLoad(){ try{ return JSON.parse(localStorage.getItem(CC_KEY)||'[]'); }catch(e){ return []; } }
+  function ccSave(l){ try{ localStorage.setItem(CC_KEY, JSON.stringify(l)); }catch(e){} }
+  function ccSync(c){
+    if (typeof gsJsonp !== 'function') return;
+    gsJsonp({ action:'upsert', sheet:CC_SHEET, record:{
+      id:c.id, data:c.data, titolo:c.titolo, dipendente:c.dipNome, dipEmail:c.dipEmail,
+      ora:c.ora||'', ricorda:c.ricorda||'', nota:c.nota||'', creatoDa:c.creatoDa||'',
+      fatto:c.fatto?'SI':'NO', fattoDa:c.fattoDa||''
+    }});
+  }
+  function ccNormDate(v){
+    if (!v) return v;
+    var s = String(v);
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1]+'-'+m[2]+'-'+m[3];
+    var d = new Date(s); if (!isNaN(d.getTime())) { var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
+    return s;
+  }
+  function ccFetchSheet(){
+    if (typeof GS_URL === 'undefined' || !GS_URL) return;
+    var cb = 'ccCb_' + Date.now();
+    var s = document.createElement('script');
+    window[cb] = function(data){
+      try { delete window[cb]; } catch(e){} if (s.parentNode) s.parentNode.removeChild(s);
+      if (!data || !Array.isArray(data)) return;
+      var locali = ccLoad();
+      var byId = {}; locali.forEach(function(c){ byId[c.id] = c; });
+      data.forEach(function(r){
+        if (!r || !r.id) return;
+        byId[r.id] = {
+          id:r.id, data:ccNormDate(r.data), titolo:r.titolo||'',
+          dipNome:r.dipendente||'', dipEmail:r.dipEmail||'',
+          ora:r.ora||'', ricorda:r.ricorda||'', nota:r.nota||'', creatoDa:r.creatoDa||'',
+          fatto:(r.fatto==='SI'||r.fatto===true||r.fatto==='true'), fattoDa:r.fattoDa||'',
+          avvisato:(byId[r.id]?byId[r.id].avvisato:false)
+        };
+      });
+      var merged = Object.keys(byId).map(function(k){ return byId[k]; });
+      ccSave(merged);
+      ccRenderCal(); if (ccGiornoSel) ccRenderList(); ccUpdateBadge();
+    };
+    s.src = GS_URL + '?sheet=' + CC_SHEET + '&callback=' + cb;
+    s.onerror = function(){ if (s.parentNode) s.parentNode.removeChild(s); };
+    document.head.appendChild(s);
+  }
+
+  /* ===================== Render calendario ===================== */
+  var ccVMese, ccVAnno;
+  function ymd(y,m,d){ return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
+  function ccCompitiGiorno(ds){
+    var f = (document.getElementById('cc-filtro')||{}).value || '';
+    return ccLoad().filter(function(c){ return c.data===ds && (!f || c.dipEmail===f); });
+  }
+  function ccEsc(s){ return String(s||'').replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];}); }
+  function ccFmtRicorda(iso){ try{ return new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return iso; } }
+
+  function ccRenderCal(){
+    var now = new Date();
+    document.getElementById('cc-meselbl').textContent = MESI[ccVMese]+' '+ccVAnno;
+    var primo = new Date(ccVAnno, ccVMese, 1);
+    var offset = (primo.getDay()+6)%7;
+    var giorni = new Date(ccVAnno, ccVMese+1, 0).getDate();
+    var h = '';
+    for (var i=0;i<offset;i++) h += '<div class="cc-cell cc-empty"></div>';
+    for (var d=1; d<=giorni; d++){
+      var ds = ymd(ccVAnno, ccVMese, d);
+      var list = ccCompitiGiorno(ds);
+      var isToday = (d===now.getDate() && ccVMese===now.getMonth() && ccVAnno===now.getFullYear());
+      var isSel = (ds===ccGiornoSel);
+      var dots = list.slice(0,4).map(function(c){ return '<span class="cc-dot '+(c.fatto?'cc-done':'cc-todo')+'"></span>'; }).join('');
+      h += '<div class="cc-cell'+(isToday?' cc-today':'')+(isSel?' cc-sel':'')+'" data-ds="'+ds+'">'
+         + '<span class="cc-num">'+d+'</span>'
+         + (list.length?'<span class="cc-cnt">'+list.length+'</span>':'')
+         + '<div class="cc-dots">'+dots+'</div></div>';
+    }
+    var grid = document.getElementById('cc-grid');
+    grid.innerHTML = h;
+    grid.querySelectorAll('.cc-cell[data-ds]').forEach(function(cell){
+      cell.addEventListener('click', function(){ ccApri(cell.getAttribute('data-ds')); });
+    });
+  }
+
+  function ccApri(ds, noScroll){
+    ccGiornoSel = ds; ccRenderCal();
+    var p = document.getElementById('cc-daypanel'); p.style.display = 'block';
+    var parts = ds.split('-');
+    document.getElementById('cc-daydate').textContent = parseInt(parts[2])+' '+MESI[parseInt(parts[1])-1]+' '+parts[0];
+    ccRenderList();
+    if (!noScroll) p.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+  function ccChiudi(){ document.getElementById('cc-daypanel').style.display='none'; ccGiornoSel=null; ccRenderCal(); }
+
+  function ccRenderList(){
+    var list = ccCompitiGiorno(ccGiornoSel);
+    var el = document.getElementById('cc-list');
+    if (!list.length){ el.innerHTML = '<div class="cc-emptymsg">Nessun compito per questo giorno.</div>'; return; }
+    el.innerHTML = list.map(function(c){
+      return '<div class="cc-task'+(c.fatto?' cc-done':'')+'">'
+        + '<div class="cc-check'+(c.fatto?' cc-on':'')+'" data-id="'+c.id+'" data-act="toggle">'+(c.fatto?'✓':'')+'</div>'
+        + '<div class="cc-tbody">'
+        +   '<div class="cc-tt">'+ccEsc(c.titolo)+'</div>'
+        +   '<div class="cc-meta">'
+        +     '<span>👤 '+ccEsc(c.dipNome)+'</span>'
+        +     (c.ora?'<span>🕐 '+ccEsc(c.ora)+'</span>':'')
+        +     (c.ricorda?'<span>🔔 '+ccEsc(ccFmtRicorda(c.ricorda))+'</span><span class="cc-callink" data-id="'+c.id+'" data-act="ics">📅 avvisami</span>':'')
+        +     (c.creatoDa?'<span>da '+ccEsc(c.creatoDa)+'</span>':'')
+        +     (c.fatto&&c.fattoDa?'<span>✓ '+ccEsc(c.fattoDa)+'</span>':'')
+        +   '</div>'
+        +   (c.nota?'<div class="cc-note">'+ccEsc(c.nota)+'</div>':'')
+        + '</div>'
+        + '<button class="cc-del" data-id="'+c.id+'" data-act="del" title="Elimina">×</button>'
+        + '</div>';
+    }).join('');
+    el.querySelectorAll('[data-act]').forEach(function(node){
+      var act = node.getAttribute('data-act'), id = node.getAttribute('data-id');
+      node.addEventListener('click', function(){
+        if (act==='toggle') ccToggle(id);
+        else if (act==='del') ccElimina(id);
+        else if (act==='ics') ccIcsById(id);
+      });
+    });
+  }
+
+  function ccUpdateBadge(){
+    var b = document.getElementById('cc-badge'); if (!b) return;
+    var now = new Date(); var ds = ymd(now.getFullYear(), now.getMonth(), now.getDate());
+    var n = ccLoad().filter(function(c){ return c.data===ds && !c.fatto; }).length;
+    if (n>0){ b.textContent = n; b.style.display = ''; } else { b.style.display = 'none'; }
+  }
+
+  /* ===================== Aggiungi / completa / elimina ===================== */
+  function ccPopDip(){
+    var dips = ccDips();
+    var optAll = '<option value="">Tutti i dipendenti</option>' + dips.map(function(d){ return '<option value="'+ccEsc(d.email)+'">'+ccEsc(d.nome)+'</option>'; }).join('');
+    document.getElementById('cc-filtro').innerHTML = optAll;
+    document.getElementById('cc-dip').innerHTML = dips.map(function(d){ return '<option value="'+ccEsc(d.email)+'">'+ccEsc(d.nome)+'</option>'; }).join('');
+  }
+  function ccAggiornaUtente(){
+    var u = ccUtente();
+    var lbl = document.getElementById('cc-inserito');
+    if (lbl) lbl.textContent = 'Inserito da: ' + u.nome + (u.ruolo==='admin' ? ' (amministratore)' : '');
+    if (u.ruolo !== 'admin' && u.email){
+      var fd = document.getElementById('cc-dip');
+      if (fd) for (var i=0;i<fd.options.length;i++){ if (fd.options[i].value===u.email){ fd.selectedIndex=i; break; } }
+    }
+  }
+  function ccAggiungi(){
+    var titolo = document.getElementById('cc-titolo').value.trim();
+    if (!titolo){ ccToast('Scrivi o detta un compito'); return; }
+    var dipSel = document.getElementById('cc-dip');
+    if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
+    var u = ccUtente();
+    var ricorda = document.getElementById('cc-ricorda').value;
+    var c = {
+      id: 'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+      data: ccGiornoSel, titolo: titolo,
+      dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
+      ora: document.getElementById('cc-ora').value.trim(),
+      ricorda: ricorda,
+      nota: document.getElementById('cc-nota').value.trim(),
+      creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
+    };
+    var list = ccLoad(); list.push(c); ccSave(list); ccSync(c);
+    if (ricorda) ccPermessoNotifiche();
+    document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value=''; document.getElementById('cc-ricorda').value='';
+    document.getElementById('cc-hint-ricorda').textContent = 'Scrivi, oppure detta: "domani alle 9", "venerdì alle 14:30", "tra 2 ore".';
+    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccToast('Compito salvato');
+    document.getElementById('cc-titolo').focus();
+  }
+  function ccToggle(id){
+    var u = ccUtente(); var list = ccLoad();
+    list.forEach(function(c){ if (c.id===id){ c.fatto=!c.fatto; c.fattoDa=c.fatto?u.nome:''; ccSync(c); } });
+    ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge();
+  }
+  function ccElimina(id){
+    if (!confirm('Eliminare questo compito?')) return;
+    var list = ccLoad().filter(function(c){ return c.id!==id; });
+    ccSave(list);
+    if (typeof gsDelete === 'function') gsDelete(CC_SHEET, id);
+    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccToast('Compito eliminato');
+  }
+
+  /* ===================== Voce (titolo + data/ora) ===================== */
+  var ccRecog=null, ccRecOn=false, ccTrascr='';
+  function ccAvviaVoce(mode){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var btnT=document.getElementById('cc-mic-titolo'), btnR=document.getElementById('cc-mic-ricorda');
+    var hintT=document.getElementById('cc-hint-titolo'), hintR=document.getElementById('cc-hint-ricorda');
+    var hint=(mode==='ricorda')?hintR:hintT, btn=(mode==='ricorda')?btnR:btnT;
+    if (!SR){ hint.textContent='Il tuo browser non supporta la dettatura. Usa Chrome o Safari.'; return; }
+    if (ccRecOn){ ccRecog.stop(); return; }
+    ccTrascr='';
+    ccRecog = new SR(); ccRecog.lang='it-IT'; ccRecog.interimResults=true; ccRecog.continuous=false;
+    ccRecog.onstart = function(){ ccRecOn=true; btn.classList.add('cc-rec'); hint.textContent='🔴 Sto ascoltando…'; hint.classList.add('cc-live'); };
+    ccRecog.onresult = function(e){ var t=''; for(var i=0;i<e.results.length;i++) t+=e.results[i][0].transcript; ccTrascr=t; if(mode==='titolo') document.getElementById('cc-titolo').value=t; else hintR.textContent='Ho sentito: "'+t+'"'; };
+    ccRecog.onerror = function(e){ hint.textContent='Errore microfono: '+e.error+'. Verifica i permessi.'; hint.classList.remove('cc-live'); };
+    ccRecog.onend = function(){
+      ccRecOn=false; btn.classList.remove('cc-rec'); hint.classList.remove('cc-live');
+      if (mode==='ricorda'){
+        var d = ccParseDataOraIT(ccTrascr);
+        if (d){ document.getElementById('cc-ricorda').value = ccToLocalInput(d); hintR.textContent='🔔 Promemoria: '+d.toLocaleString('it-IT',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); ccPermessoNotifiche(); }
+        else hintR.textContent='Non ho capito "'+ccTrascr+'". Prova "domani alle 9" o imposta a mano.';
+      } else { hintT.textContent='Detta di nuovo o scrivi a mano.'; }
+    };
+    try { ccRecog.start(); } catch(e){ hint.textContent='Impossibile avviare il microfono.'; }
+  }
+  function ccToLocalInput(d){ var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+'T'+z(d.getHours())+':'+z(d.getMinutes()); }
+  function ccParseDataOraIT(text){
+    if (!text) return null;
+    var s = ' '+text.toLowerCase().replace(/[.,!?;]/g,' ').replace(/\s+/g,' ')+' ';
+    var now = new Date();
+    var mTra = s.match(/ tra (\d+) (minut|or)/);
+    if (mTra){ var n=+mTra[1], d=new Date(); if(mTra[2]==='minut') d.setMinutes(d.getMinutes()+n); else d.setHours(d.getHours()+n); d.setSeconds(0,0); return d; }
+    s = s.replace(/ e mezz[ao]/g,':30').replace(/ e un quarto/g,':15').replace(/ e tre quarti/g,':45');
+    var nums={'ventiquattro':24,'ventitre':23,'ventitré':23,'ventidue':22,'ventuno':21,'venti':20,'diciannove':19,'diciotto':18,'diciassette':17,'sedici':16,'quindici':15,'quattordici':14,'tredici':13,'dodici':12,'undici':11,'dieci':10,'nove':9,'otto':8,'sette':7,'sei':6,'cinque':5,'quattro':4,'tre':3,'due':2,'uno':1,'una':1};
+    Object.keys(nums).forEach(function(w){ s = s.replace(new RegExp(' '+w+' ','g'), ' '+nums[w]+' '); });
+    var base = new Date(now);
+    if (ccGiornoSel){ var p=ccGiornoSel.split('-'); base=new Date(+p[0],+p[1]-1,+p[2]); }
+    if (/ dopodomani /.test(s)){ base=new Date(now); base.setDate(now.getDate()+2); }
+    else if (/ domani /.test(s)){ base=new Date(now); base.setDate(now.getDate()+1); }
+    else if (/ oggi | stasera | stamattina | stamane /.test(s)){ base=new Date(now); }
+    var gg={'domenica':0,'lunedi':1,'lunedì':1,'martedi':2,'martedì':2,'mercoledi':3,'mercoledì':3,'giovedi':4,'giovedì':4,'venerdi':5,'venerdì':5,'sabato':6};
+    for (var g in gg){ if (s.indexOf(' '+g+' ')>=0){ var add=(gg[g]-now.getDay()+7)%7; if(add===0) add=7; var d2=new Date(now); d2.setDate(now.getDate()+add); base=d2; break; } }
+    var hour=null, min=0;
+    if (/ mezzogiorno /.test(s)) hour=12; else if (/ mezzanotte /.test(s)) hour=0;
+    if (hour===null){ var mt=s.match(/ (?:alle|ore|le) (\d{1,2})[:h ]?(\d{2})?/); if(mt){ hour=+mt[1]; if(mt[2]) min=+mt[2]; } }
+    if (hour===null){ var mt2=s.match(/ (\d{1,2}):(\d{2}) /); if(mt2){ hour=+mt2[1]; min=+mt2[2]; } }
+    if (hour!==null && min===0){ var em=s.match(/:(\d{2})/); if(em) min=+em[1]; }
+    if (hour!==null && hour<12 && /(pomeriggio|sera)/.test(s)) hour+=12;
+    if (hour!==null && hour===12 && /(mattina|mattino)/.test(s)) hour=0;
+    if (hour===null) hour=9;
+    base.setHours(hour, min, 0, 0);
+    return base;
+  }
+
+  /* ===================== Promemoria / notifiche ===================== */
+  function ccPermessoNotifiche(){ try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission(); }catch(e){} }
+  function ccAvvisa(c){
+    var msg = c.titolo + ' — ' + c.dipNome;
+    try{ if('Notification' in window && Notification.permission==='granted'){ new Notification('🔔 Promemoria compito',{body:msg}); return; } }catch(e){}
+    ccToast('🔔 '+msg);
+  }
+  function ccControllaPromemoria(){
+    var now=Date.now(), list=ccLoad(), cambiato=false;
+    list.forEach(function(c){
+      if (c.ricorda && !c.avvisato && !c.fatto){
+        var t=new Date(c.ricorda).getTime();
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); c.avvisato=true; cambiato=true; }
+      }
+    });
+    if (cambiato) ccSave(list);
+  }
+
+  /* ===================== Calendario dispositivo (.ics) ===================== */
+  function ccEscICS(t){ return String(t||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n'); }
+  function ccIcsById(id){ var c=ccLoad().filter(function(x){return x.id===id;})[0]; if(c) ccScaricaICS(c); }
+  function ccScaricaICS(c){
+    if (!c.ricorda){ ccToast('Imposta prima un promemoria'); return; }
+    var dt=new Date(c.ricorda), z=function(n){return String(n).padStart(2,'0');};
+    var f=function(d){ return d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'T'+z(d.getHours())+z(d.getMinutes())+'00'; };
+    var end=new Date(dt.getTime()+30*60000);
+    var ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//EuropaAuto//Compiti//IT','BEGIN:VEVENT','UID:'+c.id+'@compiti','DTSTART:'+f(dt),'DTEND:'+f(end),'SUMMARY:'+ccEscICS('Compito: '+c.titolo+' ('+c.dipNome+')'),'DESCRIPTION:'+ccEscICS(c.nota||''),'BEGIN:VALARM','TRIGGER:PT0M','ACTION:DISPLAY','DESCRIPTION:'+ccEscICS(c.titolo),'END:VALARM','END:VEVENT','END:VCALENDAR'].join('\r\n');
+    var blob=new Blob([ics],{type:'text/calendar'}), url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='promemoria.ics'; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); try{document.body.removeChild(a);}catch(e){} },600);
+  }
+
+  function ccToast(m){ var t=document.getElementById('cc-toast'); t.textContent=m; t.classList.add('cc-show'); setTimeout(function(){ t.classList.remove('cc-show'); },2200); }
+
+  /* ===================== Render principale (all'apertura) ===================== */
+  function ccRender(){
+    var now = new Date();
+    if (typeof ccVMese === 'undefined' || ccVMese===null){ ccVMese=now.getMonth(); ccVAnno=now.getFullYear(); }
+    ccPopDip(); ccAggiornaUtente();
+    ccRenderCal();
+    ccApri(ymd(now.getFullYear(), now.getMonth(), now.getDate()), true);
+    ccUpdateBadge();
+    ccFetchSheet(); // sincronizza dal cloud
+  }
+  window.ccRender = ccRender;        // usato dal wrapper di sidebarNav
+  window.ccUpdateBadge = ccUpdateBadge;
+
+  /* ===================== Listener fissi ===================== */
+  document.getElementById('cc-prev').addEventListener('click', function(){ ccVMese--; if(ccVMese<0){ccVMese=11;ccVAnno--;} ccGiornoSel=null; ccChiudi(); ccRenderCal(); });
+  document.getElementById('cc-next').addEventListener('click', function(){ ccVMese++; if(ccVMese>11){ccVMese=0;ccVAnno++;} ccGiornoSel=null; ccChiudi(); ccRenderCal(); });
+  document.getElementById('cc-filtro').addEventListener('change', function(){ ccRenderCal(); if(ccGiornoSel) ccRenderList(); });
+  document.getElementById('cc-refresh').addEventListener('click', function(){ ccFetchSheet(); ccToast('Aggiornamento…'); });
+  document.getElementById('cc-close').addEventListener('click', ccChiudi);
+  document.getElementById('cc-salva').addEventListener('click', ccAggiungi);
+  document.getElementById('cc-mic-titolo').addEventListener('click', function(){ ccAvviaVoce('titolo'); });
+  document.getElementById('cc-mic-ricorda').addEventListener('click', function(){ ccAvviaVoce('ricorda'); });
+  document.getElementById('cc-titolo').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); ccAggiungi(); } });
+
+  /* avvio: mese corrente + promemoria + badge */
+  ccVMese = (new Date()).getMonth(); ccVAnno = (new Date()).getFullYear();
+  if (!ccIntervalOn){ ccControllaPromemoria(); setInterval(ccControllaPromemoria, 30000); ccIntervalOn = true; }
+  // badge iniziale (dopo eventuale login)
+  setTimeout(function(){ try{ ccUpdateBadge(); }catch(e){} }, 1500);
+})();
+</script>
+
 </body>
 </html>
