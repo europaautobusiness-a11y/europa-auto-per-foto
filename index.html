@@ -3474,8 +3474,9 @@ async function welcomeLogin() {
 // ══════════════════════════════════════════════════════════════
 
 var UTENTI_APP_DEFAULT = [
-  { email:'no.reply.europaauto@gmail.com', password:'Michele300564!', nome:'Michele', ruolo:'admin' },
-  { email:'bassodavide114@gmail.com',       password:'Davide123',      nome:'Davide Basso', ruolo:'dipendente' }
+  { email:'europaautobusiness@gmail.com', password:'', nome:'Davide', ruolo:'admin' },
+  { email:'no.reply.europaauto@gmail.com', password:'', nome:'Rudy', ruolo:'dipendente' },
+  { email:'bassodavide114@gmail.com',       password:'',      nome:'Davide Basso', ruolo:'dipendente' }
 ];
 var UTENTI_APP = (function(){
   try {
@@ -3752,6 +3753,8 @@ setTimeout(initApp, 600);
 
 const GDRIVE_CLIENT_ID = '776430136931-pgjrq8jf2c0rkqqt6hco1s6g5qi5cr96.apps.googleusercontent.com';
 const GDRIVE_SCOPES = [
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/gmail.send',
@@ -6816,12 +6819,12 @@ function setCurrentUser(email) {
   _currentUserEmail = (email||'').toLowerCase().trim();
   // Prima cerca tra i dipendenti registrati
   var dip = getDipendenteByEmail(_currentUserEmail);
-  if (dip) {
+  if (_currentUserEmail === 'europaautobusiness@gmail.com') {
+    _currentUserRole = 'admin';                 // Davide — amministratore
+  } else if (dip) {
     _currentUserRole = dip.ruolo;
   } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
-    _currentUserRole = 'admin';
-  } else if (_currentUserEmail === 'bassodavide114@gmail.com') {
-    _currentUserRole = 'dipendente';
+    _currentUserRole = 'dipendente';            // Rudy — utente normale
   } else {
     _currentUserRole = 'dipendente'; // default
   }
@@ -6852,6 +6855,9 @@ function applyRoleUI() {
     var btn = document.getElementById('si-' + v);
     if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
+
+  var btnCred = document.getElementById('btn-credenziali');
+  if (btnCred) btnCred.style.display = (role === 'admin') ? 'block' : 'none';
 
   var activeEl = document.querySelector('.view.active');
   if (activeEl) {
@@ -7899,6 +7905,8 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div id="cc-list"></div>'
   +     '<div class="cc-addbox">'
   +       '<div class="cc-addtitle">➕ Nuovo compito</div>'
+  +       '<button class="cc-btn cc-btn-primary" id="cc-mic-tutto" style="width:100%;margin-bottom:6px">🎤 Detta tutto in un colpo</button>'
+  +       '<div class="cc-hint" id="cc-hint-tutto" style="margin-bottom:12px">Premi e parla, es: "ordina i guanti domani alle 9 per Davide". Poi controlla e premi Salva.</div>'
   +       '<div class="cc-field"><label>Compito (scrivi o detta con 🎤)</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Consegnare materiale al cliente"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
   +         '<div class="cc-hint" id="cc-hint-titolo">Tocca il microfono e parla.</div>'
@@ -8163,15 +8171,15 @@ document.addEventListener('DOMContentLoaded',function(){
   var ccRecog=null, ccRecOn=false, ccTrascr='';
   function ccAvviaVoce(mode){
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    var btnT=document.getElementById('cc-mic-titolo'), btnR=document.getElementById('cc-mic-ricorda');
-    var hintT=document.getElementById('cc-hint-titolo'), hintR=document.getElementById('cc-hint-ricorda');
-    var hint=(mode==='ricorda')?hintR:hintT, btn=(mode==='ricorda')?btnR:btnT;
+    var btnT=document.getElementById('cc-mic-titolo'), btnR=document.getElementById('cc-mic-ricorda'), btnX=document.getElementById('cc-mic-tutto');
+    var hintT=document.getElementById('cc-hint-titolo'), hintR=document.getElementById('cc-hint-ricorda'), hintX=document.getElementById('cc-hint-tutto');
+    var hint=(mode==='ricorda')?hintR:(mode==='tutto'?hintX:hintT), btn=(mode==='ricorda')?btnR:(mode==='tutto'?btnX:btnT);
     if (!SR){ hint.textContent='Il tuo browser non supporta la dettatura. Usa Chrome o Safari.'; return; }
     if (ccRecOn){ ccRecog.stop(); return; }
     ccTrascr='';
     ccRecog = new SR(); ccRecog.lang='it-IT'; ccRecog.interimResults=true; ccRecog.continuous=false;
     ccRecog.onstart = function(){ ccRecOn=true; btn.classList.add('cc-rec'); hint.textContent='🔴 Sto ascoltando…'; hint.classList.add('cc-live'); };
-    ccRecog.onresult = function(e){ var t=''; for(var i=0;i<e.results.length;i++) t+=e.results[i][0].transcript; ccTrascr=t; if(mode==='titolo') document.getElementById('cc-titolo').value=t; else hintR.textContent='Ho sentito: "'+t+'"'; };
+    ccRecog.onresult = function(e){ var t=''; for(var i=0;i<e.results.length;i++) t+=e.results[i][0].transcript; ccTrascr=t; if(mode==='titolo') document.getElementById('cc-titolo').value=t; else if(mode==='ricorda') hintR.textContent='Ho sentito: "'+t+'"'; else hintX.textContent='Ho sentito: "'+t+'"'; };
     ccRecog.onerror = function(e){ hint.textContent='Errore microfono: '+e.error+'. Verifica i permessi.'; hint.classList.remove('cc-live'); };
     ccRecog.onend = function(){
       ccRecOn=false; btn.classList.remove('cc-rec'); hint.classList.remove('cc-live');
@@ -8179,6 +8187,15 @@ document.addEventListener('DOMContentLoaded',function(){
         var d = ccParseDataOraIT(ccTrascr);
         if (d){ document.getElementById('cc-ricorda').value = ccToLocalInput(d); hintR.textContent='🔔 Promemoria: '+d.toLocaleString('it-IT',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); ccPermessoNotifiche(); }
         else hintR.textContent='Non ho capito "'+ccTrascr+'". Prova "domani alle 9" o imposta a mano.';
+      } else if (mode==='tutto'){
+        if (!ccTrascr){ hintX.textContent='Non ho sentito nulla. Riprova.'; return; }
+        var r = ccParseTutto(ccTrascr);
+        document.getElementById('cc-titolo').value = r.titolo || ccTrascr;
+        var sum = 'Capito: "'+(r.titolo||ccTrascr)+'"';
+        if (r.ricorda){ document.getElementById('cc-ricorda').value = ccToLocalInput(r.ricorda); document.getElementById('cc-hint-ricorda').textContent='🔔 '+r.ricorda.toLocaleString('it-IT',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); ccPermessoNotifiche(); sum += ' • 🔔 '+r.ricorda.toLocaleString('it-IT',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+        else { document.getElementById('cc-ricorda').value=''; sum += ' • nessun promemoria'; }
+        if (r.dipEmail){ var fd=document.getElementById('cc-dip'); for(var k=0;k<fd.options.length;k++){ if(fd.options[k].value===r.dipEmail){ fd.selectedIndex=k; sum += ' • 👤 '+fd.options[k].text; break; } } }
+        hintX.textContent = sum + ' — controlla e premi Salva.';
       } else { hintT.textContent='Detta di nuovo o scrivi a mano.'; }
     };
     try { ccRecog.start(); } catch(e){ hint.textContent='Impossibile avviare il microfono.'; }
@@ -8210,6 +8227,42 @@ document.addEventListener('DOMContentLoaded',function(){
     if (hour===null) hour=9;
     base.setHours(hour, min, 0, 0);
     return base;
+  }
+
+  /* Interpreta UNA frase unica -> {titolo, ricorda(Date|null), dipEmail} */
+  function ccHasTempo(text){
+    return /(\bdomani\b|\bdopodomani\b|\boggi\b|\bstasera\b|\bstamattina\b|\bstamane\b|\bmezzogiorno\b|\bmezzanotte\b|luned|marted|mercoled|gioved|venerd|\bsabato\b|\bdomenica\b|\btra\s+\d+\s+(?:minut|or)|\balle\b|\bore\s+\d|\b\d{1,2}[:.]\d{2}\b)/i.test(text);
+  }
+  function ccParseTutto(text){
+    var orig = (text||'').trim();
+    var ric = ccHasTempo(orig) ? ccParseDataOraIT(orig) : null;
+    function escRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+    var email='', nomeMatch=null, dips=ccDips();
+    for (var i=0;i<dips.length;i++){
+      var full=dips[i].nome, first=(full.split(' ')[0]||full);
+      var reFull=new RegExp('\\b(?:per|a|ad|al|alla|allo)\\s+'+escRe(full)+'\\b','i');
+      var reFirst=new RegExp('\\b(?:per|a|ad|al|alla|allo)\\s+'+escRe(first)+'\\b','i');
+      if (reFull.test(orig)){ email=dips[i].email; nomeMatch=reFull; break; }
+      if (reFirst.test(orig)){ email=dips[i].email; nomeMatch=reFirst; break; }
+    }
+    var t=' '+orig+' ';
+    if (nomeMatch) t=t.replace(nomeMatch,' ');
+    t=t.replace(/^\s*(ricordami(?:\s+di|\s+che\s+devo)?|ricordati(?:\s+di)?|ricorda(?:\s+di)?|promemoria|segnati|segna|appuntati|appunta|nota|devo)\b[:,]?\s*/i,' ');
+    var hourWords='ventiquattro|ventitre|ventitré|ventidue|ventuno|venti|diciannove|diciotto|diciassette|sedici|quindici|quattordici|tredici|dodici|undici|dieci|nove|otto|sette|sei|cinque|quattro|tre|due|uno|una';
+    t=t.replace(/\btra\s+\d+\s+(?:minut\w*|or\w*)\b/ig,' ');
+    t=t.replace(/\b(?:dopodomani|domani|oggi|stasera|stamattina|stamane)\b/ig,' ');
+    t=t.replace(/(?:^|\s)(?:luned[iì]|marted[iì]|mercoled[iì]|gioved[iì]|venerd[iì]|sabato|domenica)(?=\s|$)/ig,' ');
+    t=t.replace(new RegExp('\\b(?:alle|ore|le)\\s+(?:'+hourWords+')\\b','ig'),' ');
+    t=t.replace(/\b(?:alle|ore|le)\s*\d{1,2}(?:[:.h]\d{2})?\b/ig,' ');
+    t=t.replace(/\b\d{1,2}[:.]\d{2}\b/g,' ');
+    t=t.replace(/\b(?:e\s+mezza|e\s+mezzo|e\s+un\s+quarto|e\s+tre\s+quarti)\b/ig,' ');
+    t=t.replace(/\b(?:di\s+mattina|di\s+pomeriggio|di\s+sera|del\s+mattino|del\s+pomeriggio|della\s+sera|mezzogiorno|mezzanotte)\b/ig,' ');
+    t=t.replace(/\b(?:alle|ore)\b/ig,' ');
+    t=t.replace(/\s+/g,' ').trim();
+    t=t.replace(/^(?:di|che|a|per|il|lo|la|le|i|gli)\s+/i,'');
+    t=t.replace(/^[\s,;:.]+/,'').replace(/[\s,;:.]+$/,'');
+    if (t) t=t.charAt(0).toUpperCase()+t.slice(1);
+    return { titolo:t, ricorda:ric, dipEmail:email };
   }
 
   /* ===================== Promemoria / notifiche ===================== */
@@ -8268,6 +8321,7 @@ document.addEventListener('DOMContentLoaded',function(){
   document.getElementById('cc-salva').addEventListener('click', ccAggiungi);
   document.getElementById('cc-mic-titolo').addEventListener('click', function(){ ccAvviaVoce('titolo'); });
   document.getElementById('cc-mic-ricorda').addEventListener('click', function(){ ccAvviaVoce('ricorda'); });
+  document.getElementById('cc-mic-tutto').addEventListener('click', function(){ ccAvviaVoce('tutto'); });
   document.getElementById('cc-titolo').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); ccAggiungi(); } });
 
   /* avvio: mese corrente + promemoria + badge */
