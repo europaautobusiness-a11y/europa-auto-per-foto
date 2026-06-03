@@ -48,6 +48,7 @@ input,select,textarea,button{font-family:var(--font);}
 .content-header-sub{color:rgba(255,255,255,.55);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-top:2px;}
 .content-header-right{display:flex;align-items:center;gap:10px;}
 .view{display:none !important;max-width:1060px;margin:0 auto;padding:22px 16px;}
+@media (min-width:769px){#view-provv{max-width:1360px;}}
 .view.active{display:block !important;}
 .archive-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
 .archive-title{font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;}
@@ -916,7 +917,7 @@ html, body{
 
         <div style="margin-bottom:14px;">
           <label class="lbl">Commissioni Finanziarie (€) *</label>
-          <input type="number" id="pComm" class="inp" placeholder="es. 500" oninput="pCalcola()" min="0">
+          <input type="number" id="pComm" class="inp" placeholder="min. 300" oninput="pCalcola()" min="300" step="1">
         </div>
 
         <div style="margin-bottom:14px;">
@@ -5337,6 +5338,13 @@ function pSalva() {
   const comm = parseFloat(document.getElementById('pComm')?.value) || 0;
   const tan  = parseFloat(document.getElementById('pTan')?.value) || 0;
 
+  // Commissione finanziaria minima: 300 € (se inserita)
+  if (comm > 0 && comm < 300) {
+    alert('⚠ La commissione finanziaria non può essere inferiore a 300 €.\nInserisci almeno 300 € (oppure lasciala vuota se non prevista).');
+    const _cf=document.getElementById('pComm'); if(_cf){ _cf.focus(); }
+    return;
+  }
+
   // Calcola provvigione selezionata
   let provvSelezionata = 0;
   let finanziaria = '';
@@ -6263,23 +6271,119 @@ function estraiIntestatario(t) {
   return 'Sconosciuto';
 }
 
-// Legge la scadenza/data revisione dal testo del PDF
-function estraiScadenzaRevisione(t) {
+// Legge la DATA in cui è stata fatta la revisione dal testo del PDF
+function estraiDataRevisione(t) {
   if (!t || typeof t !== 'string') return null;
   var s = t.replace(/\s+/g,' ');
   // data nei formati gg/mm/aaaa, gg-mm-aaaa, gg.mm.aaaa oppure mm/aaaa
   var d = '(\\d{1,2}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4}|\\d{1,2}[\\/.\\-]\\d{4})';
   var m;
-  // "revisione ... <data>" (scaduta il / valida fino al / del / scadenza)
   m = s.match(new RegExp('revision\\w*[^0-9]{0,40}' + d, 'i'));
   if (m) return m[1];
-  // "scadenza revisione: <data>"
   m = s.match(new RegExp('scadenz\\w*[^0-9]{0,20}revision\\w*[^0-9]{0,20}' + d, 'i'));
   if (m) return m[1];
-  // "<data> ... revisione"
   m = s.match(new RegExp(d + '[^0-9]{0,30}revision', 'i'));
   if (m) return m[1];
   return null;
+}
+
+// Converte una data testuale italiana in oggetto Date
+function _parseDataIT(str) {
+  if (!str) return null;
+  var m = String(str).trim().match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+  if (m) {
+    var g=+m[1], me=+m[2], a=+m[3];
+    if (a<100) a += 2000;
+    if (me<1||me>12||g<1||g>31) return null;
+    var dt=new Date(a, me-1, g);
+    return isNaN(dt.getTime())?null:dt;
+  }
+  m = String(str).trim().match(/^(\d{1,2})[\/.\-](\d{4})$/); // solo mese/anno
+  if (m) {
+    var me2=+m[1], a2=+m[2];
+    if (me2<1||me2>12) return null;
+    var dt2=new Date(a2, me2-1, 1);
+    return isNaN(dt2.getTime())?null:dt2;
+  }
+  return null;
+}
+function _formatDataIT(dt) {
+  if (!dt) return null;
+  return String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0')+'/'+dt.getFullYear();
+}
+
+// Legge l'immatricolazione dal testo del PDF: data completa se c'è, altrimenti solo anno
+function estraiImmatricolazione(t) {
+  if (!t || typeof t !== 'string') return { data:null, anno:null };
+  var s = t.replace(/\s+/g,' ');
+  var d = '(\\d{1,2}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4})';
+  var m = s.match(new RegExp('immatricol\\w*[^0-9]{0,40}' + d, 'i'));
+  if (m) return { data:m[1], anno:null };
+  m = s.match(/immatricol\w*[^0-9]{0,40}((?:19|20)\d{2})/i);
+  if (m) return { data:null, anno:m[1] };
+  m = s.match(/anno[^0-9]{0,20}((?:19|20)\d{2})/i);
+  if (m) return { data:null, anno:m[1] };
+  return { data:null, anno:null };
+}
+
+// Dal testo del PDF: calcola scadenza revisione. Salva e restituisce.
+// - se trova la data revisione fatta -> scadenza = +2 anni (verificata)
+// - altrimenti prova l'immatricolazione -> prima revisione = +4 anni (DA VERIFICARE, mese spesso assente)
+// - se non trova nulla -> DA VERIFICARE senza data
+function computeRevisione(testo, targa) {
+  var raw = estraiDataRevisione(testo);
+  var dDone = _parseDataIT(raw);
+  if (dDone) {
+    var done = _formatDataIT(dDone);
+    var scad = new Date(dDone.getFullYear()+2, dDone.getMonth(), dDone.getDate());
+    var scadStr = _formatDataIT(scad);
+    if (targa && scadStr) { try { salvaRevisione(targa, done, scadStr, 'verificata', ''); } catch(e){} }
+    return { dataRevisione: done, scadenzaRevisione: scadStr, daVerificare:false, revNota:'' };
+  }
+  // Nessuna revisione trovata: stima sulla prima revisione (4 anni dall'immatricolazione)
+  var imm = estraiImmatricolazione(testo);
+  if (imm.data) {
+    var di = _parseDataIT(imm.data);
+    var scadStr2 = di ? _formatDataIT(new Date(di.getFullYear()+4, di.getMonth(), di.getDate())) : null;
+    var nota2 = 'Mai revisionata. Prima revisione: 4 anni dall\u2019immatricolazione (' + imm.data + '). Stima da verificare.';
+    if (targa && scadStr2) { try { salvaRevisione(targa, 'imm. '+imm.data, scadStr2, 'da_verificare', nota2); } catch(e){} }
+    return { dataRevisione:'imm. '+imm.data, scadenzaRevisione: scadStr2, daVerificare:true, revNota: nota2 };
+  }
+  if (imm.anno) {
+    var annoScad = (parseInt(imm.anno,10)+4);
+    var scadStr3 = 'entro il ' + annoScad;
+    var nota3 = 'Mai revisionata. Immatricolazione ' + imm.anno + ': prima revisione entro il ' + annoScad + '. Il mese non è indicato sul permesso — verifica manualmente.';
+    if (targa) { try { salvaRevisione(targa, 'imm. '+imm.anno, scadStr3, 'da_verificare', nota3); } catch(e){} }
+    return { dataRevisione:'imm. '+imm.anno, scadenzaRevisione: scadStr3, daVerificare:true, revNota: nota3 };
+  }
+  // Niente data né immatricolazione: segnala comunque all'operatore
+  return { dataRevisione:null, scadenzaRevisione:null, daVerificare:true, revNota:'Nessuna data di revisione o immatricolazione trovata. Controlla manualmente la scadenza.' };
+}
+
+// ── Archivio scadenze revisione (persistente: localStorage + Google Sheets) ──
+var REVISIONI_KEY   = 'ea_revisioni_v1';
+var REVISIONI_SHEET = 'Revisioni';
+function loadRevisioni() { try { return JSON.parse(localStorage.getItem(REVISIONI_KEY)||'[]'); } catch(e) { return []; } }
+function saveRevisioniLocal(l) { try { localStorage.setItem(REVISIONI_KEY, JSON.stringify(l)); } catch(e){} }
+function salvaRevisione(targa, dataRev, scadenza, stato, nota) {
+  targa=(targa||'').toUpperCase().trim();
+  if (!targa || targa==='SCONOSCIUTA' || !scadenza) return;
+  stato = stato || 'verificata';
+  var l=loadRevisioni();
+  var i=l.findIndex(function(r){ return (r.targa||'').toUpperCase()===targa; });
+  var rec={ id:'rev_'+targa, targa:targa, dataRevisione:dataRev||'', scadenzaRevisione:scadenza, stato:stato, nota:nota||'' };
+  if (i>=0) {
+    var prev=l[i];
+    // una revisione VERIFICATA (data reale) ha sempre priorità su una stima
+    if (prev.stato==='verificata' && stato!=='verificata') return;
+    if (prev.stato==='verificata' && stato==='verificata') {
+      var oldD=_parseDataIT(prev.scadenzaRevisione), newD=_parseDataIT(scadenza);
+      if (!(newD && (!oldD || newD>oldD))) return;
+    }
+    l[i]=rec;
+  } else l.push(rec);
+  saveRevisioniLocal(l);
+  if (typeof GS_URL!=='undefined' && GS_URL) { try { gsJsonp({action:'upsert', sheet:REVISIONI_SHEET, record:rec}); } catch(e){} }
 }
 
 // ── Leggi testo da PDF (pdf.js) ───────────────────────────────
@@ -6397,10 +6501,11 @@ async function syncPermessiDaDrive(statusEl) {
       var giornoDrive=new Date(ricevutoMs).toISOString().split('T')[0];
       var targheDrive=new Set(esistenti.map(function(p){return p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:'');}));
       if (targheDrive.has(targa+'_'+giornoDrive)) { console.log('Duplicato targa+data Drive skip:',targa); continue; }
+      var _revD=computeRevisione(testo, targa);
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
         targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:null,
-        scadenzaRevisione:estraiScadenzaRevisione(testo),
+        dataRevisione:_revD.dataRevisione, scadenzaRevisione:_revD.scadenzaRevisione, revDaVerificare:_revD.daVerificare, revNota:_revD.revNota,
         ricevutoMs:ricevutoMs,
         ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
         scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -6482,10 +6587,11 @@ async function syncPermessiDaGmail(mostraStatus) {
         var chiaveTarga = targa + '_' + giornoRicevuto;
         var targheDuplicati = new Set(esistenti.map(function(p){ return p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:''); }));
         if (!fileNames.has(part.filename) && !targheDuplicati.has(chiaveTarga)) {
+          var _revG=computeRevisione(testo, targa);
           esistenti.push({
             id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
             targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null,
-            scadenzaRevisione:estraiScadenzaRevisione(testo),
+            dataRevisione:_revG.dataRevisione, scadenzaRevisione:_revG.scadenzaRevisione, revDaVerificare:_revG.daVerificare, revNota:_revG.revNota,
             ricevutoMs:ricevutoMs,
             ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
             scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -6685,8 +6791,19 @@ function renderPermessi() {
     html+='<span>&#128197; Ricevuto: <strong>'+p.ricevutoLabel+'</strong></span>';
     html+='<span style="color:'+(urgente?'#e74c3c':'#27ae60')+';">Scade: <strong>'+p.scadeLabel+'</strong></span>';
     html+='</div>';
-    if(p.scadenzaRevisione){
-      html+='<div style="margin-top:4px;color:#1a4fa0;">&#128295; Scadenza revisione: <strong>'+p.scadenzaRevisione+'</strong></div>';
+    if(p.revDaVerificare){
+      html+='<div style="margin-top:6px;padding:6px 9px;border-radius:4px;background:#fff8e1;border-left:3px solid #f39c12;color:#92400e;">';
+      html+='&#9888;&#65039; <strong>Revisione DA VERIFICARE</strong>';
+      if(p.scadenzaRevisione) html+=' &middot; scadenza stimata: <strong>'+p.scadenzaRevisione+'</strong>';
+      html+='<div style="font-size:11px;margin-top:2px;line-height:1.4;">'+(p.revNota||'Controlla manualmente la scadenza.')+'</div>';
+      html+='</div>';
+    } else if(p.scadenzaRevisione){
+      var _sc=_parseDataIT(p.scadenzaRevisione), _scaduta=_sc&&_sc.getTime()<Date.now();
+      html+='<div style="margin-top:6px;padding:5px 8px;border-radius:4px;background:'+(_scaduta?'#fff5f5':'#f0f7ff')+';border-left:3px solid '+(_scaduta?'#e74c3c':'#1a4fa0')+';">';
+      html+='&#128295; ';
+      if(p.dataRevisione) html+='Revisione: <strong>'+p.dataRevisione+'</strong> &middot; ';
+      html+='Scadenza: <strong style="color:'+(_scaduta?'#e74c3c':'#1a4fa0')+';">'+p.scadenzaRevisione+'</strong>'+(_scaduta?' <span style="color:#e74c3c;font-weight:700;">(scaduta)</span>':'');
+      html+='</div>';
     }
     html+='<div>&#128196; '+(p.fileName||'permesso.pdf')+'</div>';
     if(p.inviatoIl){
@@ -6769,9 +6886,11 @@ function importaPermessiManuali(files) {
         }
         var now = Date.now();
         if (!esistenti.find(function(p){ return p.fileName===file.name; })) {
+          var _revM=computeRevisione(testo, targa);
           var entry = {
             id:'manual_'+now+'_'+i, gmailMsgId:null, driveFileId:null,
             targa:targa, intestatario:intest, fileName:file.name, pdfBase64:b64,
+            dataRevisione:_revM.dataRevisione, scadenzaRevisione:_revM.scadenzaRevisione, revDaVerificare:_revM.daVerificare, revNota:_revM.revNota,
             ricevutoMs:now,
             ricevutoLabel:new Date(now).toLocaleDateString('it-IT'),
             scadeLabel:new Date(now+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
