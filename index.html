@@ -1229,6 +1229,11 @@ html, body{
         <select id="tc-admin-dip-filter" onchange="tcAdminRenderRegistro()" style="padding:7px 12px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;">
           <option value="">Tutti i dipendenti</option>
         </select>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
+          <button onclick="tcScaricaMeseCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Scarica mese (CSV)</button>
+          <button onclick="tcAzzeraMese()" style="padding:7px 14px;border:1px solid #ef4444;background:#fff;color:#ef4444;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🗑️ Azzera mese</button>
+        </div>
       </div>
       <div id="tc-admin-registro-wrap" style="overflow-x:auto;"></div>
     </div>
@@ -1238,7 +1243,6 @@ html, body{
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
           <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">NOME</label><input id="tc-dip-nome" type="text" placeholder="Mario Rossi" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
           <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">EMAIL</label><input id="tc-dip-email" type="email" placeholder="mario@gmail.com" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
-          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">PASSWORD</label><input id="tc-dip-pass" type="password" placeholder="Password accesso" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">
           <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RUOLO</label><select id="tc-dip-ruolo" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"><option value="dipendente">Dipendente</option><option value="staff">Staff (vede tutto, tranne admin)</option></select></div>
@@ -3584,10 +3588,6 @@ function apriGestioneCredenziali() {
               <input id="cred-email" type="email" placeholder="mario@gmail.com" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;">
             </div>
             <div>
-              <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">PASSWORD</label>
-              <input id="cred-pass" type="text" placeholder="Password123" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;">
-            </div>
-            <div>
               <label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RUOLO</label>
               <select id="cred-ruolo" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;">
                 <option value="dipendente">Dipendente</option>
@@ -3642,7 +3642,7 @@ function credCambiaPassword(idx, nuovaPass) {
 function credAggiungi() {
   var nome  = (document.getElementById('cred-nome').value||'').trim();
   var email = (document.getElementById('cred-email').value||'').toLowerCase().trim();
-  var pass  = (document.getElementById('cred-pass').value||'').trim();
+  var pass  = '-'; // accesso via Google: password non usata
   var ruolo = document.getElementById('cred-ruolo').value;
   var err   = document.getElementById('cred-err');
 
@@ -3650,13 +3650,11 @@ function credAggiungi() {
   if (!email.includes('@')) { err.textContent='Email non valida.'; err.style.display='block'; return; }
   if (UTENTI_APP.find(function(u){return u.email===email;})) { err.textContent='Email già presente.'; err.style.display='block'; return; }
   err.style.display='none';
-  if (!pass) pass = '-'; // accesso via Google: password non usata
 
   UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
   salvaUtentiApp();
   document.getElementById('cred-nome').value='';
   document.getElementById('cred-email').value='';
-  document.getElementById('cred-pass').value='';
   renderCredenzialiLista();
   alert('✅ Utente '+nome+' aggiunto.');
 }
@@ -7157,7 +7155,17 @@ function tcRenderMese() {
   if(tot&&totMin>0){tot.style.display='block';tot.textContent='🕐 Totale mese: '+Math.floor(totMin/60)+'h '+String(totMin%60).padStart(2,'0')+'m';}
 }
 
-function tcMesePrec(){var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()-1);_tcMeseCorrente=d.toISOString().substring(0,7);tcRenderMese();}
+function tcMesePrec(){
+  var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()-1);
+  var nuovo=d.toISOString().substring(0,7);
+  // Il dipendente può vedere solo il mese corrente e quello precedente
+  if(!isAdmin() && _currentUserRole!=='staff'){
+    var p=new Date(tcGetMese()+'-01'); p.setMonth(p.getMonth()-1);
+    var limite=p.toISOString().substring(0,7);
+    if(nuovo<limite){ return; }
+  }
+  _tcMeseCorrente=nuovo; tcRenderMese();
+}
 function tcMeseSucc(){if(_tcMeseCorrente>=tcGetMese())return;var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()+1);_tcMeseCorrente=d.toISOString().substring(0,7);tcRenderMese();}
 
 
@@ -7310,6 +7318,52 @@ function tcAdminRenderRegistro() {
     html+='<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 12px;font-weight:600;">'+nome+'</td><td style="padding:9px 12px;color:#64748b;">'+data+'</td><td style="padding:9px 12px;">'+(r.entrata||'—')+'</td><td style="padding:9px 12px;">'+(r.pausa||'—')+'</td><td style="padding:9px 12px;">'+(r.rientro||'—')+'</td><td style="padding:9px 12px;">'+(r.uscita||'—')+'</td><td style="padding:9px 12px;font-weight:700;color:'+(ore!=='—'?'#16a34a':'#64748b')+';">'+ore+'</td><td style="padding:9px 12px;"><button onclick="tcModificaTimbratura(\''+r.dipendente+'\',\''+r.data+'\')" style="background:#fff;border:1px solid #1a4fa0;color:#1a4fa0;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;border-radius:6px;">✏️ Modifica</button></td></tr>';
   });
   html+='</tbody></table>'; wrap.innerHTML=html;
+}
+
+// Apre il foglio Google con tutte le timbrature
+function tcApriSheet(){
+  var url = (typeof GS_SHEET_URL!=='undefined' && GS_SHEET_URL) ? GS_SHEET_URL : (typeof SHEET_URL!=='undefined'?SHEET_URL:'');
+  if(!url){ alert('URL del foglio non impostato.'); return; }
+  window.open(url, '_blank');
+}
+
+// Scarica le timbrature del mese selezionato in CSV (apribile con Excel/Fogli Google)
+function tcScaricaMeseCSV(){
+  var mese=_tcAdminMese||tcGetMese();
+  var filter=document.getElementById('tc-admin-dip-filter'), filterVal=filter?filter.value:'';
+  var reg=tcLoadReg().filter(function(r){return r.mese===mese&&(!filterVal||r.dipendente===filterVal);})
+                     .sort(function(a,b){return a.data>b.data?1:(a.data<b.data?-1:(a.dipendente>b.dipendente?1:-1));});
+  if(!reg.length){ alert('Nessuna timbratura da scaricare per '+tcMeseLabel(mese)+'.'); return; }
+  function q(v){ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; }
+  var righe=[['Dipendente','Email','Data','Entrata','Pausa','Rientro','Uscita','Ore'].map(q).join(';')];
+  reg.forEach(function(r){
+    righe.push([ tcGetNome(r.dipendente), r.dipendente, r.data, r.entrata||'', r.pausa||'', r.rientro||'', r.uscita||'', (tcCalcOre(r)||'') ].map(q).join(';'));
+  });
+  var csv='\uFEFF'+righe.join('\r\n'); // BOM per Excel
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='timbrature_'+mese+(filterVal?('_'+filterVal.split('@')[0]):'')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+
+// Azzera (elimina) le timbrature del mese selezionato — in app e su Google Sheets
+function tcAzzeraMese(){
+  var mese=_tcAdminMese||tcGetMese();
+  var reg=tcLoadReg();
+  var daEliminare=reg.filter(function(r){return r.mese===mese;});
+  if(!daEliminare.length){ alert('Nessuna timbratura da azzerare per '+tcMeseLabel(mese)+'.'); return; }
+  if(!confirm('Stai per ELIMINARE definitivamente '+daEliminare.length+' timbrature di '+tcMeseLabel(mese)+'.\n\nConsiglio: scarica prima il CSV del mese.\n\nVuoi continuare?')) return;
+  if(!confirm('Conferma finale: eliminare le timbrature di '+tcMeseLabel(mese)+'? Questa azione non è reversibile.')) return;
+  // Elimina da Google Sheets per id
+  if(typeof GS_URL!=='undefined' && GS_URL){
+    daEliminare.forEach(function(r){ if(r.id){ try{ gsDelete(PRESENZE_SHEET, r.id); }catch(e){} } });
+  }
+  // Rimuovi da localStorage
+  var restanti=reg.filter(function(r){return r.mese!==mese;});
+  try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(restanti)); }catch(e){}
+  tcAdminRenderRegistro();
+  alert('🗑️ Timbrature di '+tcMeseLabel(mese)+' azzerate.');
 }
 
 function tcAdminRenderDipendenti() {
