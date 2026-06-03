@@ -3640,15 +3640,16 @@ function renderCredenzialiLista() {
   var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
   html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Password</th><th style="padding:10px;text-align:left;">Ruolo</th><th></th></tr></thead><tbody>';
   UTENTI_APP.forEach(function(u, i) {
+    var _ruoloEff = ruoloEffettivo(u.email, u.ruolo);
     html += '<tr style="border-bottom:1px solid #f1f5f9;">';
     html += '<td style="padding:9px 10px;font-weight:600;">'+u.nome+'</td>';
     html += '<td style="padding:9px 10px;color:#64748b;font-size:12px;">'+u.email+'</td>';
     html += '<td style="padding:9px 10px;">';
     html += '<input type="text" value="'+u.password+'" onchange="credCambiaPassword('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;width:130px;">';
     html += '</td>';
-    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[u.ruolo]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[u.ruolo]+'</span></td>';
+    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[_ruoloEff]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[_ruoloEff]+'</span></td>';
     html += '<td style="padding:9px 10px;">';
-    if (u.email !== 'no.reply.europaauto@gmail.com') {
+    if (u.email !== 'europaautobusiness@gmail.com') {
       html += '<button data-idx="'+i+'" onclick="credRimuovi(parseInt(this.dataset.idx))" style="background:none;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;">✕</button>';
     }
     html += '</td></tr>';
@@ -7115,9 +7116,16 @@ function caricaPermessiDaSheets(){
   }catch(e){}
 }
 // Elenco persone (dipendenti + utenti app), deduplicato per email
+// Ruolo reale applicato al login (alcune email hanno ruolo fisso)
+function ruoloEffettivo(email, fallback){
+  var e=String(email||'').toLowerCase();
+  if(e==='europaautobusiness@gmail.com') return 'admin';
+  if(e==='no.reply.europaauto@gmail.com') return 'staff';
+  return fallback || 'dipendente';
+}
 function _tuttiUtenti(){
   var out=[], seen={};
-  function add(nome,email,ruolo){ if(!email) return; var k=String(email).toLowerCase(); if(seen[k]) return; seen[k]=1; out.push({nome:nome||k.split('@')[0], email:k, ruolo:ruolo||'dipendente'}); }
+  function add(nome,email,ruolo){ if(!email) return; var k=String(email).toLowerCase(); if(seen[k]) return; seen[k]=1; out.push({nome:nome||k.split('@')[0], email:k, ruolo:ruoloEffettivo(k, ruolo||'dipendente')}); }
   try{ (tcLoadDip()||[]).forEach(function(d){ add(d.nome,d.email,d.ruolo); }); }catch(e){}
   try{ (UTENTI_APP||[]).forEach(function(u){ add(u.nome,u.email,u.ruolo); }); }catch(e){}
   return out;
@@ -8461,6 +8469,16 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccEsc(s){ return String(s||'').replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];}); }
   function ccFmtRicorda(iso){ try{ return new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return iso; } }
 
+  // Colore stabile per persona (per distinguere a colpo d'occhio i carichi di lavoro)
+  var CC_PALETTE = ['#2563eb','#16a34a','#db2777','#ea580c','#7c3aed','#0891b2','#ca8a04','#dc2626','#0d9488','#4f46e5','#9333ea','#15803d'];
+  function ccColore(key){
+    key = String(key||'').toLowerCase().trim();
+    if(!key) return '#94a3b8';
+    var h=0; for(var i=0;i<key.length;i++){ h=(h*31 + key.charCodeAt(i))>>>0; }
+    return CC_PALETTE[h % CC_PALETTE.length];
+  }
+  function ccColoreCompito(c){ return ccColore((c.dipEmail||c.dipNome||'')); }
+
   function ccRenderCal(){
     var now = new Date();
     document.getElementById('cc-meselbl').textContent = MESI[ccVMese]+' '+ccVAnno;
@@ -8474,7 +8492,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var list = ccCompitiGiorno(ds);
       var isToday = (d===now.getDate() && ccVMese===now.getMonth() && ccVAnno===now.getFullYear());
       var isSel = (ds===ccGiornoSel);
-      var dots = list.slice(0,4).map(function(c){ return '<span class="cc-dot '+(c.fatto?'cc-done':'cc-todo')+'"></span>'; }).join('');
+      var dots = list.slice(0,4).map(function(c){ var col=c.fatto?'#cbd5e1':ccColoreCompito(c); return '<span class="cc-dot" style="background:'+col+(c.fatto?';opacity:.5':'')+'"></span>'; }).join('');
       h += '<div class="cc-cell'+(isToday?' cc-today':'')+(isSel?' cc-sel':'')+'" data-ds="'+ds+'">'
          + '<span class="cc-num">'+d+'</span>'
          + (list.length?'<span class="cc-cnt">'+list.length+'</span>':'')
@@ -8502,12 +8520,13 @@ document.addEventListener('DOMContentLoaded',function(){
     var el = document.getElementById('cc-list');
     if (!list.length){ el.innerHTML = '<div class="cc-emptymsg">Nessun compito per questo giorno.</div>'; return; }
     el.innerHTML = list.map(function(c){
-      return '<div class="cc-task'+(c.fatto?' cc-done':'')+'">'
+      var _col = ccColoreCompito(c);
+      return '<div class="cc-task'+(c.fatto?' cc-done':'')+'" style="border-left:5px solid '+_col+'">'
         + '<div class="cc-check'+(c.fatto?' cc-on':'')+'" data-id="'+c.id+'" data-act="toggle">'+(c.fatto?'✓':'')+'</div>'
         + '<div class="cc-tbody">'
         +   '<div class="cc-tt">'+ccEsc(c.titolo)+'</div>'
         +   '<div class="cc-meta">'
-        +     '<span>👤 '+ccEsc(c.dipNome)+'</span>'
+        +     '<span style="color:'+_col+';font-weight:700">👤 '+ccEsc(c.dipNome)+'</span>'
         +     (c.ora?'<span>🕐 '+ccEsc(c.ora)+'</span>':'')
         +     (c.ricorda?'<span>🔔 '+ccEsc(ccFmtRicorda(c.ricorda))+'</span><span class="cc-callink" data-id="'+c.id+'" data-act="ics">📅 avvisami</span>':'')
         +     (c.creatoDa?'<span>da '+ccEsc(c.creatoDa)+'</span>':'')
@@ -8550,7 +8569,8 @@ document.addEventListener('DOMContentLoaded',function(){
     keys.forEach(function(k){
       var g=groups[k];
       g.items.sort(function(a,b){ return (a.data||'')<(b.data||'')?-1:((a.data||'')>(b.data||'')?1:0); });
-      html+='<div class="cc-rgroup"><div class="cc-rgroup-h"><span>👤 '+ccEsc(g.nome)+'</span><span class="cc-rcount">'+g.items.length+'</span></div>';
+      var _gcol = ccColore(g.email||g.nome);
+      html+='<div class="cc-rgroup"><div class="cc-rgroup-h" style="border-left:4px solid '+_gcol+';padding-left:8px;background:'+_gcol+'14;border-radius:6px"><span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+_gcol+';margin-right:7px;vertical-align:middle"></span>'+ccEsc(g.nome)+'</span><span class="cc-rcount" style="background:'+_gcol+'">'+g.items.length+'</span></div>';
       g.items.forEach(function(c){
         var over = c.data && c.data<oggi;
         html+='<div class="cc-rtask" data-id="'+c.id+'" data-day="'+ccEsc(c.data||'')+'">'
