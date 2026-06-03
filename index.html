@@ -1239,6 +1239,7 @@ html, body{
           <button onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
           <button onclick="tcScaricaMeseCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Scarica mese (CSV)</button>
           <button onclick="tcAzzeraMese()" style="padding:7px 14px;border:1px solid #ef4444;background:#fff;color:#ef4444;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🗑️ Azzera mese</button>
+          <button onclick="eaSyncSuFoglio(false)" style="padding:7px 14px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🔄 Sincronizza con foglio</button>
         </div>
       </div>
       <div id="tc-admin-registro-wrap" style="overflow-x:auto;"></div>
@@ -7035,6 +7036,32 @@ function getDipendenteByEmail(email) {
   return loadDipendenti().find(function(d){ return d.email === email; }) || null;
 }
 
+// Spinge sul foglio Google TUTTI i dipendenti e le timbrature presenti
+// in locale su questo dispositivo. Idempotente: usa id stabili, quindi
+// rieseguirla non crea doppioni. silent=true => nessun avviso a schermo.
+function eaSyncSuFoglio(silent) {
+  if (!GS_URL) {
+    if (!silent && typeof tcToastNew === 'function') tcToastNew('❌ Foglio Google non configurato', false);
+    return;
+  }
+  var dips = loadDipendenti();
+  dips.forEach(function(d){
+    gsJsonp({ action:'upsert', sheet: PRESENZE_SHEET, record: {
+      tipo:'dipendente',
+      id:'dip_' + ((d.email || d.nome) + '').replace(/[^a-z0-9]/gi,'_'),
+      nome:d.nome, email:d.email || '', ruolo:d.ruolo || 'dipendente', sede:d.sede || 'sede_a'
+    }});
+  });
+  var reg = (typeof presenzeLoadReg === 'function') ? presenzeLoadReg() : tcLoadReg();
+  reg.forEach(function(r){
+    if (!r || !r.id) return;
+    gsJsonp({ action:'upsert', sheet: PRESENZE_SHEET, record: r });
+  });
+  if (!silent && typeof tcToastNew === 'function') {
+    tcToastNew('✅ Inviati al foglio: ' + dips.length + ' dipendenti, ' + reg.length + ' timbrature', true);
+  }
+}
+
 // ── Ruolo utente ──────────────────────────────────────────────
 function setCurrentUser(email) {
   _currentUserEmail = (email||'').toLowerCase().trim();
@@ -7378,6 +7405,7 @@ function presenzeInit() {
     if(lbl) lbl.textContent=tcMeseLabel(_tcAdminMese);
     tcAdminRenderRegistro(); tcAdminRenderDipendenti(); tcPopForzaDip();
     presenzeLoadDaSheets();
+    if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
   } else {
     vAdmin.style.display='none'; vDip.style.display='block';
     tcInitDipendente();
@@ -7394,6 +7422,7 @@ function tcInitDipendente() {
   tcRenderLog(); tcAggiornaPulsanti();
   _tcMeseCorrente=_tcMeseCorrente||tcGetMese(); tcRenderMese();
   presenzeLoadDaSheets();
+  if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
 }
 
 function tcAggiornaClock() {
@@ -8376,7 +8405,7 @@ document.addEventListener('DOMContentLoaded',function(){
   var sec = document.createElement('div'); sec.className = 'sidebar-section';
   sec.innerHTML = '<span class="sidebar-section-label">Organizzazione</span>'
     + '<button class="sidebar-item" id="si-compiti" onclick="sidebarNav(\'compiti\',this)">'
-    + '<span class="si-icon">🗓️</span><span class="si-label"> Compiti</span>'
+    + '<span class="si-icon">🗓️</span><span class="si-label"> Calendario</span>'
     + '<span class="si-badge" id="cc-badge" style="display:none;">0</span></button>';
   if (fotoSec && fotoSec.parentNode) fotoSec.parentNode.insertBefore(sec, fotoSec.nextSibling);
   else if (parent) document.querySelector('.sidebar') ? document.querySelector('.sidebar').appendChild(sec) : null;
