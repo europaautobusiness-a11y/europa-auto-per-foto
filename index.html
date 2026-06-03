@@ -1253,7 +1253,7 @@ html, body{
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">
           <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RUOLO</label><select id="tc-dip-ruolo" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"><option value="dipendente">Dipendente</option><option value="staff">Staff (vede tutto, tranne admin)</option></select></div>
-          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">SEDE GPS</label><select id="tc-dip-sede" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"><option value="sede_a">Sede A — Paderno Dugnano</option><option value="sede_b">Sede B</option></select></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">SEDE GPS</label><select id="tc-dip-sede" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"><option value="sede_a">Sede A — Paderno Dugnano</option><option value="sede_b">Sede B — Bovisio Masciago</option></select></div>
           <button onclick="tcAggiungiDipendente()" style="padding:10px 18px;background:#1a4fa0;color:white;border:none;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;border-radius:6px;">+ Aggiungi</button>
         </div>
         <div id="tc-dip-err" style="display:none;color:#ef4444;font-size:12px;margin-top:8px;"></div>
@@ -7007,7 +7007,7 @@ function importaPermessiManuali(files) {
 var GPS_RAGGIO = 30;
 var GPS_SEDI = {
   'sede_a': { lat: 45.609389, lng: 9.158183, nome: 'Sede A — Paderno Dugnano' },
-  'sede_b': { lat: 45.5960401, lng: 9.1318555, nome: 'Sede B' }
+  'sede_b': { lat: 45.5960401, lng: 9.1318555, nome: 'Sede B — Bovisio Masciago' }
 };
 function getGpsSede(email){var d=getDipendenteByEmail(email);var s=(d&&d.sede)?d.sede:'sede_a';return GPS_SEDI[s]||GPS_SEDI['sede_a'];}
 
@@ -7662,6 +7662,25 @@ function tcEliminaSede(id) {
 function tcAdminMesePrec(){var d=new Date(_tcAdminMese+'-01');d.setMonth(d.getMonth()-1);_tcAdminMese=d.toISOString().substring(0,7);document.getElementById('tc-admin-mese-label').textContent=tcMeseLabel(_tcAdminMese);tcAdminRenderRegistro();}
 function tcAdminMeseSucc(){if(_tcAdminMese>=tcGetMese())return;var d=new Date(_tcAdminMese+'-01');d.setMonth(d.getMonth()+1);_tcAdminMese=d.toISOString().substring(0,7);document.getElementById('tc-admin-mese-label').textContent=tcMeseLabel(_tcAdminMese);tcAdminRenderRegistro();}
 
+// Orario compatto di un record: "08:00–12:30 · 13:30–18:00"
+function tcOrarioCell(r){
+  if(!r) return '';
+  var e=r.entrata,p=r.pausa,ri=r.rientro,u=r.uscita;
+  if(e&&u) return (p&&ri) ? (e+'–'+p+' · '+ri+'–'+u) : (e+'–'+u);
+  if(e) return e+'–…';
+  return '';
+}
+// Minuti lavorati di un record (entrata→uscita meno pausa)
+function tcMinutiRec(r){
+  if(!r||!r.entrata||!r.uscita) return 0;
+  var m=function(t){var x=(''+t).split(':');return (parseInt(x[0],10)||0)*60+(parseInt(x[1],10)||0);};
+  var min=m(r.uscita)-m(r.entrata);
+  if(r.pausa&&r.rientro) min-=(m(r.rientro)-m(r.pausa));
+  return min>0?min:0;
+}
+function tcFmtMin(min){ return Math.floor(min/60)+'h '+String(min%60).padStart(2,'0')+'m'; }
+
+// Registro mensile a griglia: giorni in riga, dipendenti in colonna (Formato A)
 function tcAdminRenderRegistro() {
   var wrap=document.getElementById('tc-admin-registro-wrap'); if(!wrap) return;
   var mese=_tcAdminMese||tcGetMese();
@@ -7671,14 +7690,62 @@ function tcAdminRenderRegistro() {
     var existing=new Set(Array.from(filter.options).map(function(o){return o.value;}));
     dips.forEach(function(d){if(!existing.has(d.email)){var opt=document.createElement('option');opt.value=d.email;opt.textContent=d.nome;filter.appendChild(opt);}});
   }
-  var reg=tcLoadReg().filter(function(r){return r.mese===mese&&(!filterVal||r.dipendente===filterVal);}).sort(function(a,b){return a.data>b.data?1:(a.data<b.data?-1:0);});
-  if(!reg.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:#64748b;">Nessuna timbratura per '+tcMeseLabel(mese)+'</div>';return;}
-  var html='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Dipendente</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Data</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Entrata</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Pausa</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Rientro</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Uscita</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Ore</th><th style="padding:10px 12px;text-align:left;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;">Modifica</th></tr></thead><tbody>';
-  reg.forEach(function(r){
-    var ore=tcCalcOre(r)||'—', nome=tcGetNome(r.dipendente), data=new Date(r.data).toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'short'});
-    html+='<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 12px;font-weight:600;">'+nome+'</td><td style="padding:9px 12px;color:#64748b;">'+data+'</td><td style="padding:9px 12px;">'+(r.entrata||'—')+'</td><td style="padding:9px 12px;">'+(r.pausa||'—')+'</td><td style="padding:9px 12px;">'+(r.rientro||'—')+'</td><td style="padding:9px 12px;">'+(r.uscita||'—')+'</td><td style="padding:9px 12px;font-weight:700;color:'+(ore!=='—'?'#16a34a':'#64748b')+';">'+ore+'</td><td style="padding:9px 12px;"><button onclick="tcModificaTimbratura(\''+r.dipendente+'\',\''+r.data+'\')" style="background:#fff;border:1px solid #1a4fa0;color:#1a4fa0;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;border-radius:6px;">✏️ Modifica</button></td></tr>';
+  var cols=dips.filter(function(d){return !filterVal||d.email===filterVal;});
+  if(!cols.length){
+    wrap.innerHTML='<div style="text-align:center;padding:40px;color:#64748b;">Nessun dipendente. Aggiungili dalla scheda <strong>Dipendenti</strong> per vedere la griglia.</div>';
+    return;
+  }
+  var recs=tcLoadReg().filter(function(r){return r.mese===mese;});
+  var map={}; recs.forEach(function(r){ map[r.dipendente+'|'+r.data]=r; });
+  var parti=mese.split('-'), anno=parseInt(parti[0],10), mIdx=parseInt(parti[1],10)-1;
+  var giorni=new Date(anno, mIdx+1, 0).getDate();
+  var settNomi=['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
+  var oggiStr=tcGetOggi();
+  var tot={}; cols.forEach(function(d){tot[d.email]=0;});
+
+  var th='padding:8px 10px;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;background:#f8fafc;white-space:nowrap;';
+  var thc='padding:6px 8px;font-weight:700;color:#1a4fa0;border-bottom:2px solid #e2e8f0;background:#f8fafc;text-align:center;font-size:11px;white-space:nowrap;';
+  var html='<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">';
+  html+='<table style="border-collapse:collapse;font-size:12px;min-width:100%;">';
+  html+='<thead><tr>';
+  html+='<th rowspan="2" style="'+th+'text-align:left;position:sticky;left:0;z-index:2;">Giorno</th>';
+  html+='<th rowspan="2" style="'+th+'text-align:left;">Settimana</th>';
+  cols.forEach(function(d){ html+='<th colspan="2" style="'+thc+'border-left:2px solid #e2e8f0;">'+tcGetNome(d.email)+'</th>'; });
+  html+='</tr><tr>';
+  cols.forEach(function(){ html+='<th style="'+thc+'border-left:2px solid #e2e8f0;">Orario · Ore</th><th style="'+thc+'">Perm/Ferie</th>'; });
+  html+='</tr></thead><tbody>';
+
+  for(var g=1; g<=giorni; g++){
+    var dataStr=mese+'-'+String(g).padStart(2,'0');
+    var dow=new Date(anno,mIdx,g).getDay();
+    var weekend=(dow===0||dow===6);
+    var isOggi=(dataStr===oggiStr);
+    var bgRiga=isOggi?'background:#fff7ed;':(weekend?'background:#f8fafc;':'');
+    var bgFissa=isOggi?'background:#fff7ed;':(weekend?'background:#f8fafc;':'background:#fff;');
+    var tdg='padding:7px 10px;border-bottom:1px solid #f1f5f9;'+bgRiga;
+    html+='<tr>';
+    html+='<td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;position:sticky;left:0;z-index:1;'+bgFissa+'">'+g+'</td>';
+    html+='<td style="'+tdg+'color:'+(weekend?'#b91c1c':'#64748b')+';">'+settNomi[dow]+'</td>';
+    cols.forEach(function(d){
+      var r=map[d.email+'|'+dataStr];
+      var orario=tcOrarioCell(r);
+      var min=tcMinutiRec(r); if(min) tot[d.email]+=min;
+      var ore=min?tcFmtMin(min):'';
+      var perm=r?(r.permesso||r.ferie||r.nota||''):'';
+      var cella = orario ? ('<div>'+orario+'</div>'+(ore?'<div style="font-weight:700;color:#16a34a;">'+ore+'</div>':'')) : '';
+      html+='<td onclick="tcModificaTimbratura(\''+d.email+'\',\''+dataStr+'\')" style="'+tdg+'border-left:2px solid #eef2f7;text-align:center;cursor:pointer;min-width:120px;" title="Clicca per inserire o modificare">'+cella+'</td>';
+      html+='<td style="'+tdg+'text-align:center;color:#b45309;">'+perm+'</td>';
+    });
+    html+='</tr>';
+  }
+
+  html+='<tr><td colspan="2" style="padding:9px 10px;font-weight:800;color:#1a4fa0;border-top:2px solid #c7d2fe;position:sticky;left:0;z-index:1;background:#eef2ff;">TOTALE ORE</td>';
+  cols.forEach(function(d){
+    html+='<td style="padding:9px 10px;font-weight:800;color:#1a4fa0;border-top:2px solid #c7d2fe;border-left:2px solid #e2e8f0;text-align:center;background:#eef2ff;">'+(tot[d.email]?tcFmtMin(tot[d.email]):'—')+'</td>';
+    html+='<td style="padding:9px 10px;border-top:2px solid #c7d2fe;background:#eef2ff;"></td>';
   });
-  html+='</tbody></table>'; wrap.innerHTML=html;
+  html+='</tr></tbody></table></div>';
+  wrap.innerHTML=html;
 }
 
 // Apre il foglio Google con tutte le timbrature
@@ -7955,7 +8022,7 @@ function _presenzeRebuildAdminView() {
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">NOME</label><input id="dip-nome" type="text" placeholder="Es. Arianna" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">EMAIL GMAIL</label><input id="dip-email" type="email" placeholder="arianna@gmail.com" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">RUOLO</label><select id="dip-ruolo" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="dipendente">Dipendente</option></select></div>
-        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">SEDE GPS</label><select id="dip-sede" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="sede_a">Sede A</option><option value="sede_b">Sede B</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--gray);display:block;margin-bottom:4px;">SEDE GPS</label><select id="dip-sede" style="width:100%;padding:9px 10px;border:1px solid var(--bdr);font-family:var(--font);font-size:13px;"><option value="sede_a">Sede A — Paderno Dugnano</option><option value="sede_b">Sede B — Bovisio Masciago</option></select></div>
         <button onclick="presenzeAggiungiDipendente()" style="padding:10px 16px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">+ Aggiungi</button>
       </div>
       <div id="presenze-err-dip" style="display:none;color:#e74c3c;font-size:12px;margin-top:6px;"></div>
@@ -8432,7 +8499,7 @@ document.addEventListener('DOMContentLoaded',function(){
         document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
         if (btn) btn.classList.add('active');
         if (cc) cc.classList.add('active');
-        var t = document.getElementById('contentTitle'); if (t) t.textContent = 'Calendario Compiti';
+        var t = document.getElementById('contentTitle'); if (t) t.textContent = 'Calendario';
         if (typeof isMobile === 'function' && isMobile() && typeof closeSidebarMobile === 'function') closeSidebarMobile();
         ccRender();
         return;
