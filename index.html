@@ -6263,6 +6263,25 @@ function estraiIntestatario(t) {
   return 'Sconosciuto';
 }
 
+// Legge la scadenza/data revisione dal testo del PDF
+function estraiScadenzaRevisione(t) {
+  if (!t || typeof t !== 'string') return null;
+  var s = t.replace(/\s+/g,' ');
+  // data nei formati gg/mm/aaaa, gg-mm-aaaa, gg.mm.aaaa oppure mm/aaaa
+  var d = '(\\d{1,2}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4}|\\d{1,2}[\\/.\\-]\\d{4})';
+  var m;
+  // "revisione ... <data>" (scaduta il / valida fino al / del / scadenza)
+  m = s.match(new RegExp('revision\\w*[^0-9]{0,40}' + d, 'i'));
+  if (m) return m[1];
+  // "scadenza revisione: <data>"
+  m = s.match(new RegExp('scadenz\\w*[^0-9]{0,20}revision\\w*[^0-9]{0,20}' + d, 'i'));
+  if (m) return m[1];
+  // "<data> ... revisione"
+  m = s.match(new RegExp(d + '[^0-9]{0,30}revision', 'i'));
+  if (m) return m[1];
+  return null;
+}
+
 // ── Leggi testo da PDF (pdf.js) ───────────────────────────────
 async function caricaPdfJs() {
   if (window.pdfjsLib) return;
@@ -6381,6 +6400,7 @@ async function syncPermessiDaDrive(statusEl) {
       esistenti.push({
         id:'drive_'+df.id, gmailMsgId:null, driveFileId:df.id,
         targa:targa, intestatario:intestatario, fileName:df.name, pdfBase64:null,
+        scadenzaRevisione:estraiScadenzaRevisione(testo),
         ricevutoMs:ricevutoMs,
         ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
         scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -6465,6 +6485,7 @@ async function syncPermessiDaGmail(mostraStatus) {
           esistenti.push({
             id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
             targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null,
+            scadenzaRevisione:estraiScadenzaRevisione(testo),
             ricevutoMs:ricevutoMs,
             ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
             scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
@@ -6664,6 +6685,9 @@ function renderPermessi() {
     html+='<span>&#128197; Ricevuto: <strong>'+p.ricevutoLabel+'</strong></span>';
     html+='<span style="color:'+(urgente?'#e74c3c':'#27ae60')+';">Scade: <strong>'+p.scadeLabel+'</strong></span>';
     html+='</div>';
+    if(p.scadenzaRevisione){
+      html+='<div style="margin-top:4px;color:#1a4fa0;">&#128295; Scadenza revisione: <strong>'+p.scadenzaRevisione+'</strong></div>';
+    }
     html+='<div>&#128196; '+(p.fileName||'permesso.pdf')+'</div>';
     if(p.inviatoIl){
       html+='<div style="margin-top:6px;padding:5px 8px;background:#f0fff4;border-left:3px solid #27ae60;color:#1a7c3e;">';
