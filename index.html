@@ -1248,6 +1248,7 @@ html, body{
       <button class="tc-admin-tab active" onclick="tcAdminTab(event,'registro')">📋 Registro</button>
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'dipendenti')">👥 Dipendenti</button>
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'forza')">⚡ Forza Timbratura</button>
+      <button class="tc-admin-tab" onclick="tcAdminTab(event,'reteip')">📶 Rete sedi</button>
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'richieste')">📝 Richieste<span id="tc-richieste-badge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;">0</span></button>
     </div>
     <div class="tc-panel active" id="tc-panel-registro">
@@ -1302,6 +1303,16 @@ html, body{
         Richieste di permessi e ferie inviate dai dipendenti. Quelle <strong>approvate</strong> compaiono automaticamente nella colonna Perm/Ferie del registro, nei giorni coperti.
       </div>
       <div id="tc-richieste-lista"></div>
+    </div>
+    <div class="tc-panel" id="tc-panel-reteip">
+      <div style="background:#eef6ff;border-left:4px solid #1a4fa0;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:16px;font-size:13px;color:#1a4fa0;">
+        Le timbrature dei dipendenti sono permesse <strong>solo dalla rete WiFi della sede</strong>. Stando in sede, collegati al suo WiFi e premi <strong>Registra questa rete</strong>: in dati mobili (5G/4G) la timbratura verrà bloccata. Ripeti per ogni sede (Paderno, Bovisio).
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px;">
+        <div id="tc-reteip-current" style="font-size:13px;color:#64748b;margin-bottom:10px;">IP attuale…</div>
+        <button onclick="eaRegistraIP()" style="padding:10px 18px;background:#1a4fa0;color:white;border:none;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;border-radius:6px;">📍 Registra questa rete come sede</button>
+      </div>
+      <div id="tc-reteip-lista"></div>
     </div>
   </div>
 </div>
@@ -6561,10 +6572,18 @@ async function getOrCreatePermessiFolder(token) {
 
 // ── Salva PDF su Drive ────────────────────────────────────────
 async function salvaPermessoSuDrive(token, folderId, targa, intestatario, pdfB64, fileName) {
+  var name=(targa+'_'+intestatario+'.pdf').replace(/[^a-zA-Z0-9_.]/g,'_');
+  // Se esiste già un file con questo nome nella cartella, riusalo (niente duplicati su Drive)
+  try {
+    var q="'"+folderId+"' in parents and trashed=false and name='"+name.replace(/'/g,"\\'")+"'";
+    var exr=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent(q)+'&fields=files(id)',
+      {headers:{Authorization:'Bearer '+token}});
+    var exd=await exr.json();
+    if (exd && exd.files && exd.files.length) return exd.files[0].id;
+  } catch(e){}
   var pure=pdfB64.replace(/^data:[^;]+;base64,/,'');
   var bin=atob(pure), bytes=new Uint8Array(bin.length);
   for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-  var name=(targa+'_'+intestatario+'.pdf').replace(/[^a-zA-Z0-9_.]/g,'_');
   var form=new FormData();
   form.append('metadata',new Blob([JSON.stringify({name:name,parents:[folderId]})],{type:'application/json'}));
   form.append('file',new Blob([bytes],{type:'application/pdf'}));
@@ -6586,6 +6605,14 @@ async function syncPermessiDaDrive(statusEl) {
       {headers:{Authorization:'Bearer '+token}});
     var fd=await fr.json(), driveFiles=fd.files||[];
     if (!driveFiles.length) return;
+    // Pulizia doppioni su Drive: stesso nome → tieni il più recente, cestina gli altri
+    var vistiNome={}, daCestinare=[];
+    driveFiles.forEach(function(df){ var nm=(df.name||'').toLowerCase(); if(vistiNome[nm]){ daCestinare.push(df.id); } else { vistiNome[nm]=true; } });
+    for (var z=0; z<daCestinare.length; z++){
+      try { await fetch('https://www.googleapis.com/drive/v3/files/'+daCestinare[z],
+        {method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({trashed:true})}); } catch(e){}
+    }
+    if (daCestinare.length){ console.log('Drive: cestinati', daCestinare.length, 'permessini duplicati'); driveFiles=driveFiles.filter(function(df){ return daCestinare.indexOf(df.id)<0; }); }
     var esistenti=loadPermessi();
     var driveIds=new Set(esistenti.map(function(p){return p.driveFileId;}));
     var nuovi=0;
@@ -6643,6 +6670,7 @@ async function syncPermessiDaGmail(mostraStatus) {
     console.log('syncPermessiDaGmail: step 4 - esistenti.length=', esistenti.length);
     var msgIds=new Set(esistenti.filter(function(p){return p&&p.gmailMsgId;}).map(function(p){return p.gmailMsgId;}));
     var fileNames=new Set(esistenti.filter(function(p){return p&&p.fileName;}).map(function(p){return p.fileName;}));
+    var targheEsistenti=new Set(esistenti.filter(function(p){return p&&p.targa;}).map(function(p){return (p.targa||'').toUpperCase();}));
     console.log('syncPermessiDaGmail: step 5 - Gmail fetch');
     if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD04 Ricerca email...';
     var lr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='+
@@ -6685,29 +6713,27 @@ async function syncPermessiDaGmail(mostraStatus) {
         var intestatario=(testo&&testo.length>50)?estraiIntestatario(testo):null;
         if(!targa){var fn=part.filename.match(/([A-Z]{2}\d{3}[A-Z]{2})/i);targa=fn?fn[1].toUpperCase():'SCONOSCIUTA';}
         if(!intestatario||intestatario==='Sconosciuto')intestatario='Da verificare';
-        var driveFileId=null;
-        try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
-        // Salta permessi senza targa riconoscibile
         // Salta se manca targa O intestatario riconoscibili
         var targaOkG = targa && targa !== 'SCONOSCIUTA' && targa.match(/^[A-Z]{2}\d{3}[A-Z]{2}$/i);
         var intestOkG = intestatario && intestatario !== 'Da verificare' && intestatario !== 'Sconosciuto';
         if (!targaOkG || !intestOkG) { console.log('Permesso Gmail saltato - targa/intestatario non validi:', targa, intestatario); continue; }
-        // Controllo duplicati robusto: fileName, driveFileId, targa+giorno
-        var giornoRicevuto = new Date(ricevutoMs).toISOString().split('T')[0];
-        var chiaveTarga = targa + '_' + giornoRicevuto;
-        var targheDuplicati = new Set(esistenti.map(function(p){ return p.targa+'_'+(p.ricevutoMs?new Date(p.ricevutoMs).toISOString().split('T')[0]:''); }));
-        if (!fileNames.has(part.filename) && !targheDuplicati.has(chiaveTarga)) {
-          var _revG=computeRevisione(testo, targa);
-          esistenti.push({
-            id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
-            targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null,
-            dataRevisione:_revG.dataRevisione, scadenzaRevisione:_revG.scadenzaRevisione, revDaVerificare:_revG.daVerificare, revNota:_revG.revNota,
-            ricevutoMs:ricevutoMs,
-            ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
-            scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
-          });
-          msgIds.add(msgId); fileNames.add(part.filename); nuovi++;
-        }
+        // UN SOLO permessino per cliente (targa): se esiste già, NON ricaricare su Drive
+        var targaUp = targa.toUpperCase();
+        if (targheEsistenti.has(targaUp) || fileNames.has(part.filename)) { console.log('Permessino già presente per targa, salto:', targaUp); continue; }
+        // Solo ora (nuovo cliente) carico su Drive
+        var driveFileId=null;
+        try { driveFileId=await salvaPermessoSuDrive(token,folderId,targa,intestatario,pdfB64,part.filename); } catch(e){}
+        if (mostraStatus&&statusEl) statusEl.textContent='\uD83D\uDD0D Lettura PDF...';
+        var _revG=computeRevisione(testo, targa);
+        esistenti.push({
+          id:msgId+'_'+j, gmailMsgId:msgId, driveFileId:driveFileId,
+          targa:targa, intestatario:intestatario, fileName:part.filename, pdfBase64:null,
+          dataRevisione:_revG.dataRevisione, scadenzaRevisione:_revG.scadenzaRevisione, revDaVerificare:_revG.daVerificare, revNota:_revG.revNota,
+          ricevutoMs:ricevutoMs,
+          ricevutoLabel:new Date(ricevutoMs).toLocaleDateString('it-IT'),
+          scadeLabel:new Date(ricevutoMs+PERMESSI_DAYS*86400000).toLocaleDateString('it-IT')
+        });
+        msgIds.add(msgId); fileNames.add(part.filename); targheEsistenti.add(targaUp); nuovi++;
         } catch(partErr) { console.error('Errore elaborazione part', j, 'msg', msgId, ':', partErr.message, partErr.stack); }
       }
     }
@@ -7438,6 +7464,7 @@ function presenzeInit() {
     tcAdminRenderRegistro(); tcAdminRenderDipendenti(); tcPopForzaDip();
     presenzeLoadDaSheets();
     riRenderAdmin(); riAggiornaBadge(); riLoadDaSheets();
+    eaRenderReteIP(); eaLoadIPDaSheets();
     if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
   } else {
     vAdmin.style.display='none'; vDip.style.display='block';
@@ -7456,6 +7483,7 @@ function tcInitDipendente() {
   _tcMeseCorrente=_tcMeseCorrente||tcGetMese(); tcRenderMese();
   presenzeLoadDaSheets();
   riRenderDip(); riLoadDaSheets();
+  eaLoadIPDaSheets();
   if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
 }
 
@@ -7652,17 +7680,109 @@ function verificaPinSede(pin) {
   return null;
 }
 
+// ══════════════════════════════════════════════════════════════
+// LIMITE TIMBRATURE ALLA RETE DELLA SEDE (IP pubblico — solo WiFi sede)
+// ══════════════════════════════════════════════════════════════
+var SEDI_IP_KEY = 'ea_sedi_ip_v1';
+function eaLoadIP(){ try{ return JSON.parse(localStorage.getItem(SEDI_IP_KEY)||'[]'); }catch(e){ return []; } }
+function eaSaveIP(l){ try{ localStorage.setItem(SEDI_IP_KEY, JSON.stringify(l)); }catch(e){} }
+function eaFetchPublicIP(cb){
+  var done=false;
+  var to=setTimeout(function(){ if(!done){ done=true; cb(null); } }, 7000);
+  fetch('https://api.ipify.org?format=json',{cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if(done)return; done=true; clearTimeout(to); cb(j&&j.ip?String(j.ip).trim():null); })
+    .catch(function(){ if(done)return; done=true; clearTimeout(to); cb(null); });
+}
+function eaPushIP(rec){ if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:'SediIP', record:rec}); }catch(e){} } }
+function eaLoadIPDaSheets(){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='ipCb_'+Date.now();
+  var s=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },10000);
+  window[cb]=function(data){
+    clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
+    if(!Array.isArray(data)) return;
+    var lista=data.filter(function(r){return r&&r.ip;}).map(function(r){return {id:r.id||('ip_'+r.ip), nome:r.nome||'', ip:String(r.ip).trim()};});
+    eaSaveIP(lista);
+    if(document.getElementById('tc-reteip-lista')) eaRenderReteIP();
+  };
+  s.src=GS_URL+'?sheet=SediIP&callback='+cb+'&_t='+Date.now();
+  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
+  document.body.appendChild(s);
+}
+// Verifica se la rete attuale è una sede autorizzata. cb(ok, messaggio, nomeSede)
+function eaVerificaRete(cb){
+  var lista=eaLoadIP();
+  if(!lista.length){ cb(true, '', null); return; }   // non configurato → libero
+  eaFetchPublicIP(function(ip){
+    if(!ip){ cb(false, 'Impossibile verificare la rete. Riprova.', null); return; }
+    for(var i=0;i<lista.length;i++){ if(String(lista[i].ip).trim()===ip){ cb(true, '', lista[i].nome); return; } }
+    cb(false, 'Devi essere connesso al WiFi della sede per timbrare.', null);
+  });
+}
+// ── Admin: gestione reti sede ──
+function eaRenderReteIP(){
+  var wrap=document.getElementById('tc-reteip-lista'); if(!wrap) return;
+  var lista=eaLoadIP();
+  var html='';
+  if(!lista.length){
+    html='<div style="text-align:center;padding:20px;color:#64748b;">Nessuna rete registrata. Finché non ne registri almeno una, le timbrature sono libere ovunque.</div>';
+  } else {
+    html='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:10px 12px;text-align:left;">Sede</th><th style="padding:10px 12px;text-align:left;">IP rete</th><th></th></tr></thead><tbody>';
+    lista.forEach(function(sx){
+      html+='<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 12px;font-weight:600;">'+(sx.nome||'—')+'</td><td style="padding:9px 12px;color:#64748b;">'+(sx.ip||'')+'</td><td style="padding:9px 12px;text-align:right;"><button onclick="eaRimuoviIP(\''+sx.ip+'\')" style="background:none;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;">✕</button></td></tr>';
+    });
+    html+='</tbody></table>';
+  }
+  wrap.innerHTML=html;
+  var ipEl=document.getElementById('tc-reteip-current');
+  if(ipEl){ ipEl.textContent='Rilevamento IP in corso…'; eaFetchPublicIP(function(ip){ ipEl.textContent = ip ? ('IP attuale di questo dispositivo: '+ip) : 'IP non rilevato (controlla la connessione).'; }); }
+}
+function eaRegistraIP(){
+  eaFetchPublicIP(function(ip){
+    if(!ip){ tcToastNew('❌ Impossibile leggere l\u2019IP. Riprova.', false); return; }
+    var nome=prompt('Sei sul WiFi di quale sede? (es. Paderno, Bovisio)', '');
+    if(nome===null) return;
+    nome=(nome||'').trim()||('Sede '+ip);
+    var lista=eaLoadIP(), trovato=false;
+    lista.forEach(function(sx){ if(String(sx.ip)===String(ip)){ sx.nome=nome; trovato=true; } });
+    if(!trovato) lista.push({ id:'ip_'+ip, nome:nome, ip:ip });
+    eaSaveIP(lista);
+    eaPushIP({ id:'ip_'+ip, nome:nome, ip:ip });
+    eaRenderReteIP();
+    tcToastNew('✅ Rete registrata: '+nome+' ('+ip+')', true);
+  });
+}
+function eaRimuoviIP(ip){
+  if(!confirm('Rimuovere questa rete? Da qui non si potrà più timbrare.')) return;
+  var lista=eaLoadIP().filter(function(sx){ return String(sx.ip)!==String(ip); });
+  eaSaveIP(lista);
+  if(typeof gsDelete==='function') gsDelete('SediIP','ip_'+ip);
+  eaRenderReteIP();
+}
+
 function tcTimbra(tipo) {
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
-  var pinEl=document.getElementById('tc-sede-pin');
-  var pin = pinEl ? (pinEl.value||'').trim() : '';
-  var sedeNome = null;
-  if (pin) { var sede = verificaPinSede(pin); if (sede) sedeNome = sede.nome; }
-  // PIN facoltativo: si timbra comunque
-  if(ring){ring.className='tc-gps-ring ok';ring.textContent='✅';}
-  if(lbl) lbl.textContent = sedeNome ? ('Sede: ' + sedeNome) : 'Timbratura registrata';
-  if(sub) sub.textContent='Timbratura registrata';
-  tcSalvaTimbrata(_currentUserEmail, tipo, null, null, sedeNome);
+  if(ring){ring.className='tc-gps-ring idle';ring.textContent='📶';}
+  if(lbl) lbl.textContent='Verifica rete…';
+  eaVerificaRete(function(ok, msg, sedeRete){
+    if(!ok){
+      if(ring){ring.className='tc-gps-ring err';ring.textContent='🚫';}
+      if(lbl) lbl.textContent='Timbratura non consentita';
+      if(sub) sub.textContent=msg||'Connettiti al WiFi della sede';
+      tcToastNew('❌ '+(msg||'Connettiti al WiFi della sede'), false);
+      return;
+    }
+    var pinEl=document.getElementById('tc-sede-pin');
+    var pin = pinEl ? (pinEl.value||'').trim() : '';
+    var sedeNome = sedeRete || null;
+    if (pin) { var sede = verificaPinSede(pin); if (sede) sedeNome = sede.nome; }
+    if(ring){ring.className='tc-gps-ring ok';ring.textContent='✅';}
+    if(lbl) lbl.textContent = sedeNome ? ('Sede: ' + sedeNome) : 'Timbratura registrata';
+    if(sub) sub.textContent='Timbratura registrata';
+    tcSalvaTimbrata(_currentUserEmail, tipo, null, null, sedeNome);
+  });
 }
 
 function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
@@ -7715,6 +7835,7 @@ function tcAdminTab(e,tab) {
   if(tab==='forza') tcPopForzaDip();
   if(tab==='sedi') tcRenderSediPin();
   if(tab==='richieste'){ riRenderAdmin(); riAggiornaBadge(); }
+  if(tab==='reteip') eaRenderReteIP();
 }
 
 // ── Gestione PIN sedi (admin) ──
@@ -7774,8 +7895,10 @@ function tcAdminMeseSucc(){if(_tcAdminMese>=tcGetMese())return;var d=new Date(_t
 // Orari previsti (Lun–Sab): mattino 09:00, rientro pomeriggio 14:30.
 // L'anticipo prima di questi orari NON viene conteggiato; l'arrivo dopo è "ritardo".
 // Si applica SOLO ai dipendenti (non a staff/manager/admin, es. Arianna).
-var ORARIO_INIZIO  = '09:00';
-var ORARIO_RIENTRO = '14:30';
+var ORARIO_INIZIO     = '09:00';  // inizio mattino
+var ORARIO_FINE_MATT  = '12:00';  // fine mattino
+var ORARIO_RIENTRO    = '14:30';  // inizio pomeriggio
+var ORARIO_FINE       = '19:00';  // fine pomeriggio
 function tcToMin(t){ var x=(''+t).split(':'); return (parseInt(x[0],10)||0)*60+(parseInt(x[1],10)||0); }
 function tcGiornoLavorativo(dataStr){ // true se Lun–Sab
   if(!dataStr) return false;
@@ -7804,20 +7927,32 @@ function tcOrarioCell(r){
   if(e) return e+'–…';
   return '';
 }
-// Minuti lavorati: Lun–Sab e solo dipendenti → non conta l'anticipo
-// né al mattino (prima delle 9:00) né al rientro (prima delle 14:30).
+// minuti lavorati dentro la fascia [lo,hi] (taglia anticipo e straordinario)
+function tcSegmento(inizio, fine, lo, hi){
+  var s=Math.max(tcToMin(inizio), tcToMin(lo));
+  var e=Math.min(tcToMin(fine),   tcToMin(hi));
+  return Math.max(0, e-s);
+}
+// Minuti lavorati. Per i dipendenti (Lun–Sab): conta solo dentro l'orario
+// previsto (niente prima dell'inizio, niente dopo la fine) e arrotonda per
+// difetto alla mezz'ora (es. 7h10 → 7h). Per lo staff: orari reali.
 function tcMinutiRec(r){
   if(!r||!r.entrata||!r.uscita) return 0;
   var applica = tcGiornoLavorativo(r.data) && tcHaOrario(r.dipendente);
-  var inizio=tcToMin(r.entrata);
-  if(applica && inizio<tcToMin(ORARIO_INIZIO)) inizio=tcToMin(ORARIO_INIZIO);
-  var min=tcToMin(r.uscita)-inizio;
-  if(r.pausa&&r.rientro){
-    var rientro=tcToMin(r.rientro);
-    if(applica && rientro<tcToMin(ORARIO_RIENTRO)) rientro=tcToMin(ORARIO_RIENTRO);
-    min-=(rientro-tcToMin(r.pausa));
+  if(!applica){
+    var m=tcToMin(r.uscita)-tcToMin(r.entrata);
+    if(r.pausa&&r.rientro) m-=(tcToMin(r.rientro)-tcToMin(r.pausa));
+    return m>0?m:0;
   }
-  return min>0?min:0;
+  var tot=0;
+  if(r.pausa&&r.rientro){
+    tot += tcSegmento(r.entrata, r.pausa, ORARIO_INIZIO, ORARIO_FINE_MATT);
+    tot += tcSegmento(r.rientro, r.uscita, ORARIO_RIENTRO, ORARIO_FINE);
+  } else {
+    tot = tcSegmento(r.entrata, r.uscita, ORARIO_INIZIO, ORARIO_FINE);
+  }
+  tot = Math.floor(tot/30)*30;   // arrotonda per difetto a 30 min
+  return tot>0?tot:0;
 }
 function tcFmtMin(min){ return Math.floor(min/60)+'h '+String(min%60).padStart(2,'0')+'m'; }
 
