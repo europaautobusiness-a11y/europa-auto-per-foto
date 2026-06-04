@@ -1214,6 +1214,29 @@ html, body{
       <table class="tc-mese-table"><thead><tr><th>Data</th><th>Entrata</th><th>Pausa</th><th>Rientro</th><th>Uscita</th><th>Ore</th></tr></thead><tbody id="tc-mese-body"></tbody></table>
       <div class="tc-mese-total" id="tc-mese-total" style="display:none;"></div>
     </div>
+    <div class="tc-mese" style="margin-top:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap;">
+        <span class="tc-mese-label">Permessi e Ferie</span>
+        <button onclick="riToggleForm()" style="background:#1a4fa0;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">➕ Nuova richiesta</button>
+      </div>
+      <div id="ri-form" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:12px;text-align:left;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">TIPO</label>
+            <select id="ri-cat" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"><option>Ferie</option><option>Permesso</option><option>Congedo</option><option>ROL</option></select></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">ORE (solo permesso)</label>
+            <input id="ri-ore" type="text" inputmode="decimal" placeholder="es. 2" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">DAL</label>
+            <input id="ri-dal" type="date" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">AL (facoltativo)</label>
+            <input id="ri-al" type="date" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
+        </div>
+        <div style="margin-bottom:10px;"><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">NOTA (facoltativa)</label>
+          <input id="ri-nota" type="text" placeholder="motivo, dettagli…" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;box-sizing:border-box;"></div>
+        <div id="ri-err" style="display:none;color:#ef4444;font-size:12px;margin-bottom:8px;"></div>
+        <button onclick="riInvia()" style="background:#16a34a;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">Invia richiesta</button>
+      </div>
+      <div id="ri-lista-dip"></div>
+    </div>
   </div>
 </div>
 
@@ -1226,6 +1249,7 @@ html, body{
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'dipendenti')">👥 Dipendenti</button>
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'forza')">⚡ Forza Timbratura</button>
       <button class="tc-admin-tab" onclick="tcAdminTab(event,'sedi')">🔐 PIN Sedi</button>
+      <button class="tc-admin-tab" onclick="tcAdminTab(event,'richieste')">📝 Richieste<span id="tc-richieste-badge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;">0</span></button>
     </div>
     <div class="tc-panel active" id="tc-panel-registro">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
@@ -1287,6 +1311,12 @@ html, body{
         <div id="tc-sede-err" style="display:none;color:#ef4444;font-size:12px;margin-top:8px;"></div>
       </div>
       <div id="tc-sedi-lista"></div>
+    </div>
+    <div class="tc-panel" id="tc-panel-richieste">
+      <div style="background:#eef6ff;border-left:4px solid #1a4fa0;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:16px;font-size:13px;color:#1a4fa0;">
+        Richieste di permessi e ferie inviate dai dipendenti. Quelle <strong>approvate</strong> compaiono automaticamente nella colonna Perm/Ferie del registro, nei giorni coperti.
+      </div>
+      <div id="tc-richieste-lista"></div>
     </div>
   </div>
 </div>
@@ -7068,8 +7098,10 @@ function eaSyncSuFoglio(silent) {
     if (!r || !r.id) return;
     gsJsonp({ action:'upsert', sheet: PRESENZE_SHEET, record: r });
   });
+  var richieste = (typeof riLoad === 'function') ? riLoad() : [];
+  richieste.forEach(function(r){ if(r && r.id){ gsJsonp({ action:'upsert', sheet: RICHIESTE_SHEET, record: r }); } });
   if (!silent && typeof tcToastNew === 'function') {
-    tcToastNew('✅ Inviati al foglio: ' + dips.length + ' dipendenti, ' + reg.length + ' timbrature', true);
+    tcToastNew('✅ Inviati al foglio: ' + dips.length + ' dipendenti, ' + reg.length + ' timbrature, ' + richieste.length + ' richieste', true);
   }
 }
 
@@ -7416,6 +7448,7 @@ function presenzeInit() {
     if(lbl) lbl.textContent=tcMeseLabel(_tcAdminMese);
     tcAdminRenderRegistro(); tcAdminRenderDipendenti(); tcPopForzaDip();
     presenzeLoadDaSheets();
+    riRenderAdmin(); riAggiornaBadge(); riLoadDaSheets();
     if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
   } else {
     vAdmin.style.display='none'; vDip.style.display='block';
@@ -7433,7 +7466,108 @@ function tcInitDipendente() {
   tcRenderLog(); tcAggiornaPulsanti();
   _tcMeseCorrente=_tcMeseCorrente||tcGetMese(); tcRenderMese();
   presenzeLoadDaSheets();
+  riRenderDip(); riLoadDaSheets();
   if(!window._eaSyncUpDone){window._eaSyncUpDone=true;setTimeout(function(){try{eaSyncSuFoglio(true);}catch(e){}},1500);}
+}
+
+// ══════════════════════════════════════════════════════════════
+// RICHIESTE PERMESSI / FERIE
+// ══════════════════════════════════════════════════════════════
+var RICHIESTE_KEY='ea_richieste_v1';
+var RICHIESTE_SHEET='Richieste';
+
+function riLoad(){ try{ return JSON.parse(localStorage.getItem(RICHIESTE_KEY)||'[]'); }catch(e){ return []; } }
+function riSaveLocal(list){ localStorage.setItem(RICHIESTE_KEY, JSON.stringify(list)); }
+function riPush(r){ if(typeof GS_URL!=='undefined' && GS_URL && r){ try{ gsJsonp({action:'upsert', sheet:RICHIESTE_SHEET, record:r}); }catch(e){} } }
+function riPending(){ return riLoad().filter(function(r){return r.stato==='in_attesa';}); }
+function riAggiornaBadge(){ var b=document.getElementById('tc-richieste-badge'); if(!b) return; var n=riPending().length; b.textContent=n; b.style.display=n>0?'inline-block':'none'; }
+function riData(d){ try{ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }catch(e){ return d; } }
+function riPeriodo(r){ if(r.dataInizio===r.dataFine){ return riData(r.dataInizio)+(r.ore?(' · '+r.ore+'h'):''); } return riData(r.dataInizio)+' → '+riData(r.dataFine); }
+function riStatoBadge(s){
+  if(s==='approvato') return '<span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">Approvata</span>';
+  if(s==='rifiutato') return '<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">Rifiutata</span>';
+  return '<span style="background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">In attesa</span>';
+}
+
+// ── DIPENDENTE ──
+function riToggleForm(){ var f=document.getElementById('ri-form'); if(!f) return; f.style.display=(f.style.display==='none'||!f.style.display)?'block':'none'; }
+function riInvia(){
+  var cat=document.getElementById('ri-cat').value;
+  var dal=document.getElementById('ri-dal').value;
+  var al=document.getElementById('ri-al').value||dal;
+  var ore=document.getElementById('ri-ore').value.trim();
+  var nota=document.getElementById('ri-nota').value.trim();
+  var err=document.getElementById('ri-err');
+  if(!dal){ if(err){err.textContent='Inserisci almeno la data di inizio.';err.style.display='block';} return; }
+  if(al<dal){ if(err){err.textContent='La data di fine è prima di quella di inizio.';err.style.display='block';} return; }
+  if(err) err.style.display='none';
+  var r={ id:'ri_'+Date.now(), dipendente:_currentUserEmail, nome:tcGetNome(_currentUserEmail), categoria:cat, dataInizio:dal, dataFine:al, ore:ore, nota:nota, stato:'in_attesa', creato:new Date().toISOString() };
+  var list=riLoad(); list.push(r); riSaveLocal(list); riPush(r);
+  document.getElementById('ri-ore').value=''; document.getElementById('ri-nota').value='';
+  riToggleForm(); riRenderDip(); tcToastNew('✅ Richiesta inviata',true);
+}
+function riRenderDip(){
+  var wrap=document.getElementById('ri-lista-dip'); if(!wrap) return;
+  var mie=riLoad().filter(function(r){return r.dipendente===_currentUserEmail;}).sort(function(a,b){return (b.creato||'')<(a.creato||'')?-1:1;});
+  if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta inviata.</div>'; return; }
+  var html=''; mie.forEach(function(r){
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;text-align:left;">'
+      +'<div><div style="font-weight:700;color:#0f172a;font-size:13px;">'+r.categoria+'</div>'
+      +'<div style="color:#64748b;font-size:12px;">'+riPeriodo(r)+(r.nota?(' · '+r.nota):'')+'</div></div>'
+      +'<div>'+riStatoBadge(r.stato)+'</div></div>';
+  });
+  wrap.innerHTML=html;
+}
+
+// ── ADMIN ──
+function riRenderAdmin(){
+  var wrap=document.getElementById('tc-richieste-lista'); if(!wrap) return;
+  var ord={in_attesa:0,approvato:1,rifiutato:2};
+  var all=riLoad().sort(function(a,b){ if(ord[a.stato]!==ord[b.stato]) return ord[a.stato]-ord[b.stato]; return (b.creato||'')<(a.creato||'')?-1:1; });
+  if(!all.length){ wrap.innerHTML='<div style="text-align:center;padding:30px;color:#64748b;">Nessuna richiesta.</div>'; return; }
+  var html=''; all.forEach(function(r){
+    var azioni = r.stato==='in_attesa'
+      ? '<div style="display:flex;gap:6px;"><button onclick="riApprova(\''+r.id+'\')" style="background:#16a34a;color:#fff;border:none;padding:7px 12px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✓ Approva</button>'
+        +'<button onclick="riRifiuta(\''+r.id+'\')" style="background:#fff;color:#dc2626;border:1px solid #dc2626;padding:7px 12px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✕ Rifiuta</button></div>'
+      : '<button onclick="riAnnulla(\''+r.id+'\')" style="background:none;color:#64748b;border:1px solid #cbd5e1;padding:6px 10px;border-radius:6px;font-family:inherit;font-size:11px;cursor:pointer;">↩︎ In attesa</button>';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;background:#fff;flex-wrap:wrap;">'
+      +'<div style="min-width:200px;"><div style="font-weight:700;color:#0f172a;">'+r.nome+' — '+r.categoria+'</div>'
+      +'<div style="color:#64748b;font-size:12px;">'+riPeriodo(r)+(r.nota?(' · '+r.nota):'')+'</div></div>'
+      +'<div style="display:flex;align-items:center;gap:10px;">'+riStatoBadge(r.stato)+azioni+'</div></div>';
+  });
+  wrap.innerHTML=html;
+}
+function riSetStato(id,stato){ var list=riLoad(), found=null; list.forEach(function(r){ if(r.id===id){ r.stato=stato; found=r; } }); riSaveLocal(list); if(found) riPush(found); riRenderAdmin(); riAggiornaBadge(); if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro(); }
+function riApprova(id){ riSetStato(id,'approvato'); tcToastNew('✅ Richiesta approvata',true); }
+function riRifiuta(id){ riSetStato(id,'rifiutato'); tcToastNew('Richiesta rifiutata',true); }
+function riAnnulla(id){ riSetStato(id,'in_attesa'); }
+
+// ── Lettura dal foglio (JSONP) ──
+function riLoadDaSheets(){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='riCb_'+Date.now();
+  var s=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
+  window[cb]=function(data){
+    clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
+    if(!Array.isArray(data)) return;
+    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    riLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; }); // tieni i locali non ancora sincronizzati
+    riSaveLocal(Object.keys(byId).map(function(k){return byId[k];}));
+    if(typeof isAdmin==='function' && isAdmin()){ riRenderAdmin(); riAggiornaBadge(); if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro(); }
+    else { riRenderDip(); }
+  };
+  s.src=GS_URL+'?sheet='+encodeURIComponent(RICHIESTE_SHEET)+'&callback='+cb;
+  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
+  document.body.appendChild(s);
+}
+// Categoria approvata che copre un dato giorno per un dipendente (per il registro)
+function riPerGiorno(email,dataStr){
+  var out=''; riLoad().forEach(function(r){
+    if(r.stato!=='approvato' || r.dipendente!==email) return;
+    if(dataStr>=r.dataInizio && dataStr<=r.dataFine){ out=r.categoria+(r.ore?(' '+r.ore+'h'):''); }
+  });
+  return out;
 }
 
 function tcAggiornaClock() {
@@ -7602,11 +7736,12 @@ function tcToastNew(msg,ok) {
 function tcAdminTab(e,tab) {
   document.querySelectorAll('.tc-admin-tab').forEach(function(t){t.classList.remove('active');});
   document.querySelectorAll('.tc-panel').forEach(function(p){p.classList.remove('active');});
-  e.target.classList.add('active');
+  var btn=(e&&e.target&&e.target.closest)?e.target.closest('.tc-admin-tab'):(e?e.target:null); if(btn) btn.classList.add('active');
   var panel=document.getElementById('tc-panel-'+tab); if(panel) panel.classList.add('active');
   if(tab==='dipendenti') tcAdminRenderDipendenti();
   if(tab==='forza') tcPopForzaDip();
   if(tab==='sedi') tcRenderSediPin();
+  if(tab==='richieste'){ riRenderAdmin(); riAggiornaBadge(); }
 }
 
 // ── Gestione PIN sedi (admin) ──
@@ -7731,7 +7866,7 @@ function tcAdminRenderRegistro() {
       var orario=tcOrarioCell(r);
       var min=tcMinutiRec(r); if(min) tot[d.email]+=min;
       var ore=min?tcFmtMin(min):'';
-      var perm=r?(r.permesso||r.ferie||r.nota||''):'';
+      var perm=(typeof riPerGiorno==='function'?riPerGiorno(d.email,dataStr):'')||(r?(r.permesso||r.ferie||r.nota||''):'');
       var cella = orario ? ('<div>'+orario+'</div>'+(ore?'<div style="font-weight:700;color:#16a34a;">'+ore+'</div>':'')) : '';
       html+='<td onclick="tcModificaTimbratura(\''+d.email+'\',\''+dataStr+'\')" style="'+tdg+'border-left:2px solid #eef2f7;text-align:center;cursor:pointer;min-width:120px;" title="Clicca per inserire o modificare">'+cella+'</td>';
       html+='<td style="'+tdg+'text-align:center;color:#b45309;">'+perm+'</td>';
@@ -8095,11 +8230,23 @@ function presenzeRenderTabella() {
 // ══════════════════════════════════════════════════════════════
 function presenzeGsSave(entry){if(GS_URL)gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:entry});}
 
+function tcNormDateStr(v){
+  if(v===''||v===null||v===undefined) return '';
+  var s=String(v); var m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+  var d=new Date(s); if(!isNaN(d.getTime())){var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());}
+  return s;
+}
+function tcNormMeseStr(v){
+  if(v===''||v===null||v===undefined) return '';
+  var s=String(v); var m=s.match(/^(\d{4})-(\d{2})/); if(m) return m[1]+'-'+m[2];
+  var d=new Date(s); if(!isNaN(d.getTime())){var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1);}
+  return s;
+}
 function presenzeLoadDaSheets(){
   if(!GS_URL)return;
   var meseC=presenzeGetMese();
   var cb='presGsCb_'+Date.now();
-  var timer=setTimeout(function(){delete window[cb];var s=document.getElementById(cb);if(s&&s.parentNode)s.parentNode.removeChild(s);},10000);
+  var timer=setTimeout(function(){delete window[cb];var s=document.getElementById(cb);if(s&&s.parentNode)s.parentNode.removeChild(s);},12000);
   window[cb]=function(data){
     clearTimeout(timer);delete window[cb];
     var s=document.getElementById(cb);if(s&&s.parentNode)s.parentNode.removeChild(s);
@@ -8108,27 +8255,29 @@ function presenzeLoadDaSheets(){
     var dipGS=data.filter(function(r){return r.tipo==='dipendente';});
     if(dipGS.length){
       var loc=loadDipendenti();
-      dipGS.forEach(function(d){if(!loc.find(function(x){return x.email===d.email;}))loc.push(d);});
+      dipGS.forEach(function(d){ if(d.email && !loc.find(function(x){return x.email===d.email;})) loc.push({nome:d.nome,email:d.email,ruolo:d.ruolo||'dipendente',sede:d.sede||'sede_a'}); });
       saveDipendenti(loc);
-      if(isAdmin())presenzeRenderDipendentiAdmin();
     }
-    // Presenze mese corrente
-    var presGS=data.filter(function(r){return !r.tipo&&r.mese===meseC;});
-    if(presGS.length){
-      var reg=presenzeLoadReg().filter(function(r){return r.mese!==meseC;});
-      presenzeSaveReg(reg.concat(presGS));
-      if(isAdmin()){
-        if(typeof tcAdminRenderRegistro==='function')tcAdminRenderRegistro();
-        if(typeof presenzeRenderTabella==='function')presenzeRenderTabella();
-      } else {
-        if(typeof tcRenderMese==='function')tcRenderMese();
-        if(typeof tcRenderLog==='function')tcRenderLog();
-        if(typeof tcAggiornaPulsanti==='function')tcAggiornaPulsanti();
-      }
+    // Timbrature del mese corrente — normalizza data/mese (il foglio può restituirle come date ISO)
+    var presGS=data.filter(function(r){return !r.tipo;}).map(function(r){
+      r.data=tcNormDateStr(r.data);
+      r.mese=tcNormMeseStr(r.mese||r.data);
+      return r;
+    }).filter(function(r){return r.mese===meseC;});
+    var reg=presenzeLoadReg().filter(function(r){return r.mese!==meseC;});
+    presenzeSaveReg(reg.concat(presGS));
+    // Ridisegna SEMPRE la vista giusta
+    if(typeof isAdmin==='function' && isAdmin()){
+      if(typeof tcAdminRenderRegistro==='function')tcAdminRenderRegistro();
+      if(typeof presenzeRenderDipendentiAdmin==='function')presenzeRenderDipendentiAdmin();
+    } else {
+      if(typeof tcRenderMese==='function')tcRenderMese();
+      if(typeof tcRenderLog==='function')tcRenderLog();
+      if(typeof tcAggiornaPulsanti==='function')tcAggiornaPulsanti();
     }
   };
   var s=document.createElement('script');s.id=cb;
-  s.src=GS_URL+'?sheet='+PRESENZE_SHEET+'&callback='+cb;
+  s.src=GS_URL+'?sheet='+PRESENZE_SHEET+'&callback='+cb+'&_t='+Date.now();
   s.onerror=function(){clearTimeout(timer);delete window[cb];if(s.parentNode)s.parentNode.removeChild(s);};
   document.body.appendChild(s);
 }
