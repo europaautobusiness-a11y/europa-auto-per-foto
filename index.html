@@ -1260,7 +1260,7 @@ html, body{
         </select>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
-          <button onclick="tcScaricaRiepilogoCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Riepilogo mese (CSV)</button>
+          <button onclick="tcScaricaRiepilogoXLS()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Riepilogo mese (Excel)</button>
           <button onclick="tcScaricaTimbratureCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Timbrature (CSV)</button>
           <button onclick="tcAzzeraMese()" style="padding:7px 14px;border:1px solid #ef4444;background:#fff;color:#ef4444;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🗑️ Azzera mese</button>
           <button onclick="eaSyncSuFoglio(false)" style="padding:7px 14px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🔄 Sincronizza con foglio</button>
@@ -7918,12 +7918,17 @@ function tcPermCodice(cat){
   return cat;
 }
 
+// Dipendenti che NON usano l'app: colonne fisse nel file riepilogo (ore da compilare a mano)
+var DIPENDENTI_EXTRA = ['Renato'];
+
 // Riepilogo mensile in stile "FOGLIO PRESENZE" (per il commercialista)
 function tcScaricaRiepilogoCSV(){
   var mese=_tcAdminMese||tcGetMese();
   var filter=document.getElementById('tc-admin-dip-filter'), fv=filter?filter.value:'';
   var cols=tcLoadDip().filter(function(d){return !fv||d.email===fv;});
-  if(!cols.length){ alert('Nessun dipendente.'); return; }
+  // i dipendenti "extra" (es. Renato) si aggiungono solo nell'esportazione completa
+  var extra = fv ? [] : DIPENDENTI_EXTRA.slice();
+  if(!cols.length && !extra.length){ alert('Nessun dipendente.'); return; }
   var recs=tcLoadReg().filter(function(r){return r.mese===mese;});
   var map={}; recs.forEach(function(r){ map[r.dipendente+'|'+r.data]=r; });
   var parti=mese.split('-'), anno=parseInt(parti[0],10), mIdx=parseInt(parti[1],10)-1;
@@ -7931,9 +7936,13 @@ function tcScaricaRiepilogoCSV(){
   var sett=['domenica',"LUNEDI'","MARTEDI'","MERCOLEDI'","GIOVEDI'","VENERDI'",'sabato'];
   var righe=[];
   righe.push([tcCsvCell('FOGLIO PRESENZE — '+tcMeseLabel(mese))]);
-  var r1=[tcCsvCell(''),tcCsvCell('')]; cols.forEach(function(d){ r1.push(tcCsvCell(tcGetNome(d.email))); r1.push(tcCsvCell('')); });
+  var r1=[tcCsvCell(''),tcCsvCell('')];
+  cols.forEach(function(d){ r1.push(tcCsvCell(tcGetNome(d.email))); r1.push(tcCsvCell('')); });
+  extra.forEach(function(nome){ r1.push(tcCsvCell(nome)); r1.push(tcCsvCell('')); });
   righe.push(r1);
-  var r2=[tcCsvCell('DIPENDENTE'),tcCsvCell('')]; cols.forEach(function(){ r2.push(tcCsvCell('ORE')); r2.push(tcCsvCell('PERM/FERIE')); });
+  var r2=[tcCsvCell('DIPENDENTE'),tcCsvCell('')];
+  cols.forEach(function(){ r2.push(tcCsvCell('ORE')); r2.push(tcCsvCell('PERM/FERIE')); });
+  extra.forEach(function(){ r2.push(tcCsvCell('ORE')); r2.push(tcCsvCell('PERM/FERIE')); });
   righe.push(r2);
   var tot={}; cols.forEach(function(d){tot[d.email]=0;});
   for(var g=1; g<=giorni; g++){
@@ -7949,9 +7958,13 @@ function tcScaricaRiepilogoCSV(){
       riga.push(tcCsvCell(min?tcOreDecimali(min):''));
       riga.push(tcCsvCell(pc));
     });
+    // colonne extra (vuote, da compilare a mano; "/" la domenica)
+    extra.forEach(function(){ riga.push(tcCsvCell('')); riga.push(tcCsvCell(dow===0?'/':'')); });
     righe.push(riga);
   }
-  var rt=[tcCsvCell('TOTALE ORE'),tcCsvCell('')]; cols.forEach(function(d){ rt.push(tcCsvCell(tot[d.email]?tcOreDecimali(tot[d.email]):'0')); rt.push(tcCsvCell('')); });
+  var rt=[tcCsvCell('TOTALE ORE'),tcCsvCell('')];
+  cols.forEach(function(d){ rt.push(tcCsvCell(tot[d.email]?tcOreDecimali(tot[d.email]):'0')); rt.push(tcCsvCell('')); });
+  extra.forEach(function(){ rt.push(tcCsvCell('')); rt.push(tcCsvCell('')); });
   righe.push(rt);
   righe.push([tcCsvCell('')]);
   righe.push([tcCsvCell('LEGENDA')]);
@@ -7962,6 +7975,71 @@ function tcScaricaRiepilogoCSV(){
   righe.push([tcCsvCell('ROL = ROL')]);
   righe.push([tcCsvCell('/ = GIORNO DI RIPOSO')]);
   tcDownloadCSV('riepilogo_presenze_'+mese+'.csv', righe);
+}
+
+// Riepilogo mensile in EXCEL (.xls) con grassetto e larghezze colonne
+function tcScaricaRiepilogoXLS(){
+  var mese=_tcAdminMese||tcGetMese();
+  var filter=document.getElementById('tc-admin-dip-filter'), fv=filter?filter.value:'';
+  var cols=tcLoadDip().filter(function(d){return !fv||d.email===fv;});
+  var extra = fv ? [] : DIPENDENTI_EXTRA.slice();
+  if(!cols.length && !extra.length){ alert('Nessun dipendente.'); return; }
+  var recs=tcLoadReg().filter(function(r){return r.mese===mese;});
+  var map={}; recs.forEach(function(r){ map[r.dipendente+'|'+r.data]=r; });
+  var parti=mese.split('-'), anno=parseInt(parti[0],10), mIdx=parseInt(parti[1],10)-1;
+  var giorni=new Date(anno,mIdx+1,0).getDate();
+  var sett=['domenica',"LUNEDI'","MARTEDI'","MERCOLEDI'","GIOVEDI'","VENERDI'",'sabato'];
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  var nomi = cols.map(function(d){return tcGetNome(d.email);}).concat(extra);
+  var nCols = 2 + nomi.length*2;
+
+  var H='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>';
+  H+='<table border="1" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt;text-align:center;">';
+  // titolo
+  H+='<tr><td colspan="'+nCols+'" style="font-weight:bold;font-size:15pt;height:30px;">FOGLIO PRESENZE — '+esc(tcMeseLabel(mese))+'</td></tr>';
+  // nomi (sfondo azzurro, grassetto)
+  H+='<tr><td></td><td></td>';
+  nomi.forEach(function(n){ H+='<td colspan="2" style="font-weight:bold;background:#dbe5f1;font-size:12pt;">'+esc(n)+'</td>'; });
+  H+='</tr>';
+  // sottointestazioni (con larghezze colonne)
+  H+='<tr><td style="font-weight:bold;text-align:left;width:90px;">DIPENDENTE</td><td style="width:120px;"></td>';
+  nomi.forEach(function(){ H+='<td style="font-weight:bold;background:#eef3fa;width:70px;">ORE</td><td style="font-weight:bold;background:#eef3fa;width:105px;">PERM/FERIE</td>'; });
+  H+='</tr>';
+  // giorni
+  var tot={}; cols.forEach(function(d){tot[d.email]=0;});
+  for(var g=1; g<=giorni; g++){
+    var dataStr=mese+'-'+String(g).padStart(2,'0');
+    var dow=new Date(anno,mIdx,g).getDay();
+    var bg=(dow===0||dow===6)?'background:#f3f4f6;':'';
+    H+='<tr style="'+bg+'"><td style="font-weight:bold;text-align:left;">GIORNO '+g+'</td><td style="text-align:left;'+(dow===0||dow===6?'color:#b91c1c;':'')+'">'+sett[dow]+'</td>';
+    cols.forEach(function(d){
+      var r=map[d.email+'|'+dataStr];
+      var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0; if(min) tot[d.email]+=min;
+      var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
+      var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
+      H+='<td>'+(min?esc(tcOreDecimali(min)):'')+'</td><td>'+esc(pc)+'</td>';
+    });
+    extra.forEach(function(){ H+='<td></td><td>'+(dow===0?'/':'')+'</td>'; });
+    H+='</tr>';
+  }
+  // totale
+  H+='<tr style="font-weight:bold;background:#dbe5f1;"><td style="text-align:left;">TOTALE ORE</td><td></td>';
+  cols.forEach(function(d){ H+='<td>'+(tot[d.email]?esc(tcOreDecimali(tot[d.email])):'0')+'</td><td></td>'; });
+  extra.forEach(function(){ H+='<td></td><td></td>'; });
+  H+='</tr>';
+  // legenda
+  H+='<tr><td colspan="'+nCols+'"></td></tr>';
+  H+='<tr><td colspan="'+nCols+'" style="font-weight:bold;text-align:left;">LEGENDA</td></tr>';
+  ['F = FERIE','P = PERMESSO RETRIBUITO','PN = PERMESSO NON RETRIBUITO','C = CONGEDO','ROL = ROL','/ = GIORNO DI RIPOSO'].forEach(function(l){
+    H+='<tr><td colspan="'+nCols+'" style="text-align:left;">'+esc(l)+'</td></tr>';
+  });
+  H+='</table></body></html>';
+
+  var blob=new Blob(['\uFEFF'+H],{type:'application/vnd.ms-excel;charset=utf-8;'});
+  var url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='riepilogo_presenze_'+mese+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 
 // Timbrature dettagliate del mese
