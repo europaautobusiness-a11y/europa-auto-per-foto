@@ -1110,6 +1110,7 @@ html, body{
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button onclick="syncPermessiManuale(this)" style="padding:9px 18px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">&#128260; Sincronizza Gmail</button>
+      <button onclick="pulisciDuplicatiDrive(this)" style="padding:9px 18px;background:#fff;color:#dc2626;border:1px solid #dc2626;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;">&#129529; Pulisci duplicati Drive</button>
       <button onclick="eliminaDuplicatiPermessi()" style="padding:9px 18px;background:#e67e22;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">🧹 Elimina Duplicati</button>
       <label style="padding:9px 18px;background:#27ae60;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;">
         &#128196; Carica PDF
@@ -6601,18 +6602,23 @@ async function syncPermessiDaDrive(statusEl) {
     var folderId=await getOrCreatePermessiFolder(token);
     var fr=await fetch('https://www.googleapis.com/drive/v3/files?q='+
       encodeURIComponent("'"+folderId+"' in parents and trashed=false and mimeType='application/pdf'")+
-      '&fields=files(id,name,createdTime)&orderBy=createdTime desc',
+      '&fields=files(id,name,createdTime)&orderBy=createdTime desc&pageSize=1000',
       {headers:{Authorization:'Bearer '+token}});
     var fd=await fr.json(), driveFiles=fd.files||[];
     if (!driveFiles.length) return;
-    // Pulizia doppioni su Drive: stesso nome → tieni il più recente, cestina gli altri
-    var vistiNome={}, daCestinare=[];
-    driveFiles.forEach(function(df){ var nm=(df.name||'').toLowerCase(); if(vistiNome[nm]){ daCestinare.push(df.id); } else { vistiNome[nm]=true; } });
+    // Pulizia doppioni su Drive: un solo file per TARGA (tengo il più recente, cestino gli altri)
+    var vistiTarga={}, daCestinare=[];
+    driveFiles.forEach(function(df){
+      var nm=(df.name||'');
+      var m=nm.match(/([A-Z]{2}\d{3}[A-Z]{2})/i);
+      var key=m?m[1].toUpperCase():nm.toLowerCase();
+      if(vistiTarga[key]){ daCestinare.push(df.id); } else { vistiTarga[key]=true; }
+    });
     for (var z=0; z<daCestinare.length; z++){
       try { await fetch('https://www.googleapis.com/drive/v3/files/'+daCestinare[z],
         {method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({trashed:true})}); } catch(e){}
     }
-    if (daCestinare.length){ console.log('Drive: cestinati', daCestinare.length, 'permessini duplicati'); driveFiles=driveFiles.filter(function(df){ return daCestinare.indexOf(df.id)<0; }); }
+    if (daCestinare.length){ console.log('Drive: cestinati', daCestinare.length, 'permessini duplicati'); if(statusEl){statusEl.textContent='🧹 Rimossi '+daCestinare.length+' duplicati da Drive';} driveFiles=driveFiles.filter(function(df){ return daCestinare.indexOf(df.id)<0; }); }
     var esistenti=loadPermessi();
     var driveIds=new Set(esistenti.map(function(p){return p.driveFileId;}));
     var nuovi=0;
@@ -6750,6 +6756,40 @@ async function syncPermessiDaGmail(mostraStatus) {
       setTimeout(function(){statusEl.style.display='none';statusEl.style.color='';},5000);
     }
   }
+}
+
+// ── Pulizia duplicati Drive (su richiesta) ──
+async function pulisciDuplicatiDrive(btn){
+  if(!isDriveConnected()){ alert('Collega prima Google Drive (dalla schermata principale).'); return; }
+  var ot = btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='\uD83E\uDDF9 Pulizia in corso...'; }
+  try{
+    var token=_driveAccessToken;
+    var folderId=await getOrCreatePermessiFolder(token);
+    var tutti=[], pageToken=null;
+    do{
+      var url='https://www.googleapis.com/drive/v3/files?q='+
+        encodeURIComponent("'"+folderId+"' in parents and trashed=false and mimeType='application/pdf'")+
+        '&fields=nextPageToken,files(id,name,createdTime)&orderBy=createdTime desc&pageSize=1000'+(pageToken?('&pageToken='+pageToken):'');
+      var r=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+      var d=await r.json();
+      tutti=tutti.concat(d.files||[]);
+      pageToken=d.nextPageToken||null;
+    } while(pageToken);
+    var visti={}, trash=[];
+    tutti.forEach(function(df){
+      var nm=(df.name||''); var m=nm.match(/([A-Z]{2}\d{3}[A-Z]{2})/i);
+      var key=m?m[1].toUpperCase():nm.toLowerCase();
+      if(visti[key]) trash.push(df.id); else visti[key]=true;
+    });
+    for(var i=0;i<trash.length;i++){
+      try{ await fetch('https://www.googleapis.com/drive/v3/files/'+trash[i],
+        {method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({trashed:true})}); }catch(e){}
+    }
+    try{ deduplicaPermessi(); renderPermessi(); }catch(e){}
+    alert('\u2705 Pulizia completata: rimossi '+trash.length+' permessini duplicati su Drive (ora nel Cestino). Resta un file per ogni targa.');
+  }catch(e){ alert('Errore durante la pulizia: '+e.message); }
+  if(btn){ btn.disabled=false; btn.textContent=ot||'\uD83E\uDDF9 Pulisci duplicati Drive'; }
 }
 
 function syncPermessiManuale(btn) {
