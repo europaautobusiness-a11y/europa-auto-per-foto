@@ -8232,14 +8232,18 @@ function presenzeGsSave(entry){if(GS_URL)gsJsonp({action:'upsert',sheet:PRESENZE
 
 function tcNormDateStr(v){
   if(v===''||v===null||v===undefined) return '';
-  var s=String(v); var m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
-  var d=new Date(s); if(!isNaN(d.getTime())){var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());}
+  var s=String(v); var z=function(n){return String(n).padStart(2,'0');};
+  if(/T\d{2}:/.test(s)){ var dd=new Date(s); if(!isNaN(dd.getTime())) return dd.getFullYear()+'-'+z(dd.getMonth()+1)+'-'+z(dd.getDate()); }
+  var m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+  var d=new Date(s); if(!isNaN(d.getTime())) return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());
   return s;
 }
 function tcNormMeseStr(v){
   if(v===''||v===null||v===undefined) return '';
-  var s=String(v); var m=s.match(/^(\d{4})-(\d{2})/); if(m) return m[1]+'-'+m[2];
-  var d=new Date(s); if(!isNaN(d.getTime())){var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1);}
+  var s=String(v); var z=function(n){return String(n).padStart(2,'0');};
+  if(/T\d{2}:/.test(s)){ var dd=new Date(s); if(!isNaN(dd.getTime())) return dd.getFullYear()+'-'+z(dd.getMonth()+1); }
+  var m=s.match(/^(\d{4})-(\d{2})/); if(m) return m[1]+'-'+m[2];
+  var d=new Date(s); if(!isNaN(d.getTime())) return d.getFullYear()+'-'+z(d.getMonth()+1);
   return s;
 }
 function presenzeLoadDaSheets(){
@@ -8258,10 +8262,12 @@ function presenzeLoadDaSheets(){
       dipGS.forEach(function(d){ if(d.email && !loc.find(function(x){return x.email===d.email;})) loc.push({nome:d.nome,email:d.email,ruolo:d.ruolo||'dipendente',sede:d.sede||'sede_a'}); });
       saveDipendenti(loc);
     }
-    // Timbrature del mese corrente — normalizza data/mese (il foglio può restituirle come date ISO)
-    var presGS=data.filter(function(r){return !r.tipo;}).map(function(r){
-      r.data=tcNormDateStr(r.data);
-      r.mese=tcNormMeseStr(r.mese||r.data);
+    // Timbrature del mese corrente — la data ESATTA è dentro l'id (es. ..._2026-06-02);
+    // le colonne data/mese dal foglio possono slittare per fuso orario, quindi non le usiamo.
+    var presGS=data.filter(function(r){return !r.tipo && r.dipendente;}).map(function(r){
+      var m=String(r.id||'').match(/(\d{4}-\d{2}-\d{2})$/);
+      r.data = m ? m[1] : tcNormDateStr(r.data);
+      r.mese = r.data ? r.data.substring(0,7) : tcNormMeseStr(r.mese);
       return r;
     }).filter(function(r){return r.mese===meseC;});
     var reg=presenzeLoadReg().filter(function(r){return r.mese!==meseC;});
