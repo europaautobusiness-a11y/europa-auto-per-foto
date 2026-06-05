@@ -1303,6 +1303,19 @@ html, body{
       <div style="background:#eef6ff;border-left:4px solid #1a4fa0;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:16px;font-size:13px;color:#1a4fa0;">
         Richieste di permessi e ferie inviate dai dipendenti. Quelle <strong>approvate</strong> compaiono automaticamente nella colonna Perm/Ferie del registro, nei giorni coperti.
       </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:18px;">
+        <div style="font-weight:800;color:#0f172a;font-size:14px;margin-bottom:10px;">➕ Inserisci ferie / permesso (admin)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div style="flex:1;min-width:160px;"><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">DIPENDENTE</label><select id="ri-adm-dip" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"></select></div>
+          <div style="min-width:130px;"><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">TIPO</label><select id="ri-adm-cat" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"><option>Ferie</option><option>Permesso</option><option>Congedo</option><option>ROL</option></select></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">DAL</label><input type="date" id="ri-adm-dal" style="padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"></div>
+          <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">AL</label><input type="date" id="ri-adm-al" style="padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"></div>
+          <div style="width:90px;"><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">ORE</label><input type="text" id="ri-adm-ore" placeholder="(opz.)" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:13px;border-radius:6px;"></div>
+          <button onclick="riAdminInserisci()" style="background:#16a34a;color:#fff;border:none;padding:10px 18px;border-radius:6px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">Inserisci</button>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:8px;">Per un solo giorno lascia "AL" vuoto. "ORE" solo per permessi a ore (es. 4).</div>
+        <div id="ri-adm-err" style="display:none;color:#dc2626;font-size:12px;margin-top:8px;"></div>
+      </div>
       <div id="tc-richieste-lista"></div>
     </div>
     <div class="tc-panel" id="tc-panel-reteip">
@@ -7639,8 +7652,38 @@ function riRenderDip(){
 }
 
 // ── ADMIN ──
+function riAdminPopDip(){
+  var sel=document.getElementById('ri-adm-dip'); if(!sel) return;
+  var prev=sel.value;
+  var list=(typeof tcLoadDip==='function')?(tcLoadDip()||[]):[];
+  sel.innerHTML='';
+  list.forEach(function(d){ var o=document.createElement('option'); o.value=d.email; o.textContent=(d.nome||d.email)+' ('+d.email+')'; sel.appendChild(o); });
+  if(prev) sel.value=prev;
+  var dal=document.getElementById('ri-adm-dal'); if(dal&&!dal.value&&typeof tcGetOggi==='function') dal.value=tcGetOggi();
+}
+function riAdminInserisci(){
+  var sel=document.getElementById('ri-adm-dip');
+  var email=sel?sel.value:''; 
+  var cat=document.getElementById('ri-adm-cat').value;
+  var dal=document.getElementById('ri-adm-dal').value;
+  var al=document.getElementById('ri-adm-al').value||dal;
+  var ore=(document.getElementById('ri-adm-ore').value||'').trim();
+  var err=document.getElementById('ri-adm-err');
+  if(!email){ if(err){err.textContent='Scegli un dipendente.';err.style.display='block';} return; }
+  if(!dal){ if(err){err.textContent='Inserisci almeno la data (DAL).';err.style.display='block';} return; }
+  if(al<dal){ if(err){err.textContent='La data AL è prima di DAL.';err.style.display='block';} return; }
+  if(err) err.style.display='none';
+  var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
+  var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:dal, dataFine:al, ore:ore, nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
+  var l=riLoad(); l.push(r); riSaveLocal(l); riPush(r);
+  document.getElementById('ri-adm-ore').value=''; document.getElementById('ri-adm-al').value='';
+  riRenderAdmin(); riAggiornaBadge();
+  if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
+  tcToastNew('✅ '+cat+' inserito per '+nome,true);
+}
 function riRenderAdmin(){
   var wrap=document.getElementById('tc-richieste-lista'); if(!wrap) return;
+  riAdminPopDip();
   var ord={in_attesa:0,approvato:1,rifiutato:2};
   var all=riLoad().sort(function(a,b){ if(ord[a.stato]!==ord[b.stato]) return ord[a.stato]-ord[b.stato]; return (b.creato||'')<(a.creato||'')?-1:1; });
   if(!all.length){ wrap.innerHTML='<div style="text-align:center;padding:30px;color:#64748b;">Nessuna richiesta.</div>'; return; }
@@ -7681,6 +7724,50 @@ function riLoadDaSheets(){
   document.body.appendChild(s);
 }
 // Categoria approvata che copre un dato giorno per un dipendente (per il registro)
+function tcAssegnaFerieClose(){ var m=document.getElementById('tc-ferie-modal'); if(m) m.remove(); }
+function tcAssegnaFerie(email, date){
+  var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
+  var esistente=null;
+  riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ esistente=r; } });
+  var giorno; try{ giorno=new Date(date).toLocaleDateString('it-IT',{weekday:'long',day:'2-digit',month:'long'}); }catch(e){ giorno=date; }
+  var ov=document.getElementById('tc-ferie-modal'); if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='tc-ferie-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  var cats=['Ferie','Permesso','Congedo','ROL'];
+  var btns=cats.map(function(c){ return '<button onclick="tcAssegnaFerieSet(\''+email+'\',\''+date+'\',\''+c+'\')" style="background:#16a34a;color:#fff;border:none;padding:12px;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">'+c+'</button>'; }).join('');
+  var rimuovi = esistente ? '<button onclick="tcAssegnaFerieRimuovi(\''+email+'\',\''+date+'\')" style="width:100%;background:#fff;color:#dc2626;border:1px solid #dc2626;padding:11px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Rimuovi '+esistente.categoria+'</button>' : '';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:20px;max-width:340px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3);">'
+    +'<div style="font-weight:800;font-size:16px;color:#0f172a;">'+nome+'</div>'
+    +'<div style="color:#64748b;font-size:13px;margin-bottom:14px;text-transform:capitalize;">'+giorno+'</div>'
+    +(esistente?'<div style="background:#fef3c7;color:#b45309;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:12px;">Attualmente: <strong>'+esistente.categoria+'</strong>'+(esistente.dataInizio!==esistente.dataFine?(' (dal '+riData(esistente.dataInizio)+' al '+riData(esistente.dataFine)+')'):'')+'</div>':'')
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'+btns+'</div>'
+    +rimuovi
+    +'<button onclick="tcAssegnaFerieClose()" style="width:100%;background:none;color:#64748b;border:1px solid #cbd5e1;padding:10px;border-radius:8px;font-family:inherit;font-size:13px;cursor:pointer;margin-top:8px;">Annulla</button>'
+    +'</div>';
+  ov.addEventListener('click',function(e){ if(e.target===ov) tcAssegnaFerieClose(); });
+  document.body.appendChild(ov);
+}
+function tcAssegnaFerieSet(email,date,cat){
+  var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
+  var l=riLoad().filter(function(r){ return !(r.stato==='approvato'&&r.dipendente===email&&r.dataInizio===date&&r.dataFine===date); });
+  var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:date, dataFine:date, ore:'', nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
+  l.push(r); riSaveLocal(l); riPush(r);
+  tcAssegnaFerieClose();
+  if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
+  if(typeof riRenderAdmin==='function') riRenderAdmin(); if(typeof riAggiornaBadge==='function') riAggiornaBadge();
+  tcToastNew('✅ '+cat+' · '+nome,true);
+}
+function tcAssegnaFerieRimuovi(email,date){
+  var target=null; riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ target=r; } });
+  if(!target){ tcAssegnaFerieClose(); return; }
+  if(target.dataInizio!==target.dataFine){ if(!confirm('Questa voce copre dal '+riData(target.dataInizio)+' al '+riData(target.dataFine)+'. Rimuovere l\'intero periodo?')) return; }
+  riSaveLocal(riLoad().filter(function(r){ return r.id!==target.id; }));
+  if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsJsonp({action:'delete', sheet:RICHIESTE_SHEET, id:target.id}); }catch(e){} }
+  tcAssegnaFerieClose();
+  if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
+  if(typeof riRenderAdmin==='function') riRenderAdmin(); if(typeof riAggiornaBadge==='function') riAggiornaBadge();
+  tcToastNew('Voce rimossa',true);
+}
 function riPerGiorno(email,dataStr){
   var out=''; riLoad().forEach(function(r){
     if(r.stato!=='approvato' || r.dipendente!==email) return;
@@ -8114,7 +8201,7 @@ function tcAdminRenderRegistro() {
       var rit = (typeof tcRitardoMin==='function') ? tcRitardoMin(r) : 0;
       if(rit>0) cella += '<div style="color:#dc2626;font-weight:700;font-size:11px;">▲ '+rit+' min ritardo</div>';
       html+='<td onclick="tcModificaTimbratura(\''+d.email+'\',\''+dataStr+'\')" style="'+tdg+'border-left:2px solid #eef2f7;text-align:center;cursor:pointer;min-width:120px;" title="Clicca per inserire o modificare">'+cella+'</td>';
-      html+='<td style="'+tdg+'text-align:center;color:#b45309;">'+perm+'</td>';
+      html+='<td onclick="tcAssegnaFerie(\''+d.email+'\',\''+dataStr+'\')" style="'+tdg+'text-align:center;color:#b45309;cursor:pointer;" title="Clicca per assegnare ferie/permesso">'+(perm||'<span style="color:#cbd5e1;">+</span>')+'</td>';
     });
     html+='</tr>';
   }
