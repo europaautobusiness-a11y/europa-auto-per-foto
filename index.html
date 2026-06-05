@@ -6766,28 +6766,40 @@ async function pulisciDuplicatiDrive(btn){
   try{
     var token=_driveAccessToken;
     var folderId=await getOrCreatePermessiFolder(token);
-    var tutti=[], pageToken=null;
+    var tutti=[], pageToken=null, listErr=null;
     do{
       var url='https://www.googleapis.com/drive/v3/files?q='+
         encodeURIComponent("'"+folderId+"' in parents and trashed=false and mimeType='application/pdf'")+
-        '&fields=nextPageToken,files(id,name,createdTime)&orderBy=createdTime desc&pageSize=1000'+(pageToken?('&pageToken='+pageToken):'');
+        '&fields=nextPageToken,files(id,name,createdTime,ownedByMe,capabilities/canTrash)&orderBy=createdTime desc&pageSize=1000'+(pageToken?('&pageToken='+pageToken):'');
       var r=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){ listErr='HTTP '+r.status; break; }
       var d=await r.json();
       tutti=tutti.concat(d.files||[]);
       pageToken=d.nextPageToken||null;
     } while(pageToken);
+    if(listErr){
+      alert('Non riesco a leggere la cartella ('+listErr+').\nProva a riconnettere Google Drive dalla schermata principale e riprova.');
+      if(btn){ btn.disabled=false; btn.textContent=ot||'\uD83E\uDDF9 Pulisci duplicati Drive'; }
+      return;
+    }
     var visti={}, trash=[];
     tutti.forEach(function(df){
       var nm=(df.name||''); var m=nm.match(/([A-Z]{2}\d{3}[A-Z]{2})/i);
       var key=m?m[1].toUpperCase():nm.toLowerCase();
-      if(visti[key]) trash.push(df.id); else visti[key]=true;
+      if(visti[key]) trash.push(df); else visti[key]=true;
     });
+    var ok=0, ko=0;
     for(var i=0;i<trash.length;i++){
-      try{ await fetch('https://www.googleapis.com/drive/v3/files/'+trash[i],
-        {method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({trashed:true})}); }catch(e){}
+      try{
+        var pr=await fetch('https://www.googleapis.com/drive/v3/files/'+trash[i].id+'?supportsAllDrives=true',
+          {method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({trashed:true})});
+        if(pr.ok) ok++; else ko++;
+      }catch(e){ ko++; }
     }
     try{ deduplicaPermessi(); renderPermessi(); }catch(e){}
-    alert('\u2705 Pulizia completata: rimossi '+trash.length+' permessini duplicati su Drive (ora nel Cestino). Resta un file per ogni targa.');
+    var msg='Cartella permessi: '+tutti.length+' file totali.\nDuplicati trovati: '+trash.length+'\nRimossi (nel Cestino): '+ok;
+    if(ko>0) msg+='\nNON rimossi: '+ko+' (probabilmente non sei il proprietario di quei file).';
+    alert(msg);
   }catch(e){ alert('Errore durante la pulizia: '+e.message); }
   if(btn){ btn.disabled=false; btn.textContent=ot||'\uD83E\uDDF9 Pulisci duplicati Drive'; }
 }
