@@ -3674,7 +3674,16 @@ function renderCredenzialiLista() {
     html += '<td style="padding:9px 10px;">';
     html += '<input type="text" value="'+u.password+'" onchange="credCambiaPassword('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;width:130px;">';
     html += '</td>';
-    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[_ruoloEff]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[_ruoloEff]+'</span></td>';
+    var _fisso = (u.email === 'europaautobusiness@gmail.com' || u.email === 'no.reply.europaauto@gmail.com');
+    if (_fisso) {
+      html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[_ruoloEff]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[_ruoloEff]+'</span></td>';
+    } else {
+      html += '<td style="padding:9px 10px;"><select onchange="credCambiaRuolo('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;">'
+        + '<option value="dipendente"'+(u.ruolo==='dipendente'?' selected':'')+'>Dipendente</option>'
+        + '<option value="staff"'+(u.ruolo==='staff'?' selected':'')+'>Staff</option>'
+        + '<option value="admin"'+(u.ruolo==='admin'?' selected':'')+'>Admin</option>'
+        + '</select></td>';
+    }
     html += '<td style="padding:9px 10px;">';
     if (u.email !== 'europaautobusiness@gmail.com') {
       html += '<button data-idx="'+i+'" onclick="credRimuovi(parseInt(this.dataset.idx))" style="background:none;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;">✕</button>';
@@ -3746,6 +3755,14 @@ function tcTogglePermesso(cb) {
   if (_currentUserEmail === email) { try { applyRoleUI(); } catch(e){} }
 }
 
+function credCambiaRuolo(idx, ruolo) {
+  if (!UTENTI_APP[idx]) return;
+  UTENTI_APP[idx].ruolo = ruolo;
+  salvaUtentiApp();
+  renderCredenzialiLista();
+  renderPermessiSezioni();
+  if (_currentUserEmail === UTENTI_APP[idx].email) { try { setCurrentUser(_currentUserEmail); } catch(e){} }
+}
 function credCambiaPassword(idx, nuovaPass) {
   if (!nuovaPass.trim()) return;
   UTENTI_APP[idx].password = nuovaPass.trim();
@@ -7200,18 +7217,20 @@ function eaSyncSuFoglio(silent) {
 // ── Ruolo utente ──────────────────────────────────────────────
 function setCurrentUser(email) {
   _currentUserEmail = (email||'').toLowerCase().trim();
-  // Prima cerca tra i dipendenti registrati
+  // Ruolo: prima le Credenziali Utenti (unica fonte), poi la scheda dipendente
+  var _u = null;
+  try { _u = UTENTI_APP.find(function(x){ return x.email && x.email.toLowerCase() === _currentUserEmail; }); } catch(e){}
   var dip = getDipendenteByEmail(_currentUserEmail);
   if (_currentUserEmail === 'europaautobusiness@gmail.com') {
     _currentUserRole = 'admin';                 // Davide — amministratore
   } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
     _currentUserRole = 'staff';                 // Rudy — vede tutto tranne la parte admin
+  } else if (_u) {
+    _currentUserRole = _u.ruolo;                // Credenziali Utenti: ha la precedenza
   } else if (dip) {
-    _currentUserRole = dip.ruolo;
+    _currentUserRole = dip.ruolo || 'dipendente';
   } else {
-    var _u = null;
-    try { _u = UTENTI_APP.find(function(x){ return x.email && x.email.toLowerCase() === _currentUserEmail; }); } catch(e){}
-    _currentUserRole = _u ? _u.ruolo : 'dipendente';
+    _currentUserRole = 'dipendente';
   }
   console.log('User:', _currentUserEmail, 'Role:', _currentUserRole);
   applyRoleUI();
