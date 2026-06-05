@@ -3681,8 +3681,31 @@ function renderCredenzialiLista() {
     }
     html += '</td></tr>';
   });
+  // Dipendenti (es. da Presenze) non ancora tra le credenziali: mostrali e permetti di aggiungerli
+  var extraDips = [];
+  try { extraDips = (tcLoadDip()||[]).filter(function(d){ return d.email && !UTENTI_APP.find(function(u){return u.email.toLowerCase()===d.email.toLowerCase();}); }); } catch(e){}
+  extraDips.forEach(function(d){
+    var rr = ruoloEffettivo(d.email, d.ruolo||'dipendente');
+    html += '<tr style="border-bottom:1px solid #f1f5f9;background:#fffdf5;">';
+    html += '<td style="padding:9px 10px;font-weight:600;">'+(d.nome||d.email.split('@')[0])+'</td>';
+    html += '<td style="padding:9px 10px;color:#64748b;font-size:12px;">'+d.email+'</td>';
+    html += '<td style="padding:9px 10px;color:#94a3b8;font-size:11px;">da Presenze</td>';
+    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[rr]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[rr]+'</span></td>';
+    html += '<td style="padding:9px 10px;"><button data-email="'+d.email+'" onclick="credAggiungiDaDip(this.dataset.email)" style="background:#1a4fa0;border:none;color:#fff;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;white-space:nowrap;">➕ Credenziali</button></td>';
+    html += '</tr>';
+  });
   html += '</tbody></table>';
   el.innerHTML = html;
+}
+function credAggiungiDaDip(email){
+  var d=null;
+  try{ d=(tcLoadDip()||[]).find(function(x){return x.email===email;}); }catch(e){}
+  if(!d){ return; }
+  if(UTENTI_APP.find(function(u){return u.email.toLowerCase()===email.toLowerCase();})) return;
+  UTENTI_APP.push({ email:d.email, password:'-', nome:d.nome||d.email.split('@')[0], ruolo:d.ruolo||'dipendente' });
+  salvaUtentiApp();
+  renderCredenzialiLista();
+  alert('✅ '+(d.nome||d.email)+' aggiunta alle credenziali.');
 }
 
 // Matrice permessi sezioni per persona
@@ -3698,7 +3721,7 @@ function renderPermessiSezioni() {
   html += '</tr></thead><tbody>';
   people.forEach(function(p){
     var isAdminP = (p.email==='europaautobusiness@gmail.com' || p.ruolo==='admin');
-    var attivi = (perm[p.email] && perm[p.email].length) ? perm[p.email] : (SEZIONI_DEFAULT_RUOLO[p.ruolo] || SEZIONI_DEFAULT_RUOLO['dipendente']);
+    var attivi = Object.prototype.hasOwnProperty.call(perm, p.email) ? (perm[p.email]||[]) : (SEZIONI_DEFAULT_RUOLO[p.ruolo] || SEZIONI_DEFAULT_RUOLO['dipendente']);
     html += '<tr style="border-bottom:1px solid #eef2f7;"><td style="padding:7px 8px;font-weight:600;position:sticky;left:0;background:#fff;">'+p.nome+'<div style="font-weight:400;color:#94a3b8;font-size:11px;">'+p.email+'</div></td>';
     SEZIONI_DEFS.forEach(function(s){
       var checked = isAdminP || attivi.indexOf(s.v) !== -1;
@@ -7226,13 +7249,13 @@ function savePermessiSezioniLocal(map){ try{ localStorage.setItem(PERMESSI_KEY, 
 function getPermessiUtente(email){
   if(!email) return null;
   var m=loadPermessiSezioni(); var k=String(email).toLowerCase();
-  return (m[k] && m[k].length) ? m[k] : null;
+  return Object.prototype.hasOwnProperty.call(m,k) ? (m[k]||[]) : null;
 }
 function setPermessiUtente(email, views){
   var m=loadPermessiSezioni(); var k=String(email||'').toLowerCase();
   m[k]=views; savePermessiSezioniLocal(m);
   if(typeof GS_URL!=='undefined' && GS_URL){
-    try{ gsJsonp({action:'upsert', sheet:PERMESSI_SHEET, record:{ id:'perm_'+k.replace(/[^a-z0-9]/gi,'_'), email:k, sezioni:(views||[]).join(',') }}); }catch(e){}
+    try{ gsJsonp({action:'upsert', sheet:PERMESSI_SHEET, record:{ id:'perm_'+k.replace(/[^a-z0-9]/gi,'_'), email:k, sezioni:(views||[]).join(','), ts:Date.now() }}); }catch(e){}
   }
 }
 function caricaPermessiDaSheets(){
@@ -7240,11 +7263,16 @@ function caricaPermessiDaSheets(){
   try{
     gsLoad(PERMESSI_SHEET).then(function(rows){
       if(!rows || !rows.length) return;
-      var m=loadPermessiSezioni();
+      var best={};
       rows.forEach(function(r){
         if(!r || !r.email) return;
         var k=String(r.email).toLowerCase();
-        m[k]=String(r.sezioni||'').split(',').map(function(x){return x.trim();}).filter(Boolean);
+        var ts=parseInt(r.ts||0,10)||0;
+        if(!(k in best) || ts>=best[k].ts){ best[k]={ts:ts, sezioni:String(r.sezioni||'')}; }
+      });
+      var m=loadPermessiSezioni();
+      Object.keys(best).forEach(function(k){
+        m[k]=best[k].sezioni.split(',').map(function(x){return x.trim();}).filter(Boolean);
       });
       savePermessiSezioniLocal(m);
       try{ applyRoleUI(); }catch(e){}
@@ -7279,7 +7307,7 @@ function applyRoleUI() {
   // Permessi personalizzati impostati dall'admin (l'admin vede sempre tutto)
   if (role !== 'admin') {
     var permU = getPermessiUtente(_currentUserEmail);
-    if (permU && permU.length) allowed = permU.slice();
+    if (permU) allowed = permU.slice();
   }
   if (!allowed.length) allowed = ['presenze'];
 
