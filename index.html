@@ -7654,6 +7654,15 @@ function riPush(r){ if(typeof GS_URL!=='undefined' && GS_URL && r){ try{ gsJsonp
 function riPending(){ return riLoad().filter(function(r){return r.stato==='in_attesa';}); }
 function riAggiornaBadge(){ var b=document.getElementById('tc-richieste-badge'); if(!b) return; var n=riPending().length; b.textContent=n; b.style.display=n>0?'inline-block':'none'; }
 function riData(d){ try{ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }catch(e){ return d; } }
+// Normalizza una data (anche se arriva come ISO UTC dal foglio) a YYYY-MM-DD locale
+function riNormData(v){
+  if(!v && v!==0) return v;
+  v=String(v);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  var d=new Date(v);
+  if(isNaN(d.getTime())) return v.substring(0,10);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
 function riPeriodo(r){ if(r.dataInizio===r.dataFine){ return riData(r.dataInizio)+(r.ore?(' · '+r.ore+'h'):''); } return riData(r.dataInizio)+' → '+riData(r.dataFine); }
 function riStatoBadge(s){
   if(s==='approvato') return '<span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">Approvata</span>';
@@ -7759,6 +7768,7 @@ function riLoadDaSheets(){
   window[cb]=function(data){
     clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
     if(!Array.isArray(data)) return;
+    data.forEach(function(r){ if(r){ r.dataInizio=riNormData(r.dataInizio); r.dataFine=riNormData(r.dataFine); } });
     var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
     riLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; }); // tieni i locali non ancora sincronizzati
     riSaveLocal(Object.keys(byId).map(function(k){return byId[k];}));
@@ -7819,9 +7829,12 @@ function tcAssegnaFerieRimuovi(email,date){
   tcToastNew('Voce rimossa',true);
 }
 function riPerGiorno(email,dataStr){
+  var em=String(email||'').toLowerCase().trim();
   var out=''; riLoad().forEach(function(r){
-    if(r.stato!=='approvato' || r.dipendente!==email) return;
-    if(dataStr>=r.dataInizio && dataStr<=r.dataFine){ out=r.categoria+(r.ore?(' '+r.ore+'h'):''); }
+    if(r.stato!=='approvato') return;
+    if(String(r.dipendente||'').toLowerCase().trim()!==em) return;
+    var di=riNormData(r.dataInizio), df=riNormData(r.dataFine);
+    if(dataStr>=di && dataStr<=df){ out=r.categoria+(r.ore?(' '+r.ore+'h'):''); }
   });
   return out;
 }
@@ -7856,10 +7869,13 @@ function riSovrapposizione(email, dal, al, escludiId){
 }
 // Quel giorno è assenza a giornata intera (ferie/congedo, o permesso/ROL senza ore)? → niente timbratura
 function riGiornoBloccaTimbra(email, dataStr){
+  var em=String(email||'').toLowerCase().trim();
   var blocca=false;
   riLoad().forEach(function(r){
-    if(r.stato!=='approvato' || r.dipendente!==email) return;
-    if(dataStr>=r.dataInizio && dataStr<=r.dataFine){
+    if(r.stato!=='approvato') return;
+    if(String(r.dipendente||'').toLowerCase().trim()!==em) return;
+    var di=riNormData(r.dataInizio), df=riNormData(r.dataFine);
+    if(dataStr>=di && dataStr<=df){
       if(r.categoria==='Ferie' || r.categoria==='Congedo' || !r.ore) blocca=true;
     }
   });
