@@ -634,7 +634,7 @@ html, body{
           Collega Google Sheets per salvare i report in modo permanente e condividerli tra tutti i dispositivi.
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-          <button onclick="openGoogleSheet()" style="padding:9px 18px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">📊 Apri Google Sheet</button>
+          <button id="btn-apri-sheet" onclick="openGoogleSheet()" style="padding:9px 18px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">📊 Apri Google Sheet</button>
           <button onclick="syncFromSheets()" style="padding:9px 18px;background:white;border:1.5px solid var(--blue);color:var(--blue);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">🔄 Sincronizza ora</button>
           <span id="gsStatus" style="font-size:12px;font-weight:600;"></span>
         </div>
@@ -1262,7 +1262,7 @@ html, body{
           <option value="">Tutti i dipendenti</option>
         </select>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
-          <button onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
+          <button id="btn-apri-sheet-presenze" onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
           <button onclick="tcScaricaRiepilogoXLS()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Riepilogo mese (Excel)</button>
           <button onclick="tcScaricaTimbratureCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Timbrature (CSV)</button>
           <button onclick="tcAzzeraMese()" style="padding:7px 14px;border:1px solid #ef4444;background:#fff;color:#ef4444;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🗑️ Azzera mese</button>
@@ -4051,6 +4051,7 @@ function openGoogleSheet(){
 
 function unlockGsUrl(el){
   el.blur();
+  if(typeof _currentUserRole!=='undefined' && _currentUserRole!=='admin'){ alert('Solo l\'amministratore può modificare l\'URL del foglio.'); return; }
   if(confirm('⚠️ Vuoi modificare l\'URL di Google Sheets?\n\nAttenzione: un URL errato interrompe la sincronizzazione dei dati.')){
     el.removeAttribute('readonly');
     el.style.background = 'white';
@@ -4309,6 +4310,7 @@ function gsUrlSave(){
 }
 
 function gsSheetUrlSave(){
+  if(typeof _currentUserRole!=='undefined' && _currentUserRole!=='admin'){ alert('Solo l\'amministratore può modificare il collegamento al foglio.'); return; }
   const el = document.getElementById('gsSheetUrlInput');
   const url = (el.value||'').trim();
   if(!url){ alert('Inserisci il link del Google Sheet.'); return; }
@@ -4318,6 +4320,7 @@ function gsSheetUrlSave(){
 }
 
 function openGoogleSheet(){
+  if(typeof _currentUserRole!=='undefined' && _currentUserRole!=='admin'){ alert('Solo l\'amministratore può aprire il foglio Google.'); return; }
   const url = localStorage.getItem('ea_sheet_url') || SHEET_URL;
   if(!url){ alert('Inserisci prima il link del tuo Google Sheet nella sezione Concessionaria.'); return; }
   window.open(url, '_blank');
@@ -7353,6 +7356,9 @@ function applyRoleUI() {
 
   var btnCred = document.getElementById('btn-credenziali');
   if (btnCred) btnCred.style.display = (role === 'admin') ? 'block' : 'none';
+  // Apertura/modifica del foglio Google: solo admin
+  var _bs1=document.getElementById('btn-apri-sheet'); if(_bs1) _bs1.style.display=(role==='admin')?'':'none';
+  var _bs2=document.getElementById('btn-apri-sheet-presenze'); if(_bs2) _bs2.style.display=(role==='admin')?'':'none';
 
   // Schermata iniziale: al login i non-admin (dipendenti/staff, incluso Rudy) aprono le Timbrature
   var landing = (role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0];
@@ -7521,9 +7527,12 @@ var _tcAdminMese     = null;
 var _tcClockInterval = null;
 
 function tcLoadReg() { try { return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]'); } catch(e) { return []; } }
-function tcSaveReg(list) {
+function tcSaveReg(list, soloRec) {
   try { localStorage.setItem(PRESENZE_KEY, JSON.stringify(list)); } catch(e) {}
-  if (GS_URL) list.forEach(function(r){ try { gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:r}); } catch(e){} });
+  if (GS_URL) {
+    if (soloRec) { try { gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:soloRec}); } catch(e){} }
+    else { list.forEach(function(r){ try { gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:r}); } catch(e){} }); }
+  }
 }
 function tcLoadDip() {
   try {
@@ -8006,12 +8015,10 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
   var reg=tcLoadReg(), idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===oggi;});
   var rec;
   if(idx>=0){rec=reg[idx];}else{rec={id:email+'_'+oggi,dipendente:email,data:oggi,mese:mese,entrata:null,pausa:null,rientro:null,uscita:null};reg.push(rec);idx=reg.length-1;}
-  rec[tipo]=ora; if(sede) rec.sede=sede; reg[idx]=rec; tcSaveReg(reg);
+  rec[tipo]=ora; if(sede) rec.sede=sede; reg[idx]=rec; tcSaveReg(reg, rec);
   var nomi={entrata:'Entrata',pausa:'Pausa pranzo',rientro:'Rientro',uscita:'Uscita'};
   tcToastNew('✅ '+nomi[tipo]+': '+ora,true);
   tcRenderLog(); tcAggiornaPulsanti(); tcRenderMese();
-  // Salva su Google Sheets (foglio Presenze)
-  tcPushTimbrataASheets(rec);
 }
 
 function tcPushTimbrataASheets(rec) {
@@ -8243,6 +8250,7 @@ function tcAdminRenderRegistro() {
 
 // Apre il foglio Google con tutte le timbrature
 function tcApriSheet(){
+  if(typeof _currentUserRole!=='undefined' && _currentUserRole!=='admin'){ alert('Solo l\'amministratore può aprire il foglio Google.'); return; }
   var url = (typeof GS_SHEET_URL!=='undefined' && GS_SHEET_URL) ? GS_SHEET_URL : (typeof SHEET_URL!=='undefined'?SHEET_URL:'');
   if(!url){ alert('URL del foglio non impostato.'); return; }
   window.open(url, '_blank');
@@ -8504,30 +8512,13 @@ function tcForzaSalva() {
   var idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===data;});
   var rec={id:email+'_'+data,dipendente:email,data:data,mese:mese,entrata:entr||null,pausa:paus||null,rientro:rient||null,uscita:usc||null};
   if(idx>=0)reg[idx]=rec;else reg.push(rec);
-  tcSaveReg(reg);
+  tcSaveReg(reg, rec);
   if(msg){msg.textContent='✅ Salvato per '+tcGetNome(email)+' — '+data;msg.style.color='#16a34a';}
   tcAdminRenderRegistro();
 }
 
-function presenzeLoadDaSheets() {
-  if(!GS_URL) return;
-  var cb1='tcGsCb_'+Date.now(), s1=document.createElement('script');
-  window[cb1]=function(data){
-    delete window[cb1]; s1.remove(); if(!data||!Array.isArray(data)) return;
-    var reg=tcLoadReg(), ids=new Set(reg.map(function(r){return r.id;})), changed=false;
-    data.forEach(function(r){if(r.id&&!ids.has(r.id)){reg.push(r);ids.add(r.id);changed=true;}});
-    if(changed){try{localStorage.setItem(PRESENZE_KEY,JSON.stringify(reg));}catch(e){} if(isAdmin())tcAdminRenderRegistro();else tcRenderMese();}
-  };
-  s1.src=GS_URL+'?sheet='+PRESENZE_SHEET+'&callback='+cb1; document.head.appendChild(s1);
-  var cb2='tcDipCb_'+Date.now(), s2=document.createElement('script');
-  window[cb2]=function(data){
-    delete window[cb2]; s2.remove(); if(!data||!Array.isArray(data)) return;
-    var dips=tcLoadDip(), dipEmails=new Set(dips.map(function(d){return d.email;})), changed=false;
-    data.forEach(function(r){if(r.email&&!dipEmails.has(r.email)){dips.push({nome:r.nome,email:r.email,ruolo:r.ruolo||'dipendente',sede:r.sede||'sede_a'});dipEmails.add(r.email);changed=true;}});
-    if(changed){try{localStorage.setItem(PRESENZE_DIP_KEY,JSON.stringify(dips));}catch(e){} if(isAdmin()){tcAdminRenderDipendenti();tcPopForzaDip();}}
-  };
-  s2.src=GS_URL+'?sheet='+DIPENDENTI_SHEET+'&callback='+cb2; document.head.appendChild(s2);
-}
+// (rimossa la versione duplicata di presenzeLoadDaSheets: ne resta una sola, più sotto)
+
 
 // ══════════════════════════════════════════════════════════════
 // TIMBRATURA GPS
@@ -8771,8 +8762,17 @@ function presenzeLoadDaSheets(){
       r.mese = r.data ? r.data.substring(0,7) : tcNormMeseStr(r.mese);
       return r;
     }).filter(function(r){return r.mese===meseC;});
-    var reg=presenzeLoadReg().filter(function(r){return r.mese!==meseC;});
-    presenzeSaveReg(reg.concat(presGS));
+    var reg=presenzeLoadReg();
+    var mineMese={}; reg.filter(function(r){return r.mese===meseC;}).forEach(function(r){ mineMese[r.id]=Object.assign({},r); });
+    presGS.forEach(function(g){
+      var cur=mineMese[g.id]||{};
+      ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ cur[f]=g[f]||cur[f]||null; });
+      cur.id=g.id; cur.dipendente=g.dipendente; cur.data=g.data; cur.mese=g.mese;
+      mineMese[g.id]=cur;
+    });
+    var altriMesi=reg.filter(function(r){return r.mese!==meseC;});
+    var meseMerge=Object.keys(mineMese).map(function(k){return mineMese[k];});
+    presenzeSaveReg(altriMesi.concat(meseMerge));
     // Ridisegna SEMPRE la vista giusta
     if(typeof isAdmin==='function' && isAdmin()){
       if(typeof tcAdminRenderRegistro==='function')tcAdminRenderRegistro();
