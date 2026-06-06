@@ -7667,6 +7667,8 @@ function riInvia(){
   var err=document.getElementById('ri-err');
   if(!dal){ if(err){err.textContent='Inserisci almeno la data di inizio.';err.style.display='block';} return; }
   if(al<dal){ if(err){err.textContent='La data di fine è prima di quella di inizio.';err.style.display='block';} return; }
+  var dup=riSovrapposizione(_currentUserEmail, dal, al);
+  if(dup){ if(err){err.textContent='Hai già una richiesta ('+dup.categoria+') per quei giorni.';err.style.display='block';} return; }
   if(err) err.style.display='none';
   var r={ id:'ri_'+Date.now(), dipendente:_currentUserEmail, nome:tcGetNome(_currentUserEmail), categoria:cat, dataInizio:dal, dataFine:al, ore:ore, nota:nota, stato:'in_attesa', creato:new Date().toISOString() };
   var list=riLoad(); list.push(r); riSaveLocal(list); riPush(r);
@@ -7675,6 +7677,7 @@ function riInvia(){
 }
 function riRenderDip(){
   var wrap=document.getElementById('ri-lista-dip'); if(!wrap) return;
+  riDedup();
   var mie=riLoad().filter(function(r){return r.dipendente===_currentUserEmail;}).sort(function(a,b){return (b.creato||'')<(a.creato||'')?-1:1;});
   if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta inviata.</div>'; return; }
   var html=''; mie.forEach(function(r){
@@ -7707,6 +7710,8 @@ function riAdminInserisci(){
   if(!email){ if(err){err.textContent='Scegli un dipendente.';err.style.display='block';} return; }
   if(!dal){ if(err){err.textContent='Inserisci almeno la data (DAL).';err.style.display='block';} return; }
   if(al<dal){ if(err){err.textContent='La data AL è prima di DAL.';err.style.display='block';} return; }
+  var dupA=riSovrapposizione(email, dal, al);
+  if(dupA){ if(err){err.textContent='Esiste già una voce ('+dupA.categoria+') per quel periodo: rimuovila prima di reinserirla.';err.style.display='block';} return; }
   if(err) err.style.display='none';
   var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
   var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:dal, dataFine:al, ore:ore, nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
@@ -7718,6 +7723,7 @@ function riAdminInserisci(){
 }
 function riRenderAdmin(){
   var wrap=document.getElementById('tc-richieste-lista'); if(!wrap) return;
+  riDedup();
   riAdminPopDip();
   var ord={in_attesa:0,approvato:1,rifiutato:2};
   var all=riLoad().sort(function(a,b){ if(ord[a.stato]!==ord[b.stato]) return ord[a.stato]-ord[b.stato]; return (b.creato||'')<(a.creato||'')?-1:1; });
@@ -7784,7 +7790,11 @@ function tcAssegnaFerie(email, date){
 }
 function tcAssegnaFerieSet(email,date,cat){
   var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
-  var l=riLoad().filter(function(r){ return !(r.stato==='approvato'&&r.dipendente===email&&r.dataInizio===date&&r.dataFine===date); });
+  // togli QUALSIASI voce approvata che copre quel giorno (no duplicati) ed elimina dal foglio
+  var daTogliere=[];
+  riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ daTogliere.push(r.id); } });
+  var l=riLoad().filter(function(r){ return daTogliere.indexOf(r.id)<0; });
+  if(typeof GS_URL!=='undefined'&&GS_URL){ daTogliere.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
   var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:date, dataFine:date, ore:'', nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
   l.push(r); riSaveLocal(l); riPush(r);
   tcAssegnaFerieClose();
@@ -7809,6 +7819,42 @@ function riPerGiorno(email,dataStr){
     if(dataStr>=r.dataInizio && dataStr<=r.dataFine){ out=r.categoria+(r.ore?(' '+r.ore+'h'):''); }
   });
   return out;
+}
+// Rimuove voci doppie (stesso dipendente, categoria, periodo, ore, stato): tiene la più vecchia
+function riDedup(){
+  var list=riLoad();
+  var ordinata=list.slice().sort(function(a,b){return (a.creato||'')<(b.creato||'')?-1:1;});
+  var seen={}, keep=[], dropIds=[];
+  ordinata.forEach(function(r){
+    var k=(r.dipendente||'')+'|'+(r.categoria||'')+'|'+(r.dataInizio||'')+'|'+(r.dataFine||'')+'|'+(r.ore||'')+'|'+(r.stato||'');
+    if(seen[k]){ if(r.id) dropIds.push(r.id); } else { seen[k]=1; keep.push(r); }
+  });
+  if(dropIds.length){
+    riSaveLocal(keep);
+    if(typeof GS_URL!=='undefined'&&GS_URL){ dropIds.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
+  }
+  return keep;
+}
+// Esiste già una voce (approvata o in attesa) che si sovrappone al periodo?
+function riSovrapposizione(email, dal, al, escludiId){
+  var found=null;
+  riLoad().forEach(function(r){
+    if(escludiId && r.id===escludiId) return;
+    if(r.dipendente!==email || r.stato==='rifiutato') return;
+    if(dal<=r.dataFine && al>=r.dataInizio){ found=found||r; }
+  });
+  return found;
+}
+// Quel giorno è assenza a giornata intera (ferie/congedo, o permesso/ROL senza ore)? → niente timbratura
+function riGiornoBloccaTimbra(email, dataStr){
+  var blocca=false;
+  riLoad().forEach(function(r){
+    if(r.stato!=='approvato' || r.dipendente!==email) return;
+    if(dataStr>=r.dataInizio && dataStr<=r.dataFine){
+      if(r.categoria==='Ferie' || r.categoria==='Congedo' || !r.ore) blocca=true;
+    }
+  });
+  return blocca;
 }
 
 function tcAggiornaClock() {
@@ -7987,6 +8033,13 @@ function eaRimuoviIP(ip){
 }
 
 function tcTimbra(tipo) {
+  var oggiTb = (typeof tcGetOggi==='function') ? tcGetOggi() : null;
+  if(oggiTb && typeof riGiornoBloccaTimbra==='function' && riGiornoBloccaTimbra(_currentUserEmail, oggiTb)){
+    tcToastNew('🌴 Oggi risulti in ferie/permesso: timbratura non consentita', false);
+    var lbl0=document.getElementById('tc-gps-label'); if(lbl0) lbl0.textContent='In ferie/permesso oggi';
+    var sub0=document.getElementById('tc-gps-sub'); if(sub0) sub0.textContent='Timbratura non consentita';
+    return;
+  }
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
   if(ring){ring.className='tc-gps-ring idle';ring.textContent='📶';}
   if(lbl) lbl.textContent='Verifica rete…';
