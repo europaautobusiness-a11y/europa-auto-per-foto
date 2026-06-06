@@ -1298,6 +1298,7 @@ html, body{
         <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">USCITA</label><input type="time" id="tc-forza-uscita" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:14px;border-radius:6px;box-sizing:border-box;"></div>
       </div>
       <button onclick="tcForzaSalva()" style="padding:12px 28px;background:#1a4fa0;color:white;border:none;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;border-radius:8px;">💾 Salva</button>
+      <button onclick="tcForzaElimina()" style="margin-left:10px;padding:12px 22px;background:#fff;color:#dc2626;border:1px solid #dc2626;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;border-radius:8px;">🗑 Elimina timbratura</button>
       <div id="tc-forza-msg" style="margin-top:10px;font-size:13px;"></div>
     </div>
     <div class="tc-panel" id="tc-panel-richieste">
@@ -7820,14 +7821,18 @@ function riPerGiorno(email,dataStr){
   });
   return out;
 }
-// Rimuove voci doppie (stesso dipendente, categoria, periodo, ore, stato): tiene la più vecchia
+// Una sola voce per giorno per persona: se due voci si sovrappongono, tiene la più recente
 function riDedup(){
   var list=riLoad();
-  var ordinata=list.slice().sort(function(a,b){return (a.creato||'')<(b.creato||'')?-1:1;});
-  var seen={}, keep=[], dropIds=[];
-  ordinata.forEach(function(r){
-    var k=(r.dipendente||'')+'|'+(r.categoria||'')+'|'+(r.dataInizio||'')+'|'+(r.dataFine||'')+'|'+(r.ore||'')+'|'+(r.stato||'');
-    if(seen[k]){ if(r.id) dropIds.push(r.id); } else { seen[k]=1; keep.push(r); }
+  var recPrima=list.slice().sort(function(a,b){return (a.creato||'')<(b.creato||'')?1:-1;}); // più recente prima
+  var tenutiPerDip={}, keep=[], dropIds=[];
+  recPrima.forEach(function(r){
+    if(r.stato==='rifiutato'){ keep.push(r); return; } // i rifiutati non occupano il giorno
+    var em=r.dipendente||'';
+    var arr=tenutiPerDip[em]||(tenutiPerDip[em]=[]);
+    var overlap=arr.some(function(k){ return (r.dataInizio||'')<=k.fine && (r.dataFine||'')>=k.inizio; });
+    if(overlap){ if(r.id) dropIds.push(r.id); }
+    else { arr.push({inizio:r.dataInizio||'', fine:r.dataFine||''}); keep.push(r); }
   });
   if(dropIds.length){
     riSaveLocal(keep);
@@ -8068,7 +8073,7 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
   var reg=tcLoadReg(), idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===oggi;});
   var rec;
   if(idx>=0){rec=reg[idx];}else{rec={id:email+'_'+oggi,dipendente:email,data:oggi,mese:mese,entrata:null,pausa:null,rientro:null,uscita:null};reg.push(rec);idx=reg.length-1;}
-  rec[tipo]=ora; if(sede) rec.sede=sede; reg[idx]=rec; tcSaveReg(reg, rec);
+  rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now(); reg[idx]=rec; tcSaveReg(reg, rec);
   var nomi={entrata:'Entrata',pausa:'Pausa pranzo',rientro:'Rientro',uscita:'Uscita'};
   tcToastNew('✅ '+nomi[tipo]+': '+ora,true);
   tcRenderLog(); tcAggiornaPulsanti(); tcRenderMese();
@@ -8564,9 +8569,25 @@ function tcForzaSalva() {
   var mese=data.substring(0,7), reg=tcLoadReg();
   var idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===data;});
   var rec={id:email+'_'+data,dipendente:email,data:data,mese:mese,entrata:entr||null,pausa:paus||null,rientro:rient||null,uscita:usc||null};
+  rec._savedAt=Date.now();
   if(idx>=0)reg[idx]=rec;else reg.push(rec);
   tcSaveReg(reg, rec);
   if(msg){msg.textContent='✅ Salvato per '+tcGetNome(email)+' — '+data;msg.style.color='#16a34a';}
+  tcAdminRenderRegistro();
+}
+
+function tcForzaElimina(){
+  var email=document.getElementById('tc-forza-dip').value;
+  var data=document.getElementById('tc-forza-data').value;
+  var msg=document.getElementById('tc-forza-msg');
+  if(!email||!data){ if(msg){msg.textContent='⚠ Scegli dipendente e data da eliminare.';msg.style.color='#ef4444';} return; }
+  if(!confirm('Eliminare la timbratura di '+tcGetNome(email)+' del '+data+'?\nVerrà tolta anche dal foglio e dal dispositivo del dipendente.')) return;
+  var id=email+'_'+data;
+  var reg=tcLoadReg().filter(function(r){ return !(r.dipendente===email && r.data===data); });
+  try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(reg)); }catch(e){}
+  if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsDelete(PRESENZE_SHEET, id); }catch(e){} }
+  ['entrata','pausa','rientro','uscita'].forEach(function(f){ var el=document.getElementById('tc-forza-'+f); if(el) el.value=''; });
+  if(msg){ msg.textContent='🗑 Timbratura eliminata per '+tcGetNome(email)+' — '+data; msg.style.color='#dc2626'; }
   tcAdminRenderRegistro();
 }
 
@@ -8815,17 +8836,29 @@ function presenzeLoadDaSheets(){
       r.mese = r.data ? r.data.substring(0,7) : tcNormMeseStr(r.mese);
       return r;
     }).filter(function(r){return r.mese===meseC;});
+    var RECENT_MS=120000; // 2 minuti: una timbratura appena fatta può non essere ancora sul foglio
     var reg=presenzeLoadReg();
-    var mineMese={}; reg.filter(function(r){return r.mese===meseC;}).forEach(function(r){ mineMese[r.id]=Object.assign({},r); });
+    var localMese={}; reg.filter(function(r){return r.mese===meseC;}).forEach(function(r){ localMese[r.id]=r; });
+    var sheetIds={}; presGS.forEach(function(g){ sheetIds[g.id]=1; });
+    var result=[];
+    // 1) i record presenti sul foglio sono la verità; se c'è una modifica locale appena fatta, la unisco
     presGS.forEach(function(g){
-      var cur=mineMese[g.id]||{};
-      ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ cur[f]=g[f]||cur[f]||null; });
-      cur.id=g.id; cur.dipendente=g.dipendente; cur.data=g.data; cur.mese=g.mese;
-      mineMese[g.id]=cur;
+      var loc=localMese[g.id];
+      var rec={id:g.id,dipendente:g.dipendente,data:g.data,mese:g.mese,entrata:g.entrata||null,pausa:g.pausa||null,rientro:g.rientro||null,uscita:g.uscita||null,sede:g.sede||null};
+      if(loc && loc._savedAt && (Date.now()-loc._savedAt)<RECENT_MS){
+        ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ rec[f]=loc[f]||rec[f]||null; });
+        rec._savedAt=loc._savedAt;
+      }
+      result.push(rec);
+    });
+    // 2) record locali NON sul foglio: li tengo solo se appena fatti (in sync), altrimenti erano stati eliminati
+    Object.keys(localMese).forEach(function(id){
+      if(sheetIds[id]) return;
+      var loc=localMese[id];
+      if(loc._savedAt && (Date.now()-loc._savedAt)<RECENT_MS) result.push(loc);
     });
     var altriMesi=reg.filter(function(r){return r.mese!==meseC;});
-    var meseMerge=Object.keys(mineMese).map(function(k){return mineMese[k];});
-    presenzeSaveReg(altriMesi.concat(meseMerge));
+    presenzeSaveReg(altriMesi.concat(result));
     // Ridisegna SEMPRE la vista giusta
     if(typeof isAdmin==='function' && isAdmin()){
       if(typeof tcAdminRenderRegistro==='function')tcAdminRenderRegistro();
