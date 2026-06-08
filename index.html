@@ -7652,10 +7652,24 @@ function tcMostraIP(){
 // RICHIESTE PERMESSI / FERIE
 // ══════════════════════════════════════════════════════════════
 var RICHIESTE_KEY='ea_richieste_v1';
+var RICHIESTE_DEL_KEY='ea_richieste_del_v1';
+function riTombstones(){ try{ return JSON.parse(localStorage.getItem(RICHIESTE_DEL_KEY)||'[]'); }catch(e){ return []; } }
+function riAddTombstone(id){ if(!id) return; var t=riTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(RICHIESTE_DEL_KEY,JSON.stringify(t));}catch(e){} } }
 var RICHIESTE_SHEET='Richieste';
 
-function riLoad(){ try{ return JSON.parse(localStorage.getItem(RICHIESTE_KEY)||'[]'); }catch(e){ return []; } }
+function riLoad(){ try{ var t=riTombstones(); return (JSON.parse(localStorage.getItem(RICHIESTE_KEY)||'[]')).filter(function(r){ return r && t.indexOf(r.id)<0; }); }catch(e){ return []; } }
 function riSaveLocal(list){ localStorage.setItem(RICHIESTE_KEY, JSON.stringify(list)); }
+function riEliminaDef(id){
+  if(!confirm('Eliminare definitivamente questa voce?')) return;
+  riAddTombstone(id);
+  riSaveLocal(riLoad().filter(function(r){ return r.id!==id; }));
+  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'delete', sheet:RICHIESTE_SHEET, id:id}); }catch(e){} }
+  try{ riRenderAdmin(); }catch(e){}
+  try{ if(typeof riRenderDip==='function') riRenderDip(); }catch(e){}
+  try{ if(typeof riAggiornaBadge==='function') riAggiornaBadge(); }catch(e){}
+  try{ if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('🗑 Voce eliminata',true);
+}
 function riPush(r){ if(typeof GS_URL!=='undefined' && GS_URL && r){ try{ gsJsonp({action:'upsert', sheet:RICHIESTE_SHEET, record:r}); }catch(e){} } }
 function riPending(){ return riLoad().filter(function(r){return r.stato==='in_attesa';}); }
 function riAggiornaBadge(){ var b=document.getElementById('tc-richieste-badge'); if(!b) return; var n=riPending().length; b.textContent=n; b.style.display=n>0?'inline-block':'none'; }
@@ -7753,6 +7767,7 @@ function riRenderAdmin(){
       ? '<div style="display:flex;gap:6px;"><button onclick="riApprova(\''+r.id+'\')" style="background:#16a34a;color:#fff;border:none;padding:7px 12px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✓ Approva</button>'
         +'<button onclick="riRifiuta(\''+r.id+'\')" style="background:#fff;color:#dc2626;border:1px solid #dc2626;padding:7px 12px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✕ Rifiuta</button></div>'
       : '<button onclick="riAnnulla(\''+r.id+'\')" style="background:none;color:#64748b;border:1px solid #cbd5e1;padding:6px 10px;border-radius:6px;font-family:inherit;font-size:11px;cursor:pointer;">↩︎ In attesa</button>';
+    azioni += '<button onclick="riEliminaDef(\''+r.id+'\')" title="Elimina definitivamente" style="background:#fee2e2;color:#dc2626;border:1px solid #ef4444;padding:6px 10px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">🗑</button>';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;background:#fff;flex-wrap:wrap;">'
       +'<div style="min-width:200px;"><div style="font-weight:700;color:#0f172a;">'+r.nome+' — '+r.categoria+'</div>'
       +'<div style="color:#64748b;font-size:12px;">'+riPeriodo(r)+(r.nota?(' · '+r.nota):'')+'</div></div>'
@@ -7777,7 +7792,9 @@ function riLoadDaSheets(){
     data.forEach(function(r){ if(r){ r.dataInizio=riNormData(r.dataInizio); r.dataFine=riNormData(r.dataFine); } });
     var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
     riLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; }); // tieni i locali non ancora sincronizzati
-    riSaveLocal(Object.keys(byId).map(function(k){return byId[k];}));
+    var tomb=riTombstones();
+    var merged=Object.keys(byId).map(function(k){return byId[k];}).filter(function(r){ return tomb.indexOf(r.id)<0; }); // niente voci eliminate
+    riSaveLocal(merged);
     if(typeof isAdmin==='function' && isAdmin()){ riRenderAdmin(); riAggiornaBadge(); if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro(); }
     else { riRenderDip(); }
   };
@@ -7828,6 +7845,7 @@ function tcAssegnaFerieRimuovi(email,date){
   if(!target){ tcAssegnaFerieClose(); return; }
   if(target.dataInizio!==target.dataFine){ if(!confirm('Questa voce copre dal '+riData(target.dataInizio)+' al '+riData(target.dataFine)+'. Rimuovere l\'intero periodo?')) return; }
   riSaveLocal(riLoad().filter(function(r){ return r.id!==target.id; }));
+  riAddTombstone(target.id);
   if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsJsonp({action:'delete', sheet:RICHIESTE_SHEET, id:target.id}); }catch(e){} }
   tcAssegnaFerieClose();
   if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
