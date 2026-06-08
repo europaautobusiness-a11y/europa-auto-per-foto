@@ -7530,6 +7530,7 @@ function presenzeRenderDipendentiAdmin() {
 // ══════════════════════════════════════════════════════════════
 
 var PRESENZE_KEY     = 'ea_presenze_v2';
+var PRESENZE_DEL_KEY = 'ea_presenze_del_v1';
 var PRESENZE_DIP_KEY = 'ea_presenze_dipendenti';
 var PRESENZE_SHEET   = 'Presenze';
 var DIPENDENTI_SHEET = 'Dipendenti';
@@ -7537,7 +7538,9 @@ var _tcMeseCorrente  = null;
 var _tcAdminMese     = null;
 var _tcClockInterval = null;
 
-function tcLoadReg() { try { return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]'); } catch(e) { return []; } }
+function tcTombstones() { try { return JSON.parse(localStorage.getItem(PRESENZE_DEL_KEY)||'[]'); } catch(e) { return []; } }
+function tcAddTombstone(id) { if(!id) return; var t=tcTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(PRESENZE_DEL_KEY,JSON.stringify(t));}catch(e){} } }
+function tcLoadReg() { try { var t=tcTombstones(); return (JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]')).filter(function(r){ return r && t.indexOf(r.id)<0; }); } catch(e) { return []; } }
 function tcSaveReg(list, soloRec) {
   try { localStorage.setItem(PRESENZE_KEY, JSON.stringify(list)); } catch(e) {}
   if (GS_URL) {
@@ -8640,6 +8643,7 @@ function tcForzaElimina(){
   var id=email+'_'+data;
   var reg=tcLoadReg().filter(function(r){ return !(r.dipendente===email && r.data===data); });
   try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(reg)); }catch(e){}
+  tcAddTombstone(id);
   if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsDelete(PRESENZE_SHEET, id); }catch(e){} }
   ['entrata','pausa','rientro','uscita'].forEach(function(f){ var el=document.getElementById('tc-forza-'+f); if(el) el.value=''; });
   if(msg){ msg.textContent='🗑 Timbratura eliminata per '+tcGetNome(email)+' — '+data; msg.style.color='#dc2626'; }
@@ -8891,28 +8895,24 @@ function presenzeLoadDaSheets(){
       r.mese = r.data ? r.data.substring(0,7) : tcNormMeseStr(r.mese);
       return r;
     }).filter(function(r){return r.mese===meseC;});
-    var RECENT_MS=120000; // 2 minuti: una timbratura appena fatta può non essere ancora sul foglio
     var reg=presenzeLoadReg();
+    var tomb=tcTombstones();
     var localMese={}; reg.filter(function(r){return r.mese===meseC;}).forEach(function(r){ localMese[r.id]=r; });
-    var sheetIds={}; presGS.forEach(function(g){ sheetIds[g.id]=1; });
-    var result=[];
-    // 1) i record presenti sul foglio sono la verità; se c'è una modifica locale appena fatta, la unisco
+    var seen={}, result=[];
+    // 1) record del foglio (verità sui campi); salto quelli eliminati; unisco eventuali campi locali non ancora sincronizzati
     presGS.forEach(function(g){
+      if(tomb.indexOf(g.id)>=0) return;
       var loc=localMese[g.id];
       var rec={id:g.id,dipendente:g.dipendente,data:g.data,mese:g.mese,entrata:g.entrata||null,pausa:g.pausa||null,rientro:g.rientro||null,uscita:g.uscita||null,sede:g.sede||null};
-      if(loc && loc._savedAt && (Date.now()-loc._savedAt)<RECENT_MS){
-        ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ rec[f]=loc[f]||rec[f]||null; });
-        rec._savedAt=loc._savedAt;
-      }
-      result.push(rec);
+      if(loc){ ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ rec[f]=g[f]||loc[f]||null; }); if(loc._savedAt) rec._savedAt=loc._savedAt; }
+      result.push(rec); seen[g.id]=1;
     });
-    // 2) record locali NON sul foglio: li tengo solo se appena fatti (in sync), altrimenti erano stati eliminati
+    // 2) record locali NON ancora sul foglio: LI TENGO (non spariscono), tranne quelli eliminati
     Object.keys(localMese).forEach(function(id){
-      if(sheetIds[id]) return;
-      var loc=localMese[id];
-      if(loc._savedAt && (Date.now()-loc._savedAt)<RECENT_MS) result.push(loc);
+      if(seen[id] || tomb.indexOf(id)>=0) return;
+      result.push(localMese[id]);
     });
-    var altriMesi=reg.filter(function(r){return r.mese!==meseC;});
+    var altriMesi=reg.filter(function(r){return r.mese!==meseC && tomb.indexOf(r.id)<0;});
     presenzeSaveReg(altriMesi.concat(result));
     // Ridisegna SEMPRE la vista giusta
     if(typeof isAdmin==='function' && isAdmin()){
