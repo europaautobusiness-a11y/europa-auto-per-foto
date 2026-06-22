@@ -846,6 +846,13 @@ html, body{
 
 
 <!-- ══ SEZIONE PROVVIGIONI ══ -->
+<style>
+#sin-print{display:none;}
+@media print{
+  body.sin-printing > *{ display:none !important; }
+  body.sin-printing > #sin-print{ display:block !important; }
+}
+</style>
 <div class="view" id="view-sinistri" style="padding:22px 16px;">
   <div id="sin-tabs" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;"></div>
   <button onclick="sinNuovo()" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:16px;">➕ Nuovo sinistro</button>
@@ -9763,17 +9770,45 @@ document.addEventListener('DOMContentLoaded',function(){
 
 // ══════════════════════════ SINISTRI AUTO ══════════════════════════
 var SINISTRI_KEY='ea_sinistri_v1';
+var SINISTRI_SHEET='Sinistri';
+var SINISTRI_DEL_KEY='ea_sinistri_del_v1';
 var _sinTab='attesa_apertura';
 var SIN_ORDER=['attesa_apertura','aperto','lavorazione','concluso','saldo','liquidato'];
 var SIN_STATI={ attesa_apertura:'In attesa di apertura', aperto:'Aperto / In attesa di perizia', lavorazione:'Periziato / In lavorazione', concluso:'Concluso / In concordato', saldo:'In attesa di saldo', liquidato:'Liquidato' };
 var SIN_ICONS={ attesa_apertura:'📝', aperto:'📂', lavorazione:'🔧', concluso:'🚗', saldo:'💰', liquidato:'✅' };
 
-function sinLoad(){ try{ return JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]'); }catch(e){ return []; } }
+function sinTombstones(){ try{ return JSON.parse(localStorage.getItem(SINISTRI_DEL_KEY)||'[]'); }catch(e){ return []; } }
+function sinAddTombstone(id){ if(!id) return; var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} } }
+function sinLoad(){ try{ var t=sinTombstones(); return (JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]')).filter(function(s){ return s && t.indexOf(s.id)<0; }); }catch(e){ return []; } }
 function sinSave(list){ try{ localStorage.setItem(SINISTRI_KEY, JSON.stringify(list)); }catch(e){} }
 function sinById(id){ return sinLoad().filter(function(s){return s.id===id;})[0]; }
 function sinEsc(v){ return (v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'aperto'); }
+// Invia un sinistro al foglio
+function sinPush(s){ if(typeof GS_URL!=='undefined' && GS_URL && s && s.id){ try{ gsJsonp({action:'upsert', sheet:SINISTRI_SHEET, record:s}); }catch(e){} } }
+
+// Rilegge i sinistri dal foglio e li unisce (rispettando la lista nera)
+function sinLoadDaSheets(){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='sinCb_'+Date.now();
+  var s=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
+  window[cb]=function(data){
+    clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
+    if(!Array.isArray(data)) return;
+    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    sinLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; }); // tieni i locali non ancora inviati
+    var tomb=sinTombstones();
+    var merged=Object.keys(byId).map(function(k){return byId[k];}).filter(function(r){ return tomb.indexOf(r.id)<0; });
+    sinSave(merged);
+    sinRenderTabs(); sinRender();
+  };
+  s.src=GS_URL+'?sheet='+encodeURIComponent(SINISTRI_SHEET)+'&callback='+cb;
+  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
+  document.body.appendChild(s);
+}
+
+function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); sinLoadDaSheets(); }
 
 function sinRenderTabs(){
   var bar=document.getElementById('sin-tabs'); if(!bar) return;
@@ -9804,10 +9839,15 @@ function sinRender(){
     // Evidenza per stato: compagnia in attesa apertura, perito in attesa perizia
     if(_sinTab==='attesa_apertura'){
       html+='<div style="margin-top:8px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:6px 10px;font-size:12px;color:#854d0e;font-weight:700;">🏢 In attesa di risposta da: '+sinEsc(s.compagnia||'— compagnia da indicare —')+'</div>';
+      html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
+      html+='<input id="sinnum-'+s.id+'" type="number" inputmode="numeric" value="'+sinEsc(s.numeroSinistro||'')+'" placeholder="Numero sinistro" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
+      html+='<button onclick="sinApriSinistro(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">Apri sinistro</button>';
+      html+='</div>';
     } else if(_sinTab==='aperto'){
       html+='<div style="margin-top:8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;font-size:12px;color:#1e40af;font-weight:700;">👤 Perito: '+sinEsc(s.perito||'— da affidare —')+(s.appuntamento?(' · 📅 '+sinFmtApp(s.appuntamento)):'')+'</div>';
     }
     var righe=[];
+    if(s.numeroSinistro && _sinTab!=='attesa_apertura') righe.push('📄 Sinistro n. '+sinEsc(s.numeroSinistro));
     if(_sinTab!=='attesa_apertura' && s.compagnia) righe.push('🏢 '+sinEsc(s.compagnia));
     if(s.finanziaria)righe.push('💳 '+sinEsc(s.finanziaria));
     if(_sinTab!=='aperto' && s.perito) righe.push('👤 '+sinEsc(s.perito));
@@ -9842,10 +9882,51 @@ function sinVedePreventivo(){ try{ return getCurrentRole()!=='staff'; }catch(e){
 function sinNuovo(){ sinForm(null); }
 function sinApri(id){ sinForm(id); }
 
+function sinApriSinistro(id){
+  var el=document.getElementById('sinnum-'+id);
+  var num=el?String(el.value).trim():'';
+  if(!num){ alert('Inserisci il numero di sinistro per aprirlo.'); return; }
+  var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  list[idx].numeroSinistro=num; list[idx].stato='aperto'; list[idx].apertoAt=Date.now();
+  sinSave(list); sinPush(list[idx]); _sinTab='aperto'; sinSetTab('aperto');
+  if(typeof tcToastNew==='function') tcToastNew('📂 Sinistro n. '+num+' aperto',true);
+}
+
+// Documento Cessione del credito precompilato (stampa / salva PDF, firma a penna)
+function sinCessione(id){
+  var s=sinById(id); if(!s) return;
+  if(!s.numeroSinistro){ alert('La cessione si genera quando il sinistro è aperto (serve il numero sinistro).'); return; }
+  var oggi=new Date();
+  var dataIt=String(oggi.getDate()).padStart(2,'0')+'-'+String(oggi.getMonth()+1).padStart(2,'0')+'-'+oggi.getFullYear();
+  var nome=sinEsc(s.nome||''), res=sinEsc(s.residenza||s.indirizzo||''), targa=sinEsc(s.targa||''), num=sinEsc(s.numeroSinistro||'');
+  var doc=''
+    +'<div class="cess-doc" style="font-family:Arial,Helvetica,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:24px;font-size:13px;line-height:1.6;">'
+    +'<h2 style="text-align:center;font-size:18px;margin:0 0 22px;">CESSIONE DI CREDITO</h2>'
+    +'<p>Il sottoscritto <b>'+nome+'</b> residente in '+res+'.</p>'
+    +'<p>- Che il sottoscritto intende effettuare le riparazioni del proprio veicolo targato <b>'+targa+'</b> presso la Carrozzeria Europa Auto srl con sede a Paderno Dugnano MI in Via Nigra n 4; Tutto ciò premesso</p>'
+    +'<h3 style="text-align:center;font-size:15px;margin:18px 0;">DICHIARA</h3>'
+    +'<p>- Di cedere il proprio credito per il risarcimento dei danni derivanti SINISTRO N <b>'+num+'</b> TARGA <b>'+targa+'</b> alla Carrozzeria Europa auto srl con sede a Paderno Dugnano MI in Via Nigra n.4, fino alla concorrenza dell\'importo ricevuto, oltre interessi, rivalutazione monetaria ed accessori;</p>'
+    +'<p>- Ove, per qualsivoglia motivo, si manifestasse l\'impossibilità di recupero del predetto importo nei confronti del responsabile civile e/o della sua Compagnia di Assicurazione, il sottoscritto si impegna a rimborsare il predetto importo alla Carrozzeria Europa Auto srl, a semplice richiesta di quest\'ultima, senza alcuna corresponsione di interessi od altro;</p>'
+    +'<p>- Ove peraltro, ricevuta la richiesta di rimborso dal cessionario, il pagamento non fosse effettuato dal sottoscritto cedente entro 30 (trenta) giorni dalla richiesta, saranno dovuti anche gli interessi di mora al tasso legale, nonché la rivalutazione monetaria;</p>'
+    +'<p>Iban: <b>IT88E0344033990000001004900</b> Intestazione: <b>Europa auto Srl.</b></p>'
+    +'<p style="margin-top:18px;">'+dataIt+' Paderno D.</p>'
+    +'<div style="display:flex;justify-content:space-between;margin-top:60px;">'
+    +'<div style="text-align:center;width:45%;">Cessionario<br><br><br>______________________</div>'
+    +'<div style="text-align:center;width:45%;">Cedente<br><br><br>______________________</div>'
+    +'</div>'
+    +'</div>';
+  var pa=document.getElementById('sin-print'); 
+  if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
+  pa.innerHTML=doc; pa.style.display='block';
+  document.body.classList.add('sin-printing');
+  setTimeout(function(){ try{ window.print(); }catch(e){} }, 200);
+  setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); }, 1500);
+}
+
 function sinInviaConcordato(id){
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   list[idx].stato='concluso'; list[idx].docInviatiAt=Date.now();
-  sinSave(list); _sinTab='concluso'; sinSetTab('concluso');
+  sinSave(list); sinPush(list[idx]); _sinTab='concluso'; sinSetTab('concluso');
   if(typeof tcToastNew==='function') tcToastNew('📤 Documenti e foto inviati · passato a Concluso / In concordato',true);
 }
 function sinFmtEuro(n){ try{ return Number(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return n; } }
@@ -9855,7 +9936,7 @@ function sinConcorda(id){
   if(isNaN(val)||val<=0){ alert("Inserisci l'importo concordato prima di procedere."); return; }
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   list[idx].importoConcordato=val; list[idx].concordatoAt=Date.now(); list[idx].stato='saldo';
-  sinSave(list); _sinTab='saldo'; sinSetTab('saldo');
+  sinSave(list); sinPush(list[idx]); _sinTab='saldo'; sinSetTab('saldo');
   if(typeof tcToastNew==='function') tcToastNew('🤝 Concordato € '+sinFmtEuro(val)+' · in attesa di saldo',true);
 }
 
@@ -9875,6 +9956,7 @@ function sinForm(id){
   html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><div style="font-size:18px;font-weight:800;color:#0f172a;">'+(id?'Modifica sinistro':'Nuovo sinistro')+'</div>';
   html+='<button onclick="sinChiudi()" style="background:none;border:none;font-size:24px;color:#94a3b8;cursor:pointer;line-height:1;">&times;</button></div>';
   html+=f('Nome e cognome','nome','text','Mario Rossi');
+  html+=f('Residenza (per la cessione)','residenza','text','Cesano Maderno (MB), Via …');
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa','targa','text','GX873JH')+'</div><div style="flex:1.4;">'+f('Modello','modello','text','Ford Puma 1.0')+'</div></div>';
   html+=f('Compagnia assicurativa','compagnia','text','');
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria','finanziaria','text','')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
@@ -9892,6 +9974,9 @@ function sinForm(id){
   if(sinVedePreventivo()){
     html+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0;"><button onclick="sinPreventivo(\''+s.id+'\')" style="width:100%;padding:11px;border-radius:8px;border:1px dashed #1a4fa0;background:#f8fafc;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🧾 Preventivo di riparazione</button></div>';
   }
+  if(s.numeroSinistro){
+    html+='<div style="margin-top:10px;"><button onclick="sinCessione(\''+s.id+'\')" style="width:100%;padding:11px;border-radius:8px;border:1px dashed #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">📄 Cessione del credito (stampa)</button></div>';
+  }
   html+='</div>';
   m.innerHTML=html; m.style.display='block';
 }
@@ -9902,21 +9987,23 @@ function sinSalva(id, isNew){
   var g=function(k){ var el=document.getElementById('sinf-'+k); return el?el.value.trim():''; };
   var list=sinLoad();
   var s = isNew ? { id:id, createdAt:Date.now() } : (sinById(id)||{ id:id, createdAt:Date.now() });
-  s.nome=g('nome'); s.targa=g('targa').toUpperCase(); s.modello=g('modello');
+  s.nome=g('nome'); s.residenza=g('residenza'); s.targa=g('targa').toUpperCase(); s.modello=g('modello');
   s.compagnia=g('compagnia'); s.finanziaria=g('finanziaria'); s.perito=g('perito');
   s.appuntamento=g('appuntamento'); s.docLink=g('docLink'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
   var idx=list.findIndex(function(x){return x.id===id;});
   if(idx>=0) list[idx]=s; else list.push(s);
-  sinSave(list);
+  sinSave(list); sinPush(s);
   sinChiudi(); _sinTab=s.stato; sinSetTab(s.stato);
   if(typeof tcToastNew==='function') tcToastNew('✅ Sinistro salvato',true);
 }
 
 function sinElimina(id){
   if(!confirm('Eliminare definitivamente questo sinistro?')) return;
+  sinAddTombstone(id);
   sinSave(sinLoad().filter(function(x){return x.id!==id;}));
-  sinChiudi(); sinRender();
+  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(SINISTRI_SHEET, id); }catch(e){} }
+  sinChiudi(); sinRender(); sinRenderTabs();
   if(typeof tcToastNew==='function') tcToastNew('🗑 Sinistro eliminato',true);
 }
 
