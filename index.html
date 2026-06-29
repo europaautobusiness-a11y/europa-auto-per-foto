@@ -9911,30 +9911,9 @@ function sinCard(s){
     html+='<button onclick="sinConcorda(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">→ Saldo</button>';
     html+='</div>';
   }
+  html+=sinPanelSoldi(s, st);
   if(st==='saldo'){
-    html+='<button onclick="sinVaiIntegrazione(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:9px;border-radius:6px;border:1px solid #d97706;background:#fffbeb;color:#b45309;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">➕ Integrazione al saldo</button>';
-  }
-  if(st==='integrazione'){
-    html+='<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:12px;color:#b45309;font-weight:700;">➕ In attesa di integrazione al saldo</div>';
-  }
-  if(s.importoConcordato!=null && s.importoConcordato!=='' && sinVedePreventivo() && (st==='saldo'||st==='integrazione'||st==='liquidato')){
-    html+='<div style="margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 10px;font-size:13px;color:#15803d;font-weight:800;">💶 Concordato: € '+sinFmtEuro(s.importoConcordato)+'</div>';
-  }
-  // Data ricezione del concordato (conferma che i soldi sono arrivati)
-  if(sinVedePreventivo() && (st==='saldo'||st==='integrazione'||st==='liquidato')){
-    html+='<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span style="font-size:12px;color:#475569;font-weight:700;">📅 Concordato ricevuto il:</span><input type="date" value="'+sinEsc(s.dataRicezione||'')+'" onchange="sinAggiornaCampo(\''+s.id+'\',\'dataRicezione\',this.value)" style="flex:1;min-width:130px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;"></div>';
-    if(s.dataRicezione) html+='<div style="margin-top:4px;font-size:12px;color:#16a34a;font-weight:700;">✅ Concordato ricevuto il '+sinFmtData(s.dataRicezione)+'</div>';
-  }
-  // Importo + data ricezione integrazione (solo nella sottosezione integrazione)
-  if(st==='integrazione' && sinVedePreventivo()){
-    html+='<div style="margin-top:8px;background:#fff;border:1px dashed #fbbf24;border-radius:8px;padding:8px 10px;">';
-    html+='<div style="display:flex;gap:8px;align-items:center;"><span style="font-size:12px;color:#b45309;font-weight:700;flex:0 0 auto;">Importo integrazione €</span><input type="number" inputmode="decimal" step="0.01" value="'+sinEsc(s.importoIntegrazione||'')+'" placeholder="0,00" onchange="sinAggiornaCampo(\''+s.id+'\',\'importoIntegrazione\',this.value)" style="flex:1;min-width:0;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;"></div>';
-    html+='<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span style="font-size:12px;color:#b45309;font-weight:700;">📅 Integrazione ricevuta il:</span><input type="date" value="'+sinEsc(s.dataRicezioneIntegrazione||'')+'" onchange="sinAggiornaCampo(\''+s.id+'\',\'dataRicezioneIntegrazione\',this.value)" style="flex:1;min-width:130px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;"></div>';
-    html+='</div>';
-  }
-  // Riepilogo integrazione quando già impostata (anche in liquidato)
-  if(s.importoIntegrazione!=null && s.importoIntegrazione!=='' && sinVedePreventivo() && st==='liquidato'){
-    html+='<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:13px;color:#b45309;font-weight:800;">➕ Integrazione: € '+sinFmtEuro(s.importoIntegrazione)+(s.dataRicezioneIntegrazione?(' · ricevuta il '+sinFmtData(s.dataRicezioneIntegrazione)):'')+'</div>';
+    html+='<button onclick="sinVaiIntegrazione(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:9px;border-radius:8px;border:1px solid #d97706;background:#fffbeb;color:#b45309;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">➕ Richiedi integrazione al saldo</button>';
   }
   if(s.docInviatiAt && (st==='concluso'||st==='saldo'||st==='integrazione'||st==='liquidato')){
     html+='<div style="margin-top:8px;font-size:11px;color:#16a34a;font-weight:700;">📤 Documenti e foto inviati il '+sinFmtApp(s.docInviatiAt)+'</div>';
@@ -9947,9 +9926,65 @@ function sinFmtApp(v){ try{ var d=new Date(v); if(isNaN(d.getTime())) return v; 
 function sinFmtData(v){ if(!v) return ''; var p=String(v).split('-'); if(p.length===3) return p[2]+'/'+p[1]+'/'+p[0]; return v; }
 function sinAggiornaCampo(id, campo, valore){
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  var old=list[idx][campo];
   list[idx][campo]=valore;
   sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  // Quando si segna per la prima volta la ricezione di un bonifico → avvisa la contabilità
+  if(valore && !old && (campo==='dataRicezione'||campo==='dataRicezioneIntegrazione')){
+    var tipo=(campo==='dataRicezioneIntegrazione')?'integrazione':'concordato';
+    var importo=(campo==='dataRicezioneIntegrazione')?list[idx].importoIntegrazione:list[idx].importoConcordato;
+    sinNotificaBonifico(list[idx], tipo, importo);
+    if(typeof tcToastNew==='function') tcToastNew('📧 Avviso bonifico inviato alla contabilità',true);
+  }
   sinRender();
+}
+function sinNotificaBonifico(s, tipo, importo){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='mailCb_'+Date.now();
+  var sc=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); },12000);
+  window[cb]=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); };
+  var params='action=inviaMailBonifico'
+    +'&cliente='+encodeURIComponent(s.nome||'')
+    +'&tipo='+encodeURIComponent(tipo||'concordato')
+    +'&importo='+encodeURIComponent(importo!=null?importo:'')
+    +'&targa='+encodeURIComponent(s.targa||'')
+    +'&nsin='+encodeURIComponent(s.numeroSinistro||'');
+  sc.src=GS_URL+'?'+params+'&callback='+cb;
+  sc.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); };
+  document.body.appendChild(sc);
+}
+function sinPanelSoldi(s, st){
+  if(!sinVedePreventivo()) return '';
+  if(st!=='saldo' && st!=='integrazione' && st!=='liquidato') return '';
+  var hasConc=(s.importoConcordato!=null && s.importoConcordato!=='');
+  var hasIntegr=(st==='integrazione') || (st==='liquidato' && s.importoIntegrazione!=null && s.importoIntegrazione!=='');
+  if(!hasConc && !hasIntegr) return '';
+  var dInput=function(campo,val){ return '<input type="date" value="'+sinEsc(val||'')+'" onchange="sinAggiornaCampo(\''+s.id+'\',\''+campo+'\',this.value)" style="padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;background:#fff;">'; };
+  var html='<div style="margin-top:10px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">';
+  // --- CONCORDATO ---
+  if(hasConc){
+    var ric=!!s.dataRicezione;
+    html+='<div style="padding:10px 12px;background:'+(ric?'#f0fdf4':'#f8fafc')+';'+(hasIntegr?'border-bottom:1px solid #eef2f7;':'')+'">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:#64748b;">CONCORDATO</span><span style="font-size:17px;font-weight:800;color:#15803d;">€ '+sinFmtEuro(s.importoConcordato)+'</span></div>';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;"><span style="font-size:12px;font-weight:700;color:'+(ric?'#16a34a':'#94a3b8')+';">'+(ric?'✅ Ricevuto il':'Ricevuto il')+'</span>'+dInput('dataRicezione',s.dataRicezione)+'</div>';
+    html+='</div>';
+  }
+  // --- INTEGRAZIONE ---
+  if(hasIntegr){
+    var ricI=!!s.dataRicezioneIntegrazione;
+    html+='<div style="padding:10px 12px;background:#fffbeb;">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:#b45309;">INTEGRAZIONE</span>';
+    if(st==='liquidato') html+='<span style="font-size:17px;font-weight:800;color:#b45309;">€ '+sinFmtEuro(s.importoIntegrazione)+'</span>';
+    html+='</div>';
+    if(st==='integrazione'){
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;"><span style="font-size:12px;font-weight:700;color:#b45309;">Importo €</span><input type="number" inputmode="decimal" step="0.01" value="'+sinEsc(s.importoIntegrazione||'')+'" placeholder="0,00" onchange="sinAggiornaCampo(\''+s.id+'\',\'importoIntegrazione\',this.value)" style="width:120px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;text-align:right;background:#fff;"></div>';
+    }
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;"><span style="font-size:12px;font-weight:700;color:'+(ricI?'#16a34a':'#b45309')+';">'+(ricI?'✅ Ricevuta il':'Ricevuta il')+'</span>'+dInput('dataRicezioneIntegrazione',s.dataRicezioneIntegrazione)+'</div>';
+    html+='</div>';
+  }
+  html+='</div>';
+  return html;
 }
 
 function sinVedePreventivo(){ try{ return getCurrentRole()!=='staff'; }catch(e){ return true; } }
