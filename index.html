@@ -9796,9 +9796,10 @@ var SINISTRI_KEY='ea_sinistri_v1';
 var SINISTRI_SHEET='Sinistri';
 var SINISTRI_DEL_KEY='ea_sinistri_del_v1';
 var _sinTab='attesa_apertura';
-var SIN_ORDER=['attesa_apertura','aperto','lavorazione','concluso','saldo','liquidato'];
-var SIN_STATI={ attesa_apertura:'In attesa di apertura', aperto:'Aperto / In attesa di perizia', lavorazione:'Periziato / In lavorazione', concluso:'Concluso / In concordato', saldo:'In attesa di saldo', liquidato:'Liquidato' };
-var SIN_ICONS={ attesa_apertura:'📝', aperto:'📂', lavorazione:'🔧', concluso:'🚗', saldo:'💰', liquidato:'✅' };
+var SIN_ORDER=['attesa_apertura','aperto','lavorazione','concluso','saldo','integrazione','liquidato'];
+var SIN_STATI={ attesa_apertura:'In attesa di apertura', aperto:'Aperto / In attesa di perizia', lavorazione:'Periziato / In lavorazione', concluso:'Concluso / In concordato', saldo:'In attesa di saldo', integrazione:'In attesa di integrazione', liquidato:'Liquidato' };
+var SIN_ICONS={ attesa_apertura:'📝', aperto:'📂', lavorazione:'🔧', concluso:'🚗', saldo:'💰', integrazione:'➕', liquidato:'✅' };
+var SIN_NEXT={ attesa_apertura:'aperto', aperto:'lavorazione', lavorazione:'concluso', concluso:'saldo', saldo:'liquidato', integrazione:'liquidato' };
 
 function sinTombstones(){ try{ return JSON.parse(localStorage.getItem(SINISTRI_DEL_KEY)||'[]'); }catch(e){ return []; } }
 function sinAddTombstone(id){ if(!id) return; var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} } }
@@ -9836,9 +9837,10 @@ function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); sinL
 function sinRenderTabs(){
   var bar=document.getElementById('sin-tabs'); if(!bar) return;
   var all=sinLoad();
-  bar.innerHTML = SIN_ORDER.map(function(s){
+  bar.innerHTML = SIN_ORDER.filter(function(s){return s!=='integrazione';}).map(function(s){
     var on=(s===_sinTab);
     var n=all.filter(function(x){return (x.stato||'attesa_apertura')===s;}).length;
+    if(s==='saldo') n+=all.filter(function(x){return x.stato==='integrazione';}).length;
     return '<button onclick="sinSetTab(\''+s+'\')" style="white-space:nowrap;flex:0 0 auto;padding:9px 13px;border-radius:8px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+SIN_ICONS[s]+' '+SIN_STATI[s]+(n?(' ('+n+')'):'')+'</button>';
   }).join('');
 }
@@ -9847,63 +9849,82 @@ function sinSetTab(stato){ _sinTab=stato; sinRenderTabs(); sinRender(); }
 
 function sinRender(){
   var all=sinLoad();
-  var lista=all.filter(function(x){return (x.stato||'attesa_apertura')===_sinTab;})
-               .sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
   var wrap=document.getElementById('sin-lista'); if(!wrap) return;
-  if(!lista.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun sinistro in «'+SIN_STATI[_sinTab]+'».</div>'; return; }
+  var byCreated=function(a,b){return (b.createdAt||0)-(a.createdAt||0);};
+  var vuoto=function(label){ return '<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun sinistro in «'+label+'».</div>'; };
   var html='';
-  lista.forEach(function(s){
-    html+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
-    html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
-    html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+sinEsc(s.nome||'(senza nome)')+'</div>';
-    html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div></div>';
-    if(_sinTab!=='attesa_apertura'){
-      html+='<div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;flex:0 0 auto;">';
-      html+='<button onclick="sinApri(\''+s.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Apri</button>';
-      var _ci=SIN_ORDER.indexOf(s.stato);
-      if(_ci>=0 && _ci<SIN_ORDER.length-1){
-        html+='<button onclick="event.stopPropagation();sinProssimoStato(\''+s.id+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Cambia stato →</button>';
-      }
-      html+='</div>';
+  if(_sinTab==='saldo'){
+    var gS=all.filter(function(x){return x.stato==='saldo';}).sort(byCreated);
+    var gI=all.filter(function(x){return x.stato==='integrazione';}).sort(byCreated);
+    if(!gS.length && !gI.length){ wrap.innerHTML=vuoto('In attesa di saldo'); return; }
+    gS.forEach(function(s){ html+=sinCard(s); });
+    if(gI.length){
+      html+='<div style="margin:18px 2px 12px;padding:9px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-weight:800;font-size:13px;color:#b45309;">➕ In attesa di integrazione ('+gI.length+')</div>';
+      gI.forEach(function(s){ html+=sinCard(s); });
     }
-    html+='</div>';
-    // Evidenza per stato: compagnia in attesa apertura, perito in attesa perizia
-    if(_sinTab==='attesa_apertura'){
-      html+='<div style="margin-top:8px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:6px 10px;font-size:12px;color:#854d0e;font-weight:700;">🏢 In attesa di risposta da: '+sinEsc(s.compagnia||'— compagnia da indicare —')+'</div>';
-      html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
-      html+='<input id="sinnum-'+s.id+'" type="text" value="'+sinEsc(s.numeroSinistro||'')+'" placeholder="Numero sinistro" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
-      html+='<button onclick="sinApriSinistro(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">Apri sinistro</button>';
-      html+='</div>';
-    } else if(_sinTab==='aperto'){
-      html+='<div style="margin-top:8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;font-size:12px;color:#1e40af;font-weight:700;">👤 Perito: '+sinEsc(s.perito||'— da affidare —')+(s.peritoOnline?' · 💻 online':(s.appuntamento?(' · 📅 '+sinFmtApp(s.appuntamento)):''))+'</div>';
-    }
-    var righe=[];
-    if(s.numeroSinistro && _sinTab!=='attesa_apertura') righe.push('📄 Sinistro n. '+sinEsc(s.numeroSinistro));
-    if(_sinTab!=='attesa_apertura' && s.compagnia) righe.push('🏢 '+sinEsc(s.compagnia));
-    if(s.finanziaria)righe.push('💳 '+sinEsc(s.finanziaria));
-    if(_sinTab!=='aperto' && s.perito) righe.push('👤 '+sinEsc(s.perito));
-    if(_sinTab!=='aperto' && s.appuntamento) righe.push('📅 '+sinFmtApp(s.appuntamento));
-    if(righe.length) html+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+righe.join('<br>')+'</div>';
-    
-    if(_sinTab==='lavorazione'){
-      html+='<button onclick="sinInviaConcordato(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">📤 Inviati documenti e foto al perito → In concordato</button>';
-    }
-    if(_sinTab==='concluso' && sinVedePreventivo()){
-      var impVal = (s.importoConcordato!=null && s.importoConcordato!=='') ? s.importoConcordato : '';
-      html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
-      html+='<input id="sinimp-'+s.id+'" type="number" inputmode="decimal" step="0.01" value="'+sinEsc(impVal)+'" placeholder="Importo concordato €" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
-      html+='<button onclick="sinConcorda(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">→ Saldo</button>';
-      html+='</div>';
-    }
-    if(s.importoConcordato!=null && s.importoConcordato!=='' && sinVedePreventivo() && (_sinTab==='saldo'||_sinTab==='liquidato')){
-      html+='<div style="margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 10px;font-size:13px;color:#15803d;font-weight:800;">💶 Concordato: € '+sinFmtEuro(s.importoConcordato)+'</div>';
-    }
-    if(s.docInviatiAt && (_sinTab==='concluso'||_sinTab==='saldo'||_sinTab==='liquidato')){
-      html+='<div style="margin-top:8px;font-size:11px;color:#16a34a;font-weight:700;">📤 Documenti e foto inviati il '+sinFmtApp(s.docInviatiAt)+'</div>';
-    }
-    html+='</div>';
-  });
+  } else {
+    var lista=all.filter(function(x){return (x.stato||'attesa_apertura')===_sinTab;}).sort(byCreated);
+    if(!lista.length){ wrap.innerHTML=vuoto(SIN_STATI[_sinTab]); return; }
+    lista.forEach(function(s){ html+=sinCard(s); });
+  }
   wrap.innerHTML=html;
+}
+
+function sinCard(s){
+  var st=s.stato||'attesa_apertura';
+  var html='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
+  html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
+  html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+sinEsc(s.nome||'(senza nome)')+'</div>';
+  html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div></div>';
+  if(st!=='attesa_apertura'){
+    html+='<div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;flex:0 0 auto;">';
+    html+='<button onclick="sinApri(\''+s.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Apri</button>';
+    if(SIN_NEXT[st]){
+      html+='<button onclick="event.stopPropagation();sinProssimoStato(\''+s.id+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Cambia stato →</button>';
+    }
+    html+='</div>';
+  }
+  html+='</div>';
+  if(st==='attesa_apertura'){
+    html+='<div style="margin-top:8px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:6px 10px;font-size:12px;color:#854d0e;font-weight:700;">🏢 In attesa di risposta da: '+sinEsc(s.compagnia||'— compagnia da indicare —')+'</div>';
+    html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
+    html+='<input id="sinnum-'+s.id+'" type="text" value="'+sinEsc(s.numeroSinistro||'')+'" placeholder="Numero sinistro" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
+    html+='<button onclick="sinApriSinistro(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">Apri sinistro</button>';
+    html+='</div>';
+  } else if(st==='aperto'){
+    html+='<div style="margin-top:8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;font-size:12px;color:#1e40af;font-weight:700;">👤 Perito: '+sinEsc(s.perito||'— da affidare —')+(s.peritoOnline?' · 💻 online':(s.appuntamento?(' · 📅 '+sinFmtApp(s.appuntamento)):''))+'</div>';
+  }
+  var righe=[];
+  if(s.numeroSinistro && st!=='attesa_apertura') righe.push('📄 Sinistro n. '+sinEsc(s.numeroSinistro));
+  if(st!=='attesa_apertura' && s.compagnia) righe.push('🏢 '+sinEsc(s.compagnia));
+  if(s.finanziaria)righe.push('💳 '+sinEsc(s.finanziaria));
+  if(st!=='aperto' && s.perito) righe.push('👤 '+sinEsc(s.perito));
+  if(st!=='aperto' && s.appuntamento) righe.push('📅 '+sinFmtApp(s.appuntamento));
+  if(righe.length) html+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+righe.join('<br>')+'</div>';
+  if(st==='lavorazione'){
+    html+='<button onclick="sinInviaConcordato(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">📤 Inviati documenti e foto al perito → In concordato</button>';
+  }
+  if(st==='concluso' && sinVedePreventivo()){
+    var impVal = (s.importoConcordato!=null && s.importoConcordato!=='') ? s.importoConcordato : '';
+    html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
+    html+='<input id="sinimp-'+s.id+'" type="number" inputmode="decimal" step="0.01" value="'+sinEsc(impVal)+'" placeholder="Importo concordato €" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
+    html+='<button onclick="sinConcorda(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">→ Saldo</button>';
+    html+='</div>';
+  }
+  if(st==='saldo'){
+    html+='<button onclick="sinVaiIntegrazione(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:9px;border-radius:6px;border:1px solid #d97706;background:#fffbeb;color:#b45309;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">➕ Serve integrazione al saldo (non liquidare)</button>';
+  }
+  if(st==='integrazione'){
+    html+='<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:12px;color:#b45309;font-weight:700;">➕ In attesa di integrazione al saldo</div>';
+  }
+  if(s.importoConcordato!=null && s.importoConcordato!=='' && sinVedePreventivo() && (st==='saldo'||st==='integrazione'||st==='liquidato')){
+    html+='<div style="margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 10px;font-size:13px;color:#15803d;font-weight:800;">💶 Concordato: € '+sinFmtEuro(s.importoConcordato)+'</div>';
+  }
+  if(s.docInviatiAt && (st==='concluso'||st==='saldo'||st==='integrazione'||st==='liquidato')){
+    html+='<div style="margin-top:8px;font-size:11px;color:#16a34a;font-weight:700;">📤 Documenti e foto inviati il '+sinFmtApp(s.docInviatiAt)+'</div>';
+  }
+  html+='</div>';
+  return html;
 }
 
 function sinFmtApp(v){ try{ var d=new Date(v); if(isNaN(d.getTime())) return v; return d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return v; } }
@@ -9919,14 +9940,20 @@ function sinToggleOnline(){
 }
 function sinProssimoStato(id){
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
-  var ci=SIN_ORDER.indexOf(list[idx].stato);
-  if(ci<0 || ci>=SIN_ORDER.length-1) return; // ultimo stato: niente successivo
-  var nuovo=SIN_ORDER[ci+1];
+  var nuovo=SIN_NEXT[list[idx].stato];
+  if(!nuovo) return; // nessuno stato successivo (es. liquidato)
   list[idx].stato=nuovo;
   if(nuovo==='concluso' && !list[idx].docInviatiAt) list[idx].docInviatiAt=Date.now();
   sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
   _sinTab=nuovo; sinSetTab(nuovo);
   if(typeof tcToastNew==='function') tcToastNew('➡️ '+(SIN_ICONS[nuovo]||'')+' '+(SIN_STATI[nuovo]||nuovo),true);
+}
+function sinVaiIntegrazione(id){
+  var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  list[idx].stato='integrazione'; list[idx].integrazioneAt=Date.now();
+  sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  _sinTab='integrazione'; sinSetTab('integrazione');
+  if(typeof tcToastNew==='function') tcToastNew('➕ In attesa di integrazione',true);
 }
 function sinApriSinistro(id){
   var el=document.getElementById('sinnum-'+id);
