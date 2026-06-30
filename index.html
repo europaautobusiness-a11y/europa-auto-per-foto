@@ -10442,6 +10442,13 @@ function pmForm(id){
   // azioni
   h+='<button onclick="pmSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva perizia</button>';
   h+='<button onclick="pmStampa()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa / Salva PDF</button>';
+  h+='<button onclick="pmLinkCliente()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #16a34a;background:#fff;color:#15803d;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🔗 Crea link per il cliente (compila e firma da remoto)</button>';
+  h+='<div id="pm-linkbox" style="display:none;margin-top:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;">';
+  h+='<div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:6px;">Link da inviare al cliente:</div>';
+  h+='<input id="pm-linkurl" readonly onclick="this.select()" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12px;box-sizing:border-box;">';
+  h+='<div style="display:flex;gap:8px;margin-top:8px;"><button onclick="pmCopiaLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Copia</button><button onclick="pmWhatsAppLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#25d366;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">WhatsApp</button><button onclick="pmCondividiLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Condividi</button></div>';
+  h+='<div style="font-size:11px;color:#64748b;margin-top:6px;">Il cliente apre il link, compila e firma; la perizia firmata torna qui (premi “Sincronizza” o riapri la sezione).</div>';
+  h+='</div>';
   if(p) h+='<button onclick="pmElimina(\''+_pm.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div>';
   m.innerHTML=h; m.style.display='block';
@@ -10573,6 +10580,7 @@ function pmStampa(){
     +(p.pins.length?('<ol>'+p.pins.map(function(x){return '<li>'+(pmEsc(x.desc)||'(senza descrizione)')+'</li>';}).join('')+'</ol>'):'<p>Nessun danno segnalato.</p>')
     +'<div class="sez">Dichiarazioni e garanzie del cliente</div><p>Il cliente, sotto la propria responsabilità, dichiara che:</p><ul>'+dch.map(function(x){return '<li>'+x+';</li>';}).join('')+'</ul>'
     +'<p><b>Verifica entro 60 giorni.</b> Qualora, entro 60 (sessanta) giorni dalla data di consegna del veicolo, emergano danni, guasti, difetti o vizi preesistenti non dichiarati dal cliente nel presente documento, Europa Auto S.r.l. si riserva il diritto di procedere a una nuova valutazione del veicolo e di richiedere al cliente il risarcimento dei danni subiti e/o il pagamento dell&rsquo;eventuale differenza di valore accertata. Europa Auto S.r.l. si riserva altres&igrave; di effettuare una rivalutazione dello stato del veicolo al momento della consegna effettiva. Il cliente dichiara e garantisce che tutte le informazioni fornite in merito alle condizioni del veicolo sono veritiere, complete e corrispondenti al reale stato dello stesso.</p>'
+    +'<p><b>Condizioni di consegna e pulizia.</b> Il veicolo dovr&agrave; essere consegnato in buone condizioni igieniche e di pulizia esterne. In caso contrario, al momento del ritiro verr&agrave; addebitato al cliente un importo di € 100,00 a titolo di spese di pulizia.</p>'
     +'<p style="margin-top:10px;">Data: '+pmOggi()+'</p>'
     +'<div class="firme"><div>Per Europa Auto Srl<br><br><br>______________________<br>Il venditore</div><div>'+firmaCliente+'<br>______________________<br>Il cliente'+otpRiga+'</div></div></div>';
   var pa=document.getElementById('sin-print'); if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
@@ -10580,6 +10588,109 @@ function pmStampa(){
   setTimeout(function(){ try{ window.print(); }catch(e){} }, 250);
   setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); }, 1500);
 }
+
+
+/* ===================== PERMUTE — LINK CLIENTE ===================== */
+function pmLinkCliente(){
+  var rec=pmRaccogli();
+  if(!rec.cliente && !rec.modello){ alert('Compila almeno il cliente o il modello e salva prima di generare il link.'); return; }
+  var list=pmLoad(); var idx=list.findIndex(function(x){return x.id===rec.id;});
+  if(idx>=0) list[idx]=rec; else list.push(rec);
+  pmSave(list); pmPush(rec);
+  if(typeof GS_URL==='undefined' || !GS_URL){ alert('Per il link serve il collegamento al foglio (sincronizzazione).'); return; }
+  var url=location.origin+location.pathname+'?permuta='+encodeURIComponent(rec.id);
+  var box=document.getElementById('pm-linkbox');
+  if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
+}
+function pmCopiaLink(){
+  var inp=document.getElementById('pm-linkurl'); if(!inp) return;
+  try{ inp.select(); }catch(e){}
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(inp.value).then(function(){ if(typeof tcToastNew==='function')tcToastNew('🔗 Link copiato',true); }); }
+  else { try{ document.execCommand('copy'); }catch(e){} }
+}
+function pmWhatsAppLink(){ var inp=document.getElementById('pm-linkurl'); if(!inp)return; window.open('https://wa.me/?text='+encodeURIComponent('Compila e firma la perizia del tuo veicolo (Europa Auto): '+inp.value),'_blank'); }
+function pmCondividiLink(){ var inp=document.getElementById('pm-linkurl'); if(!inp)return; if(navigator.share){ navigator.share({title:'Perizia veicolo — Europa Auto', text:'Compila e firma la perizia del tuo veicolo:', url:inp.value}).catch(function(){}); } else { pmCopiaLink(); } }
+
+/* ---- lato cliente (apertura tramite ?permuta=ID) ---- */
+var _pmcl=null;
+function pmClientOpen(id){
+  var ov=document.createElement('div'); ov.id='pm-client'; ov.style.cssText='position:fixed;inset:0;background:#f1f5f9;z-index:99999;overflow:auto;-webkit-overflow-scrolling:touch;';
+  ov.innerHTML='<div style="max-width:680px;margin:0 auto;padding:40px 20px;text-align:center;color:#475569;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">Caricamento della perizia…</div>';
+  document.body.appendChild(ov); document.body.style.overflow='hidden';
+  if(typeof GS_URL==='undefined' || !GS_URL){ ov.firstChild.textContent='Link non disponibile.'; return; }
+  var cb='pmCl_'+Date.now(); var s=document.createElement('script');
+  var to=setTimeout(function(){ ov.firstChild.textContent='Connessione lenta, riprova ad aprire il link.'; },15000);
+  window[cb]=function(data){
+    clearTimeout(to); try{delete window[cb];}catch(e){}
+    var rec=Array.isArray(data)?data.filter(function(r){return r&&String(r.id)===String(id);})[0]:null;
+    if(!rec){ ov.firstChild.textContent='Perizia non trovata o link non più valido.'; return; }
+    pmClientRender(ov, rec);
+  };
+  s.src=GS_URL+'?sheet='+encodeURIComponent(PERMUTE_SHEET)+'&callback='+cb;
+  s.onerror=function(){ clearTimeout(to); ov.firstChild.textContent='Errore di caricamento.'; };
+  document.body.appendChild(s);
+}
+function pmClientRender(ov, rec){
+  _pmcl={ rec:rec, pins:(rec.pins?JSON.parse(JSON.stringify(rec.pins)):[]), sigUsed:false, otpOk:false, code:null };
+  var kv=function(k,v){ return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:14px;"><span style="color:#64748b;">'+k+'</span><span style="font-weight:700;">'+pmEsc(v||'—')+'</span></div>'; };
+  var tg=(rec.tagliandi||[]).length;
+  var h='<div class="hero" style="background:#1a4fa0;color:#fff;padding:18px 16px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><h1 style="margin:0;font-size:18px;font-weight:800;">🚗 Europa Auto — Perizia del tuo veicolo</h1><p style="margin:5px 0 0;font-size:13px;opacity:.9;">Ciao '+pmEsc(rec.cliente||'')+', controlla i dati, segna eventuali danni, conferma e firma.</p></div>';
+  h+='<div style="max-width:680px;margin:0 auto;padding:14px 12px 60px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Dati del veicolo</div>'
+    +kv('Modello',rec.modello)+kv('Anno · Km',(rec.anno||'—')+' · '+(rec.km||'—'))+kv('Targa',rec.targa)+kv('Valutazione proposta',rec.valutazione?('€ '+rec.valutazione):'—')+kv('Tagliandi documentati',tg+' su 10')+'</div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Segnala eventuali danni</div><p style="font-size:12px;color:#64748b;margin:0 0 8px;">Tocca il disegno dove c\'è un danno, poi scrivi cosa è.</p><div id="pmcl-carbox" onclick="pmClientAddPin(event)" style="cursor:crosshair;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;"></div><div id="pmcl-pinlist" style="margin-top:10px;"></div></div>';
+  var dz=rec.dichiarazioni||{d1:true,d2:true,d3:true,d4:true};
+  var dl=function(id,t,on){ return '<label style="display:flex;gap:9px;align-items:flex-start;margin:9px 0;font-size:13px;line-height:1.4;cursor:pointer;"><input type="checkbox" id="'+id+'" '+(on!==false?'checked':'')+' style="width:21px;height:21px;flex:0 0 auto;margin-top:1px;"><span>'+t+'</span></label>'; };
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Le tue dichiarazioni</div>'
+    +dl('pmcl_d1','Le informazioni sullo stato del veicolo sono complete e veritiere.',dz.d1)
+    +dl('pmcl_d2','Il veicolo non presenta danni, guasti o vizi occulti diversi da quelli elencati.',dz.d2)
+    +dl('pmcl_d3','Il chilometraggio è reale e non manomesso.',dz.d3)
+    +dl('pmcl_d4','Il veicolo non ha subìto danni strutturali da incidente non dichiarati.',dz.d4)
+    +'<p style="font-size:12px;color:#64748b;">Se entro 60 giorni dalla consegna emergono danni o vizi preesistenti non dichiarati, Europa Auto potrà rivalutare il veicolo e richiedere il risarcimento e/o la differenza di valore.</p><p style="font-size:12px;color:#64748b;">Il veicolo dovrà essere consegnato in buone condizioni igieniche e di pulizia esterne: in caso contrario, al ritiro verranno addebitati € 100,00 di spese di pulizia.</p></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Conferma identità (codice via email)</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientInvia()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Invia codice via email</button><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Firma digitale</div><canvas id="pmcl-sig" width="700" height="180" style="width:100%;height:180px;border:2px dashed #94a3b8;border-radius:10px;background:#fff;touch-action:none;display:block;"></canvas><button onclick="pmClientClear()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Cancella</button></div>';
+  h+='<button onclick="pmClientSubmit()" style="width:100%;padding:15px;border-radius:11px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:16px;cursor:pointer;font-family:inherit;">✅ Conferma e firma la perizia</button><div id="pmcl-esito" style="font-size:13px;color:#475569;text-align:center;margin-top:12px;"></div></div>';
+  ov.innerHTML=h;
+  pmClientRenderCar(); pmClientRenderPins(); pmClientSetupSig();
+}
+function pmClientRenderCar(){ var c=document.getElementById('pmcl-carbox'); if(c) c.innerHTML=pmCarSVG(_pmcl.pins); }
+function pmClientAddPin(e){ var box=document.getElementById('pmcl-carbox'); var svg=box?box.querySelector('svg'):null; if(!svg)return; var r=svg.getBoundingClientRect(); var x=Math.round((e.clientX-r.left)/r.width*680), y=Math.round((e.clientY-r.top)/r.height*360); if(x<0||y<0||x>680||y>360)return; _pmcl.pins.push({x:x,y:y,desc:''}); pmClientRenderCar(); pmClientRenderPins(); }
+function pmClientRenderPins(){ var c=document.getElementById('pmcl-pinlist'); if(!c)return; var h=_pmcl.pins.length?'':'<div style="font-size:12px;color:#94a3b8;">Nessun danno segnato.</div>'; _pmcl.pins.forEach(function(p,i){ h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;"><span style="flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;">'+(i+1)+'</span><input value="'+pmEsc(p.desc)+'" placeholder="Descrizione danno n. '+(i+1)+'" oninput="_pmcl.pins['+i+'].desc=this.value" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;font-family:inherit;"><button onclick="_pmcl.pins.splice('+i+',1);pmClientRenderCar();pmClientRenderPins();" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;cursor:pointer;">✕</button></div>'; }); c.innerHTML=h; }
+function pmClientSetupSig(){
+  var cv=document.getElementById('pmcl-sig'); if(!cv)return; var ctx=cv.getContext('2d'); ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.strokeStyle='#0b2a5b'; var dr=false;
+  var pos=function(e){ var r=cv.getBoundingClientRect(); return {x:(e.clientX-r.left)*(cv.width/r.width), y:(e.clientY-r.top)*(cv.height/r.height)}; };
+  cv.onpointerdown=function(e){ dr=true; _pmcl.sigUsed=true; var q=pos(e); ctx.beginPath(); ctx.moveTo(q.x,q.y); e.preventDefault(); };
+  cv.onpointermove=function(e){ if(!dr)return; var q=pos(e); ctx.lineTo(q.x,q.y); ctx.stroke(); e.preventDefault(); };
+  cv.onpointerup=function(){ dr=false; }; cv.onpointerleave=function(){ dr=false; };
+  _pmcl.cv=cv;
+}
+function pmClientClear(){ if(_pmcl.cv){ var c=_pmcl.cv.getContext('2d'); c.clearRect(0,0,_pmcl.cv.width,_pmcl.cv.height); } _pmcl.sigUsed=false; }
+function pmClientInvia(){
+  var em=document.getElementById('pmcl_email'); em=em?em.value:''; var st=document.getElementById('pmcl-ostato');
+  if(!em){ if(st)st.textContent='Inserisci la tua email.'; return; }
+  _pmcl.code=String(Math.floor(100000+Math.random()*900000));
+  if(typeof GS_URL!=='undefined' && GS_URL){ try{ var s=document.createElement('script'); s.src=GS_URL+'?action=inviaOtp&email='+encodeURIComponent(em)+'&code='+_pmcl.code+'&callback=pmNoop'; document.body.appendChild(s); }catch(e){} }
+  document.getElementById('pmcl-overif').style.display='block';
+  if(st) st.innerHTML='Ti abbiamo inviato un codice via email a <b>'+pmEsc(em)+'</b>. Inseriscilo qui.';
+}
+function pmClientVerifica(){ var el=document.getElementById('pmcl_otp'); var st=document.getElementById('pmcl-ostato'); if(el && el.value===_pmcl.code && _pmcl.code){ _pmcl.otpOk=true; if(st)st.innerHTML='✅ Identità confermata.'; } else { _pmcl.otpOk=false; if(st)st.textContent='Codice errato.'; } }
+function pmClientSubmit(){
+  var es=document.getElementById('pmcl-esito');
+  if(!_pmcl.sigUsed || !_pmcl.cv){ if(es)es.textContent='Aggiungi prima la tua firma.'; return; }
+  var c=function(id){ var el=document.getElementById(id); return el?el.checked:false; };
+  var em=document.getElementById('pmcl_email'); em=em?em.value:'';
+  var rec=_pmcl.rec;
+  rec.pins=_pmcl.pins;
+  rec.dichiarazioni={d1:c('pmcl_d1'),d2:c('pmcl_d2'),d3:c('pmcl_d3'),d4:c('pmcl_d4')};
+  rec.firma=_pmcl.cv.toDataURL('image/png');
+  rec.metodoFirma= _pmcl.otpOk ? 'otp' : 'dito';
+  rec.email=em; rec.otp=_pmcl.otpOk?em:''; rec.dataFirma=pmOggi(); rec.firmatoDalCliente=true; rec.updatedAt=Date.now();
+  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:rec}); }catch(e){} }
+  if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
+  var ov=document.getElementById('pm-client');
+  if(ov){ setTimeout(function(){ ov.scrollTo(0,0); ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><div style="font-size:54px;">✅</div><h1 style="font-size:22px;color:#16a34a;">Perizia firmata!</h1><p style="color:#475569;font-size:15px;">Grazie '+pmEsc(rec.cliente||'')+'. Il documento è stato inviato a Europa Auto. Puoi chiudere questa pagina.</p></div>'; }, 600); }
+}
+(function(){ try{ var q=(location.search||''); var m=q.match(/[?&]permuta=([^&]+)/); if(m){ var id=decodeURIComponent(m[1]); if(document.body){ pmClientOpen(id); } else { window.addEventListener('DOMContentLoaded',function(){ pmClientOpen(id); }); } } }catch(e){} })();
 
 </script>
 
