@@ -10444,10 +10444,13 @@ function pmForm(id){
   h+='<button onclick="pmStampa()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa / Salva PDF</button>';
   h+='<button onclick="pmLinkCliente()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #16a34a;background:#fff;color:#15803d;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🔗 Crea link per il cliente (compila e firma da remoto)</button>';
   h+='<div id="pm-linkbox" style="display:none;margin-top:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;">';
-  h+='<div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:6px;">Link da inviare al cliente:</div>';
+  h+='<div style="font-size:12px;font-weight:800;color:#15803d;margin-bottom:6px;">📧 Invia il link al cliente via email</div>';
+  h+='<div style="display:flex;gap:8px;"><input id="pm-link-email" type="email" placeholder="email del cliente" style="flex:1;min-width:0;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;"><button onclick="pmInviaLinkEmail()" style="flex:0 0 auto;padding:10px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Invia</button></div>';
+  h+='<div id="pm-link-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>';
+  h+='<div style="font-size:11px;color:#64748b;margin:10px 0 4px;">oppure invia il link manualmente:</div>';
   h+='<input id="pm-linkurl" readonly onclick="this.select()" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12px;box-sizing:border-box;">';
-  h+='<div style="display:flex;gap:8px;margin-top:8px;"><button onclick="pmCopiaLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Copia</button><button onclick="pmWhatsAppLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#25d366;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">WhatsApp</button><button onclick="pmCondividiLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Condividi</button></div>';
-  h+='<div style="font-size:11px;color:#64748b;margin-top:6px;">Il cliente apre il link, compila e firma; la perizia firmata torna qui (premi “Sincronizza” o riapri la sezione).</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:8px;"><button onclick="pmCopiaLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#15803d;font-weight:700;font-family:inherit;cursor:pointer;">Copia</button><button onclick="pmWhatsAppLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#25d366;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">WhatsApp</button><button onclick="pmCondividiLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Condividi</button></div>';
+  h+='<div style="font-size:11px;color:#64748b;margin-top:8px;">Il cliente apre il link, compila e firma; la perizia firmata torna qui (premi “Sincronizza” o riapri la sezione).</div>';
   h+='</div>';
   if(p) h+='<button onclick="pmElimina(\''+_pm.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div>';
@@ -10614,7 +10617,22 @@ function pmLinkCliente(){
   if(typeof GS_URL==='undefined' || !GS_URL){ alert('Per il link serve il collegamento al foglio (sincronizzazione).'); return; }
   var url=location.origin+location.pathname+'?permuta='+encodeURIComponent(rec.id);
   var box=document.getElementById('pm-linkbox');
-  if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
+  if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; var eml=document.getElementById('pm-link-email'); if(eml && !eml.value){ var pe=document.getElementById('pm_email'); if(pe&&pe.value) eml.value=pe.value; } box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
+}
+function pmInviaLinkEmail(){
+  var inp=document.getElementById('pm-linkurl'); var emEl=document.getElementById('pm-link-email'); var st=document.getElementById('pm-link-stato');
+  if(!inp||!inp.value){ if(st)st.textContent='Genera prima il link.'; return; }
+  var em=emEl?emEl.value:''; if(!em){ if(st)st.textContent='Inserisci l\'email del cliente.'; return; }
+  if(typeof GS_URL==='undefined'||!GS_URL){ if(st)st.textContent='Sincronizzazione non attiva: impossibile inviare.'; return; }
+  var cliente=(document.getElementById('pm_cliente')||{}).value||'';
+  if(st) st.textContent='Invio in corso…';
+  var cb='pmLink_'+Date.now()+Math.floor(Math.random()*1000); var sc=document.createElement('script'); var done=false;
+  var fine=function(){ if(sc.parentNode)sc.parentNode.removeChild(sc); try{delete window[cb];}catch(e){} };
+  var to=setTimeout(function(){ if(done)return; done=true; fine(); if(st)st.innerHTML='⚠️ Invio non riuscito: lo script del foglio non è aggiornato o l\'email non è autorizzata.'; },10000);
+  window[cb]=function(r){ if(done)return; done=true; clearTimeout(to); fine(); if(r&&r.ok){ if(st)st.innerHTML='✅ Link inviato via email a <b>'+pmEsc(em)+'</b>.'; } else { if(st)st.innerHTML='⚠️ Invio non riuscito (autorizzazione email mancante nello script).'; } };
+  sc.onerror=function(){ if(done)return; done=true; clearTimeout(to); fine(); if(st)st.innerHTML='⚠️ Invio non riuscito. Verifica lo script del foglio.'; };
+  sc.src=GS_URL+'?action=inviaLinkPermuta&email='+encodeURIComponent(em)+'&cliente='+encodeURIComponent(cliente)+'&link='+encodeURIComponent(inp.value)+'&callback='+cb;
+  document.body.appendChild(sc);
 }
 function pmCopiaLink(){
   var inp=document.getElementById('pm-linkurl'); if(!inp) return;
