@@ -7751,8 +7751,15 @@ function riInvia(){
 function riRenderDip(){
   var wrap=document.getElementById('ri-lista-dip'); if(!wrap) return;
   riDedup();
-  var mie=riLoad().filter(function(r){return r.dipendente===_currentUserEmail;}).sort(function(a,b){return (b.creato||'')<(a.creato||'')?-1:1;});
-  if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta inviata.</div>'; return; }
+  var ym = (typeof _tcMeseCorrente!=='undefined' && _tcMeseCorrente) ? _tcMeseCorrente : ((typeof tcGetMese==='function')?tcGetMese():new Date().toISOString().substring(0,7));
+  var primo = ym+'-01', ultimo = ym+'-31';
+  var mie=riLoad().filter(function(r){
+    if(r.dipendente!==_currentUserEmail) return false;
+    var di = r.dataInizio||r.data||'', df = r.dataFine||di;
+    if(!di) return true;
+    return (di <= ultimo) && (df >= primo);
+  }).sort(function(a,b){return (b.creato||'')<(a.creato||'')?-1:1;});
+  if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta per questo mese.</div>'; return; }
   var html=''; mie.forEach(function(r){
     html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;text-align:left;">'
       +'<div><div style="font-weight:700;color:#0f172a;font-size:13px;">'+r.categoria+'</div>'
@@ -7799,8 +7806,15 @@ function riRenderAdmin(){
   riDedup();
   riAdminPopDip();
   var ord={in_attesa:0,approvato:1,rifiutato:2};
-  var all=riLoad().sort(function(a,b){ if(ord[a.stato]!==ord[b.stato]) return ord[a.stato]-ord[b.stato]; return (b.creato||'')<(a.creato||'')?-1:1; });
-  if(!all.length){ wrap.innerHTML='<div style="text-align:center;padding:30px;color:#64748b;">Nessuna richiesta.</div>'; return; }
+  var ymNow=(typeof tcGetMese==='function')?tcGetMese():new Date().toISOString().substring(0,7);
+  var primo=ymNow+'-01';
+  var all=riLoad().filter(function(r){
+    if(r.stato==='in_attesa') return true;
+    var di=r.dataInizio||r.data||'', df=r.dataFine||di;
+    if(!di) return true;
+    return df>=primo;
+  }).sort(function(a,b){ if(ord[a.stato]!==ord[b.stato]) return ord[a.stato]-ord[b.stato]; return (b.creato||'')<(a.creato||'')?-1:1; });
+  if(!all.length){ wrap.innerHTML='<div style="text-align:center;padding:30px;color:#64748b;">Nessuna richiesta per il mese corrente o futura.</div>'; return; }
   var html=''; all.forEach(function(r){
     var azioni = r.stato==='in_attesa'
       ? '<div style="display:flex;gap:6px;"><button onclick="riApprova(\''+r.id+'\')" style="background:#16a34a;color:#fff;border:none;padding:7px 12px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✓ Approva</button>'
@@ -8011,8 +8025,8 @@ function tcRenderMese() {
     }
     tot.innerHTML=h;
   }
+  try{ if(typeof riRenderDip==='function') riRenderDip(); }catch(e){}
 }
-
 function tcMesePrec(){
   var d=new Date(_tcMeseCorrente+'-01');d.setMonth(d.getMonth()-1);
   var nuovo=d.toISOString().substring(0,7);
@@ -8948,6 +8962,14 @@ function presenzeLoadDaSheets(){
       r.mese = r.data ? r.data.substring(0,7) : tcNormMeseStr(r.mese);
       return r;
     }).filter(function(r){return r.mese===meseC;});
+    // Unisci eventuali righe duplicate con lo stesso id: combina entrata/pausa/rientro/uscita
+    var _byId={};
+    presGS.forEach(function(g){
+      var e=_byId[g.id];
+      if(!e){ _byId[g.id]={id:g.id,dipendente:g.dipendente,data:g.data,mese:g.mese,entrata:g.entrata||'',pausa:g.pausa||'',rientro:g.rientro||'',uscita:g.uscita||'',sede:g.sede||'',tipo:g.tipo}; }
+      else { ['entrata','pausa','rientro','uscita','sede'].forEach(function(f){ if(!e[f] && g[f]) e[f]=g[f]; }); }
+    });
+    presGS=Object.keys(_byId).map(function(k){return _byId[k];});
     var reg=presenzeLoadReg();
     var tomb=tcTombstones();
     var localMese={}; reg.filter(function(r){return r.mese===meseC;}).forEach(function(r){ localMese[r.id]=r; });
@@ -10384,7 +10406,7 @@ function pmRender(){
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
     h+='<div onclick="pmApri(\''+p.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+pmEsc(p.cliente||'(cliente senza nome)')+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+pmEsc(p.modello||'—')+(p.targa?(' · '+pmEsc(p.targa)):'')+'</div>';
-    h+='<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(p.valutazione?('💶 € '+pmEsc(p.valutazione)+' · '):'')+(firmato?'<span style="color:#16a34a;font-weight:700;">✅ Firmato</span>':'<span style="color:#d97706;font-weight:700;">✍️ Da firmare</span>')+'</div></div>';
+    h+='<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(p.valutazione?('💶 € '+pmEsc(p.valutazione)+' · '):'')+(firmato?('<span style="color:#16a34a;font-weight:700;">✅ Firmato</span>'+(p.firmaTs?(' <span style="color:#64748b;font-weight:600;">il '+pmFmtDataOra(p.firmaTs)+'</span>'):'')):'<span style="color:#d97706;font-weight:700;">✍️ Da firmare</span>')+'</div></div>';
     h+='<button onclick="pmApri(\''+p.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Apri</button>';
     h+='</div></div>';
   });
@@ -10693,7 +10715,9 @@ function pmClientOpen(id){
   document.body.appendChild(s);
 }
 function pmClientRender(ov, rec){
-  _pmcl={ rec:rec, pins:(rec.pins?JSON.parse(JSON.stringify(rec.pins)):[]), sigUsed:false, otpOk:false, code:null, firmaTs:null };
+  var _draft=null; try{ _draft=JSON.parse(localStorage.getItem('ea_pmcl_draft_'+rec.id)||'null'); }catch(e){ _draft=null; }
+  if(_draft){ ['proprietari','gomme','targa','valutazione','dotazioni','chiavi','carta','bollo','revisione','email'].forEach(function(k){ if(_draft[k]!=null && _draft[k]!=='') rec[k]=_draft[k]; }); if(_draft.tagliandi) rec.tagliandi=_draft.tagliandi; if(_draft.pins) rec.pins=_draft.pins; if(_draft.questionario) rec.questionario=_draft.questionario; if(_draft.dichiarazioni) rec.dichiarazioni=_draft.dichiarazioni; }
+  _pmcl={ rec:rec, pins:(rec.pins?JSON.parse(JSON.stringify(rec.pins)):[]), sigUsed:false, otpOk:false, code:(_draft&&_draft.code)||null, sent:!!(_draft&&_draft.sent), firmaTs:null };
   var kv=function(k,v){ return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:14px;"><span style="color:#64748b;">'+k+'</span><span style="font-weight:700;">'+pmEsc(v||'—')+'</span></div>'; };
   var tg=(rec.tagliandi||[]).length;
   var h='<div class="hero" style="background:#1a4fa0;color:#fff;padding:18px 16px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><h1 style="margin:0;font-size:18px;font-weight:800;">🚗 Europa Auto — Perizia del tuo veicolo</h1><p style="margin:5px 0 0;font-size:13px;opacity:.9;">Ciao '+pmEsc(rec.cliente||'')+', controlla i dati, segna eventuali danni, conferma e firma.</p></div>';
@@ -10720,12 +10744,27 @@ function pmClientRender(ov, rec){
     +dl('pmcl_d3','Il chilometraggio è reale e non manomesso.',dz.d3)
     +dl('pmcl_d4','Il veicolo non ha subìto danni strutturali da incidente non dichiarati.',dz.d4)
     +'<p style="font-size:12px;color:#64748b;">Se entro 60 giorni dalla consegna emergono danni o vizi preesistenti non dichiarati, Europa Auto potrà rivalutare il veicolo e richiedere il risarcimento e/o la differenza di valore.</p><p style="font-size:12px;color:#64748b;">Il veicolo dovrà essere consegnato in buone condizioni igieniche e di pulizia esterne: in caso contrario, al ritiro verranno addebitati € 100,00 di spese di pulizia.</p></div>';
-  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Conferma identità (codice via email)</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientInvia()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Invia codice via email</button><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Conferma identità (codice via email)</div><div style="font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:9px;margin-bottom:8px;">✅ I dati che hai inserito restano salvati: puoi uscire per leggere l&rsquo;email con il codice e tornare qui senza ricompilare nulla.</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientInvia()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Invia codice via email</button><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Firma digitale</div><canvas id="pmcl-sig" width="700" height="180" style="width:100%;height:180px;border:2px dashed #94a3b8;border-radius:10px;background:#fff;touch-action:none;display:block;"></canvas><button onclick="pmClientClear()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Cancella</button></div>';
   h+='<button onclick="pmClientSubmit()" style="width:100%;padding:15px;border-radius:11px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:16px;cursor:pointer;font-family:inherit;">✅ Conferma e firma la perizia</button><div id="pmcl-esito" style="font-size:13px;color:#475569;text-align:center;margin-top:12px;"></div></div>';
   ov.innerHTML=h;
   pmClientRenderCar(); pmClientRenderPins(); pmClientSetupSig(); pmClientRenderTagliandi(rec.tagliandi); pmClientCountdown(rec.linkTs);
+  if(_pmcl.sent && _pmcl.code){ var _ov=document.getElementById('pmcl-overif'); if(_ov)_ov.style.display='block'; var _os=document.getElementById('pmcl-ostato'); if(_os)_os.innerHTML='Hai già richiesto il codice: controlla la tua email e inseriscilo qui.'; }
+  try{ document.addEventListener('visibilitychange', function(){ if(document.hidden) pmClientSaveDraft(); }); }catch(e){}
+  if(window._pmclSaveTimer) clearInterval(window._pmclSaveTimer);
+  window._pmclSaveTimer=setInterval(pmClientSaveDraft, 4000);
 }
+function pmClientSaveDraft(){
+  if(!_pmcl || !_pmcl.rec) return;
+  var g=function(id){ var el=document.getElementById(id); return el?el.value:''; };
+  var c=function(id){ var el=document.getElementById(id); return el?el.checked:false; };
+  var d={ proprietari:g('pmcl_prop'), gomme:g('pmcl_gomme'), targa:g('pmcl_targa'), valutazione:g('pmcl_val'), dotazioni:g('pmcl_dot'), chiavi:g('pmcl_chiavi'), carta:g('pmcl_carta'), bollo:g('pmcl_bollo'), revisione:g('pmcl_rev'),
+    tagliandi:pmClientTagliandiSelez(), pins:_pmcl.pins, questionario:pmClientQuestCollect(),
+    dichiarazioni:{d1:c('pmcl_d1'),d2:c('pmcl_d2'),d3:c('pmcl_d3'),d4:c('pmcl_d4')},
+    email:g('pmcl_email'), code:_pmcl.code, sent:!!_pmcl.sent };
+  try{ localStorage.setItem('ea_pmcl_draft_'+_pmcl.rec.id, JSON.stringify(d)); }catch(e){}
+}
+function pmClientClearDraft(){ try{ localStorage.removeItem('ea_pmcl_draft_'+(_pmcl&&_pmcl.rec?_pmcl.rec.id:'')); }catch(e){} if(window._pmclSaveTimer){ clearInterval(window._pmclSaveTimer); window._pmclSaveTimer=null; } }
 function pmClientCountdown(linkTs){
   if(!linkTs) return; var el=document.getElementById('pmcl-countdown'); if(!el) return; el.style.display='block';
   var scad=Number(linkTs)+48*3600*1000;
@@ -10775,8 +10814,10 @@ function pmClientInvia(){
   if(!em){ if(st)st.textContent='Inserisci la tua email.'; return; }
   if(typeof GS_URL==='undefined' || !GS_URL){ if(st)st.textContent='Servizio non disponibile in questo momento.'; return; }
   _pmcl.code=String(Math.floor(100000+Math.random()*900000));
+  _pmcl.sent=true;
   document.getElementById('pmcl-overif').style.display='block';
   if(st) st.textContent='Invio del codice in corso…';
+  pmClientSaveDraft();
   pmOtpSend(em, _pmcl.code, st);
 }
 function pmClientVerifica(){ var el=document.getElementById('pmcl_otp'); var st=document.getElementById('pmcl-ostato'); if(el && el.value===_pmcl.code && _pmcl.code){ _pmcl.otpOk=true; _pmcl.firmaTs=Date.now(); if(st)st.innerHTML='✅ Identità confermata.'; } else { _pmcl.otpOk=false; if(st)st.textContent='Codice errato.'; } }
@@ -10815,6 +10856,7 @@ function pmClientSubmit(){
     try{ var ns=document.createElement('script'); ns.src=GS_URL+'?action=notificaPermuta&cliente='+encodeURIComponent(rec.cliente||'')+'&modello='+encodeURIComponent(rec.modello||'')+'&id='+encodeURIComponent(rec.id||'')+'&callback=pmNoop'; document.body.appendChild(ns); }catch(e){}
   }
   if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
+  pmClientClearDraft();
   var ov=document.getElementById('pm-client');
   if(ov){ setTimeout(function(){ ov.scrollTo(0,0); ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><div style="font-size:54px;">✅</div><h1 style="font-size:22px;color:#16a34a;">Perizia firmata!</h1><p style="color:#475569;font-size:15px;">Grazie '+pmEsc(rec.cliente||'')+'. Il documento è stato inviato a Europa Auto. Puoi chiudere questa pagina.</p></div>'; }, 600); }
 }
