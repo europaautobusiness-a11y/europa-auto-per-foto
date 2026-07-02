@@ -4168,11 +4168,16 @@ function gsJsonp(payload){
   // Invia una richiesta JSONP a Google Apps Script
   const encoded = encodeURIComponent(JSON.stringify(payload));
   const url = GS_URL + '?payload=' + encoded;
-  if(url.length > 7500){ console.warn('GS payload too large:', url.length); return; }
+  if(url.length > 7500){ return gsPost(payload); } // troppo grande per GET: uso POST
   const s = document.createElement('script');
   s.src = url;
   s.onload = s.onerror = () => { if(s.parentNode) s.parentNode.removeChild(s); };
   document.body.appendChild(s);
+}
+// POST senza limiti di lunghezza (per record grandi es. con firma). Risposta opaca (no-cors): fire-and-forget con Promise.
+function gsPost(payload){
+  if(typeof GS_URL==='undefined' || !GS_URL) return Promise.reject(new Error('no GS_URL'));
+  return fetch(GS_URL, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
 }
 
 function gsSave(sheet, data){
@@ -10368,6 +10373,7 @@ var _pm=null, _pmSigUsed=false, _pmOtpCode=null;
 function pmEsc(v){ return (v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function pmOggi(){ var d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
 function pmFmtDataOra(ts){ try{ var d=new Date(ts); if(isNaN(d.getTime())) return ''; var z=function(n){return String(n).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear()+' alle ore '+z(d.getHours())+':'+z(d.getMinutes()); }catch(e){ return ''; } }
+function pmDMY(s){ if(!s) return ''; var m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?(m[3]+'/'+m[2]+'/'+m[1]):String(s); }
 function pmTombstones(){ try{ return JSON.parse(localStorage.getItem(PERMUTE_DEL_KEY)||'[]'); }catch(e){ return []; } }
 function pmAddTombstone(id){ if(!id)return; var t=pmTombstones(); if(t.indexOf(id)<0){t.push(id); try{localStorage.setItem(PERMUTE_DEL_KEY,JSON.stringify(t));}catch(e){}} }
 function pmLoad(){ try{ var t=pmTombstones(); return (JSON.parse(localStorage.getItem(PERMUTE_KEY)||'[]')).filter(function(p){return p && t.indexOf(p.id)<0;}); }catch(e){ return []; } }
@@ -10433,14 +10439,15 @@ function pmForm(id){
   h+=f('Nome cliente <span style="color:#dc2626">*</span>','pm_cliente','Mario Rossi',v('cliente'));
   h+=f('Marca, modello e allestimento <span style="color:#dc2626">*</span>','pm_modello','',v('modello'));
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Anno <span style="color:#dc2626">*</span>','pm_anno','',v('anno'))+'</div><div style="flex:1;">'+f('Km <span style="color:#dc2626">*</span>','pm_km','',v('km'))+'</div></div>';
-  h+='<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><span style="color:#dc2626;">*</span> campi obbligatori per inviare il link al cliente</div>';
+  h+='<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><span style="color:#dc2626;">*</span> campi obbligatori (Valutazione più sotto)</div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('N. proprietari','pm_prop','',v('proprietari'))+'</div><div style="flex:1;">'+f('% Gomme','pm_gomme','',v('gomme'))+'</div></div>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa','pm_targa','',v('targa'))+'</div><div style="flex:1;">'+f('Valutazione €','pm_val','',v('valutazione'))+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa','pm_targa','',v('targa'))+'</div><div style="flex:1;">'+f('Valutazione € <span style="color:#dc2626">*</span>','pm_val','',v('valutazione'))+'</div></div>';
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Dotazioni</label><textarea id="pm_dot" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;min-height:50px;box-sizing:border-box;">'+v('dotazioni')+'</textarea>';
   // stato
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 2px;text-transform:uppercase;">Stato del veicolo</div>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Numero chiavi','pm_chiavi','',v('chiavi'))+'</div><div style="flex:1;">'+f('Carta circolazione','pm_carta','',v('carta'))+'</div></div>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Scad. bollo','pm_bollo','',v('bollo'))+'</div><div style="flex:1;">'+f('Scad. revisione','pm_rev','',v('revisione'))+'</div></div>';
+  var fd=function(lab,id,val){ return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">'+lab+'</label><input type="date" id="'+id+'" value="'+(val||'')+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Numero chiavi','pm_chiavi','',v('chiavi'))+'</div><div style="flex:1;">'+fd('Scad. bollo','pm_bollo',v('bollo'))+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+fd('Scad. revisione','pm_rev',v('revisione'))+'</div><div style="flex:1;"></div></div>';
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:10px 0 3px;text-transform:uppercase;">Tagliandi eseguiti con documentazione</label><div id="pm-tagliandi"></div><div id="pm-tag-tot" style="margin-top:6px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:7px 10px;font-weight:800;color:#15803d;font-size:13px;"></div>';
   // danni
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 2px;text-transform:uppercase;">Danni sul veicolo</div>';
@@ -10453,21 +10460,13 @@ function pmForm(id){
   h+=dline('pm_d2','Il veicolo non presenta danni, guasti o vizi occulti diversi da quelli elencati.',dz.d2!==false);
   h+=dline('pm_d3','Il chilometraggio è reale e non manomesso.',dz.d3!==false);
   h+=dline('pm_d4','Il veicolo non ha subìto danni strutturali da incidente non dichiarati.',dz.d4!==false);
-  // firma
-  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 4px;text-transform:uppercase;">Firma del cliente</div>';
-  h+='<div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:11px;line-height:1.5;">La firma del cliente si raccoglie in uno di questi due modi:<br>• <b>🔗 Crea link per il cliente</b> — il cliente compila e firma dal suo telefono, con codice via email;<br>• <b>🖨️ Stampa / Salva PDF</b> — stampi il documento, il cliente firma a penna e in più conferma con il codice OTP qui sotto.</div>';
-  h+='<div style="margin-top:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;">';
-  h+='<div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:5px;">✉️ Conferma con codice OTP</div>';
-  h+='<div style="font-size:12px;color:#475569;margin-bottom:8px;">Invia il codice all\'email del cliente e inserisci qui il codice che riceve. Nel documento comparirà «Firma digitale con OTP del [data e ora]», oltre alla riga per la firma a penna.</div>';
-  h+=f('Email del cliente','pm_email','cliente@email.it',v('email'));
-  h+='<button type="button" onclick="pmInviaCodice()" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Invia codice via email</button>';
-  h+='<div id="pm-otp-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>';
-  h+='<div id="pm-otp-verifica" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pm_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;"><button type="button" onclick="pmVerificaCodice()" style="padding:9px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div>';
-  h+='</div>';
-  // azioni
-  h+='<button onclick="pmSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva perizia</button>';
-  h+='<button onclick="pmStampa()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa / Salva PDF</button>';
-  h+='<button onclick="pmLinkCliente()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #16a34a;background:#fff;color:#15803d;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🔗 Crea link per il cliente (compila e firma da remoto)</button>';
+  h+=pmQuestReadonly(p?p.questionario:null);
+  // firma — scelta modalità
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:16px 0 6px;text-transform:uppercase;">Come far firmare la perizia?</div>';
+  h+='<div style="display:flex;gap:8px;"><button type="button" id="pm-fm-link" onclick="pmSetFirmaMode(\'link\')" style="flex:1;padding:12px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;line-height:1.25;">🔗 Invia link<br>al cliente</button><button type="button" id="pm-fm-carta" onclick="pmSetFirmaMode(\'carta\')" style="flex:1;padding:12px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;line-height:1.25;">🖨️ Stampa<br>cartacea</button></div>';
+  h+='<div id="pm-pan-link" style="display:none;margin-top:12px;">';
+  h+='<div style="font-size:12px;color:#475569;margin-bottom:8px;">Il cliente riceve un link, compila i dati mancanti e firma dal suo telefono con codice via email.</div>';
+  h+='<button onclick="pmLinkCliente()" style="width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🔗 Crea e invia il link</button>';
   h+='<div id="pm-linkbox" style="display:none;margin-top:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;">';
   h+='<div style="font-size:12px;font-weight:800;color:#15803d;margin-bottom:6px;">📧 Invia il link al cliente via email</div>';
   h+='<div style="display:flex;gap:8px;"><input id="pm-link-email" type="email" placeholder="email del cliente" style="flex:1;min-width:0;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;"><button onclick="pmInviaLinkEmail()" style="flex:0 0 auto;padding:10px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Invia</button></div>';
@@ -10476,13 +10475,36 @@ function pmForm(id){
   h+='<div style="font-size:11px;color:#64748b;margin:10px 0 4px;">oppure invia il link manualmente:</div>';
   h+='<input id="pm-linkurl" readonly onclick="this.select()" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12px;box-sizing:border-box;">';
   h+='<div style="display:flex;gap:8px;margin-top:8px;"><button onclick="pmCopiaLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#15803d;font-weight:700;font-family:inherit;cursor:pointer;">Copia</button><button onclick="pmWhatsAppLink()" style="flex:1;padding:9px;border-radius:7px;border:none;background:#25d366;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">WhatsApp</button><button onclick="pmCondividiLink()" style="flex:1;padding:9px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Condividi</button></div>';
-  h+='<div style="font-size:11px;color:#64748b;margin-top:8px;">Il cliente apre il link, compila e firma; la perizia firmata torna qui (premi “Sincronizza” o riapri la sezione).</div>';
+  h+='<div style="font-size:11px;color:#64748b;margin-top:8px;">Quando il cliente firma, la perizia torna qui (premi “Sincronizza” o riapri la sezione).</div>';
   h+='</div>';
+  h+='</div>';
+  h+='<div id="pm-pan-carta" style="display:none;margin-top:12px;">';
+  h+='<div style="font-size:12px;color:#475569;margin-bottom:8px;">Stampi il documento e il cliente firma a penna. Se vuoi, puoi anche far confermare con il codice OTP: nel PDF comparirà «Firma digitale con OTP del [data e ora]».</div>';
+  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;margin-bottom:10px;">';
+  h+='<div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:6px;">✉️ Conferma con codice OTP (opzionale)</div>';
+  h+=f('Email del cliente','pm_email','cliente@email.it',v('email'));
+  h+='<button type="button" onclick="pmInviaCodice()" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Invia codice via email</button>';
+  h+='<div id="pm-otp-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>';
+  h+='<div id="pm-otp-verifica" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pm_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;"><button type="button" onclick="pmVerificaCodice()" style="padding:9px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div>';
+  h+='</div>';
+  h+='<button onclick="pmStampa()" style="width:100%;padding:13px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa / Salva PDF</button>';
+  h+='</div>';
+  h+='<button onclick="pmSalva()" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:1px solid #16a34a;background:#fff;color:#15803d;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">💾 Salva perizia</button>';
   if(p) h+='<button onclick="pmElimina(\''+_pm.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div>';
   m.innerHTML=h; m.style.display='block';
   pmRenderTagliandi(tg); pmRenderCar(); pmRenderPinList();
+  pmSetFirmaMode((_pm.rec&&_pm.rec.metodoFirma==='carta')?'carta':'link');
   if(_pm.rec && _pm.rec.firmaTs && _pm.rec.otp){ var _st=document.getElementById('pm-otp-stato'); if(_st) _st.innerHTML='✅ Già confermato con OTP il '+pmFmtDataOra(_pm.rec.firmaTs); }
+}
+function pmSetFirmaMode(mode){
+  _pm.firmaMode=mode;
+  var bl=document.getElementById('pm-fm-link'), bc=document.getElementById('pm-fm-carta');
+  var pl=document.getElementById('pm-pan-link'), pc=document.getElementById('pm-pan-carta');
+  if(bl){ var on=mode==='link'; bl.style.background=on?'#16a34a':'#fff'; bl.style.color=on?'#fff':'#334155'; bl.style.borderColor=on?'#16a34a':'#cbd5e1'; }
+  if(bc){ var o2=mode==='carta'; bc.style.background=o2?'#1a4fa0':'#fff'; bc.style.color=o2?'#fff':'#334155'; bc.style.borderColor=o2?'#1a4fa0':'#cbd5e1'; }
+  if(pl) pl.style.display=(mode==='link')?'block':'none';
+  if(pc) pc.style.display=(mode==='carta')?'block':'none';
 }
 
 function pmRenderTagliandi(sel){
@@ -10583,6 +10605,8 @@ function pmRaccogli(){
   return out;
 }
 function pmSalva(){
+  var g=function(id){ var el=document.getElementById(id); return (el&&el.value||'').trim(); };
+  if(!g('pm_cliente')||!g('pm_modello')||!g('pm_anno')||!g('pm_km')||!g('pm_val')){ alert('Compila prima i dati obbligatori: Nome cliente, Marca/modello, Anno, Km e Valutazione.'); return; }
   var rec=pmRaccogli();
   var nuovaNotifica = _pm.otpOk && !(_pm.rec && _pm.rec.notificato);
   if(nuovaNotifica) rec.notificato=true;
@@ -10601,6 +10625,25 @@ function pmElimina(id){
   if(typeof tcToastNew==='function') tcToastNew('🗑 Perizia eliminata',true);
 }
 
+function pmQuestReadonly(q){
+  if(!q) return '';
+  var any=['incidenti','interni','esterni','spie','motore','cambio','clima','sterzo','freni'].some(function(k){return q[k];});
+  if(!any) return '';
+  var ex=function(t,com){ var s=t||''; if(com) s+=(s?' · ':'')+'già comunicato: '+com; return s; };
+  var r=function(d,v,e){ return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #eef2f7;font-size:12px;"><span style="color:#64748b;">'+d+'</span><span style="font-weight:700;text-align:right;">'+pmEsc(v||'—')+(e?(' <span style="font-weight:400;color:#64748b;">— '+pmEsc(e)+'</span>'):'')+'</span></div>'; };
+  var h='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 4px;text-transform:uppercase;">Questionario del cliente</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:11px;">';
+  h+=r('L\'auto ha subito incidenti?',q.incidenti);
+  h+=r('Stato interni',q.interni);
+  h+=r('Stato esterni',q.esterni);
+  h+=r('Spie accese?',q.spie,q.spie==='Sì'?ex(q.spie_txt,q.spie_com):'');
+  h+=r('Motore ok?',q.motore,q.motore==='No'?ex(q.motore_txt,q.motore_com):'');
+  h+=r('Cambio ok?',q.cambio,q.cambio==='No'?ex(q.cambio_txt,q.cambio_com):'');
+  h+=r('Climatizzazione ok?',q.clima,q.clima==='No'?ex(q.clima_txt,q.clima_com):'');
+  h+=r('Sterzo ok?',q.sterzo,q.sterzo==='No'?ex(q.sterzo_txt,q.sterzo_com):'');
+  h+=r('Freni ok?',q.freni);
+  h+='</div>';
+  return h;
+}
 function pmQuestStampa(q){
   if(!q) return '';
   var any=['incidenti','interni','esterni','spie','motore','cambio','clima','sterzo','freni'].some(function(k){return q[k];});
@@ -10610,11 +10653,12 @@ function pmQuestStampa(q){
   h+=row('L&rsquo;auto ha mai subito incidenti?', q.incidenti);
   h+=row('Stato degli interni', q.interni);
   h+=row('Stato degli esterni', q.esterni);
-  h+=row('Spie luminose permanenti accese sul cruscotto?', q.spie, q.spie==='Sì'?q.spie_txt:'');
-  h+=row('Motore in perfette condizioni?', q.motore, q.motore==='No'?q.motore_txt:'');
-  h+=row('Cambio in perfette condizioni?', q.cambio, q.cambio==='No'?q.cambio_txt:'');
-  h+=row('Climatizzazione in perfette condizioni?', q.clima, q.clima==='No'?q.clima_txt:'');
-  h+=row('Sterzo in perfette condizioni?', q.sterzo, q.sterzo==='No'?q.sterzo_txt:'');
+  var ex=function(t,com){ var s=t||''; if(com) s+=(s?' · ':'')+'già comunicato al venditore: '+com; return s; };
+  h+=row('Spie luminose permanenti accese sul cruscotto?', q.spie, q.spie==='Sì'?ex(q.spie_txt,q.spie_com):'');
+  h+=row('Motore in perfette condizioni?', q.motore, q.motore==='No'?ex(q.motore_txt,q.motore_com):'');
+  h+=row('Cambio in perfette condizioni?', q.cambio, q.cambio==='No'?ex(q.cambio_txt,q.cambio_com):'');
+  h+=row('Climatizzazione in perfette condizioni?', q.clima, q.clima==='No'?ex(q.clima_txt,q.clima_com):'');
+  h+=row('Sterzo in perfette condizioni?', q.sterzo, q.sterzo==='No'?ex(q.sterzo_txt,q.sterzo_com):'');
   h+=row('Freni in perfette condizioni?', q.freni);
   h+='</table>';
   return h;
@@ -10635,11 +10679,11 @@ function pmStampa(){
     +'<tr><td><div class="lab">Targa</div>'+pmEsc(p.targa)+'</td><td><div class="lab">Valutazione</div>€ '+pmEsc(p.valutazione)+'</td></tr>'
     +'<tr><td colspan="2"><div class="lab">Dotazioni</div>'+pmEsc(p.dotazioni)+'</td></tr></table>'
     +'<div class="sez">Rapporto sullo stato del veicolo</div>'
-    +'<table><tr><td><div class="lab">Numero chiavi</div>'+pmEsc(p.chiavi)+'</td><td><div class="lab">Carta di circolazione</div>'+pmEsc(p.carta)+'</td></tr>'
-    +'<tr><td><div class="lab">Scad. bollo</div>'+pmEsc(p.bollo)+'</td><td><div class="lab">Scad. revisione</div>'+pmEsc(p.revisione)+'</td></tr></table>'
+    +'<table><tr><td><div class="lab">Numero chiavi</div>'+pmEsc(p.chiavi)+'</td><td><div class="lab">Scad. bollo</div>'+pmEsc(pmDMY(p.bollo))+'</td></tr>'
+    +'<tr><td><div class="lab">Scad. revisione</div>'+pmEsc(pmDMY(p.revisione))+'</td><td></td></tr></table>'
     +'<div class="lab" style="margin-top:6px;">Tagliandi documentati — totale '+tf.length+' su '+PM_TAGLIANDI.length+'</div>'+(tf.length?('<ul>'+tf.map(function(x){return '<li>Tagliando '+x+' km</li>';}).join('')+'</ul>'):'<p>Nessun tagliando documentato.</p>')
     +'<div class="sez">Danni segnalati sul veicolo</div><div style="width:520px;max-width:100%;margin:10px auto;page-break-inside:avoid;">'+pmCarSVG(p.pins)+'</div>'
-    +(p.pins.length?('<ol>'+p.pins.map(function(x){return '<li>'+(pmEsc(x.desc)||'(senza descrizione)')+'</li>';}).join('')+'</ol>'):'<p>Nessun danno segnalato.</p>')
+    +(p.pins.length?('<ol>'+p.pins.map(function(x){return '<li>'+(pmEsc(x.desc)||'(senza descrizione)')+(x.visto?(' — <i>'+(x.visto==='Sì'?'già visto col venditore':'segnalato ora dal cliente')+'</i>'):'')+'</li>';}).join('')+'</ol>'):'<p>Nessun danno segnalato.</p>')
     +pmQuestStampa(p.questionario)
     +'<div class="sez">Dichiarazioni e garanzie del cliente</div><p>Il cliente, sotto la propria responsabilità, dichiara che:</p><ul>'+dch.map(function(x){return '<li>'+x+';</li>';}).join('')+'</ul>'
     +'<p><b>Verifica entro 60 giorni.</b> Qualora, entro 60 (sessanta) giorni dalla data di consegna del veicolo, emergano danni, guasti, difetti o vizi preesistenti non dichiarati dal cliente nel presente documento, Europa Auto S.r.l. si riserva il diritto di procedere a una nuova valutazione del veicolo e di richiedere al cliente il risarcimento dei danni subiti e/o il pagamento dell&rsquo;eventuale differenza di valore accertata. Europa Auto S.r.l. si riserva altres&igrave; di effettuare una rivalutazione dello stato del veicolo al momento della consegna effettiva. Il cliente dichiara e garantisce che tutte le informazioni fornite in merito alle condizioni del veicolo sono veritiere, complete e corrispondenti al reale stato dello stesso.</p>'
@@ -10656,7 +10700,7 @@ function pmStampa(){
 /* ===================== PERMUTE — LINK CLIENTE ===================== */
 function pmLinkCliente(){
   var g=function(id){ var el=document.getElementById(id); return (el&&el.value||'').trim(); };
-  if(!g('pm_cliente')||!g('pm_modello')||!g('pm_anno')||!g('pm_km')){ alert('Per inviare il link compila prima i dati obbligatori:\n• Nome cliente\n• Marca, modello e allestimento\n• Anno\n• Km'); return; }
+  if(!g('pm_cliente')||!g('pm_modello')||!g('pm_anno')||!g('pm_km')||!g('pm_val')){ alert('Compila prima i dati obbligatori:\n• Nome cliente\n• Marca, modello e allestimento\n• Anno\n• Km\n• Valutazione'); return; }
   var rec=pmRaccogli();
   rec.linkTs=Date.now();
   if(_pm.rec){ _pm.rec.linkTs=rec.linkTs; }
@@ -10726,12 +10770,13 @@ function pmClientRender(ov, rec){
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Il tuo veicolo</div>'
     +kv('Cliente',rec.cliente)+kv('Modello',rec.modello)+kv('Anno · Km',(rec.anno||'—')+' · '+(rec.km||'—'))+'</div>';
   var ci=function(lab,id,val,ph){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:8px 0 3px;">'+lab+' <span style="color:#dc2626">*</span></label><input type="text" id="'+id+'" value="'+pmEsc(val||'')+'" placeholder="'+(ph||'')+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;">'; };
+  var cid=function(lab,id,val){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:8px 0 3px;">'+lab+' <span style="color:#dc2626">*</span></label><input type="date" id="'+id+'" value="'+pmEsc(val||'')+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;">'; };
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Completa i dati del veicolo</div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+ci('N. proprietari','pmcl_prop',rec.proprietari)+'</div><div style="flex:1;">'+ci('% Gomme','pmcl_gomme',rec.gomme)+'</div></div>'
-    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+ci('Targa','pmcl_targa',rec.targa)+'</div><div style="flex:1;">'+ci('Valutazione €','pmcl_val',rec.valutazione)+'</div></div>'
+    +ci('Targa','pmcl_targa',rec.targa)
     +'<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:8px 0 3px;">Dotazioni <span style="color:#dc2626">*</span></label><textarea id="pmcl_dot" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;min-height:50px;box-sizing:border-box;">'+pmEsc(rec.dotazioni||'')+'</textarea>'
-    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+ci('Numero chiavi','pmcl_chiavi',rec.chiavi)+'</div><div style="flex:1;">'+ci('Carta di circolazione','pmcl_carta',rec.carta)+'</div></div>'
-    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+ci('Scad. bollo','pmcl_bollo',rec.bollo)+'</div><div style="flex:1;">'+ci('Scad. revisione','pmcl_rev',rec.revisione)+'</div></div>'
+    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+ci('Numero chiavi','pmcl_chiavi',rec.chiavi)+'</div><div style="flex:1;">'+cid('Scad. bollo','pmcl_bollo',rec.bollo)+'</div></div>'
+    +cid('Scad. revisione','pmcl_rev',rec.revisione)
     +'</div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Tagliandi eseguiti con documentazione</div><div id="pmcl-tagliandi"></div></div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Segnala eventuali danni</div><p style="font-size:12px;color:#64748b;margin:0 0 8px;">Tocca il disegno dove c\'è un danno, poi scrivi cosa è.</p><div id="pmcl-carbox" onclick="pmClientAddPin(event)" style="cursor:crosshair;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;"></div><div id="pmcl-pinlist" style="margin-top:10px;"></div></div>';
@@ -10779,15 +10824,16 @@ function pmClientQuestHTML(rec){
   var stt=function(id,val){ var o=['perfette','utilizzo moderato','molto consumate']; return '<select id="'+id+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;background:#fff;"><option value="">— scegli —</option>'+o.map(function(x){return '<option'+(val===x?' selected':'')+'>'+x+'</option>';}).join('')+'</select>'; };
   var lab=function(t){ return '<label style="display:block;font-size:13px;font-weight:600;color:#334155;margin:14px 0 5px;">'+t+' <span style="color:#dc2626">*</span></label>'; };
   var txt=function(id,val,ph,show){ return '<div id="'+id+'_wrap" style="margin-top:6px;display:'+(show?'block':'none')+';"><input type="text" id="'+id+'" value="'+pmEsc(val||'')+'" placeholder="'+ph+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;"></div>'; };
+  var prob=function(id,tv,cv,ph,show){ return '<div id="'+id+'_wrap" style="margin-top:6px;display:'+(show?'block':'none')+';"><input type="text" id="'+id+'" value="'+pmEsc(tv||'')+'" placeholder="'+ph+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;"><div style="font-size:12px;color:#475569;margin-top:6px;">Già comunicato al venditore? <select id="'+id+'_com" style="margin-left:4px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;font-family:inherit;"><option value="">— scegli —</option><option'+(cv==='Sì'?' selected':'')+'>Sì</option><option'+(cv==='No'?' selected':'')+'>No</option></select></div></div>'; };
   var h='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Questionario sul veicolo</div>';
   h+=lab('L\'auto ha mai subito incidenti?')+sn('pmcl_q_incidenti',q.incidenti);
   h+=lab('Qual è lo stato degli interni dell\'auto?')+stt('pmcl_q_interni',q.interni);
   h+=lab('Qual è lo stato degli esterni dell\'auto? (indica anche tutti i danni visti con il venditore)')+stt('pmcl_q_esterni',q.esterni);
-  h+=lab('Ci sono spie luminose accese permanenti sul cruscotto?')+sn('pmcl_q_spie',q.spie,'pmClientQToggle(\'pmcl_q_spie\',\'pmcl_q_spie_txt\',\'Sì\')')+txt('pmcl_q_spie_txt',q.spie_txt,'Quali spie?',q.spie==='Sì');
-  h+=lab('Il motore è in perfette condizioni?')+sn('pmcl_q_motore',q.motore,'pmClientQToggle(\'pmcl_q_motore\',\'pmcl_q_motore_txt\',\'No\')')+txt('pmcl_q_motore_txt',q.motore_txt,'Perché non è in ottime condizioni?',q.motore==='No');
-  h+=lab('Il cambio è in perfette condizioni?')+sn('pmcl_q_cambio',q.cambio,'pmClientQToggle(\'pmcl_q_cambio\',\'pmcl_q_cambio_txt\',\'No\')')+txt('pmcl_q_cambio_txt',q.cambio_txt,'Perché non è in ottime condizioni?',q.cambio==='No');
-  h+=lab('Il sistema di climatizzazione è in perfette condizioni?')+sn('pmcl_q_clima',q.clima,'pmClientQToggle(\'pmcl_q_clima\',\'pmcl_q_clima_txt\',\'No\')')+txt('pmcl_q_clima_txt',q.clima_txt,'Perché non è in ottime condizioni?',q.clima==='No');
-  h+=lab('Lo sterzo è in perfette condizioni?')+sn('pmcl_q_sterzo',q.sterzo,'pmClientQToggle(\'pmcl_q_sterzo\',\'pmcl_q_sterzo_txt\',\'No\')')+txt('pmcl_q_sterzo_txt',q.sterzo_txt,'Perché non è in ottime condizioni?',q.sterzo==='No');
+  h+=lab('Ci sono spie luminose accese permanenti sul cruscotto?')+sn('pmcl_q_spie',q.spie,'pmClientQToggle(\'pmcl_q_spie\',\'pmcl_q_spie_txt\',\'Sì\')')+prob('pmcl_q_spie_txt',q.spie_txt,q.spie_com,'Quali spie?',q.spie==='Sì');
+  h+=lab('Il motore è in perfette condizioni?')+sn('pmcl_q_motore',q.motore,'pmClientQToggle(\'pmcl_q_motore\',\'pmcl_q_motore_txt\',\'No\')')+prob('pmcl_q_motore_txt',q.motore_txt,q.motore_com,'Perché non è in ottime condizioni?',q.motore==='No');
+  h+=lab('Il cambio è in perfette condizioni?')+sn('pmcl_q_cambio',q.cambio,'pmClientQToggle(\'pmcl_q_cambio\',\'pmcl_q_cambio_txt\',\'No\')')+prob('pmcl_q_cambio_txt',q.cambio_txt,q.cambio_com,'Perché non è in ottime condizioni?',q.cambio==='No');
+  h+=lab('Il sistema di climatizzazione è in perfette condizioni?')+sn('pmcl_q_clima',q.clima,'pmClientQToggle(\'pmcl_q_clima\',\'pmcl_q_clima_txt\',\'No\')')+prob('pmcl_q_clima_txt',q.clima_txt,q.clima_com,'Perché non è in ottime condizioni?',q.clima==='No');
+  h+=lab('Lo sterzo è in perfette condizioni?')+sn('pmcl_q_sterzo',q.sterzo,'pmClientQToggle(\'pmcl_q_sterzo\',\'pmcl_q_sterzo_txt\',\'No\')')+prob('pmcl_q_sterzo_txt',q.sterzo_txt,q.sterzo_com,'Perché non è in ottime condizioni?',q.sterzo==='No');
   h+=lab('I freni sono in perfette condizioni?')+sn('pmcl_q_freni',q.freni);
   h+='</div>';
   return h;
@@ -10795,11 +10841,12 @@ function pmClientQuestHTML(rec){
 function pmClientQToggle(selId,txtId,showVal){ var s=document.getElementById(selId); var w=document.getElementById(txtId+'_wrap'); if(s&&w){ w.style.display=(s.value===showVal)?'block':'none'; } }
 function pmClientQuestCollect(){
   var g=function(id){var el=document.getElementById(id);return el?el.value:'';};
-  return { incidenti:g('pmcl_q_incidenti'), interni:g('pmcl_q_interni'), esterni:g('pmcl_q_esterni'), spie:g('pmcl_q_spie'), spie_txt:g('pmcl_q_spie_txt'), motore:g('pmcl_q_motore'), motore_txt:g('pmcl_q_motore_txt'), cambio:g('pmcl_q_cambio'), cambio_txt:g('pmcl_q_cambio_txt'), clima:g('pmcl_q_clima'), clima_txt:g('pmcl_q_clima_txt'), sterzo:g('pmcl_q_sterzo'), sterzo_txt:g('pmcl_q_sterzo_txt'), freni:g('pmcl_q_freni') };
+  return { incidenti:g('pmcl_q_incidenti'), interni:g('pmcl_q_interni'), esterni:g('pmcl_q_esterni'), spie:g('pmcl_q_spie'), spie_txt:g('pmcl_q_spie_txt'), spie_com:g('pmcl_q_spie_txt_com'), motore:g('pmcl_q_motore'), motore_txt:g('pmcl_q_motore_txt'), motore_com:g('pmcl_q_motore_txt_com'), cambio:g('pmcl_q_cambio'), cambio_txt:g('pmcl_q_cambio_txt'), cambio_com:g('pmcl_q_cambio_txt_com'), clima:g('pmcl_q_clima'), clima_txt:g('pmcl_q_clima_txt'), clima_com:g('pmcl_q_clima_txt_com'), sterzo:g('pmcl_q_sterzo'), sterzo_txt:g('pmcl_q_sterzo_txt'), sterzo_com:g('pmcl_q_sterzo_txt_com'), freni:g('pmcl_q_freni') };
 }
 function pmClientRenderCar(){ var c=document.getElementById('pmcl-carbox'); if(c) c.innerHTML=pmCarSVG(_pmcl.pins); }
-function pmClientAddPin(e){ var box=document.getElementById('pmcl-carbox'); var svg=box?box.querySelector('svg'):null; if(!svg)return; var r=svg.getBoundingClientRect(); var x=Math.round((e.clientX-r.left)/r.width*680), y=Math.round((e.clientY-r.top)/r.height*360); if(x<0||y<0||x>680||y>360)return; _pmcl.pins.push({x:x,y:y,desc:''}); pmClientRenderCar(); pmClientRenderPins(); }
-function pmClientRenderPins(){ var c=document.getElementById('pmcl-pinlist'); if(!c)return; var h=_pmcl.pins.length?'':'<div style="font-size:12px;color:#94a3b8;">Nessun danno segnato.</div>'; _pmcl.pins.forEach(function(p,i){ h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:7px;"><span style="flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;">'+(i+1)+'</span><input value="'+pmEsc(p.desc)+'" placeholder="Descrizione danno n. '+(i+1)+'" oninput="_pmcl.pins['+i+'].desc=this.value" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;font-family:inherit;"><button onclick="_pmcl.pins.splice('+i+',1);pmClientRenderCar();pmClientRenderPins();" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;cursor:pointer;">✕</button></div>'; }); c.innerHTML=h; }
+function pmShrinkDataURL(cv, maxW){ try{ var w=cv.width, h=cv.height; var scale=Math.min(1, maxW/(w||maxW)); var nw=Math.max(1,Math.round(w*scale)), nh=Math.max(1,Math.round(h*scale)); var c2=document.createElement('canvas'); c2.width=nw; c2.height=nh; var x=c2.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,nw,nh); x.drawImage(cv,0,0,nw,nh); return c2.toDataURL('image/png'); }catch(e){ try{return cv.toDataURL('image/png');}catch(e2){return '';} } }
+function pmClientAddPin(e){ var box=document.getElementById('pmcl-carbox'); var svg=box?box.querySelector('svg'):null; if(!svg)return; var r=svg.getBoundingClientRect(); var x=Math.round((e.clientX-r.left)/r.width*680), y=Math.round((e.clientY-r.top)/r.height*360); if(x<0||y<0||x>680||y>360)return; _pmcl.pins.push({x:x,y:y,desc:'',visto:''}); pmClientRenderCar(); pmClientRenderPins(); }
+function pmClientRenderPins(){ var c=document.getElementById('pmcl-pinlist'); if(!c)return; var h=_pmcl.pins.length?'':'<div style="font-size:12px;color:#94a3b8;">Nessun danno segnato.</div>'; _pmcl.pins.forEach(function(p,i){ h+='<div style="border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:9px;"><div style="display:flex;gap:8px;align-items:center;"><span style="flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;">'+(i+1)+'</span><input value="'+pmEsc(p.desc)+'" placeholder="Descrizione danno n. '+(i+1)+'" oninput="_pmcl.pins['+i+'].desc=this.value" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;font-family:inherit;"><button onclick="_pmcl.pins.splice('+i+',1);pmClientRenderCar();pmClientRenderPins();" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;cursor:pointer;">✕</button></div><div style="margin-top:7px;font-size:12px;color:#475569;">Già visto/comunicato al venditore? <select onchange="_pmcl.pins['+i+'].visto=this.value" style="margin-left:4px;padding:6px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;font-family:inherit;"><option value="">— scegli —</option><option value="Sì"'+(p.visto==='Sì'?' selected':'')+'>Sì, già visto col venditore</option><option value="No"'+(p.visto==='No'?' selected':'')+'>No, lo segnalo ora</option></select></div></div>'; }); c.innerHTML=h; }
 function pmClientSetupSig(){
   var cv=document.getElementById('pmcl-sig'); if(!cv)return; var ctx=cv.getContext('2d'); ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.strokeStyle='#0b2a5b'; var dr=false;
   var pos=function(e){ var r=cv.getBoundingClientRect(); return {x:(e.clientX-r.left)*(cv.width/r.width), y:(e.clientY-r.top)*(cv.height/r.height)}; };
@@ -10823,7 +10870,7 @@ function pmClientInvia(){
 function pmClientVerifica(){ var el=document.getElementById('pmcl_otp'); var st=document.getElementById('pmcl-ostato'); if(el && el.value===_pmcl.code && _pmcl.code){ _pmcl.otpOk=true; _pmcl.firmaTs=Date.now(); if(st)st.innerHTML='✅ Identità confermata.'; } else { _pmcl.otpOk=false; if(st)st.textContent='Codice errato.'; } }
 function pmClientValida(){
   var g=function(id){var el=document.getElementById(id);return el?(el.value||'').trim():'';};
-  var campi=[['pmcl_prop','N. proprietari'],['pmcl_gomme','% Gomme'],['pmcl_targa','Targa'],['pmcl_val','Valutazione'],['pmcl_dot','Dotazioni'],['pmcl_chiavi','Numero chiavi'],['pmcl_carta','Carta di circolazione'],['pmcl_bollo','Scad. bollo'],['pmcl_rev','Scad. revisione']];
+  var campi=[['pmcl_prop','N. proprietari'],['pmcl_gomme','% Gomme'],['pmcl_targa','Targa'],['pmcl_dot','Dotazioni'],['pmcl_chiavi','Numero chiavi'],['pmcl_bollo','Scad. bollo'],['pmcl_rev','Scad. revisione']];
   for(var i=0;i<campi.length;i++){ if(!g(campi[i][0])) return {id:campi[i][0], msg:'Compila il campo: '+campi[i][1]}; }
   var q=[['pmcl_q_incidenti','L\'auto ha mai subito incidenti?'],['pmcl_q_interni','Stato degli interni'],['pmcl_q_esterni','Stato degli esterni'],['pmcl_q_spie','Spie sul cruscotto'],['pmcl_q_motore','Motore'],['pmcl_q_cambio','Cambio'],['pmcl_q_clima','Climatizzazione'],['pmcl_q_sterzo','Sterzo'],['pmcl_q_freni','Freni']];
   for(var j=0;j<q.length;j++){ if(!g(q[j][0])) return {id:q[j][0], msg:'Rispondi alla domanda: '+q[j][1]}; }
@@ -10844,16 +10891,17 @@ function pmClientSubmit(){
   var em=document.getElementById('pmcl_email'); em=em?em.value:'';
   var rec=_pmcl.rec;
   var g=function(id){ var el=document.getElementById(id); return el?el.value:''; };
-  rec.proprietari=g('pmcl_prop'); rec.gomme=g('pmcl_gomme'); rec.targa=(g('pmcl_targa')||'').toUpperCase(); rec.valutazione=g('pmcl_val'); rec.dotazioni=g('pmcl_dot');
-  rec.chiavi=g('pmcl_chiavi'); rec.carta=g('pmcl_carta'); rec.bollo=g('pmcl_bollo'); rec.revisione=g('pmcl_rev'); rec.tagliandi=pmClientTagliandiSelez();
+  rec.proprietari=g('pmcl_prop'); rec.gomme=g('pmcl_gomme'); rec.targa=(g('pmcl_targa')||'').toUpperCase(); rec.dotazioni=g('pmcl_dot');
+  rec.chiavi=g('pmcl_chiavi'); rec.bollo=g('pmcl_bollo'); rec.revisione=g('pmcl_rev'); rec.tagliandi=pmClientTagliandiSelez();
   rec.questionario=pmClientQuestCollect();
   rec.pins=_pmcl.pins;
   rec.dichiarazioni={d1:c('pmcl_d1'),d2:c('pmcl_d2'),d3:c('pmcl_d3'),d4:c('pmcl_d4')};
-  rec.firma=_pmcl.cv.toDataURL('image/png');
+  rec.firma=pmShrinkDataURL(_pmcl.cv, 320);
   rec.metodoFirma= _pmcl.otpOk ? 'otp' : 'dito';
   rec.email=em; rec.otp=_pmcl.otpOk?em:''; rec.dataFirma=pmOggi(); rec.firmaTs=_pmcl.firmaTs||Date.now(); rec.firmatoDalCliente=true; rec.updatedAt=Date.now();
-  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:rec}); }catch(e){}
-    try{ var ns=document.createElement('script'); ns.src=GS_URL+'?action=notificaPermuta&cliente='+encodeURIComponent(rec.cliente||'')+'&modello='+encodeURIComponent(rec.modello||'')+'&id='+encodeURIComponent(rec.id||'')+'&callback=pmNoop'; document.body.appendChild(ns); }catch(e){}
+  if(typeof GS_URL!=='undefined' && GS_URL){
+    var fireNotif=function(){ try{ var ns=document.createElement('script'); ns.src=GS_URL+'?action=notificaPermuta&cliente='+encodeURIComponent(rec.cliente||'')+'&modello='+encodeURIComponent(rec.modello||'')+'&id='+encodeURIComponent(rec.id||'')+'&callback=pmNoop'; document.body.appendChild(ns); }catch(e){} };
+    try{ gsPost({action:'upsert', sheet:PERMUTE_SHEET, record:rec}).then(function(){ setTimeout(fireNotif,600); }, function(){ setTimeout(fireNotif,1800); }); }catch(e){ setTimeout(fireNotif,1800); }
   }
   if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
   pmClientClearDraft();
