@@ -472,6 +472,9 @@ html, body{
     <button class="sidebar-item" id="si-magazzino" onclick="sidebarNav('magazzino',this)" style="color:rgba(255,255,255,.6);display:none;">
       <span class="si-icon">🚙</span><span class="si-label"> Magazzino <span style="font-size:9px;background:#f59e0b;color:#fff;padding:1px 5px;border-radius:6px;vertical-align:middle;">DEMO</span></span>
     </button>
+    <button class="sidebar-item" id="si-calendario" onclick="sidebarNav('calendario',this)" style="color:rgba(255,255,255,.6);display:none;">
+      <span class="si-icon">📅</span><span class="si-label"> Calendario</span>
+    </button>
   </div>
 
   <div class="sidebar-sync">
@@ -903,6 +906,27 @@ html, body{
     <div id="cv-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;padding:18px;overflow:auto;"></div>
   </div>
   <div id="mz-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;padding:18px;overflow:auto;"></div>
+</div>
+
+<div class="view" id="view-calendario" style="padding:22px 16px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button onclick="calPrev()" style="width:36px;height:36px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-size:16px;cursor:pointer;">‹</button>
+      <div id="cal-mese-lbl" style="font-weight:800;font-size:16px;min-width:150px;text-align:center;"></div>
+      <button onclick="calNext()" style="width:36px;height:36px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-size:16px;cursor:pointer;">›</button>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="calOggi()" style="padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Oggi</button>
+      <button onclick="calForm()" style="padding:8px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">➕ Appuntamento</button>
+    </div>
+  </div>
+  <div id="cal-griglia"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px;">
+    <div style="font-weight:800;font-size:14px;color:#1a4fa0;">🔔 Prossimi appuntamenti</div>
+    <button id="cal-notif-btn" onclick="calNotifAttiva()" style="padding:6px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;">🔔 Attiva notifiche</button>
+  </div>
+  <div id="cal-prossimi"></div>
+  <div id="cal-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;padding:18px;overflow:auto;"></div>
 </div>
 
 <div class="view" id="view-provv" style="padding:22px 16px;">
@@ -7417,8 +7441,8 @@ function _tuttiUtenti(){
 function applyRoleUI() {
   var role = getCurrentRole();
   var ROLE_VIEWS = {
-    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino'],
-    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute'],
+    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','calendario'],
+    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','calendario'],
     'manager':    ['editor','ready','archive','provv','presenze','compiti'],
     'dipendente': ['presenze','compiti']
   };
@@ -7430,7 +7454,7 @@ function applyRoleUI() {
   }
   if (!allowed.length) allowed = ['presenze'];
 
-  ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino'].forEach(function(v){
+  ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','calendario'].forEach(function(v){
     var btn = document.getElementById('si-' + v);
     if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
@@ -9164,13 +9188,14 @@ var SIDEBAR_TITLES = {
   'presenze': 'Presenze Dipendenti',
   'sinistri': 'Sinistri Auto',
   'permute': 'Perizie permuta',
-  'magazzino': 'Magazzino auto (demo)'
+  'magazzino': 'Magazzino auto (demo)',
+  'calendario': 'Calendario'
 };
 
 function sidebarNav(view,btn){
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
   // Usa solo classList — il CSS usa .view.active{display:block !important}
-  ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','magazzino'].forEach(function(v){
+  ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','magazzino','calendario'].forEach(function(v){
     var el = document.getElementById('view-' + v);
     if (!el) return;
     el.classList.remove('active');
@@ -9215,6 +9240,7 @@ function sidebarNav(view,btn){
   if(view==='sinistri'){ sinInit(); }
   if(view==='permute'){ pmInit(); }
   if(view==='magazzino'){ mzInit(); }
+  if(view==='calendario'){ calInit(); }
 }
 
 // ── SIDEBAR TOGGLE ─────────────────────────────────────────
@@ -11362,6 +11388,175 @@ function docElimina(docId, path, tipo, id, pfx){
 
 /* avvio autenticazione Supabase quando la libreria è pronta */
 (function(){ var n=0; var iv=setInterval(function(){ n++; if(typeof sbClient==='function' && sbClient()){ clearInterval(iv); try{ sbAuthInit(); }catch(e){} } else if(n>25){ clearInterval(iv); } }, 300); })();
+
+
+/* ===================== CALENDARIO (Supabase) ===================== */
+var CAL_TIPI=[['appuntamento','Appuntamento','#1a4fa0'],['promemoria','Promemoria','#d97706'],['consegna','Consegna auto','#16a34a'],['ritiro','Ritiro auto','#7c3aed'],['scadenza','Scadenza','#dc2626'],['chiamata','Chiamata','#0891b2'],['altro','Altro','#64748b']];
+var CAL_REMIND=[['','Nessuno'],['10','10 minuti prima'],['30','30 minuti prima'],['60','1 ora prima'],['120','2 ore prima'],['1440','1 giorno prima']];
+var _calMese=null;        // Date del primo giorno del mese visualizzato
+var _calData=[];          // appuntamenti del mese
+var _calId=null;
+var _calRemFired={};
+
+function calEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function calTipoInfo(t){ for(var i=0;i<CAL_TIPI.length;i++){ if(CAL_TIPI[i][0]===t) return CAL_TIPI[i]; } return CAL_TIPI[0]; }
+function calYmd(d){ var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
+function calParse(s){ var p=String(s||'').split('-'); return new Date(+p[0],(+p[1]||1)-1,+p[2]||1); }
+
+function calInit(){
+  if(!_calMese){ var n=new Date(); _calMese=new Date(n.getFullYear(), n.getMonth(), 1); }
+  calCaricaMese();
+  calNotifCheck();
+}
+function calPrev(){ _calMese=new Date(_calMese.getFullYear(), _calMese.getMonth()-1, 1); calCaricaMese(); }
+function calNext(){ _calMese=new Date(_calMese.getFullYear(), _calMese.getMonth()+1, 1); calCaricaMese(); }
+function calOggi(){ var n=new Date(); _calMese=new Date(n.getFullYear(), n.getMonth(), 1); calCaricaMese(); }
+
+function calCaricaMese(){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  var wrap=document.getElementById('cal-griglia');
+  if(!sb){ if(wrap)wrap.innerHTML='<div style="padding:30px;text-align:center;color:#94a3b8;">Archivio non disponibile: ricarica la pagina.</div>'; return; }
+  var primo=calYmd(new Date(_calMese.getFullYear(), _calMese.getMonth(), 1));
+  var ultimo=calYmd(new Date(_calMese.getFullYear(), _calMese.getMonth()+1, 0));
+  if(wrap && !_calData.length) wrap.innerHTML='<div style="padding:20px;text-align:center;color:#94a3b8;">Caricamento…</div>';
+  sb.from('appuntamenti').select('*').gte('data',primo).lte('data',ultimo).then(function(r){
+    _calData = (r&&r.data)?r.data:[];
+    calRenderMese(); calRenderProssimi();
+  }, function(){ if(wrap)wrap.innerHTML='<div style="padding:20px;text-align:center;color:#dc2626;">Errore di caricamento.</div>'; });
+}
+
+function calRenderMese(){
+  var wrap=document.getElementById('cal-griglia'); if(!wrap) return;
+  var lbl=document.getElementById('cal-mese-lbl');
+  var mesi=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  if(lbl) lbl.textContent=mesi[_calMese.getMonth()]+' '+_calMese.getFullYear();
+  var perGiorno={};
+  _calData.forEach(function(a){ (perGiorno[a.data]=perGiorno[a.data]||[]).push(a); });
+  var anno=_calMese.getFullYear(), mese=_calMese.getMonth();
+  var primo=new Date(anno,mese,1);
+  var startDow=(primo.getDay()+6)%7; // lun=0
+  var giorniMese=new Date(anno,mese+1,0).getDate();
+  var oggi=calYmd(new Date());
+  var h='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">';
+  ['L','M','M','G','V','S','D'].forEach(function(d){ h+='<div style="text-align:center;font-size:11px;font-weight:700;color:#94a3b8;padding:4px 0;">'+d+'</div>'; });
+  for(var i=0;i<startDow;i++){ h+='<div></div>'; }
+  for(var g=1;g<=giorniMese;g++){
+    var ymd=calYmd(new Date(anno,mese,g));
+    var list=(perGiorno[ymd]||[]).sort(function(a,b){return (a.ora||'')<(b.ora||'')?-1:1;});
+    var isOggi=ymd===oggi;
+    h+='<div onclick="calGiorno(\''+ymd+'\')" style="min-height:64px;border:1px solid '+(isOggi?'#1a4fa0':'#e2e8f0')+';border-radius:8px;padding:4px;cursor:pointer;background:'+(isOggi?'#eff6ff':'#fff')+';overflow:hidden;">';
+    h+='<div style="font-size:12px;font-weight:700;color:'+(isOggi?'#1a4fa0':'#334155')+';">'+g+'</div>';
+    list.slice(0,3).forEach(function(a){ var ti=calTipoInfo(a.tipo); h+='<div style="font-size:9px;background:'+ti[2]+'22;color:'+ti[2]+';border-radius:4px;padding:1px 3px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">'+(a.ora?calEsc(a.ora)+' ':'')+calEsc(a.titolo||ti[1])+'</div>'; });
+    if(list.length>3) h+='<div style="font-size:9px;color:#94a3b8;margin-top:1px;">+'+(list.length-3)+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  wrap.innerHTML=h;
+}
+
+function calRenderProssimi(){
+  var c=document.getElementById('cal-prossimi'); if(!c) return;
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  var oggi=calYmd(new Date());
+  var tra7=calYmd(new Date(Date.now()+7*86400000));
+  sb.from('appuntamenti').select('*').gte('data',oggi).lte('data',tra7).neq('stato','annullato').order('data',{ascending:true}).then(function(r){
+    var list=((r&&r.data)?r.data:[]).sort(function(a,b){ return (a.data+(a.ora||''))<(b.data+(b.ora||''))?-1:1; }).slice(0,8);
+    if(!list.length){ c.innerHTML='<div style="font-size:12px;color:#94a3b8;padding:6px;">Nessun appuntamento nei prossimi 7 giorni.</div>'; return; }
+    c.innerHTML=list.map(function(a){ var ti=calTipoInfo(a.tipo); var d=calParse(a.data); var gg=['Dom','Lun','Mar','Mer','Gio','Ven','Sab'][d.getDay()];
+      return '<div onclick="calForm(\''+a.id+'\')" style="display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;cursor:pointer;background:#fff;">'
+        +'<div style="flex:0 0 auto;width:5px;height:34px;border-radius:3px;background:'+ti[2]+';"></div>'
+        +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+calEsc(a.titolo||ti[1])+'</div><div style="font-size:11px;color:#64748b;">'+gg+' '+d.getDate()+'/'+(d.getMonth()+1)+(a.ora?(' · '+calEsc(a.ora)):'')+(a.cliente_nome?(' · '+calEsc(a.cliente_nome)):'')+'</div></div>'
+        +(a.reminder_min?'<span style="font-size:11px;">🔔</span>':'')+'<button onclick="event.stopPropagation();calWhatsApp(\''+a.id+'\')" style="flex:0 0 auto;border:none;background:#dcfce7;color:#15803d;border-radius:7px;width:34px;height:32px;font-size:15px;cursor:pointer;margin-left:6px;">📱</button>'+'</div>';
+    }).join('');
+  });
+}
+
+function calGiorno(ymd){
+  var list=_calData.filter(function(a){return a.data===ymd;}).sort(function(a,b){return (a.ora||'')<(b.ora||'')?-1:1;});
+  var d=calParse(ymd); var gg=['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'][d.getDay()];
+  var h='<div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
+  h+='<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;">'+gg+' '+d.getDate()+'/'+(d.getMonth()+1)+'/'+d.getFullYear()+'</span><button onclick="calChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>';
+  h+='<div style="padding:16px 18px;max-height:70vh;overflow:auto;">';
+  if(!list.length) h+='<div style="color:#94a3b8;font-size:14px;padding:10px 0;">Nessun appuntamento in questo giorno.</div>';
+  list.forEach(function(a){ var ti=calTipoInfo(a.tipo);
+    h+='<div onclick="calForm(\''+a.id+'\')" style="display:flex;gap:10px;align-items:center;padding:10px;border:1px solid #e2e8f0;border-radius:9px;margin-bottom:8px;cursor:pointer;">'
+      +'<div style="flex:0 0 auto;width:5px;height:40px;border-radius:3px;background:'+ti[2]+';"></div>'
+      +'<div style="flex:1;"><div style="font-weight:700;font-size:14px;">'+(a.ora?calEsc(a.ora)+' · ':'')+calEsc(a.titolo||ti[1])+'</div><div style="font-size:12px;color:#64748b;">'+calEsc(ti[1])+(a.cliente_nome?(' · '+calEsc(a.cliente_nome)):'')+(a.assegnato_a?(' · '+calEsc(a.assegnato_a)):'')+'</div></div>'
+      +(a.stato==='fatto'?'<span style="color:#16a34a;">✓</span>':'')+'</div>';
+  });
+  h+='<button onclick="calForm(null,\''+ymd+'\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">➕ Aggiungi appuntamento</button>';
+  h+='</div></div>';
+  var m=document.getElementById('cal-modal'); m.innerHTML=h; m.style.display='block';
+}
+function calChiudi(){ var m=document.getElementById('cal-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+
+function calForm(id, ymdDefault){
+  var a=null;
+  if(id){ a=_calData.filter(function(x){return x.id===id;})[0]||null; }
+  _calId=(a&&a.id)||null;
+  var v=function(k){ return a&&a[k]!=null?calEsc(a[k]):''; };
+  var lab=function(t){ return '<div style="font-size:11px;font-weight:700;color:#64748b;margin:10px 0 3px;text-transform:uppercase;">'+t+'</div>'; };
+  var inp=function(id2,val,ph,type){ return '<input id="'+id2+'" type="'+(type||'text')+'" value="'+calEsc(val==null?'':val)+'" placeholder="'+(ph||'')+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
+  var selTipo='<select id="cal_tipo" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+CAL_TIPI.map(function(t){return '<option value="'+t[0]+'"'+(a&&a.tipo===t[0]?' selected':'')+'>'+t[1]+'</option>';}).join('')+'</select>';
+  var selRem='<select id="cal_rem" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+CAL_REMIND.map(function(t){return '<option value="'+t[0]+'"'+(a&&String(a.reminder_min||'')===t[0]?' selected':'')+'>'+t[1]+'</option>';}).join('')+'</select>';
+  var selStato='<select id="cal_stato" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;"><option value="aperto"'+(a&&a.stato==='aperto'?' selected':'')+'>Aperto</option><option value="fatto"'+(a&&a.stato==='fatto'?' selected':'')+'>Fatto</option><option value="annullato"'+(a&&a.stato==='annullato'?' selected':'')+'>Annullato</option></select>';
+  var h='<div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
+  h+='<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;">'+(a?'Modifica appuntamento':'Nuovo appuntamento')+'</span><button onclick="calChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>';
+  h+='<div style="padding:16px 18px;max-height:72vh;overflow:auto;">';
+  h+=lab('Titolo')+inp('cal_titolo',v('titolo'),'es. Consegna Alfa Giulia a Rossi');
+  h+=lab('Tipo')+selTipo;
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data')+inp('cal_data',(a&&a.data)||ymdDefault||calYmd(new Date()),'','date')+'</div><div style="flex:1;">'+lab('Ora')+inp('cal_ora',v('ora'),'','time')+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Durata (min)')+inp('cal_durata',v('durata_min'),'','number')+'</div><div style="flex:1;">'+lab('Assegnato a')+inp('cal_assegn',v('assegnato_a'),'')+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Cliente')+inp('cal_cliente',v('cliente_nome'),'nome cliente')+'</div><div style="flex:1;">'+lab('Telefono')+inp('cal_tel',v('telefono'),'per WhatsApp','tel')+'</div></div>';
+  h+=lab('Promemoria')+selRem;
+  h+=lab('Note')+'<textarea id="cal_note" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+v('note')+'</textarea>';
+  if(a) h+=lab('Stato')+selStato;
+  h+='<button onclick="calSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Salva</button>';
+  h+='<button onclick="calWhatsAppForm()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:none;background:#25d366;color:#fff;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;">📱 Promemoria WhatsApp al cliente</button>';
+  if(a) h+='<button onclick="calElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Elimina</button>';
+  h+='</div></div>';
+  var m=document.getElementById('cal-modal'); m.innerHTML=h; m.style.display='block';
+}
+
+function calSalva(){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ alert('Servizio non disponibile.'); return; }
+  var g=function(id){ var el=document.getElementById(id); return el?el.value:''; };
+  var rec={ titolo:g('cal_titolo'), tipo:g('cal_tipo')||'appuntamento', data:g('cal_data'), ora:g('cal_ora'),
+    durata_min:g('cal_durata')?parseInt(g('cal_durata')):null, assegnato_a:g('cal_assegn'), cliente_nome:g('cal_cliente'),
+    reminder_min:g('cal_rem')?parseInt(g('cal_rem')):null, note:g('cal_note'), telefono:g('cal_tel'), stato:g('cal_stato')||'aperto' };
+  if(!rec.titolo && !rec.cliente_nome){ alert('Inserisci almeno un titolo.'); return; }
+  if(!rec.data){ alert('Inserisci la data.'); return; }
+  var done=function(r){ if(r&&r.error){ alert('Errore: '+r.error.message); return; } calChiudi(); calCaricaMese(); };
+  if(_calId){ sb.from('appuntamenti').update(rec).eq('id',_calId).then(done); }
+  else { sb.from('appuntamenti').insert(rec).then(done); }
+}
+function calElimina(id){ if(!confirm('Eliminare questo appuntamento?')) return; var sb=sbClient(); if(!sb)return; sb.from('appuntamenti').delete().eq('id',id).then(function(){ calChiudi(); calCaricaMese(); }); }
+function calNormTel(t){ var n=String(t||'').replace(/[^\d]/g,''); if(!n) return ''; if(n.indexOf('00')===0)n=n.substring(2); if(n.length===10 && n.charAt(0)==='3')n='39'+n; return n; }
+function calMsgWa(nome,data,ora,titolo){ var d=calParse(data); var gg=['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'][d.getDay()]; var quando=gg+' '+d.getDate()+'/'+(d.getMonth()+1)+(ora?(' alle '+ora):''); return 'Gentile '+(nome||'cliente')+', le ricordiamo l\'appuntamento presso Europa Auto '+quando+'.'+(titolo?(' '+titolo+'.'):'')+' A presto!'; }
+function calWa(tel,nome,data,ora,titolo){ if(!data){ alert('Manca la data.'); return; } window.open('https://wa.me/'+calNormTel(tel)+'?text='+encodeURIComponent(calMsgWa(nome,data,ora,titolo)),'_blank'); }
+function calWhatsAppForm(){ var g=function(id){var el=document.getElementById(id);return el?el.value:'';}; calWa(g('cal_tel'),g('cal_cliente'),g('cal_data'),g('cal_ora'),g('cal_titolo')); }
+function calWhatsApp(id){ var a=_calData.filter(function(x){return x.id===id;})[0]; if(!a)return; calWa(a.telefono,a.cliente_nome,a.data,a.ora,a.titolo); }
+
+/* ---- promemoria / notifiche (mentre l'app è aperta) ---- */
+function calNotifAttiva(){
+  if(!('Notification' in window)){ alert('Il tuo browser non supporta le notifiche.'); return; }
+  Notification.requestPermission().then(function(p){ var b=document.getElementById('cal-notif-btn'); if(b){ if(p==='granted'){ b.textContent='🔔 Notifiche attive'; b.style.background='#dcfce7'; b.style.color='#15803d'; } else { b.textContent='🔕 Notifiche bloccate'; } } });
+}
+function calNotifCheck(){ var b=document.getElementById('cal-notif-btn'); if(b && ('Notification' in window) && Notification.permission==='granted'){ b.textContent='🔔 Notifiche attive'; b.style.background='#dcfce7'; b.style.color='#15803d'; } }
+function calCheckReminders(){
+  if(!('Notification' in window) || Notification.permission!=='granted') return;
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  var oggi=calYmd(new Date()); var domani=calYmd(new Date(Date.now()+86400000));
+  sb.from('appuntamenti').select('*').gte('data',oggi).lte('data',domani).neq('stato','annullato').then(function(r){
+    var list=(r&&r.data)?r.data:[]; var now=Date.now();
+    list.forEach(function(a){ if(!a.reminder_min || !a.ora || _calRemFired[a.id]) return;
+      var dt=calParse(a.data); var hm=String(a.ora).split(':'); dt.setHours(+hm[0]||0, +hm[1]||0, 0, 0);
+      var trigger=dt.getTime()-(a.reminder_min*60000);
+      if(now>=trigger && now<dt.getTime()+60000){ _calRemFired[a.id]=1; try{ new Notification('Europa Auto — '+(a.titolo||'Appuntamento'), { body:(a.ora?a.ora+' · ':'')+(calTipoInfo(a.tipo)[1])+(a.cliente_nome?(' · '+a.cliente_nome):'') }); }catch(e){} }
+    });
+  });
+}
+setInterval(function(){ try{ calCheckReminders(); }catch(e){} }, 60000);
 
 </script>
 
