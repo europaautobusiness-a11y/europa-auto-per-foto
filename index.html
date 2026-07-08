@@ -11,6 +11,7 @@
 <script src="https://apis.google.com/js/api.js"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root{--blue:#1a4fa0;--blue2:#2a6fd4;--bpale:#e8eef8;--blk:#1a1a1a;--gray:#6b6b6b;--lgray:#f5f5f5;--bdr:#e0e0e0;--red:#e74c3c;--ora:#e67e22;--yel:#f39c12;--grn:#27ae60;--font:'Inter',sans-serif;}
@@ -9951,6 +9952,12 @@ function sinCard(s){
     if(SIN_NEXT[st]){
       html+='<button onclick="event.stopPropagation();sinProssimoStato(\''+s.id+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Cambia stato →</button>';
     }
+    if(s.numeroSinistro){
+      html+='<button onclick="event.stopPropagation();sinCessione(\''+s.id+'\')" style="padding:6px 10px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">📥 Cessione</button>';
+    }
+    if(s.preventivo && s.preventivoConfermato){
+      html+='<button onclick="event.stopPropagation();sinScaricaPreventivo(\''+s.id+'\')" style="padding:6px 10px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">📥 Preventivo</button>';
+    }
     html+='</div>';
   }
   html+='</div>';
@@ -9971,7 +9978,8 @@ function sinCard(s){
   if(st!=='aperto' && s.appuntamento) righe.push('📅 '+sinFmtApp(s.appuntamento));
   if(righe.length) html+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+righe.join('<br>')+'</div>';
   if(st==='lavorazione'){
-    html+='<button onclick="sinInviaConcordato(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:10px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">📤 Inviati documenti e foto al perito → In concordato</button>';
+    html+=sinInviiBox(s, true);
+    html+='<button onclick="sinInviaConcordato(\''+s.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">✅ Concludi invii → In concordato</button>';
   }
   if(st==='concluso' && sinVedePreventivo()){
     var impVal = (s.importoConcordato!=null && s.importoConcordato!=='') ? s.importoConcordato : '';
@@ -9984,7 +9992,9 @@ function sinCard(s){
   if(st==='saldo'){
     html+='<button onclick="sinVaiIntegrazione(\''+s.id+'\')" style="margin-top:10px;width:100%;padding:9px;border-radius:8px;border:1px solid #d97706;background:#fffbeb;color:#b45309;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">➕ Richiedi integrazione al saldo</button>';
   }
-  if(s.docInviatiAt && (st==='concluso'||st==='saldo'||st==='integrazione'||st==='liquidato')){
+  if((s.invii||[]).length && (st==='concluso'||st==='saldo'||st==='integrazione'||st==='liquidato')){
+    html+=sinInviiBox(s, false);
+  } else if(s.docInviatiAt && (st==='concluso'||st==='saldo'||st==='integrazione'||st==='liquidato')){
     html+='<div style="margin-top:8px;font-size:11px;color:#16a34a;font-weight:700;">📤 Documenti e foto inviati il '+sinFmtApp(s.docInviatiAt)+'</div>';
   }
   html+='</div>';
@@ -10123,6 +10133,40 @@ function sinCessione(id){
   setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); }, 1500);
 }
 
+function sinInviiBox(s, editable){
+  var invii=s.invii||[];
+  var h='<div style="margin-top:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;">';
+  h+='<div style="font-size:12px;font-weight:800;color:#15803d;margin-bottom:6px;">📤 Invii al perito</div>';
+  if(invii.length){
+    h+=invii.map(function(iv,i){ return '<div style="font-size:12px;color:#334155;padding:4px 0;border-bottom:1px solid #dcfce7;display:flex;justify-content:space-between;gap:8px;"><span>✅ '+sinFmtApp(iv.ts)+(iv.nota?(' — <b>'+sinEsc(iv.nota)+'</b>'):'')+'</span>'+(editable?('<a onclick="sinEliminaInvio(\''+s.id+'\','+i+')" style="color:#dc2626;cursor:pointer;flex:0 0 auto;">✕</a>'):'')+'</div>'; }).join('');
+  } else {
+    h+='<div style="font-size:12px;color:#94a3b8;">Nessun invio registrato.</div>';
+  }
+  if(editable){
+    h+='<div style="display:flex;gap:8px;margin-top:8px;"><input id="sininvio-'+s.id+'" placeholder="Nota (es. inviate foto cofano, mancano paraurti)" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;"><button onclick="sinRegistraInvio(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;font-size:13px;cursor:pointer;white-space:nowrap;">Registra invio</button></div>';
+  }
+  h+='</div>';
+  return h;
+}
+function sinRegistraInvio(id){
+  var el=document.getElementById('sininvio-'+id); var nota=el?el.value.trim():'';
+  var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0)return;
+  list[idx].invii=list[idx].invii||[]; list[idx].invii.push({ts:Date.now(), nota:nota});
+  if(!list[idx].docInviatiAt) list[idx].docInviatiAt=Date.now();
+  sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]); sinRender();
+  if(typeof tcToastNew==='function') tcToastNew('📤 Invio registrato',true);
+}
+function sinEliminaInvio(id, i){
+  var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0)return;
+  if(list[idx].invii) list[idx].invii.splice(i,1);
+  sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]); sinRender();
+}
+function sinScaricaPreventivo(id){
+  var list=sinLoad(); var s=list.filter(function(x){return x.id===id;})[0];
+  if(!s || !s.preventivo || !s.preventivoConfermato){ alert('Il preventivo non è ancora confermato: non può essere scaricato.'); return; }
+  sinPreventivo(id);
+  setTimeout(function(){ try{ pvStampa(); }catch(e){} }, 350);
+}
 function sinInviaConcordato(id){
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   list[idx].stato='concluso'; list[idx].docInviatiAt=Date.now();
@@ -10250,9 +10294,12 @@ function sinPreventivo(id){
   html+='<button onclick="pvAdd()" style="width:100%;padding:10px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:12px;">+ Aggiungi lavorazione</button>';
   html+='<div id="pv-totali" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;"></div>';
   html+='<div style="display:flex;gap:8px;">';
-  html+='<button onclick="pvSalva()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">💾 Salva</button>';
+  html+='<button onclick="pvSalva()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">💾 Salva bozza</button>';
   html+='<button onclick="pvStampa()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">🖨️ Stampa / PDF</button>';
-  html+='</div></div>';
+  html+='</div>';
+  html+='<button onclick="pvConferma()" style="margin-top:8px;width:100%;padding:13px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">✅ Conferma preventivo (rendilo scaricabile)</button>';
+  html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:'+(s.preventivoConfermato?'#16a34a':'#d97706')+';">'+(s.preventivoConfermato?'✅ Preventivo confermato — scaricabile dalla scheda':'⏳ Bozza — confermalo per poterlo scaricare')+'</div>';
+  html+='</div>';
   m.innerHTML=html; m.style.display='block';
   pvRenderRighe(); pvCalc();
 }
@@ -10351,8 +10398,16 @@ function pvCollect(){
 }
 function pvSalva(){
   if(!_pvId) return; var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===_pvId;}); if(idx<0) return;
-  list[idx].preventivo=pvCollect(); sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
-  if(typeof tcToastNew==='function') tcToastNew('💾 Preventivo salvato',true);
+  list[idx].preventivo=pvCollect(); list[idx].preventivoConfermato=false; sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  if(typeof tcToastNew==='function') tcToastNew('💾 Bozza salvata (da confermare per scaricarla)',true);
+  if(typeof sinRender==='function') sinRender();
+}
+function pvConferma(){
+  if(!_pvId) return; var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===_pvId;}); if(idx<0) return;
+  list[idx].preventivo=pvCollect(); list[idx].preventivoConfermato=true; sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  if(typeof tcToastNew==='function') tcToastNew('✅ Preventivo confermato',true);
+  if(typeof sinChiudi==='function'){ sinChiudi(); } else { var m=document.getElementById('sin-modal'); if(m){ m.style.display='none'; } }
+  if(typeof sinRender==='function') sinRender();
 }
 function pvStampa(){
   var t=pvCompute(); var rh='';
@@ -11029,10 +11084,12 @@ function mzForm(id){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Prezzo acquisto €','prezzoAcq','','number')+'</div><div style="flex:1;">'+f('Prezzo vendita €','prezzoVen','','number')+'</div></div>';
   h+=sel('Stato','stato',MZ_STATI.map(function(s){return [s[0],s[1]];}));
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Note</label><textarea id="mz_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+v('note')+'</textarea>';
+  h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('auto', _mzId, 'mzdoc')+'</div>';
   h+='<button onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva auto</button>';
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
   var m=document.getElementById('mz-modal'); m.innerHTML=h; m.style.display='block';
+  try{ docListaRender('auto', _mzId, 'mzdoc'); }catch(e){}
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
 }
@@ -11243,6 +11300,91 @@ function cvStampa(){
   pa.innerHTML=st+doc; pa.style.display='block';
   setTimeout(function(){ try{ window.print(); }catch(e){} }, 250);
   setTimeout(function(){ pa.style.display='none'; }, 1500);
+}
+
+
+/* ===================== ARCHIVIO DOCUMENTI (Supabase) ===================== */
+var SB_URL='https://jasrectyddshjizpxiia.supabase.co';
+var SB_KEY='sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
+var _sb=null;
+function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||!supabase.createClient) return null; _sb=supabase.createClient(SB_URL, SB_KEY); return _sb; }catch(e){ return null; } }
+function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+var DOC_CAT={
+  auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
+  cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['altro','Altro']],
+  pratica:[['contratto_firmato','Contratto firmato'],['libretto_nuovo','Libretto nuovo intestato'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['altro','Altro']]
+};
+function docCatLabel(tipo,cat){ var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
+function docCatOptions(tipo){ return (DOC_CAT[tipo]||DOC_CAT.auto).map(function(o){return '<option value="'+o[0]+'">'+docEsc(o[1])+'</option>';}).join(''); }
+
+// pannello riutilizzabile: lo inserisci in un modulo passando tipo ('auto'|'cliente'|'pratica'), id, e un prefisso unico
+function docPannelloHTML(tipo, id, pfx){
+  return '<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 6px;text-transform:uppercase;">📎 Documenti</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    +'<select id="'+pfx+'-cat" style="flex:1;min-width:150px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;background:#fff;">'+docCatOptions(tipo)+'</select>'
+    +'<input type="file" id="'+pfx+'-file" multiple style="flex:1;min-width:150px;font-size:12px;">'
+    +'<button type="button" onclick="docCarica(\''+tipo+'\',\''+id+'\',\''+pfx+'\')" style="padding:9px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Carica</button>'
+    +'</div>'
+    +'<div id="'+pfx+'-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>'
+    +'<div id="'+pfx+'-list" style="margin-top:8px;"></div>';
+}
+
+function docCarica(tipo, id, pfx){
+  var sb=sbClient(); var st=document.getElementById(pfx+'-stato');
+  if(!sb){ if(st)st.textContent='⚠️ Archivio non disponibile: ricarica la pagina.'; return; }
+  var cat=(document.getElementById(pfx+'-cat')||{}).value||'altro';
+  var fi=document.getElementById(pfx+'-file');
+  if(!fi||!fi.files||!fi.files.length){ if(st)st.textContent='Scegli almeno un file.'; return; }
+  if(st)st.textContent='Caricamento in corso…';
+  var files=Array.prototype.slice.call(fi.files);
+  var i=0;
+  var next=function(){
+    if(i>=files.length){ fi.value=''; if(st)st.textContent='✅ Caricato'; docListaRender(tipo,id,pfx); return; }
+    var file=files[i++];
+    var safe=(file.name||'file').replace(/[^\w.\-]/g,'_');
+    var path=tipo+'/'+id+'/'+Date.now()+'_'+safe;
+    sb.storage.from('documenti').upload(path, file, {upsert:false}).then(function(up){
+      if(up.error){ if(st)st.textContent='⚠️ '+(up.error.message||'errore upload'); return; }
+      sb.from('documenti').insert({entita_tipo:tipo, entita_id:id, categoria:cat, nome_file:file.name, storage_path:path, mime:file.type, dimensione:file.size}).then(function(ins){
+        if(ins.error){ if(st)st.textContent='⚠️ '+(ins.error.message||'errore salvataggio'); return; }
+        next();
+      });
+    }, function(err){ if(st)st.textContent='⚠️ '+(err&&err.message||'errore rete'); });
+  };
+  next();
+}
+
+function docListaRender(tipo, id, pfx){
+  var c=document.getElementById(pfx+'-list'); if(!c) return;
+  var sb=sbClient(); if(!sb){ c.innerHTML='<div style="font-size:12px;color:#94a3b8;">Archivio non disponibile.</div>'; return; }
+  c.innerHTML='<div style="font-size:12px;color:#94a3b8;">Caricamento documenti…</div>';
+  sb.from('documenti').select('*').eq('entita_tipo',tipo).eq('entita_id',String(id)).order('created_at',{ascending:false}).then(function(r){
+    if(r.error){ c.innerHTML='<div style="font-size:12px;color:#dc2626;">Errore: '+docEsc(r.error.message)+'</div>'; return; }
+    var list=r.data||[];
+    if(!list.length){ c.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessun documento allegato.</div>'; return; }
+    c.innerHTML=list.map(function(d){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;background:#fff;">'
+        +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div><div style="font-size:11px;color:#94a3b8;">'+docEsc(docCatLabel(tipo,d.categoria))+'</div></div>'
+        +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
+        +'<button type="button" onclick="docElimina(\''+d.id+'\',\''+docEsc(d.storage_path)+'\',\''+tipo+'\',\''+id+'\',\''+pfx+'\')" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;height:32px;font-size:14px;cursor:pointer;">🗑</button>'
+        +'</div>';
+    }).join('');
+  }, function(err){ c.innerHTML='<div style="font-size:12px;color:#dc2626;">Errore: '+docEsc(err&&err.message)+'</div>'; });
+}
+
+function docApri(path){
+  var sb=sbClient(); if(!sb) return;
+  sb.storage.from('documenti').createSignedUrl(path, 3600).then(function(r){
+    if(r.data && r.data.signedUrl){ window.open(r.data.signedUrl,'_blank'); } else { alert('Impossibile aprire il file.'); }
+  });
+}
+function docElimina(docId, path, tipo, id, pfx){
+  if(!confirm('Eliminare questo documento dall\'archivio?')) return;
+  var sb=sbClient(); if(!sb) return;
+  sb.storage.from('documenti').remove([path]).then(function(){
+    sb.from('documenti').delete().eq('id',docId).then(function(){ docListaRender(tipo,id,pfx); });
+  });
 }
 
 </script>
