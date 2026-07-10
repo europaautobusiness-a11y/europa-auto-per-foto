@@ -11248,12 +11248,14 @@ function cvRender(){
 function cvCalcola(c){
   var prezzo=cvNum(c.prezzoVendita), passaggio=cvNum(c.passaggio), gar=cvNum(c.garanziaImporto), assic=(c.assicOn?cvNum(c.assicImporto):0);
   var extra=(c.costiExtra||[]).reduce(function(s,x){return s+cvNum(x.importo);},0);
-  var totaleVendita=prezzo+passaggio+gar+assic+extra;
   var sconto=(c.scontoOn?cvNum(c.scontoImporto):0);
-  var totaleScontato=totaleVendita-sconto;
+  var iva104=0, imponibile104=0, veicolo=prezzo;
+  if(c.legge104On){ imponibile104=Math.max(0, prezzo - sconto); iva104=Math.round(imponibile104*0.04*100)/100; veicolo=imponibile104+iva104; }
+  var totaleVendita=veicolo+passaggio+gar+assic+extra;
+  var totaleScontato = c.legge104On ? totaleVendita : (totaleVendita - sconto);
   var pagTot=(c.pagamenti||[]).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var saldoDovuto=totaleScontato-pagTot;
-  return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, totaleVendita:totaleVendita, sconto:sconto, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
+  return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
 }
 
 function cvForm(id){
@@ -11275,8 +11277,12 @@ function cvForm(id){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Telefono *')+inp('cv_tel',_cv.cliente.telefono)+'</div><div style="flex:1;">'+lab('Email *')+inp('cv_email',_cv.cliente.email)+'</div></div>';
   h+=lab('Prezzo di vendita €')+inp('cv_prezzo',_cv.prezzoVendita,'','number');
   h+=lab('Passaggio di proprietà / Immatricolazione € (calcolato dai kW)')+'<input id="cv_passaggio" type="number" value="'+(cvEsc(_cv.passaggio==null?'':_cv.passaggio))+'" readonly style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#eef2f7;color:#334155;">'+'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">Calcolato automaticamente dai kW del veicolo e dai Parametri. Non modificabile dal venditore.</div>';
+  h+=tog('cv_legge104On',_cv.legge104On,'Legge 104');
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
   h+='<div id="cv-sconto-box" style="display:'+(_cv.scontoOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:2;">'+inp('cv_scontoDesc',_cv.scontoDesc,'descrizione (es. Sconto finanziamento PROMO)')+'</div><div style="flex:1;">'+inp('cv_scontoImporto',_cv.scontoImporto,'importo €','number')+'</div></div></div>';
+  h+=tog('cv_listinoOn',_cv.listinoOn,'Mostra prezzo listino');
+  h+='<div id="cv-listino-box" style="display:'+(_cv.listinoOn?'block':'none')+';padding-left:8px;">'+inp('cv_listino',_cv.listino,'prezzo di listino €','number')+'</div>';
+  h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_diniOn" '+(_cv.diniOn?'checked':'')+' onchange="cvAggiornaPassaggio()" style="width:20px;height:20px;">Vendita a professionista (Legge Dini) &mdash; trapasso 130&euro; fisso</label>';
   h+=lab('Garanzia');
   h+='<div style="display:flex;gap:8px;"><button type="button" id="cv-gar-12" onclick="cvGar(\'12\')" style="flex:1;padding:10px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">12 mesi</button><button type="button" id="cv-gar-24" onclick="cvGar(\'24\')" style="flex:1;padding:10px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">24 mesi</button></div>';
   h+='<div style="margin-top:6px;">'+inp('cv_garImporto',_cv.garanziaImporto,'costo garanzia € (0 se inclusa)','number')+'</div>';
@@ -11285,7 +11291,20 @@ function cvForm(id){
   h+=lab('Costi extra')+'<div id="cv-extra"></div><button type="button" onclick="cvAddExtra()" style="margin-top:6px;padding:8px 12px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">+ costo extra</button>';
   h+=lab('Pagamenti')+'<div id="cv-pag"></div><button type="button" onclick="cvAddPag()" style="margin-top:6px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">+ pagamento</button>';
   h+=tog('cv_permutaOn',_cv.permutaOn,'Permuta');
-  h+='<div id="cv-permuta-box" style="display:'+(_cv.permutaOn?'block':'none')+';padding-left:8px;"><textarea id="cv_permutaNote" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:80px;box-sizing:border-box;">'+cvEsc(_cv.permutaNote||CV_PERMUTA_DEF)+'</textarea></div>';
+  var pm=_cv.permuta||{};
+  h+='<div id="cv-permuta-box" style="display:'+(_cv.permutaOn?'block':'none')+';background:#f1f5f9;border-radius:10px;padding:12px;margin-top:4px;">';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:6px;">Dati permuta</div>';
+  h+=lab('Modello')+inp('cv_pm_modello',pm.modello,'es. Fiat Panda');
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Alimentazione')+inp('cv_pm_alim',pm.alimentazione,'')+'</div><div style="flex:1;">'+lab('Tipologia cambio')+inp('cv_pm_cambio',pm.cambio,'')+'</div></div>';
+  h+=lab('Immatricolazione')+'<select id="cv_pm_immat" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+['','Immatricolata','Da immatricolare'].map(function(x){return '<option'+((pm.immat||'')===x?' selected':'')+'>'+(x||'— seleziona —')+'</option>';}).join('')+'</select>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Colore')+inp('cv_pm_colore',pm.colore,'')+'</div><div style="flex:1;">'+lab('Prezzo di acquisto €')+inp('cv_pm_prezzoAcq',pm.prezzoAcq,'','number')+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Cilindrata (cc)')+inp('cv_pm_cilindrata',pm.cilindrata,'','number')+'</div><div style="flex:1;">'+lab('Potenza (kW)')+inp('cv_pm_potenza',pm.potenza,'','number')+'</div></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data immatricolazione')+inp('cv_pm_dataImm',pm.dataImm,'','date')+'</div><div style="flex:1;">'+lab('Targa')+inp('cv_pm_targa',pm.targa,'')+'</div></div>';
+  h+=lab('Km')+inp('cv_pm_km',pm.km,'','number');
+  h+=tog('cv_pm_doppiaChiave',pm.doppiaChiave,'Doppia chiave');
+  h+=tog('cv_pm_privaDifetti',pm.privaDifetti,'Priva di difetti');
+  h+=lab('Dichiarazione difetti visibili e non visibili del veicolo in permuta')+'<textarea id="cv_pm_difetti" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:70px;box-sizing:border-box;">'+cvEsc(pm.difetti||'')+'</textarea>';
+  h+='</div>';
   h+=lab('Note contratto')+'<textarea id="cv_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+cvEsc(_cv.note||'')+'</textarea>';
   h+='<div id="cv-riepilogo" style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;"></div>';
   h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva preventivo</button>';
@@ -11297,7 +11316,8 @@ function cvForm(id){
 }
 function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvGar(mesi){ _cv.garanziaMesi=mesi; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} }
-function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof mzById==='function')?mzById(sel.value):null; if(a){ _cv.autoId=a.id; _cv.autoDesc='#'+(a.targa||'')+' - '+(a.marca||'')+' '+(a.modello||''); _cv.autoSnapshot={modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(),alimentazione:a.alimentazione,cilindrata:a.cilindrata,potenza:a.potenza,cambio:a.cambio,telaio:a.telaio,targa:a.targa,dataImm:a.dataImm,colore:a.colore,km:a.km}; var pz=document.getElementById('cv_prezzo'); if(pz&&!pz.value&&a.prezzoVen) pz.value=a.prezzoVen; var km=document.getElementById('cv_km'); if(km&&!km.value&&a.km) km.value=a.km; var pa=document.getElementById('cv_passaggio'); if(pa){ var pp=cvPassaggioKw(a.potenza); if(pp!=='') pa.value=pp; } cvLive(); } }
+function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof mzById==='function')?mzById(sel.value):null; if(a){ _cv.autoId=a.id; _cv.autoDesc='#'+(a.targa||'')+' - '+(a.marca||'')+' '+(a.modello||''); _cv.autoSnapshot={modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(),alimentazione:a.alimentazione,cilindrata:a.cilindrata,potenza:a.potenza,cambio:a.cambio,telaio:a.telaio,targa:a.targa,dataImm:a.dataImm,colore:a.colore,km:a.km}; var pz=document.getElementById('cv_prezzo'); if(pz&&!pz.value&&a.prezzoVen) pz.value=a.prezzoVen; var km=document.getElementById('cv_km'); if(km&&!km.value&&a.km) km.value=a.km; cvAggiornaPassaggio(); } }
+function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
 function cvPassaggioKw(kw){ var p=(typeof parLoad==='function')?parLoad():null; if(!p) return ''; kw=parseFloat(kw)||0; if(kw<=0) return ''; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; if(kw<54) return n(p.ppMinore54); if(kw==54) return n(p.ppUguale54); return n(p.ppUguale54)+(kw-54)*n(p.ppOltre54); }
 function cvAddExtra(){ cvSync(); _cv.costiExtra.push({desc:'',importo:''}); cvRenderExtra(); cvLive(); }
 function cvRenderExtra(){ var c=document.getElementById('cv-extra'); if(!c)return; c.innerHTML=_cv.costiExtra.map(function(x,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px;"><input value="'+cvEsc(x.desc)+'" placeholder="descrizione" oninput="_cv.costiExtra['+i+'].desc=this.value" style="flex:2;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><input value="'+cvEsc(x.importo)+'" placeholder="€" type="number" oninput="_cv.costiExtra['+i+'].importo=this.value;cvLive()" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><button onclick="_cv.costiExtra.splice('+i+',1);cvRenderExtra();cvLive()" style="border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;cursor:pointer;">✕</button></div>'; }).join(''); }
@@ -11330,9 +11350,12 @@ function cvSync(){
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.garanziaImporto=g('cv_garImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
-  _cv.permutaOn=ck('cv_permutaOn'); _cv.permutaNote=g('cv_permutaNote'); _cv.note=g('cv_note');
+  _cv.legge104On=ck('cv_legge104On'); _cv.listinoOn=ck('cv_listinoOn'); _cv.listino=g('cv_listino'); _cv.diniOn=ck('cv_diniOn');
+  _cv.permutaOn=ck('cv_permutaOn'); _cv.note=g('cv_note');
+  if(document.getElementById('cv_pm_modello')){ _cv.permuta={ modello:g('cv_pm_modello'), alimentazione:g('cv_pm_alim'), cambio:g('cv_pm_cambio'), immat:((document.getElementById('cv_pm_immat')||{}).value||''), colore:g('cv_pm_colore'), prezzoAcq:g('cv_pm_prezzoAcq'), cilindrata:g('cv_pm_cilindrata'), potenza:g('cv_pm_potenza'), dataImm:g('cv_pm_dataImm'), targa:g('cv_pm_targa'), km:g('cv_pm_km'), doppiaChiave:ck('cv_pm_doppiaChiave'), privaDifetti:ck('cv_pm_privaDifetti'), difetti:g('cv_pm_difetti') }; }
   var sb=document.getElementById('cv-sconto-box'); if(sb) sb.style.display=_cv.scontoOn?'block':'none';
   var ab=document.getElementById('cv-assic-box'); if(ab) ab.style.display=_cv.assicOn?'block':'none';
+  var lb=document.getElementById('cv-listino-box'); if(lb) lb.style.display=(document.getElementById('cv_listinoOn')&&document.getElementById('cv_listinoOn').checked)?'block':'none';
   var pb=document.getElementById('cv-permuta-box'); if(pb) pb.style.display=_cv.permutaOn?'block':'none';
 }
 function cvLive(){
@@ -11340,13 +11363,15 @@ function cvLive(){
   var t=cvCalcola(_cv);
   var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
   var h='<div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">Valore contratto</div>';
+  var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
   h+=r('Prezzo vendita',t.prezzo);
+  if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile (Legge 104)',t.imponibile104); h+=r('IVA 4%',t.iva104); }
   h+=r('Passaggio di proprietà / Imm.',t.passaggio);
   if(t.gar) h+=r('Garanzia',t.gar);
   if(_cv.assicOn) h+=r('Assicurazione',t.assic);
   (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
   h+=r('Totale vendita',t.totaleVendita,true);
-  if(_cv.scontoOn && t.sconto){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(_cv.scontoDesc||'Sconto')+'</span><span>-'+cvEuro(t.sconto)+'</span></div>'; h+=r('Totale scontato',t.totaleScontato,true); }
+  if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale scontato',t.totaleScontato,true); }
   (_cv.pagamenti||[]).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
   h+=r('Saldo dovuto',t.saldoDovuto,true);
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
@@ -11356,6 +11381,8 @@ function cvSalva(){
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
   if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
+  var _hasCap=(_cv.pagamenti||[]).some(function(x){ return (x.tipo==='Caparra') && cvNum(x.importo)>0; });
+  if(_hasCap && !_cv.statoVendita){ _cv.statoVendita='in_attesa_pagamento'; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
@@ -11375,19 +11402,21 @@ function cvStampa(){
   doc+='<div class="cvh">Dati acquirente</div><div class="cvgrid">'+fld('Nome',c.cliente.nome)+fld('Cognome',c.cliente.cognome)+fld('Telefono',c.cliente.telefono)+fld('Email',c.cliente.email)+'</div>';
   doc+='<div class="cvh">Dati auto</div><div class="cvgrid">'+fld('Modello',a.modello||c.autoDesc)+fld('Targa',a.targa)+fld('Alimentazione',a.alimentazione)+fld('Cilindrata',a.cilindrata)+fld('Potenza (kW)',a.potenza)+fld('Cambio',a.cambio)+fld('Telaio',a.telaio)+fld('Colore',a.colore)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(a.dataImm):a.dataImm))+fld('Km',c.kmAgg||a.km)+'</div>';
   doc+='<div class="cvh">Valore contratto</div>';
-  doc+=row('Prezzo vendita',t.prezzo)+row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
+  doc+=row('Prezzo vendita',t.prezzo);
+  if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile (Legge 104)',t.imponibile104)+row('IVA 4%',t.iva104); }
+  doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
   if(c.assicOn) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
   (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
   doc+=row('Totale vendita',t.totaleVendita,'sub');
-  if(c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
+  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
   pagList.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
   doc+=row('Saldo dovuto',t.saldoDovuto,'tot');
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
   if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+(x.rate?(' <span class="cvsmall">&middot; '+cvEsc(x.rate)+' rate da '+cvEuro(x.importoRata)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; }); doc+='<div class="cvsmall" style="margin-top:6px;">Beneficiario: <b>'+EA_BENEF+'</b> &middot; IBAN: <b>'+EA_IBAN+'</b></div>'; }
   var _cond=(typeof parLoad==='function')?(parLoad().condizioni||''):'';
   if(_cond){ doc+='<div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:1px solid #eef2f7;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; }
-  if(c.permutaOn){ doc+='<div class="cvh">Note per permuta</div><div class="cvbox">'+cvEsc(c.permutaNote||'')+'</div>'; }
+  if(c.permutaOn && c.permuta){ var pm=c.permuta; doc+='<div class="cvh">Veicolo in permuta</div><div class="cvgrid">'+fld('Modello',pm.modello)+fld('Alimentazione',pm.alimentazione)+fld('Cambio',pm.cambio)+fld('Immatricolazione',pm.immat)+fld('Colore',pm.colore)+fld('Targa',pm.targa)+fld('Cilindrata',pm.cilindrata)+fld('Potenza (kW)',pm.potenza)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(pm.dataImm):pm.dataImm))+fld('Km',pm.km)+fld('Prezzo acquisto',pm.prezzoAcq?cvEuro(pm.prezzoAcq):'')+fld('Doppia chiave',pm.doppiaChiave?'Sì':'No')+fld('Priva di difetti',pm.privaDifetti?'Sì':'No')+'</div>'+(pm.difetti?('<div class="cvbox" style="margin-top:8px;"><b>Dichiarazione difetti:</b> '+cvEsc(pm.difetti)+'</div>'):''); }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione)</div></div>';
   doc+='</div>';
