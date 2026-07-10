@@ -11065,7 +11065,39 @@ function mzById(id){ return mzLoad().filter(function(a){return a.id===id;})[0]||
 function mzStatoInfo(s){ for(var i=0;i<MZ_STATI.length;i++){ if(MZ_STATI[i][0]===s) return MZ_STATI[i]; } return MZ_STATI[0]; }
 function mzEuro(n){ n=parseFloat(n); if(isNaN(n)) return '—'; return '€ '+n.toLocaleString('it-IT'); }
 
-function mzInit(){ mzRenderFiltri(); mzRender(); }
+function mzLoadDaSheets(){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='mzCb_'+Date.now(); var s=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
+  window[cb]=function(data){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
+    if(!Array.isArray(data)) return;
+    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    mzLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
+    mzSave(Object.keys(byId).map(function(k){return byId[k];}));
+    if(typeof mzRender==='function') mzRender();
+    var pr=document.getElementById('mz-pan-reg'); if(pr && pr.style.display!=='none' && typeof regRender==='function') regRender();
+  };
+  s.src=GS_URL+'?sheet=Magazzino&callback='+cb;
+  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
+  document.body.appendChild(s);
+}
+function fnLoadDaSheets(){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cb='fnCb_'+Date.now(); var s=document.createElement('script');
+  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
+  window[cb]=function(data){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
+    if(!Array.isArray(data)) return;
+    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    fnLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
+    fnSave(Object.keys(byId).map(function(k){return byId[k];}));
+    if(typeof fnRender==='function') fnRender();
+    var sel=document.getElementById('mz_fornitore'); if(sel){ var cur=sel.value; sel.innerHTML=fnOptions(cur); sel.value=cur; }
+  };
+  s.src=GS_URL+'?sheet=Fornitori&callback='+cb;
+  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
+  document.body.appendChild(s);
+}
+function mzInit(){ mzRenderFiltri(); mzRender(); mzLoadDaSheets(); }
 
 function mzRenderFiltri(){
   var c=document.getElementById('mz-filtri'); if(!c) return;
@@ -11240,7 +11272,7 @@ function cvForm(id){
   h+=lab('Auto')+'<select id="cv_auto" onchange="cvAutoSel()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+optAuto+'</select>';
   h+=lab('Km aggiornati')+inp('cv_km',_cv.kmAgg,'','number');
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Nome')+inp('cv_nome',_cv.cliente.nome)+'</div><div style="flex:1;">'+lab('Cognome')+inp('cv_cognome',_cv.cliente.cognome)+'</div></div>';
-  h+=lab('Telefono')+inp('cv_tel',_cv.cliente.telefono);
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Telefono *')+inp('cv_tel',_cv.cliente.telefono)+'</div><div style="flex:1;">'+lab('Email *')+inp('cv_email',_cv.cliente.email)+'</div></div>';
   h+=lab('Prezzo di vendita €')+inp('cv_prezzo',_cv.prezzoVendita,'','number');
   h+=lab('Passaggio di proprietà / Immatricolazione € (calcolato dai kW)')+'<input id="cv_passaggio" type="number" value="'+(cvEsc(_cv.passaggio==null?'':_cv.passaggio))+'" readonly style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#eef2f7;color:#334155;">'+'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">Calcolato automaticamente dai kW del veicolo e dai Parametri. Non modificabile dal venditore.</div>';
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
@@ -11293,7 +11325,7 @@ function cvSync(){
   if(!_cv) return;
   var g=function(id){ var el=document.getElementById(id); return el?el.value:''; };
   var ck=function(id){ var el=document.getElementById(id); return el?el.checked:false; };
-  _cv.kmAgg=g('cv_km'); _cv.cliente={nome:g('cv_nome'),cognome:g('cv_cognome'),telefono:g('cv_tel')};
+  _cv.kmAgg=g('cv_km'); _cv.cliente={nome:g('cv_nome'),cognome:g('cv_cognome'),telefono:g('cv_tel'),email:g('cv_email')};
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.garanziaImporto=g('cv_garImporto');
@@ -11322,6 +11354,8 @@ function cvLive(){
 function cvSalva(){
   cvSync();
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
+  if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
+  if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
@@ -11333,30 +11367,41 @@ function cvElimina(id){ if(!confirm('Eliminare questo preventivo?')) return; cvS
 function cvStampa(){
   cvSync();
   var c=_cv, t=cvCalcola(c), a=c.autoSnapshot||{};
-  var er=function(l,v,neg){ return '<tr><td style="padding:3px 6px;">'+l+'</td><td style="padding:3px 6px;text-align:right;white-space:nowrap;">'+(neg?'-':'')+cvEuro(v)+'</td></tr>'; };
   var pagList=(c.pagamenti||[]).filter(function(x){return cvNum(x.importo);});
+  var fld=function(l,v){ return '<div class="cvfield"><div class="l">'+l+'</div><div class="v">'+cvEsc((v==null||v==='')?'—':v)+'</div></div>'; };
+  var row=function(l,v,cls,neg){ return '<div class="cvrow '+(cls||'')+(neg?' neg':'')+'"><div>'+l+'</div><div class="amt">'+(neg?'\u2212 ':'')+cvEuro(v)+'</div></div>'; };
   var doc='<div class="cvdoc">';
-  doc+='<div style="display:flex;justify-content:space-between;align-items:flex-start;"><div><div style="font-size:16px;font-weight:bold;">EUROPA AUTO SRL</div><div style="font-size:11px;">Via Nigra, 4 — 20037 Paderno Dugnano (MI)</div><div style="font-size:11px;">P.IVA 06440210968 · Tel. 029181820</div></div><div style="text-align:right;font-size:11px;"><div>Venditore: <b>'+cvEsc(c.venditore||'')+'</b></div><div>Proposta di vendita: <b>'+cvEsc(c.data||'')+'</b></div></div></div>';
-  doc+='<div class="cvh">Dati acquirente</div><table class="cvt"><tr><td>Nome</td><td><b>'+cvEsc(c.cliente.nome||'')+'</b></td><td>Cognome</td><td><b>'+cvEsc(c.cliente.cognome||'')+'</b></td></tr><tr><td>Telefono</td><td colspan="3"><b>'+cvEsc(c.cliente.telefono||'')+'</b></td></tr></table>';
-  doc+='<div class="cvh">Dati auto</div><table class="cvt"><tr><td>Modello</td><td><b>'+cvEsc(a.modello||c.autoDesc||'')+'</b></td><td>Targa</td><td><b>'+cvEsc(a.targa||'')+'</b></td></tr><tr><td>Alimentazione</td><td>'+cvEsc(a.alimentazione||'')+'</td><td>Cilindrata</td><td>'+cvEsc(a.cilindrata||'')+'</td></tr><tr><td>Potenza (kW)</td><td>'+cvEsc(a.potenza||'')+'</td><td>Cambio</td><td>'+cvEsc(a.cambio||'')+'</td></tr><tr><td>Telaio</td><td>'+cvEsc(a.telaio||'')+'</td><td>Colore</td><td>'+cvEsc(a.colore||'')+'</td></tr><tr><td>Data imm.</td><td>'+cvEsc(pmDMY?pmDMY(a.dataImm):a.dataImm||'')+'</td><td>Km</td><td>'+cvEsc(c.kmAgg||a.km||'')+'</td></tr></table>';
-  doc+='<div class="cvh">Valore contratto</div><table class="cvt2">'+er('Prezzo vendita',t.prezzo)+er('Passaggio di proprietà / Imm.',t.passaggio);
-  if(c.assicOn) doc+=er('Assicurazione',t.assic);
-  if(t.gar) doc+=er('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
-  (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=er(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
-  doc+='<tr style="font-weight:bold;border-top:1px solid #000;"><td style="padding:3px 6px;">Totale vendita</td><td style="padding:3px 6px;text-align:right;">'+cvEuro(t.totaleVendita)+'</td></tr>';
-  if(c.scontoOn && t.sconto){ doc+=er(cvEsc(c.scontoDesc||'Sconto'),t.sconto,true); doc+='<tr style="font-weight:bold;"><td style="padding:3px 6px;">Totale scontato</td><td style="padding:3px 6px;text-align:right;">'+cvEuro(t.totaleScontato)+'</td></tr>'; }
-  pagList.forEach(function(x){ doc+=er(cvEsc(x.tipo||'Pagamento'),cvNum(x.importo),true); });
-  doc+='<tr style="font-weight:bold;border-top:1px solid #000;"><td style="padding:3px 6px;">Saldo dovuto</td><td style="padding:3px 6px;text-align:right;">'+cvEuro(t.saldoDovuto)+'</td></tr></table>';
-  if(c.assicOn){ doc+='<div class="cvh">Assicurazione — dettaglio'+(c.assicMesi?(' ('+cvEsc(c.assicMesi)+' mesi)'):'')+'</div><div style="font-size:11px;white-space:pre-line;">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div class="cvh">Dati contratto — pagamenti</div><table class="cvt">'+pagList.map(function(x){ return '<tr><td><b>'+cvEsc(x.tipo)+'</b></td><td>'+cvEsc(x.metodo||'')+'</td><td style="text-align:right;">'+cvEuro(x.importo)+'</td></tr>'+((x.note||x.rate)?('<tr><td colspan="3" style="font-size:10px;color:#555;">'+cvEsc(x.note||'')+(x.rate?(' · '+cvEsc(x.rate)+' rate da '+cvEuro(x.importoRata)):'')+'</td></tr>'):''); }).join('')+'</table>'; doc+='<div style="font-size:11px;margin-top:4px;">Beneficiario: <b>'+EA_BENEF+'</b> · IBAN: <b>'+EA_IBAN+'</b></div>'; }
+  doc+='<div class="cvtop"><div><div class="cvbrand">EUROPA AUTO SRL</div><div class="cvsmall">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &middot; P.IVA 06440210968 &middot; Tel. 029181820</div></div><div style="text-align:right;" class="cvsmall"><div>Venditore: <b style="color:#0f172a;">'+cvEsc(c.venditore||'')+'</b></div><div>Proposta di vendita: <b style="color:#0f172a;">'+cvEsc(c.data||'')+'</b></div></div></div>';
+  doc+='<div class="cvh">Dati acquirente</div><div class="cvgrid">'+fld('Nome',c.cliente.nome)+fld('Cognome',c.cliente.cognome)+fld('Telefono',c.cliente.telefono)+fld('Email',c.cliente.email)+'</div>';
+  doc+='<div class="cvh">Dati auto</div><div class="cvgrid">'+fld('Modello',a.modello||c.autoDesc)+fld('Targa',a.targa)+fld('Alimentazione',a.alimentazione)+fld('Cilindrata',a.cilindrata)+fld('Potenza (kW)',a.potenza)+fld('Cambio',a.cambio)+fld('Telaio',a.telaio)+fld('Colore',a.colore)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(a.dataImm):a.dataImm))+fld('Km',c.kmAgg||a.km)+'</div>';
+  doc+='<div class="cvh">Valore contratto</div>';
+  doc+=row('Prezzo vendita',t.prezzo)+row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
+  if(c.assicOn) doc+=row('Assicurazione',t.assic);
+  if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
+  (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  doc+=row('Totale vendita',t.totaleVendita,'sub');
+  if(c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
+  pagList.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
+  doc+=row('Saldo dovuto',t.saldoDovuto,'tot');
+  if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+(x.rate?(' <span class="cvsmall">&middot; '+cvEsc(x.rate)+' rate da '+cvEuro(x.importoRata)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; }); doc+='<div class="cvsmall" style="margin-top:6px;">Beneficiario: <b>'+EA_BENEF+'</b> &middot; IBAN: <b>'+EA_IBAN+'</b></div>'; }
   var _cond=(typeof parLoad==='function')?(parLoad().condizioni||''):'';
-  if(_cond){ doc+='<div class="cvh">Condizioni contrattuali</div><div style="font-size:10.5px;white-space:pre-line;line-height:1.45;">'+cvEsc(_cond)+'</div>'; }
-  if(c.permutaOn){ doc+='<div class="cvh">Note per permuta</div><div style="font-size:11px;white-space:pre-line;">'+cvEsc(c.permutaNote||'')+'</div>'; }
-  if(c.note){ doc+='<div class="cvh">Note</div><div style="font-size:11px;white-space:pre-line;">'+cvEsc(c.note)+'</div>'; }
-  doc+='<div style="display:flex;justify-content:space-between;margin-top:26px;gap:24px;"><div style="flex:1;text-align:center;font-size:11px;"><div style="height:50px;"></div><div style="border-top:1px solid #000;padding-top:3px;">Il venditore</div></div><div style="flex:1;text-align:center;font-size:11px;"><div style="height:50px;"></div><div style="border-top:1px solid #000;padding-top:3px;">L\'acquirente (firma per accettazione)</div></div></div>';
+  if(_cond){ doc+='<div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:1px solid #eef2f7;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; }
+  if(c.permutaOn){ doc+='<div class="cvh">Note per permuta</div><div class="cvbox">'+cvEsc(c.permutaNote||'')+'</div>'; }
+  if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
+  doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione)</div></div>';
   doc+='</div>';
-  var css='*{-webkit-print-color-adjust:exact;print-color-adjust:exact;} body{margin:0;} @page{size:A4;margin:12mm;} .cvdoc{font-family:Arial,sans-serif;color:#000;font-size:12px;max-width:760px;margin:0 auto;padding:10px;} .cvh{background:#eef2f7;font-weight:bold;padding:5px 8px;margin:12px 0 4px;border-radius:4px;} .cvt{width:100%;border-collapse:collapse;font-size:11px;} .cvt td{border:1px solid #bbb;padding:4px 6px;} .cvt2{width:100%;border-collapse:collapse;} .cvol{font-size:10.5px;padding-left:18px;line-height:1.4;} .cvol li{margin-bottom:3px;}';
-  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Preventivo</title><style>'+css+'</style></head><body>'+doc+'</body></html>';
+  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:12mm;}"
+    +".cvdoc{max-width:760px;margin:0 auto;padding:6px;font-size:12px;}"
+    +".cvtop{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a4fa0;padding-bottom:8px;margin-bottom:2px;}"
+    +".cvbrand{font-size:19px;font-weight:800;color:#1a4fa0;letter-spacing:.5px;} .cvsmall{font-size:10px;color:#64748b;}"
+    +".cvh{font-size:11.5px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #dbe4f0;padding-bottom:3px;margin:15px 0 8px;}"
+    +".cvgrid{display:flex;flex-wrap:wrap;gap:8px 24px;} .cvfield{min-width:150px;} .cvfield .l{font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;} .cvfield .v{font-size:12.5px;font-weight:700;color:#0f172a;}"
+    +".cvrow{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid #f1f5f9;font-size:12px;} .cvrow .amt{font-weight:600;white-space:nowrap;padding-left:14px;}"
+    +".cvrow.sub{font-weight:800;} .cvrow.neg .amt{color:#b91c1c;} .cvrow.tot{border-top:2px solid #1a4fa0;border-bottom:none;font-weight:800;font-size:13.5px;color:#1a4fa0;margin-top:3px;padding-top:7px;}"
+    +".cvbox{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.5;white-space:pre-line;}"
+    +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:36px;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:44px;border-bottom:1px solid #334155;margin-bottom:4px;}";
+  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Preventivo '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+'</body></html>';
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
@@ -11458,7 +11503,7 @@ function fnEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</
 function fnLoad(){ try{ return JSON.parse(localStorage.getItem(FORN_KEY)||'[]'); }catch(e){ return []; } }
 function fnSave(l){ try{ localStorage.setItem(FORN_KEY, JSON.stringify(l)); }catch(e){ alert('Memoria piena.'); } }
 function fnById(id){ return fnLoad().filter(function(x){return x.id===id;})[0]||null; }
-function fnInit(){ fnRender(); }
+function fnInit(){ fnRender(); fnLoadDaSheets(); }
 function fnRender(){
   var wrap=document.getElementById('fn-lista'); if(!wrap) return;
   var q=((document.getElementById('fn-cerca')||{}).value||'').toLowerCase().trim();
