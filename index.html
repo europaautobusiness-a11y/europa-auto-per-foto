@@ -11906,7 +11906,8 @@ function cvVendConsegna(id){
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
   if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;}); if(_mi>=0){ _ml[_mi].stato='venduta'; _ml[_mi].impegnata=true; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   cvSave(list); supaUpsert('preventivi', list[idx]); cvVendRender();
-  if(typeof tcToastNew==='function') tcToastNew('✅ Consegnato',true);
+  if(typeof cvStampaById==='function'){ cvStampaById(id, 'finale'); }
+  if(typeof tcToastNew==='function') tcToastNew('✅ Consegnato — stampa contratto in corso',true);
 }
 
 function cvVendNotificaMail(cv,p){
@@ -12089,8 +12090,30 @@ function crmLeads(){
 }
 function crmDefaultStato(l){ return l.consegnato?'chiuso vinto':'nuovo'; }
 function crmInit(){ crmSupaLoad(); crmRender(); }
+function crmMesiDa(ts){ if(!ts) return 0; return Math.floor((Date.now()-ts)/(1000*60*60*24*30.44)); }
+function crmDMY(ts){ if(!ts) return '—'; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
+function crmAddMesi(ts, m){ var d=new Date(ts); d.setMonth(d.getMonth()+(parseInt(m,10)||0)); return d.getTime(); }
+function crmWa(tel){ var t=(tel||'').replace(/[^0-9]/g,''); if(!t) return ''; if(t.indexOf('39')!==0 && t.length<=10) t='39'+t; return t; }
+function crmOfferta(nome, tel, email, auto){
+  var scad=new Date(Date.now()+48*3600*1000);
+  var scadStr=('0'+scad.getDate()).slice(-2)+'/'+('0'+(scad.getMonth()+1)).slice(-2)+' ore '+('0'+scad.getHours()).slice(-2)+':'+('0'+scad.getMinutes()).slice(-2);
+  var txt='Gentile '+(nome||'Cliente')+', Europa Auto le riserva un\'offerta esclusiva: PACCHETTO MANUTENZIONE INCLUSO sul veicolo '+(auto||'')+'. Offerta valida fino al '+scadStr+' (48 ore). La aspettiamo! Europa Auto Srl - Tel. 029181820';
+  var t=crmWa(tel);
+  if(t){ window.open('https://wa.me/'+t+'?text='+encodeURIComponent(txt), '_blank'); }
+  else if(email){ window.open('mailto:'+email+'?subject='+encodeURIComponent('Offerta manutenzione - Europa Auto')+'&body='+encodeURIComponent(txt), '_blank'); }
+  else { alert('Questo contatto non ha né telefono né email.'); }
+}
+function crmOffBtn(nome,tel,email,auto){ return '<button onclick="crmOfferta('+JSON.stringify(nome||'')+','+JSON.stringify(tel||'')+','+JSON.stringify(email||'')+','+JSON.stringify(auto||'')+')" style="margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🎁 Offerta manutenzione (WhatsApp)</button>'; }
+var _crmTab='lead';
+function crmTab(t){ _crmTab=t; crmRender(); }
 function crmRender(){
   var wrap=document.getElementById('view-crm'); if(!wrap) return;
+  var tabs=[['lead','Contatti / Lead'],['consegnate','Auto consegnate'],['assicurazioni','Assicurazioni']];
+  var tb='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+t[1]+'</button>'; }).join('')+'</div>';
+  var body = _crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderLead());
+  wrap.innerHTML='<div style="max-width:900px;margin:0 auto;">'+tb+body+'</div>';
+}
+function crmRenderLead(){
   var store=crmLoad();
   var q=((document.getElementById('crm-cerca')||{}).value||'').toLowerCase().trim();
   var fil=(document.getElementById('crm-filtro')||{}).value||'tutti';
@@ -12098,8 +12121,7 @@ function crmRender(){
   leads.forEach(function(l){ var st=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); l._stato=st; if(cnt[st]!=null)cnt[st]++; });
   var vis=leads.filter(function(l){ if(fil!=='tutti'&&l._stato!==fil) return false; if(q){ var blob=(l.nome+' '+l.cognome+' '+l.telefono+' '+l.email+' '+l.auto).toLowerCase(); if(blob.indexOf(q)<0) return false; } return true; });
   var col={'nuovo':'#64748b','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
-  var h='<div style="max-width:900px;margin:0 auto;">';
-  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><input id="crm-cerca" oninput="crmRender()" placeholder="🔎 Cerca nome, telefono, email…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;"><select id="crm-filtro" onchange="crmRender()" style="padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"><option value="tutti">Tutti gli stati</option>'+CRM_STATI.map(function(s){return '<option'+(fil===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
+  var h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><input id="crm-cerca" oninput="crmRender()" placeholder="🔎 Cerca nome, telefono, email…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;"><select id="crm-filtro" onchange="crmRender()" style="padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"><option value="tutti">Tutti gli stati</option>'+CRM_STATI.map(function(s){return '<option'+(fil===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
   h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">👥 '+leads.length+' contatti · '+CRM_STATI.map(function(s){return '<b style="color:'+col[s]+'">'+cnt[s]+'</b> '+s;}).join(' · ')+'</div>';
   if(!vis.length){ h+='<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessun contatto. I lead arrivano in automatico dai preventivi che crei.</div>'; }
   vis.forEach(function(l){ var rec=store[l.key]||{};
@@ -12107,11 +12129,36 @@ function crmRender(){
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1;min-width:180px;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.telefono?('📞 '+crmEsc(l.telefono)):'')+(l.email?('  ✉️ '+crmEsc(l.email)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:3px;">🚗 '+crmEsc(l.auto||'—')+' · '+l.nPrev+' preventivo/i</div></div>'
       +'<select onchange="crmSetStato(\''+l.key+'\',this.value)" style="height:38px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-weight:700;color:'+(col[l._stato]||'#334155')+';">'+CRM_STATI.map(function(s){return '<option'+(l._stato===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
       +'<textarea onchange="crmSetNote(\''+l.key+'\',this.value)" placeholder="Note / promemoria…" style="width:100%;margin-top:8px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:44px;box-sizing:border-box;">'+crmEsc(rec.note||'')+'</textarea>'
+      +crmOffBtn(l.nome,l.telefono,l.email,l.auto)
       +'</div>';
   });
-  h+='<div style="font-size:11px;color:#94a3b8;margin-top:12px;">Prima versione del CRM: i contatti si popolano dai preventivi. Prossimi passi: promemoria con notifica, campagne email ai lead non chiusi, storico per cliente.</div>';
-  h+='</div>';
-  wrap.innerHTML=h;
+  return h;
+}
+function crmRenderConsegnate(){
+  var cons=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.statoVendita==='consegnato';}).sort(function(a,b){return (b.consegnatoTs||0)-(a.consegnatoTs||0);});
+  if(!cons.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna auto consegnata.</div>';
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🚗 '+cons.length+' auto consegnate. A ~11 mesi dalla consegna compare il promemoria per proporre il pacchetto manutenzione (tagliando).</div>';
+  cons.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var mesi=crmMesiDa(cv.consegnatoTs); var tag=mesi>=11;
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(tag?'border-left:4px solid #d97706;':'')+'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div></div>'
+      +(tag?'<div style="font-size:11px;font-weight:800;color:#92400e;background:#fef3c7;padding:5px 9px;border-radius:20px;height:fit-content;white-space:nowrap;">🔔 Tempo tagliando</div>':'')+'</div>'
+      +crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''))
+      +'</div>';
+  });
+  return h;
+}
+function crmRenderAssic(){
+  var ass=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
+  if(!ass.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
+  ass=ass.map(function(cv){ var mesi=parseInt(cv.assicMesi,10); if(isNaN(mesi)||mesi<=0||mesi>120) mesi=12; cv._scad=crmAddMesi(cv.consegnatoTs, mesi); cv._gg=Math.round((cv._scad-Date.now())/(1000*60*60*24)); return cv; }).sort(function(a,b){return a._scad-b._scad;});
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze attive. In arancione quelle in scadenza entro 60 giorni.</div>';
+  ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<60;
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
+      +'<div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Scadenza</div><div style="font-weight:800;color:'+(scad?'#d97706':'#1a4fa0')+';">'+crmDMY(cv._scad)+'</div><div style="font-size:11px;color:'+(cv._gg<0?'#dc2626':'#94a3b8')+';">'+(cv._gg<0?'scaduta':('tra '+cv._gg+' gg'))+'</div></div></div>'
+      +'</div>';
+  });
+  return h;
 }
 function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].stato=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmSetNote(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].note=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
