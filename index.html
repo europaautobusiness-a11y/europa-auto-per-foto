@@ -902,7 +902,8 @@ html, body{
   <div id="mz-pan-auto">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
       <button onclick="mzForm()" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">➕ Aggiungi auto</button>
-      <input id="mz-cerca" oninput="mzRender()" placeholder="🔎 Cerca marca, modello, targa…" style="flex:1;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">
+      <button onclick="mzSyncUp()" style="padding:10px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">☁️ Sincronizza su Supabase</button>
+      <input id="mz-cerca" oninput="mzRender()" placeholder="🔎 Cerca marca, modello, targa…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">
     </div>
     <div id="mz-filtri" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
     <div id="mz-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
@@ -11070,15 +11071,18 @@ function mzById(id){ return mzLoad().filter(function(a){return a.id===id;})[0]||
 function mzStatoInfo(s){ for(var i=0;i<MZ_STATI.length;i++){ if(MZ_STATI[i][0]===s) return MZ_STATI[i]; } return MZ_STATI[0]; }
 function mzEuro(n){ n=parseFloat(n); if(isNaN(n)) return '—'; return '€ '+n.toLocaleString('it-IT'); }
 
+function mzSyncUp(){ var sb=sbClient(); if(!sb){ alert('Supabase non disponibile (ricarica la pagina).'); return; } var a=mzLoad(); a.forEach(function(r){ if(r&&r.id) mzSupaUpsert(r); }); var f=(typeof fnLoad==='function')?fnLoad():[]; f.forEach(function(r){ if(r&&r.id) fnSupaUpsert(r); }); if(typeof tcToastNew==='function') tcToastNew('☁️ Inviate '+a.length+' auto e '+f.length+' fornitori su Supabase',true); setTimeout(function(){ mzSupaLoad(); if(typeof fnSupaLoad==='function') fnSupaLoad(); },1500); }
 function mzLoadDaSheets(){
   if(typeof GS_URL==='undefined' || !GS_URL) return;
   var cb='mzCb_'+Date.now(); var s=document.createElement('script');
   var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
   window[cb]=function(data){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
     if(!Array.isArray(data)) return;
-    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
-    mzLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
+    var byId={}, onSheet={}; data.forEach(function(r){ if(r&&r.id){ byId[r.id]=r; onSheet[r.id]=true; } });
+    var locals=mzLoad();
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
     mzSave(Object.keys(byId).map(function(k){return byId[k];}));
+    if(typeof gsJsonp==='function' && typeof GS_URL!=='undefined' && GS_URL){ locals.forEach(function(r){ if(r&&r.id&&!onSheet[r.id]){ try{ gsJsonp({action:'upsert', sheet:'Magazzino', record:r}); }catch(e){} } }); }
     if(typeof mzRender==='function') mzRender();
     var pr=document.getElementById('mz-pan-reg'); if(pr && pr.style.display!=='none' && typeof regRender==='function') regRender();
   };
@@ -11092,9 +11096,11 @@ function fnLoadDaSheets(){
   var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },12000);
   window[cb]=function(data){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
     if(!Array.isArray(data)) return;
-    var byId={}; data.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
-    fnLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
+    var byId={}, onSheet={}; data.forEach(function(r){ if(r&&r.id){ byId[r.id]=r; onSheet[r.id]=true; } });
+    var locals=fnLoad();
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
     fnSave(Object.keys(byId).map(function(k){return byId[k];}));
+    if(typeof gsJsonp==='function' && typeof GS_URL!=='undefined' && GS_URL){ locals.forEach(function(r){ if(r&&r.id&&!onSheet[r.id]){ try{ gsJsonp({action:'upsert', sheet:'Fornitori', record:r}); }catch(e){} } }); }
     if(typeof fnRender==='function') fnRender();
     var sel=document.getElementById('mz_fornitore'); if(sel){ var cur=sel.value; sel.innerHTML=fnOptions(cur); sel.value=cur; }
   };
@@ -11102,7 +11108,7 @@ function fnLoadDaSheets(){
   s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
   document.body.appendChild(s);
 }
-function mzInit(){ mzRenderFiltri(); mzRender(); mzLoadDaSheets(); }
+function mzInit(){ mzRenderFiltri(); mzRender(); mzSupaLoad(); }
 
 function mzRenderFiltri(){
   var c=document.getElementById('mz-filtri'); if(!c) return;
@@ -11198,7 +11204,7 @@ function mzSalva(){
   a.targa=(a.targa||'').toUpperCase(); a.updatedAt=Date.now();
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
-  mzSave(list); if(typeof gsJsonp==='function' && typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:'Magazzino', record:a}); }catch(e){} } mzChiudi(); mzRender();
+  mzSave(list); mzSupaUpsert(a); mzChiudi(); mzRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Auto salvata',true);
 }
 function mzElimina(id){
@@ -11575,7 +11581,7 @@ function fnEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</
 function fnLoad(){ try{ return JSON.parse(localStorage.getItem(FORN_KEY)||'[]'); }catch(e){ return []; } }
 function fnSave(l){ try{ localStorage.setItem(FORN_KEY, JSON.stringify(l)); }catch(e){ alert('Memoria piena.'); } }
 function fnById(id){ return fnLoad().filter(function(x){return x.id===id;})[0]||null; }
-function fnInit(){ fnRender(); fnLoadDaSheets(); }
+function fnInit(){ fnRender(); fnSupaLoad(); }
 function fnRender(){
   var wrap=document.getElementById('fn-lista'); if(!wrap) return;
   var q=((document.getElementById('fn-cerca')||{}).value||'').toLowerCase().trim();
@@ -11618,12 +11624,12 @@ function fnSalva(){
   ['ragione','piva','cfiscale','pec','indirizzo','note'].forEach(function(k){ f[k]=g(k); });
   var l=fnLoad(); var i=l.findIndex(function(x){return x.id===f.id;});
   if(i>=0) l[i]=f; else l.push(f);
-  fnSave(l); if(typeof gsJsonp==='function' && typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:'Fornitori', record:f}); }catch(e){} }
+  fnSave(l); fnSupaUpsert(f);
   var ret=_fnReturn; fnChiudi();
   if(typeof fnRender==='function') fnRender();
   if(ret==='auto' && typeof mzFornitoreRefresh==='function'){ mzFornitoreRefresh(f.id); }
 }
-function fnElimina(id){ if(!confirm('Eliminare questo fornitore?')) return; fnSave(fnLoad().filter(function(x){return x.id!==id;})); fnChiudi(); fnRender(); }
+function fnElimina(id){ if(!confirm('Eliminare questo fornitore?')) return; fnSave(fnLoad().filter(function(x){return x.id!==id;})); fnSupaDelete(id); fnChiudi(); fnRender(); }
 function fnOptions(selId){ return '<option value="">— nessuno —</option>'+fnLoad().sort(function(a,b){return (a.ragione||'').localeCompare(b.ragione||'');}).map(function(f){ return '<option value="'+f.id+'"'+(selId===f.id?' selected':'')+'>'+fnEsc(f.ragione)+'</option>'; }).join(''); }
 
 /* ===================== PARAMETRI ===================== */
@@ -11731,7 +11737,7 @@ function regSalva(){
   var cs=document.getElementById('reg_causale');
   list[idx].scarico={ causale:cs?cs.value:'', dataScarico:g('dataScarico'), destinatario:g('destinatario'), destinatarioCf:g('destinatarioCf'), destinatarioInd:g('destinatarioInd') };
   list[idx].updatedAt=Date.now();
-  mzSave(list); if(typeof gsJsonp==='function' && typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:'Magazzino', record:list[idx]}); }catch(e){} } regChiudi(); regRender();
+  mzSave(list); mzSupaUpsert(list[idx]); regChiudi(); regRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Registro aggiornato',true);
 }
 
@@ -11818,7 +11824,7 @@ function cvVendImmatricola(id){
     if(nt===null) return; nt=(nt||'').toUpperCase().trim();
     if(!nt){ alert('Per un\'auto estera la nuova targa è obbligatoria.'); return; }
     cv.nuovaTarga=nt; if(cv.autoSnapshot) cv.autoSnapshot.targa=nt;
-    if(cv.autoId && typeof mzLoad==='function'){ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;}); if(mi>=0){ ml[mi].targa=nt; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof gsJsonp==='function'&&typeof GS_URL!=='undefined'&&GS_URL){ try{ gsJsonp({action:'upsert',sheet:'Magazzino',record:ml[mi]}); }catch(e){} } } }
+    if(cv.autoId && typeof mzLoad==='function'){ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;}); if(mi>=0){ ml[mi].targa=nt; ml[mi].updatedAt=Date.now(); mzSave(ml); mzSupaUpsert(ml[mi]); } }
   } else {
     if(!confirm('Segnare l\'immatricolazione come completata?')) return;
   }
@@ -11847,6 +11853,38 @@ function cvVendNotificaMail(cv,p){
 
 
 function sidebarSetActive(btn){ try{ document.querySelectorAll(".sidebar-item").forEach(function(b){b.classList.remove("active");}); if(btn) btn.classList.add("active"); }catch(e){} }
+
+/* ===================== MAGAZZINO + FORNITORI su SUPABASE ===================== */
+function mzSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('magazzino').upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log('magazzino upsert:',res.error.message); }); }catch(e){} }
+function mzSupaDelete(id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from('magazzino').delete().eq('id',String(id)).then(function(){}); }catch(e){} }
+function mzSupaLoad(){
+  var sb=sbClient(); if(!sb){ if(typeof mzRender==='function') mzRender(); return; }
+  try{ sb.from('magazzino').select('id,data').then(function(res){
+    if(!res||res.error){ if(res&&res.error) console.log('magazzino load:',res.error.message); if(typeof mzRender==='function') mzRender(); return; }
+    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; onDb[d.id]=true; } });
+    var locals=mzLoad(), localOnly=[];
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]){ byId[r.id]=r; localOnly.push(r); } });
+    mzSave(Object.keys(byId).map(function(k){return byId[k];}));
+    localOnly.forEach(function(r){ mzSupaUpsert(r); });
+    if(typeof mzRender==='function') mzRender();
+    var pr=document.getElementById('mz-pan-reg'); if(pr && pr.style.display!=='none' && typeof regRender==='function') regRender();
+  }); }catch(e){ if(typeof mzRender==='function') mzRender(); }
+}
+function fnSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('fornitori').upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log('fornitori upsert:',res.error.message); }); }catch(e){} }
+function fnSupaDelete(id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from('fornitori').delete().eq('id',String(id)).then(function(){}); }catch(e){} }
+function fnSupaLoad(){
+  var sb=sbClient(); if(!sb){ if(typeof fnRender==='function') fnRender(); return; }
+  try{ sb.from('fornitori').select('id,data').then(function(res){
+    if(!res||res.error){ if(res&&res.error) console.log('fornitori load:',res.error.message); if(typeof fnRender==='function') fnRender(); return; }
+    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; onDb[d.id]=true; } });
+    var locals=fnLoad(), localOnly=[];
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]){ byId[r.id]=r; localOnly.push(r); } });
+    fnSave(Object.keys(byId).map(function(k){return byId[k];}));
+    localOnly.forEach(function(r){ fnSupaUpsert(r); });
+    if(typeof fnRender==='function') fnRender();
+    var sel=document.getElementById('mz_fornitore'); if(sel){ var cur=sel.value; sel.innerHTML=fnOptions(cur); sel.value=cur; }
+  }); }catch(e){ if(typeof fnRender==='function') fnRender(); }
+}
 </script>
 
 </body>
