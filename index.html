@@ -11694,6 +11694,38 @@ var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT
 var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
 (function(){ try{ var raw=localStorage.getItem(PARAM_KEY); if(!raw) return; var o=JSON.parse(raw); var ch=false; if(o && typeof o.condizioni==='string' && o.condizioni.indexOf('2% e il 4%')>=0){ o.condizioni=PARAM_CONDIZIONI_DEF; ch=true; } if(o && typeof o.condizioniFinali==='string' && o.condizioniFinali.indexOf('2% e il 4%')>=0){ o.condizioniFinali=PARAM_CONDIZIONI_FINALI_DEF; ch=true; } if(ch){ localStorage.setItem(PARAM_KEY, JSON.stringify(o)); } }catch(e){} })();
+var EA_BUILD='2026-07-11 · sync-fix';
+function diagSync(){
+  var out=document.getElementById('diag-out'); if(!out) return;
+  out.style.color='#334155'; out.innerHTML='Verifica in corso\u2026';
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ out.innerHTML='\u274c Libreria Supabase non caricata (connessione assente o script bloccato). Ricarica la pagina.'; return; }
+  var tabelle=['preventivi','fornitori','magazzino','crm'];
+  var localCount={ preventivi:function(){try{return cvLoad().length;}catch(e){return '-';}}, fornitori:function(){try{return fnLoad().length;}catch(e){return '-';}}, magazzino:function(){try{return mzLoad().length;}catch(e){return '-';}}, crm:function(){try{return Object.keys(crmLoad()).length;}catch(e){return '-';}} };
+  var righe=['<b>Versione app:</b> '+EA_BUILD]; var idx=0;
+  function fine(){ out.innerHTML=righe.join('<br>'); }
+  function prossima(){
+    if(idx>=tabelle.length){ fine(); return; }
+    var t=tabelle[idx++]; var loc=localCount[t]?localCount[t]():'-';
+    sb.from(t).select('id').then(function(res){
+      if(res&&res.error){ righe.push('\u274c <b>'+t+'</b>: lettura fallita \u2014 '+res.error.message); prossima(); return; }
+      var n=(res.data||[]).length; var probe='__diag__'+Date.now();
+      sb.from(t).upsert({ id:probe, data:{ id:probe, _diag:true } }).then(function(w){
+        if(w&&w.error){ righe.push('\u274c <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u2014 SCRITTURA BLOCCATA: '+w.error.message); prossima(); return; }
+        sb.from(t).delete().eq('id',probe).then(function(){ righe.push('\u2705 <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u00b7 scrittura OK'); prossima(); }, function(){ righe.push('\u2705 <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u00b7 scrittura OK'); prossima(); });
+      }, function(err){ righe.push('\u274c <b>'+t+'</b>: errore rete in scrittura \u2014 '+((err&&err.message)||err)); prossima(); });
+    }, function(err){ righe.push('\u274c <b>'+t+'</b>: errore rete in lettura \u2014 '+((err&&err.message)||err)); prossima(); });
+  }
+  prossima();
+}
+function diagRicarica(){
+  var out=document.getElementById('diag-out'); if(out){ out.style.color='#334155'; out.innerHTML='Ricarico dal cloud\u2026'; }
+  try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  try{ if(typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
+  try{ if(typeof mzSupaLoad==='function') mzSupaLoad(); }catch(e){}
+  try{ if(typeof crmSupaLoad==='function') crmSupaLoad(); }catch(e){}
+  setTimeout(function(){ if(out) out.innerHTML='\u2705 Ricarica avviata. Riapri Preventivi/Fornitori per vedere i dati. Premi di nuovo \u201cVerifica\u201d per ricontrollare i conteggi.'; }, 500);
+}
 function parInit(){
   var p=parLoad(); var el=document.getElementById('par-form'); if(!el) return;
   var lab=function(t){ return '<label style="display:block;font-size:12px;font-weight:700;color:#334155;margin:14px 0 4px;">'+t+'</label>'; };
@@ -11719,6 +11751,12 @@ function parInit(){
   h+=lab('Condizioni CONTRATTO finale (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
   h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
   h+='<div id="par-stato" style="text-align:center;font-size:13px;color:#16a34a;font-weight:700;margin-top:10px;min-height:18px;"></div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Diagnostica sincronizzazione</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+  h+='<button onclick="diagSync()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\udd0e Verifica sincronizzazione</button>';
+  h+='<button onclick="diagRicarica()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\udd04 Ricarica dati dal cloud</button>';
+  h+='</div>';
+  h+='<div id="diag-out" style="margin-top:10px;font-size:13px;color:#334155;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px;min-height:20px;">Premi \u201cVerifica sincronizzazione\u201d per controllare.</div>';
   h+='</div>';
   el.innerHTML=h;
 }
