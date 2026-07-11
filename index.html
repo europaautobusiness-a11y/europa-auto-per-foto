@@ -11922,7 +11922,7 @@ function cvVendCard(cv){
   var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
   var sb=STL[st]||['#f1f5f9','#334155',st];
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div>'
     +recap
     +'<div style="margin-top:10px;">'+(pag||'<div style="font-size:12px;color:#94a3b8;">Nessun pagamento inserito.</div>')+'</div>'
     +azione+stampe+annulla+'</div>';
@@ -12201,28 +12201,61 @@ function crmRenderDashboard(){
   leads.forEach(function(l){ var st=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); l._stato=st; if(cnt[st]!=null)cnt[st]++; });
   var tot=leads.length, vinti=cnt['chiuso vinto'], persi=cnt['chiuso perso'], chiusi=vinti+persi;
   var tasso=chiusi?Math.round(vinti/chiusi*100):0;
+  var col={'nuovo':'#64748b','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
+  var cvAll=(typeof cvLoad==='function'?cvLoad():[]);
+  var contratti=cvAll.filter(function(x){return x.isContratto;});
+  var venduto=contratti.reduce(function(s,x){ return s+((typeof cvCalcola==='function')?(cvCalcola(x).totaleVendita||0):0); },0);
   var oggi=crmOggiISO(); var rit=0,ogg=0; var prossime=[];
   Object.keys(store).forEach(function(k){ var arr=(store[k]&&store[k].attivita)||[]; arr.forEach(function(a){ if(a.fatto) return; if(a.scad&&a.scad<oggi) rit++; else if(a.scad&&a.scad===oggi) ogg++; if(a.scad) prossime.push({key:k,a:a}); }); });
   prossime.sort(function(x,y){ return (x.a.scad||'').localeCompare(y.a.scad||''); });
-  var fonti={}; leads.forEach(function(l){ var f=(store[l.key]&&store[l.key].fonte)||'(non indicata)'; fonti[f]=(fonti[f]||0)+1; });
   var nameByKey={}; leads.forEach(function(l){ nameByKey[l.key]=((l.cognome||'')+' '+(l.nome||'')).trim()||l.key; });
-  var col={'nuovo':'#64748b','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
-  var kpi=function(lab,val,sub,c){ return '<div style="flex:1;min-width:148px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;"><div style="font-size:12px;color:#64748b;font-weight:600;">'+lab+'</div><div style="font-size:28px;font-weight:800;color:'+(c||'#0f172a')+';margin-top:4px;line-height:1;">'+val+'</div>'+(sub?'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">'+sub+'</div>':'')+'</div>'; };
-  var h='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">'+kpi('Contatti totali',tot,'',null)+kpi('In trattativa',cnt['trattativa'],'trattative aperte','#1a4fa0')+kpi('Chiusi vinti',vinti,'','#16a34a')+kpi('Tasso di chiusura',tasso+'%','vinti su chiusi','#16a34a')+kpi('Da fare',ogg+rit,(rit?(rit+' in ritardo'):'nessun ritardo'),(rit?'#dc2626':'#d97706'))+'</div>';
-  var maxS=1; CRM_STATI.forEach(function(s){ if(cnt[s]>maxS)maxS=cnt[s]; });
-  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:16px;"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Pipeline</div>';
-  CRM_STATI.forEach(function(s){ var w=Math.round(cnt[s]/maxS*100); h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="width:110px;font-size:12px;color:#475569;text-transform:capitalize;">'+s+'</div><div style="flex:1;background:#f1f5f9;border-radius:6px;height:20px;overflow:hidden;"><div style="width:'+w+'%;height:100%;background:'+col[s]+';border-radius:6px;"></div></div><div style="width:26px;text-align:right;font-weight:800;font-size:13px;color:'+col[s]+';">'+cnt[s]+'</div></div>'; });
-  h+='</div>';
-  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;">';
-  var fk=Object.keys(fonti).sort(function(a,b){return fonti[b]-fonti[a];}); var maxF=1; fk.forEach(function(f){ if(fonti[f]>maxF)maxF=fonti[f]; });
-  h+='<div style="flex:1;min-width:260px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Provenienza contatti</div>';
-  if(!fk.length){ h+='<div style="font-size:13px;color:#94a3b8;">Nessun dato ancora. Imposta la provenienza dei contatti.</div>'; }
-  fk.forEach(function(f){ var w=Math.round(fonti[f]/maxF*100); h+='<div style="margin-bottom:9px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#475569;margin-bottom:3px;"><span>'+crmEsc(f)+'</span><b>'+fonti[f]+'</b></div><div style="background:#f1f5f9;border-radius:6px;height:8px;"><div style="width:'+w+'%;height:8px;background:#1a4fa0;border-radius:6px;"></div></div></div>'; });
-  h+='</div>';
-  h+='<div style="flex:1;min-width:260px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Prossimi promemoria</div>';
-  if(!prossime.length){ h+='<div style="font-size:13px;color:#94a3b8;">Nessun promemoria programmato.</div>'; }
-  prossime.slice(0,6).forEach(function(pp){ var stt=crmAttStato(pp.a); var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b'); h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;"><div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[pp.key]||pp.key)+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+(pp.a.nota?(' \u00b7 '+crmEsc(pp.a.nota)):'')+'</div></div><div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>'; });
-  h+='</div></div>';
+
+  // KPI cards con icona
+  var kpi=function(icon,bg,val,lab){ return '<div style="flex:1;min-width:146px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="width:38px;height:38px;border-radius:10px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:12px;">'+icon+'</div><div style="font-size:25px;font-weight:800;color:#0f172a;line-height:1;">'+val+'</div><div style="font-size:12px;color:#94a3b8;margin-top:5px;">'+lab+'</div></div>'; };
+  var h='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">'
+    +kpi('\uD83D\uDC65','#eef2ff',tot,'Contatti')
+    +kpi('\uD83D\uDD25','#eff6ff',cnt['trattativa'],'In trattativa')
+    +kpi('\uD83D\uDE97','#ecfdf5',contratti.length,'Auto vendute')
+    +kpi('\uD83D\uDCB6','#fefce8',cvEuro(venduto),'Venduto')
+    +kpi('\u2705','#f0fdf4',tasso+'%','Tasso chiusura')
+    +kpi('\u23F0','#fff7ed',(ogg+rit),'Promemoria')
+    +'</div>';
+
+  // Riga: grafico barre (vendite/mese) + ciambella pipeline
+  var mesi=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+  var perMese=[0,0,0,0,0,0,0,0,0,0,0,0]; var annoC=new Date().getFullYear();
+  contratti.forEach(function(cv){ var d=new Date(cv.contrattoTs||cv.createdAt||Date.now()); if(d.getFullYear()===annoC) perMese[d.getMonth()]++; });
+  var maxM=1; for(var mi=0;mi<12;mi++){ if(perMese[mi]>maxM) maxM=perMese[mi]; }
+  var bars=''; for(var m=0;m<12;m++){ var hg=Math.round(perMese[m]/maxM*120); bars+='<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;"><div style="font-size:10px;color:#94a3b8;">'+(perMese[m]||'')+'</div><div style="width:70%;background:#1a4fa0;border-radius:5px 5px 0 0;height:'+hg+'px;margin-top:3px;"></div><div style="font-size:10px;color:#94a3b8;margin-top:4px;">'+mesi[m]+'</div></div>'; }
+  var barCard='<div style="flex:2;min-width:300px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:14px;">Auto vendute per mese &middot; '+annoC+'</div><div style="display:flex;align-items:flex-end;gap:5px;height:150px;">'+bars+'</div></div>';
+
+  var totP=0; CRM_STATI.forEach(function(s){ totP+=cnt[s]; });
+  var donutSvg='<div style="display:flex;align-items:center;justify-content:center;height:150px;color:#94a3b8;font-size:13px;">Nessun contatto</div>';
+  if(totP>0){ var r=54,C=2*Math.PI*r,acc=0,segs='';
+    CRM_STATI.forEach(function(s){ if(!cnt[s])return; var frac=cnt[s]/totP; var len=frac*C; segs+='<circle cx="70" cy="70" r="54" fill="none" stroke="'+col[s]+'" stroke-width="20" stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-acc*C).toFixed(2)+'"></circle>'; acc+=frac; });
+    donutSvg='<div style="display:flex;justify-content:center;"><svg width="150" height="150" viewBox="0 0 140 140" style="transform:rotate(-90deg);">'+segs+'</svg></div>';
+  }
+  var legend=CRM_STATI.filter(function(s){return cnt[s];}).map(function(s){ return '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#475569;"><span style="width:9px;height:9px;border-radius:50%;background:'+col[s]+';"></span><span style="text-transform:capitalize;">'+s+'</span><b style="margin-left:auto;">'+cnt[s]+'</b></div>'; }).join('');
+  var donutCard='<div style="flex:1;min-width:220px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:8px;">Pipeline per fase</div>'+donutSvg+'<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px;">'+legend+'</div></div>';
+
+  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">'+barCard+donutCard+'</div>';
+
+  // Riga: trattative in corso + prossimi promemoria
+  var prob={'nuovo':20,'ricontattare':45,'trattativa':75};
+  var aperte=leads.filter(function(l){ return prob[l._stato]!=null; }).sort(function(a,b){ return (prob[b._stato]||0)-(prob[a._stato]||0); });
+  var oppCard='<div style="flex:2;min-width:300px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Trattative in corso</div>';
+  if(!aperte.length){ oppCard+='<div style="font-size:13px;color:#94a3b8;">Nessuna trattativa aperta.</div>'; }
+  aperte.slice(0,6).forEach(function(l){ var pr=prob[l._stato]||0;
+    oppCard+='<div style="padding:9px 0;border-bottom:1px solid #f1f5f9;"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[l.key]||l.key)+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(l.auto||'\u2014')+'</div></div><div style="text-align:right;flex:0 0 auto;"><span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:'+col[l._stato]+'22;color:'+col[l._stato]+';text-transform:capitalize;">'+l._stato+'</span></div></div><div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><div style="flex:1;background:#f1f5f9;border-radius:6px;height:6px;"><div style="width:'+pr+'%;height:6px;background:'+col[l._stato]+';border-radius:6px;"></div></div><span style="font-size:11px;font-weight:700;color:#64748b;">'+pr+'%</span></div></div>';
+  });
+  oppCard+='</div>';
+
+  var promCard='<div style="flex:1;min-width:220px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Prossimi promemoria</div>';
+  if(!prossime.length){ promCard+='<div style="font-size:13px;color:#94a3b8;">Nessun promemoria programmato.</div>'; }
+  prossime.slice(0,6).forEach(function(pp){ var stt=crmAttStato(pp.a); var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b'); promCard+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;"><div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[pp.key]||pp.key)+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+'</div></div><div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>'; });
+  promCard+='</div>';
+
+  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;">'+oppCard+promCard+'</div>';
   return h;
 }
 var _crmTab='dashboard';
