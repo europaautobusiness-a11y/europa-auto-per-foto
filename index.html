@@ -11131,7 +11131,7 @@ function mzRender(){
   var q=(document.getElementById('mz-cerca')||{}).value||''; q=q.toLowerCase().trim();
   var all=mzLoad();
   // statistiche
-  var disp=all.filter(function(a){return a.stato==='disponibile';});
+  var disp=all.filter(function(a){return a.stato==='disponibile' && !a.impegnata;});
   var valore=disp.reduce(function(s,a){var n=parseFloat(a.prezzoVen);return s+(isNaN(n)?0:n);},0);
   var stat=document.getElementById('mz-stat');
   if(stat) stat.innerHTML='🚙 '+all.length+' auto in totale · '+disp.length+' disponibili · valore magazzino (vendita): <b>'+mzEuro(valore)+'</b>';
@@ -11146,7 +11146,7 @@ function mzRender(){
     var si=mzStatoInfo(a.stato);
     h+='<div onclick="mzForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;">';
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
-    h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+'</div>';
+    h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+(a.stato==='venduta'?' <span style="font-size:10px;font-weight:800;background:#fecaca;color:#991b1b;padding:2px 7px;border-radius:10px;vertical-align:middle;">VENDUTA</span>':(a.impegnata?' <span style="font-size:10px;font-weight:800;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:10px;vertical-align:middle;">IMPEGNATA</span>':''))+'</div>';
     if(a.allestimento) h+='<div style="font-size:12px;color:#64748b;">'+mzEsc(a.allestimento)+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:4px;">'+(a.targa?('<b>'+mzEsc(a.targa)+'</b> · '):'')+(a.anno||'—')+' · '+(a.km?((''+a.km).replace(/\B(?=(\d{3})+(?!\d))/g,'.')+' km'):'— km')+'</div>';
     var badges=[]; if(a.alimentazione)badges.push(a.alimentazione); if(a.cambio)badges.push(a.cambio); if(a.colore)badges.push(a.colore);
@@ -11428,6 +11428,7 @@ function cvTrasformaContratto(){
   cvSync();
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Completa i dati del cliente.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Email cliente obbligatoria.'); return; }
+  var _tt=cvCalcola(_cv); if(Math.abs(_tt.saldoDovuto)>0.01){ alert('I pagamenti devono coprire l\'intero importo.\nTotale: '+cvEuro(_tt.totaleScontato)+'\nAncora da coprire: '+cvEuro(_tt.saldoDovuto)+'\n\nInserisci gli importi dei pagamenti fino a completare il totale.'); return; }
   if(!confirm('Trasformare questo preventivo in CONTRATTO? Entrer\u00e0 nelle Vendite come "in attesa di pagamento".')) return;
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
@@ -11454,7 +11455,8 @@ function cvSalva(){
   cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato e inviato al cliente':'💾 Preventivo salvato',true);
 }
-function cvElimina(id){ if(!confirm('Eliminare questo preventivo?')) return; cvSave(cvLoad().filter(function(x){return x.id!==id;})); supaDelete('preventivi', id); cvChiudi(); cvRender(); }
+var _cvDeleted={};
+function cvElimina(id){ if(!confirm('Eliminare definitivamente questo preventivo?')) return; _cvDeleted[id]=true; cvSave(cvLoad().filter(function(x){return x.id!==id;})); supaDelete('preventivi', id); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
 
 function cvStampa(tipo){ cvSync(); cvStampaDoc(_cv, tipo); }
 function cvStampaESalva(){
@@ -11462,6 +11464,7 @@ function cvStampaESalva(){
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
   if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
+  var _tt=cvCalcola(_cv); if(Math.abs(_tt.saldoDovuto)>0.01){ alert('I pagamenti devono coprire l\'intero importo.\nTotale: '+cvEuro(_tt.totaleScontato)+'\nAncora da coprire: '+cvEuro(_tt.saldoDovuto)+'\n\nInserisci gli importi dei pagamenti fino a completare il totale.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0); if(isNew && _cv.cliente.email){ _cv.emailInviata=true; }
   _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
@@ -11889,6 +11892,7 @@ function cvVendConsegna(id){
   if(!confirm('Segnare il veicolo come CONSEGNATO?')) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
+  if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;}); if(_mi>=0){ _ml[_mi].stato='venduta'; _ml[_mi].impegnata=true; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   cvSave(list); supaUpsert('preventivi', list[idx]); cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('✅ Consegnato',true);
 }
@@ -11953,7 +11957,7 @@ function supaLoadList(table, localLoad, localSave, done){
     if(done)done();
   }); }catch(e){ if(done)done(); }
 }
-function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, cvSave, function(){ if(typeof cvVendBadge==='function') cvVendBadge(); var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); }); }
+function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, function(arr){ cvSave(arr.filter(function(x){return !(_cvDeleted&&_cvDeleted[x.id]);})); }, function(){ if(typeof cvVendBadge==='function') cvVendBadge(); var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); }); }
 
 /* ===================== MODIFICA CONTRATTO (permessi + notifica) ===================== */
 var _cvMod=null;
