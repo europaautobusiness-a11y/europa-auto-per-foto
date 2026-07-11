@@ -10820,8 +10820,7 @@ function pmQuestStampa(q){
   h+='</table>';
   return h;
 }
-function pmStampa(){
-  var p=pmRaccogli();
+function pmPeriziaInner(p){
   var dch=[]; if(p.dichiarazioni.d1)dch.push('le informazioni fornite sullo stato del veicolo sono complete e veritiere'); if(p.dichiarazioni.d2)dch.push('il veicolo non presenta danni, guasti meccanici o vizi occulti diversi da quelli elencati'); if(p.dichiarazioni.d3)dch.push('il chilometraggio indicato è reale e non manomesso'); if(p.dichiarazioni.d4)dch.push('il veicolo non ha subìto danni strutturali da incidente non dichiarati');
   var tf=p.tagliandi.map(function(i){return PM_TAGLIANDI[i][0]+'/'+PM_TAGLIANDI[i][1];});
   var sigImgHtml = (p.metodoFirma!=='carta' && p.firma) ? '<img src="'+p.firma+'" style="max-height:62px;">' : '';
@@ -10847,6 +10846,12 @@ function pmStampa(){
     +'<p><b>Condizioni di consegna e pulizia.</b> Il veicolo dovr&agrave; essere consegnato in buone condizioni igieniche e di pulizia esterne. In caso contrario, al momento del ritiro verr&agrave; addebitato al cliente un importo di € 100,00 a titolo di spese di pulizia.</p>'
     +'<p style="margin-top:10px;">Data: '+pmOggi()+'</p>'
     +'<div class="firme" style="page-break-inside:avoid;"><div><div style="font-size:10px;color:#555;margin-bottom:2px;">Per Europa Auto Srl</div><div style="height:66px;"></div><div style="border-top:1px solid #000;padding-top:3px;">Firma del venditore</div></div><div><div style="font-size:10px;color:#555;margin-bottom:2px;">&nbsp;</div><div style="height:66px;display:flex;align-items:flex-end;justify-content:center;">'+sigImgHtml+'</div><div style="border-top:1px solid #000;padding-top:3px;">Firma del cliente</div>'+otpRiga+'</div></div></div>';
+  return doc;
+}
+function pmPeriziaFullHTML(p){ return '<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Perizia permuta</title></head><body id="sin-print" style="display:block;">'+pmPeriziaInner(p)+'</body></html>'; }
+function pmStampa(){
+  var p=pmRaccogli();
+  var doc=pmPeriziaInner(p);
   var pa=document.getElementById('sin-print'); if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
   pa.innerHTML=doc; pa.style.display='block'; document.body.classList.add('sin-printing');
   setTimeout(function(){ try{ window.print(); }catch(e){} }, 250);
@@ -11058,7 +11063,8 @@ function pmClientSubmit(){
   rec.metodoFirma= _pmcl.otpOk ? 'otp' : 'dito';
   rec.email=em; rec.otp=_pmcl.otpOk?em:''; rec.dataFirma=pmOggi(); rec.firmaTs=_pmcl.firmaTs||Date.now(); rec.firmatoDalCliente=true; rec.updatedAt=Date.now();
   if(typeof GS_URL!=='undefined' && GS_URL){
-    var fireNotif=function(){ try{ var ns=document.createElement('script'); ns.src=GS_URL+'?action=notificaPermuta&cliente='+encodeURIComponent(rec.cliente||'')+'&modello='+encodeURIComponent(rec.modello||'')+'&id='+encodeURIComponent(rec.id||'')+'&callback=pmNoop'; document.body.appendChild(ns); }catch(e){} };
+    var _phtml=''; try{ _phtml=pmPeriziaFullHTML(rec); }catch(e){}
+    var fireNotif=function(){ try{ gsPost({action:'notificaPermutaPdf', id:rec.id||'', cliente:rec.cliente||'', modello:rec.modello||'', html:_phtml}); }catch(e){} };
     try{ gsPost({action:'upsert', sheet:PERMUTE_SHEET, record:rec}).then(function(){ setTimeout(fireNotif,600); }, function(){ setTimeout(fireNotif,1800); }); }catch(e){ setTimeout(fireNotif,1800); }
   }
   if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
@@ -11493,7 +11499,6 @@ function cvStampaDoc(c, tipo){
   var row=function(l,v,cls,neg){ return '<div class="cvrow '+(cls||'')+(neg?' neg':'')+'"><div>'+l+'</div><div class="amt">'+(neg?'\u2212 ':'')+cvEuro(v)+'</div></div>'; };
   var doc='<div class="cvdoc">';
   doc+='<div class="cvtop"><div><div class="cvbrand">EUROPA AUTO SRL</div><div style="font-size:13px;font-weight:800;color:#334155;margin:2px 0;">'+titolo+'</div><div class="cvsmall">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &middot; P.IVA 06440210968 &middot; Tel. 029181820</div></div><div style="text-align:right;" class="cvsmall"><div>Venditore: <b style="color:#0f172a;">'+cvEsc(c.venditore||'')+'</b></div><div>Proposta di vendita: <b style="color:#0f172a;">'+cvEsc(c.data||'')+'</b></div></div></div>';
-  if(tipo!=='preventivo'){ doc+='<div class="cvsellertop">Europa Auto S.r.l. \u2014 Il venditore (firma per accettazione): <span class="ln"></span></div>'; }
   doc+='<div class="cvh">Dati acquirente</div><div class="cvgrid">'+fld('Nome',c.cliente.nome)+fld('Cognome',c.cliente.cognome)+fld('Telefono',c.cliente.telefono)+fld('Email',c.cliente.email)+'</div>';
   doc+='<div class="cvh">Dati auto</div><div class="cvgrid">'+fld('Modello',a.modello||c.autoDesc)+fld('Targa',a.targa)+fld('Alimentazione',a.alimentazione)+fld('Cilindrata',a.cilindrata)+fld('Potenza (kW)',a.potenza)+fld('Cambio',a.cambio)+fld('Telaio',a.telaio)+fld('Colore',a.colore)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(a.dataImm):a.dataImm))+fld('Km',c.kmAgg||a.km)+'</div>';
   doc+='<div class="cvh">Valore contratto</div>';
@@ -11511,12 +11516,12 @@ function cvStampaDoc(c, tipo){
   if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div class="cvsmall" style="margin-top:6px;">Beneficiario: <b>'+EA_BENEF+'</b> &middot; IBAN: <b>'+EA_IBAN+'</b></div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div class="cvsmall" style="margin-top:2px;">Causale bonifico: <b>'+cvEsc(cvCausale(c))+'</b></div>'; } }
   if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=(_finImp<10000)?2000:((_finImp<=15000)?3000:3500); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale pari a <b>'+cvEuro(_pen)+'</b>.</div>'; } }
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
-  if(_cond){ doc+='<div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:1px solid #eef2f7;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+='<div class="cvaccept">Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., l\'acquirente approva specificamente le clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale PROMO; variazione indicativa dell\'importo della rata; condizioni delle garanzie assicurative in promozione.</div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
-  if(c.permutaOn && c.permuta){ var pm=c.permuta; doc+='<div class="cvh">Veicolo in permuta</div><div class="cvgrid">'+fld('Modello',pm.modello)+fld('Alimentazione',pm.alimentazione)+fld('Cambio',pm.cambio)+fld('Immatricolazione',pm.immat)+fld('Colore',pm.colore)+fld('Targa',pm.targa)+fld('Cilindrata',pm.cilindrata)+fld('Potenza (kW)',pm.potenza)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(pm.dataImm):pm.dataImm))+fld('Km',pm.km)+fld('Prezzo acquisto',pm.prezzoAcq?cvEuro(pm.prezzoAcq):'')+fld('Doppia chiave',pm.doppiaChiave?'Sì':'No')+fld('Priva di difetti',pm.privaDifetti?'Sì':'No')+'</div>'+(pm.difetti?('<div class="cvbox" style="margin-top:8px;"><b>Dichiarazione difetti:</b> '+cvEsc(pm.difetti)+'</div>'):''); doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>Il proprietario del veicolo in permuta</div></div>'; }
+  if(_cond){ doc+='<div class="cvpb"></div><div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:1px solid #eef2f7;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+='<div class="cvaccept">Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., l\'acquirente approva specificamente le clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale PROMO; variazione indicativa dell\'importo della rata; condizioni delle garanzie assicurative in promozione.</div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+  if(c.permutaOn && c.permuta){ var pm=c.permuta; doc+='<div class="cvh">Veicolo in permuta</div><div class="cvgrid">'+fld('Modello',pm.modello)+fld('Alimentazione',pm.alimentazione)+fld('Cambio',pm.cambio)+fld('Immatricolazione',pm.immat)+fld('Colore',pm.colore)+fld('Targa',pm.targa)+fld('Cilindrata',pm.cilindrata)+fld('Potenza (kW)',pm.potenza)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(pm.dataImm):pm.dataImm))+fld('Km',pm.km)+fld('Prezzo acquisto',pm.prezzoAcq?cvEuro(pm.prezzoAcq):'')+fld('Doppia chiave',pm.doppiaChiave?'Sì':'No')+fld('Priva di difetti',pm.privaDifetti?'Sì':'No')+'</div>'+(pm.difetti?('<div class="cvbox" style="margin-top:8px;"><b>Dichiarazione difetti:</b> '+cvEsc(pm.difetti)+'</div>'):''); }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
-  if(tipo!=='preventivo'){ doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione)</div></div>'; }
   doc+='</div>';
-  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:12mm;}"
+  var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'34mm':'12mm';
+  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:12mm 12mm "+pageBottom+" 12mm;}"
     +".cvdoc{max-width:760px;margin:0 auto;padding:6px;font-size:12px;}"
     +".cvtop{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a4fa0;padding-bottom:8px;margin-bottom:2px;}"
     +".cvbrand{font-size:19px;font-weight:800;color:#1a4fa0;letter-spacing:.5px;} .cvsmall{font-size:10px;color:#64748b;}"
@@ -11525,8 +11530,9 @@ function cvStampaDoc(c, tipo){
     +".cvrow{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid #f1f5f9;font-size:12px;} .cvrow .amt{font-weight:600;white-space:nowrap;padding-left:14px;}"
     +".cvrow.sub{font-weight:800;} .cvrow.neg .amt{color:#b91c1c;} .cvrow.tot{border-top:2px solid #1a4fa0;border-bottom:none;font-weight:800;font-size:13.5px;color:#1a4fa0;margin-top:3px;padding-top:7px;}"
     +".cvbox{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.5;white-space:pre-line;}"
-    +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:30px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:44px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:12px;font-size:9.5px;color:#475569;line-height:1.45;page-break-inside:avoid;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;}";
-  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>'+titolo+' '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+'</body></html>';
+    +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:30px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:44px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:12px;font-size:9.5px;color:#475569;line-height:1.45;page-break-inside:avoid;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;} .cvpb{page-break-before:always;} .cvfoot{position:fixed;bottom:0;left:0;right:0;padding:5px 12mm 6px;border-top:1px solid #94a3b8;background:#fff;display:flex;justify-content:space-between;gap:50px;} .cvfoot .fs{flex:1;text-align:center;font-size:10px;color:#334155;} .cvfoot .fs .fl{height:30px;border-bottom:1px solid #334155;margin-bottom:3px;}";
+  var footHtml=needSign?'<div class="cvfoot"><div class="fs"><div class="fl"></div>Firma venditore</div><div class="fs"><div class="fl"></div>Firma acquirente</div></div>':'';
+  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>'+titolo+' '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+footHtml+'</body></html>';
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
@@ -11926,7 +11932,7 @@ function cvVendNotificaMail(cv,p){
 function sidebarSetActive(btn){ try{ document.querySelectorAll(".sidebar-item").forEach(function(b){b.classList.remove("active");}); if(btn) btn.classList.add("active"); }catch(e){} }
 
 /* ===================== MAGAZZINO + FORNITORI su SUPABASE ===================== */
-function mzSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('magazzino').upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log('magazzino upsert:',res.error.message); }); }catch(e){} }
+function mzSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('magazzino').upsert({ id:String(rec.id), data:rec }).then(function(res){ if(res&&res.error) console.log('magazzino upsert:',res.error.message); }); }catch(e){} }
 function mzSupaDelete(id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from('magazzino').delete().eq('id',String(id)).then(function(){}); }catch(e){} }
 function mzSupaLoad(){
   var sb=sbClient(); if(!sb){ if(typeof mzRender==='function') mzRender(); return; }
@@ -11941,7 +11947,7 @@ function mzSupaLoad(){
     var pr=document.getElementById('mz-pan-reg'); if(pr && pr.style.display!=='none' && typeof regRender==='function') regRender();
   }); }catch(e){ if(typeof mzRender==='function') mzRender(); }
 }
-function fnSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('fornitori').upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log('fornitori upsert:',res.error.message); }); }catch(e){} }
+function fnSupaUpsert(rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from('fornitori').upsert({ id:String(rec.id), data:rec }).then(function(res){ if(res&&res.error) console.log('fornitori upsert:',res.error.message); }); }catch(e){} }
 function fnSupaDelete(id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from('fornitori').delete().eq('id',String(id)).then(function(){}); }catch(e){} }
 function fnSupaLoad(){
   var sb=sbClient(); if(!sb){ if(typeof fnRender==='function') fnRender(); return; }
@@ -11958,7 +11964,7 @@ function fnSupaLoad(){
 }
 
 /* ===================== SYNC GENERICO SUPABASE (riusabile per ogni modulo) ===================== */
-function supaUpsert(table, rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from(table).upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log(table+' upsert:',res.error.message); }); }catch(e){} }
+function supaUpsert(table, rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){ if(res&&res.error) console.log(table+' upsert:',res.error.message); }); }catch(e){} }
 function supaDelete(table, id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from(table).delete().eq('id',String(id)).then(function(){}); }catch(e){} }
 function supaLoadList(table, localLoad, localSave, done){
   var sb=sbClient(); if(!sb){ if(done)done(); return; }
@@ -12164,7 +12170,7 @@ function crmRenderAssic(){
 }
 function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].stato=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmSetNote(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].note=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
-function crmSupaUpsert(key,rec){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').upsert({ id:String(key), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log('crm upsert:',res.error.message); }); }catch(e){} }
+function crmSupaUpsert(key,rec){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').upsert({ id:String(key), data:rec }).then(function(res){ if(res&&res.error) console.log('crm upsert:',res.error.message); }); }catch(e){} }
 function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').select('id,data').then(function(res){ if(!res||res.error) return; var s=crmLoad(); (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){try{d=JSON.parse(d);}catch(e){d=null;}} if(d&&r.id){ s[r.id]=d; } }); crmSave(s); crmRender(); }); }catch(e){} }
 </script>
 
