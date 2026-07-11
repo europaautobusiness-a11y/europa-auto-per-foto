@@ -9259,7 +9259,7 @@ function sidebarNav(view,btn){
   if(view==='sinistri'){ sinInit(); }
   if(view==='permute'){ pmInit(); }
   if(view==='fornitori'){ fnInit(); }
-  if(view==='preventivi'){ if(typeof cvRender==='function') cvRender(); }
+  if(view==='preventivi'){ if(typeof cvSupaLoad==='function') cvSupaLoad(); else if(typeof cvRender==='function') cvRender(); }
   if(view==='vendite'){ if(typeof cvVendInit==='function') cvVendInit(); }
   if(view==='parametri'){ parInit(); }
   if(view==='magazzino'){ mzInit(); }
@@ -11416,7 +11416,7 @@ function cvTrasformaContratto(){
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0); if(isNew && _cv.cliente.email){ _cv.emailInviata=true; }
   _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
-  cvSave(list);
+  cvSave(list); supaUpsert('preventivi', _cv);
   if(isNew && _cv.cliente.email){ cvInviaMailCliente(_cv); }
   cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew('\ud83d\udcc4 Trasformato in contratto \u2014 in attesa pagamento',true);
@@ -11431,12 +11431,12 @@ function cvSalva(){
   if(isNew && _cv.cliente.email){ _cv.emailInviata=true; }
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
-  cvSave(list);
+  cvSave(list); supaUpsert('preventivi', _cv);
   if(isNew && _cv.cliente.email){ cvInviaMailCliente(_cv); }
   cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato e inviato al cliente':'💾 Preventivo salvato',true);
 }
-function cvElimina(id){ if(!confirm('Eliminare questo preventivo?')) return; cvSave(cvLoad().filter(function(x){return x.id!==id;})); cvChiudi(); cvRender(); }
+function cvElimina(id){ if(!confirm('Eliminare questo preventivo?')) return; cvSave(cvLoad().filter(function(x){return x.id!==id;})); supaDelete('preventivi', id); cvChiudi(); cvRender(); }
 
 function cvStampa(tipo){ cvSync(); cvStampaDoc(_cv, tipo); }
 function cvStampaById(id, tipo){ var p=cvLoad().filter(function(x){return x.id===id;})[0]; if(!p){ alert('Contratto non trovato.'); return; } cvStampaDoc(p, tipo); }
@@ -11770,7 +11770,7 @@ function cvVendData(ts){ if(!ts) return ''; var d=new Date(ts); return ('0'+d.ge
 function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || e.indexOf('ariannapresta')>=0 || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
 function cvVendGo(stato){ _cvVendStato=stato||'in_attesa_pagamento'; sidebarNav('vendite'); }
-function cvVendInit(){ cvVendRender(); }
+function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 function cvVendEstera(cv){ if(cv.autoSnapshot && cv.autoSnapshot.estera) return true; if(cv.autoId && typeof mzById==='function'){ var a=mzById(cv.autoId); if(a && a.estera) return true; } return false; }
 
 function cvVendRender(){
@@ -11811,7 +11811,7 @@ function cvVendConfermaPag(id, ri){
   p.confermato=true; p.confermatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''); p.confermatoTs=Date.now();
   var avanzato=false;
   if(p.tipo==='Caparra' && ((cv.statoVendita||'in_attesa_pagamento')==='in_attesa_pagamento')){ cv.statoVendita='in_attesa_immatricolazione'; avanzato=true; }
-  cv.updatedAt=Date.now(); cvSave(list);
+  cv.updatedAt=Date.now(); cvSave(list); supaUpsert('preventivi', cv);
   cvVendNotificaMail(cv,p);
   cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew(avanzato?'✓ Caparra confermata → in attesa immatricolazione':'✓ Pagamento confermato',true);
@@ -11829,7 +11829,7 @@ function cvVendImmatricola(id){
     if(!confirm('Segnare l\'immatricolazione come completata?')) return;
   }
   cv.immatricolatoTs=Date.now(); cv.statoVendita='da_consegnare'; cv.updatedAt=Date.now();
-  cvSave(list); cvVendRender();
+  cvSave(list); supaUpsert('preventivi', cv); cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('🚗 Immatricolazione completata → da consegnare',true);
 }
 
@@ -11837,7 +11837,7 @@ function cvVendConsegna(id){
   if(!confirm('Segnare il veicolo come CONSEGNATO?')) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
-  cvSave(list); cvVendRender();
+  cvSave(list); supaUpsert('preventivi', list[idx]); cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('✅ Consegnato',true);
 }
 
@@ -11885,6 +11885,23 @@ function fnSupaLoad(){
     var sel=document.getElementById('mz_fornitore'); if(sel){ var cur=sel.value; sel.innerHTML=fnOptions(cur); sel.value=cur; }
   }); }catch(e){ if(typeof fnRender==='function') fnRender(); }
 }
+
+/* ===================== SYNC GENERICO SUPABASE (riusabile per ogni modulo) ===================== */
+function supaUpsert(table, rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from(table).upsert({ id:String(rec.id), data:rec, updated_at:new Date().toISOString() }).then(function(res){ if(res&&res.error) console.log(table+' upsert:',res.error.message); }); }catch(e){} }
+function supaDelete(table, id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from(table).delete().eq('id',String(id)).then(function(){}); }catch(e){} }
+function supaLoadList(table, localLoad, localSave, done){
+  var sb=sbClient(); if(!sb){ if(done)done(); return; }
+  try{ sb.from(table).select('id,data').then(function(res){
+    if(!res||res.error){ if(res&&res.error) console.log(table+' load:',res.error.message); if(done)done(); return; }
+    var byId={},onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; onDb[d.id]=true; } });
+    var locals=localLoad(),localOnly=[];
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]){ byId[r.id]=r; localOnly.push(r); } });
+    localSave(Object.keys(byId).map(function(k){return byId[k];}));
+    localOnly.forEach(function(r){ supaUpsert(table,r); });
+    if(done)done();
+  }); }catch(e){ if(done)done(); }
+}
+function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, cvSave, function(){ var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); }); }
 </script>
 
 </body>
