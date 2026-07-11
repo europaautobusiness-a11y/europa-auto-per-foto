@@ -11274,7 +11274,7 @@ function cvForm(id){
   _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''}] };
   if(!_cv.costiExtra) _cv.costiExtra=[]; if(!_cv.pagamenti) _cv.pagamenti=[]; if(!_cv.cliente) _cv.cliente={};
   var autos=(typeof mzLoad==='function'?mzLoad():[]);
-  var optAuto='<option value="">— seleziona auto dal magazzino —</option>'+autos.map(function(a){ var lab='#'+(a.targa||'???')+' - '+(a.marca||'')+' '+(a.modello||''); return '<option value="'+a.id+'"'+(_cv.autoId===a.id?' selected':'')+'>'+cvEsc(lab)+'</option>'; }).join('');
+  var optAuto='<option value="">— seleziona auto dal magazzino —</option>'+autos.filter(function(a){ return (!a.impegnata && a.stato!=='venduta') || a.id===_cv.autoId; }).map(function(a){ var lab='#'+(a.targa||'???')+' - '+(a.marca||'')+' '+(a.modello||''); return '<option value="'+a.id+'"'+(_cv.autoId===a.id?' selected':'')+'>'+cvEsc(lab)+'</option>'; }).join('');
   var lab=function(t){ return '<div style="font-size:13px;font-weight:700;color:#334155;margin:12px 0 4px;">'+t+'</div>'; };
   var inp=function(id2,val,ph,type){ return '<input id="'+id2+'" type="'+(type||'text')+'" value="'+cvEsc(val==null?'':val)+'" placeholder="'+(ph||'')+'" oninput="cvLive()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
   var tog=function(id2,on,t){ return '<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="'+id2+'" '+(on?'checked':'')+' onchange="cvLive()" style="width:20px;height:20px;">'+t+'</label>'; };
@@ -11318,9 +11318,8 @@ function cvForm(id){
   h+='</div>';
   h+=lab('Note contratto')+'<textarea id="cv_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+cvEsc(_cv.note||'')+'</textarea>';
   h+='<div id="cv-riepilogo" style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;"></div>';
-  h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva preventivo</button>';
-  h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa pre-contratto</button>';
-  h+='<button onclick="cvTrasformaContratto()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:2px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83d\udcc4 Trasforma in contratto</button>';
+  h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
+  h+='<button onclick="cvTrasformaContratto()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:2px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83d\udcc4 Trasforma in pre-contratto</button>';
   h+='<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;">Solo trasformandolo in contratto entra nelle Vendite (in attesa pagamento). Alla creazione il preventivo viene inviato via email al cliente.</div>';
   if(c) h+='<button onclick="cvElimina(\''+c.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
@@ -11343,7 +11342,12 @@ function cvPagMetodo(i, val){
     var tg=document.getElementById('cv_assicOn'); if(tg) tg.checked=true;
     var box=document.getElementById('cv-assic-box'); if(box) box.style.display='block';
     var dett=document.getElementById('cv_assicDett'); if(dett && !dett.value.trim()) dett.value=_cv.assicDettaglio;
+    _cv.scontoOn=true; if(!_cv.scontoDesc || !_cv.scontoDesc.trim()) _cv.scontoDesc='Sconto finanziamento promo';
+    var sc=document.getElementById('cv_scontoOn'); if(sc) sc.checked=true;
+    var sbox=document.getElementById('cv-sconto-box'); if(sbox) sbox.style.display='block';
+    var sd=document.getElementById('cv_scontoDesc'); if(sd && !sd.value.trim()) sd.value=_cv.scontoDesc;
   }
+  if(typeof cvRenderPag==='function') cvRenderPag();
   cvLive();
 }
 function cvRenderPag(){
@@ -11413,6 +11417,7 @@ function cvTrasformaContratto(){
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Email cliente obbligatoria.'); return; }
   if(!confirm('Trasformare questo preventivo in CONTRATTO? Entrer\u00e0 nelle Vendite come "in attesa di pagamento".')) return;
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
+  if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0); if(isNew && _cv.cliente.email){ _cv.emailInviata=true; }
   _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
@@ -11439,9 +11444,23 @@ function cvSalva(){
 function cvElimina(id){ if(!confirm('Eliminare questo preventivo?')) return; cvSave(cvLoad().filter(function(x){return x.id!==id;})); supaDelete('preventivi', id); cvChiudi(); cvRender(); }
 
 function cvStampa(tipo){ cvSync(); cvStampaDoc(_cv, tipo); }
+function cvStampaESalva(){
+  cvSync();
+  if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
+  if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
+  if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
+  var isNew=(idx<0); if(isNew && _cv.cliente.email){ _cv.emailInviata=true; }
+  _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
+  cvSave(list); supaUpsert('preventivi', _cv);
+  if(isNew && _cv.cliente.email){ cvInviaMailCliente(_cv); }
+  if(typeof cvRender==='function') cvRender();
+  if(typeof tcToastNew==='function') tcToastNew('💾 Preventivo salvato'+(isNew?' e inviato al cliente':''),true);
+  cvStampaDoc(_cv, 'preventivo');
+}
 function cvStampaById(id, tipo){ var p=cvLoad().filter(function(x){return x.id===id;})[0]; if(!p){ alert('Contratto non trovato.'); return; } cvStampaDoc(p, tipo); }
 function cvStampaDoc(c, tipo){
-  var isFinale=(tipo==='finale'); var titolo=isFinale?'Contratto':'Pre-contratto';
+  var isFinale=(tipo==='finale'); var titolo=isFinale?'Contratto':(tipo==='preventivo'?'Preventivo':'Pre-contratto');
   var t=cvCalcola(c), a=c.autoSnapshot||{};
   var pagList=(c.pagamenti||[]).filter(function(x){return cvNum(x.importo);});
   var fld=function(l,v){ return '<div class="cvfield"><div class="l">'+l+'</div><div class="v">'+cvEsc((v==null||v==='')?'—':v)+'</div></div>'; };
@@ -11796,11 +11815,30 @@ function cvVendCard(cv){
   if(st==='in_attesa_immatricolazione'){ azione='<button onclick="cvVendImmatricola(\''+cv.id+'\')" style="margin-top:10px;width:100%;padding:11px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">🚗 Immatricolazione completata'+(cvVendEstera(cv)?' (inserisci nuova targa)':'')+'</button>'; }
   else if(st==='da_consegnare'){ azione='<button onclick="cvVendConsegna(\''+cv.id+'\')" style="margin-top:10px;width:100%;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">✅ Segna come consegnato</button>'; }
   else if(st==='consegnato'){ azione='<div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'; }
-  var stampe='<div style="display:flex;gap:8px;margin-top:10px;"><button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='da_consegnare'||st==='consegnato')?('<button onclick="cvStampaById(\''+cv.id+'\',\'finale\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+'</div>';
+  var _isAdm=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
+  var mod='<button onclick="'+(_isAdm?('cvVendModifica(\''+cv.id+'\')'):('cvVendModificaLimitata(\''+cv.id+'\')'))+'" style="flex:1 1 46%;padding:8px;border-radius:7px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\u270f\ufe0f Modifica'+(_isAdm?' (completa)':' finanz./assic.')+'</button>';
+  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='da_consegnare'||st==='consegnato')?('<button onclick="cvStampaById(\''+cv.id+'\',\'finale\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+'</div>';
+  var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
+  var pagsAll=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
+  var incassato=pagsAll.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
+  var totale=t.totaleVendita;
+  var daIncassare=Math.max(0, totale-incassato);
+  var finTot=pagsAll.filter(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';}).reduce(function(s,p){return s+cvNum(p.importo);},0);
+  var permVal=(cv.permutaOn && cv.permuta)?cvNum(cv.permuta.prezzoAcq):0;
+  var recap='<div style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px;margin-top:10px;font-size:12px;">'
+    +'<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>Totale contratto</span><b>'+cvEuro(totale)+'</b></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#16a34a;"><span>✓ Incassato (confermato)</span><b>'+cvEuro(incassato)+'</b></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626;font-weight:700;"><span>Da incassare</span><b>'+cvEuro(daIncassare)+'</b></div>'
+    +(finTot?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;di cui finanziamento</span><span>'+cvEuro(finTot)+'</span></div>'):'')
+    +(permVal?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;permuta'+((cv.permuta&&cv.permuta.modello)?(' ('+cvEsc(cv.permuta.modello)+')'):'')+'</span><span>'+cvEuro(permVal)+'</span></div>'):'')
+    +'</div>';
+  var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
+  var sb=STL[st]||['#f1f5f9','#334155',st];
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Saldo dovuto</div><div style="font-weight:800;color:#1a4fa0;">'+cvEuro(t.saldoDovuto)+'</div></div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div>'
+    +recap
     +'<div style="margin-top:10px;">'+(pag||'<div style="font-size:12px;color:#94a3b8;">Nessun pagamento inserito.</div>')+'</div>'
-    +azione+stampe+'</div>';
+    +azione+stampe+annulla+'</div>';
 }
 
 function cvVendConfermaPag(id, ri){
@@ -11902,6 +11940,61 @@ function supaLoadList(table, localLoad, localSave, done){
   }); }catch(e){ if(done)done(); }
 }
 function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, cvSave, function(){ var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); }); }
+
+/* ===================== MODIFICA CONTRATTO (permessi + notifica) ===================== */
+var _cvMod=null;
+function cvVendModifica(id){ if(typeof cvForm==='function') cvForm(id); }
+function cvModModal(){ var m=document.getElementById('cv-mod-modal'); if(!m){ m=document.createElement('div'); m.id='cv-mod-modal'; m.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:10000;padding:14px;overflow:auto;'; document.body.appendChild(m); } return m; }
+function cvModChiudi(){ var m=document.getElementById('cv-mod-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } _cvMod=null; }
+function cvVendModificaLimitata(id){
+  var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
+  _cvMod=JSON.parse(JSON.stringify(cv)); if(!_cvMod.pagamenti) _cvMod.pagamenti=[];
+  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:8px 0 3px;">'+t+'</label>'; };
+  var h='<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
+  h+='<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;">Modifica finanziamento / assicurazione</span><button onclick="cvModChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>';
+  h+='<div style="padding:16px 18px;max-height:74vh;overflow:auto;">';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:8px;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||''))+' &mdash; '+cvEsc((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'')+'</div>';
+  h+='<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin:10px 0 4px;">Pagamenti / Finanziamento</div>';
+  _cvMod.pagamenti.forEach(function(p,i){
+    h+='<div style="background:#eff6ff;border-radius:8px;padding:8px;margin-bottom:6px;"><div style="font-weight:700;font-size:13px;">'+cvEsc(p.tipo||'')+' &mdash; '+cvEsc(p.metodo||'')+'</div>';
+    h+='<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;"><input value="'+cvEsc(p.importo||'')+'" type="number" placeholder="importo €" oninput="_cvMod.pagamenti['+i+'].importo=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;">';
+    if(/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'){ h+='<input value="'+cvEsc(p.rate||'')+'" type="number" placeholder="n° rate" oninput="_cvMod.pagamenti['+i+'].rate=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;"><input value="'+cvEsc(p.importoRata||'')+'" type="number" placeholder="rata €" oninput="_cvMod.pagamenti['+i+'].importoRata=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;">'; }
+    h+='</div></div>';
+  });
+  h+='<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin:12px 0 4px;">Assicurazione</div>';
+  h+='<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;"><input type="checkbox" '+(_cvMod.assicOn?'checked':'')+' onchange="_cvMod.assicOn=this.checked" style="width:18px;height:18px;"> Assicurazione inclusa</label>';
+  h+=lab('Importo assicurazione €')+'<input value="'+cvEsc(_cvMod.assicImporto||'')+'" type="number" oninput="_cvMod.assicImporto=this.value" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;box-sizing:border-box;">';
+  h+=lab('Dettaglio assicurazione')+'<textarea oninput="_cvMod.assicDettaglio=this.value" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;min-height:70px;box-sizing:border-box;font-family:inherit;">'+cvEsc(_cvMod.assicDettaglio||'')+'</textarea>';
+  h+='<button onclick="cvModSalva()" style="margin-top:16px;width:100%;padding:12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;cursor:pointer;font-family:inherit;">💾 Salva modifiche</button>';
+  h+='<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="margin-top:8px;width:100%;padding:11px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;cursor:pointer;font-family:inherit;">🖨️ Stampa pre-contratto</button>';
+  h+='</div></div>';
+  var m=cvModModal(); m.innerHTML=h; m.style.display='block';
+}
+function cvModSalva(){
+  if(!_cvMod) return;
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cvMod.id;}); if(idx<0){ cvModChiudi(); return; }
+  list[idx].pagamenti=_cvMod.pagamenti; list[idx].assicOn=_cvMod.assicOn; list[idx].assicImporto=_cvMod.assicImporto; list[idx].assicDettaglio=_cvMod.assicDettaglio;
+  list[idx].updatedAt=Date.now(); list[idx].modificatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''); list[idx].modificatoTs=Date.now();
+  cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', list[idx]);
+  cvNotificaModifica(list[idx]);
+  cvModChiudi(); if(typeof cvVendRender==='function') cvVendRender();
+  if(typeof tcToastNew==='function') tcToastNew('💾 Modifiche salvate',true);
+}
+function cvNotificaModifica(cv){
+  if(typeof gsJsonp!=='function' || typeof GS_URL==='undefined' || !GS_URL) return;
+  var t=cvCalcola(cv); var a=cv.autoSnapshot||{};
+  try{ gsJsonp({ action:'notificaModifica', cliente:(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim(), auto:(a.modello||cv.autoDesc||''), modificatoDa:(cv.modificatoDa||''), saldo:cvEuro(t.saldoDovuto) }); }catch(e){}
+}
+
+function cvVendAnnulla(id){
+  if(!confirm('Annullare questo contratto? Il veicolo tornerà DISPONIBILE in magazzino e il record tornerà un preventivo modificabile.')) return;
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return; var cv=list[idx];
+  if(cv.autoId && typeof mzLoad==="function"){ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;}); if(mi>=0){ ml[mi].impegnata=false; ml[mi].impegnataDa=null; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof mzSupaUpsert==="function") mzSupaUpsert(ml[mi]); } }
+  cv.isContratto=false; cv.statoVendita=null; cv.annullatoTs=Date.now(); cv.updatedAt=Date.now();
+  cvSave(list); if(typeof supaUpsert==="function") supaUpsert("preventivi", cv);
+  if(typeof cvVendRender==="function") cvVendRender();
+  if(typeof tcToastNew==="function") tcToastNew("Contratto annullato — auto tornata disponibile",true);
+}
 </script>
 
 </body>
