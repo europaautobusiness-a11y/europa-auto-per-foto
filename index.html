@@ -9987,8 +9987,47 @@ document.addEventListener('DOMContentLoaded',function(){
     if (c.data){ var s=String(c.data)+(c.ora?('T'+c.ora):'T09:00'); var t2=new Date(s).getTime(); if(!isNaN(t2)) return t2; }
     return null;
   }
+  /* --- Orari apertura, festivi e ferie (i solleciti partono solo quando siete aperti) --- */
+  var CC_FESTIVI_FISSI = ['01-01','01-06','04-25','05-01','06-02','08-15','11-01','12-08','12-25','12-26'];
+  var CC_FESTIVI_EXTRA = [];   // aggiungi qui feste locali, es. '12-07' Sant'Ambrogio, in formato 'MM-GG'
+  function ccPasqua(y){
+    var a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;
+    return new Date(y,mo-1,da);
+  }
+  function ccZ2(n){ return ('0'+n).slice(-2); }
+  function ccYmd(d){ return d.getFullYear()+'-'+ccZ2(d.getMonth()+1)+'-'+ccZ2(d.getDate()); }
+  function ccIsFestivo(d){
+    var mmdd=ccZ2(d.getMonth()+1)+'-'+ccZ2(d.getDate());
+    if (CC_FESTIVI_FISSI.indexOf(mmdd)>=0) return true;
+    if (CC_FESTIVI_EXTRA.indexOf(mmdd)>=0) return true;
+    var pm=new Date(ccPasqua(d.getFullYear()).getTime()+86400000); // Lunedì dell'Angelo (Pasquetta)
+    if (d.getFullYear()===pm.getFullYear() && d.getMonth()===pm.getMonth() && d.getDate()===pm.getDate()) return true;
+    return false;
+  }
+  function ccIsOpen(d){
+    if (d.getDay()===0) return false;          // domenica chiuso
+    if (ccIsFestivo(d)) return false;          // festivi chiuso
+    var min=d.getHours()*60+d.getMinutes();
+    return (min>=540 && min<720) || (min>=870 && min<1140); // 9:00–12:00 e 14:30–19:00
+  }
+  function ccInFerie(email, ts){
+    if (!email) return false;
+    var ds=ccYmd(new Date(ts)); var e=String(email).toLowerCase();
+    var list=(typeof riLoad==='function')?riLoad():[];
+    return list.some(function(r){
+      if (!r) return false;
+      if (String(r.dipendente||'').toLowerCase()!==e) return false;
+      if ((r.stato||'')!=='approvato') return false;
+      var cat=String(r.categoria||'');
+      var fullDay=(cat==='Ferie'||cat==='Congedo'||cat==='Malattia'||cat==='Aspettativa'||!r.ore);
+      if (!fullDay) return false;
+      var di=r.dataInizio||r.data||''; var df=r.dataFine||di;
+      return di && ds>=di && ds<=df;
+    });
+  }
   function ccSolleciti(){
     var now=Date.now(), list=ccLoad(), changed=[];
+    if (!ccIsOpen(new Date(now))) return;                 // fuori orario/festivo/domenica: niente solleciti
     var u=ccUtente(); var meEmail=((u&&u.email)||'').toLowerCase();
     var isAdmin=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
     list.forEach(function(c){
@@ -9996,6 +10035,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if ((c.categoria||'')!=='task') return;            // solo task, non appuntamenti
       if (!c.dipEmail) return;                            // solo se assegnato a qualcuno
       var due=ccDueTs(c); if (due===null || due>now) return;  // solo se scaduto/da fare adesso
+      if (ccInFerie(c.dipEmail, now)) return;             // assegnatario in ferie oggi: non disturbare
       // 1) Popup "in faccia" all'assegnatario, sul suo dispositivo
       if (meEmail && String(c.dipEmail).toLowerCase()===meEmail){
         try{ if('Notification' in window && Notification.permission==='granted'){ new Notification('\u23f0 Task da fare', {body:(c.titolo||'')}); } else { ccToast('\u23f0 Da fare: '+(c.titolo||'')); } }catch(e){}
