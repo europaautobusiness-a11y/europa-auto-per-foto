@@ -913,9 +913,10 @@ html, body{
 </div>
 
 <div class="view" id="view-magazzino" style="padding:22px 16px;">
-  <div style="display:flex;gap:8px;margin-bottom:16px;">
-    <button id="mz-tab-auto" onclick="mzTab('auto')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">🚙 Auto</button>
-    <button id="mz-tab-reg" onclick="mzTab('reg')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">📋 Registro carico/scarico</button>
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+    <button id="mz-tab-auto" onclick="mzTab('auto')" style="flex:1;min-width:110px;padding:11px;border-radius:9px;border:2px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">🚙 Auto</button>
+    <button id="mz-tab-permute" onclick="mzTab('permute')" style="flex:1;min-width:110px;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">🔑 Permute in ingresso</button>
+    <button id="mz-tab-reg" onclick="mzTab('reg')" style="flex:1;min-width:110px;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">📋 Registro carico/scarico</button>
   </div>
   <div id="mz-pan-auto">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
@@ -935,6 +936,12 @@ html, body{
     <div id="reg-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
     <div id="reg-lista"></div>
     <div id="reg-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;padding:18px;overflow:auto;"></div>
+  </div>
+  <div id="mz-pan-permute" style="display:none;">
+    <div style="font-size:12px;color:#64748b;margin-bottom:10px;">Permute dai contratti non ancora entrate. <b>Conferma ingresso</b> = il veicolo entra nel magazzino e nel registro carico/scarico. <b>Export</b> = non entra da noi, viene esportato e rimosso dal contratto (resta consultabile in "Esportate").</div>
+    <div id="pmi-filtri" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
+    <div id="pmi-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
+    <div id="pmi-lista"></div>
   </div>
   <div id="mz-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;padding:18px;overflow:auto;"></div>
 </div>
@@ -11430,14 +11437,96 @@ function cvOggi(){ var d=new Date(),z=function(n){return String(n).padStart(2,'0
 
 function mzTab(t){
   _mzTab=t;
-  var ba=document.getElementById('mz-tab-auto'), bp=document.getElementById('mz-tab-reg');
-  var pa=document.getElementById('mz-pan-auto'), pp=document.getElementById('mz-pan-reg');
-  var onA=t==='auto';
-  if(ba){ ba.style.background=onA?'#1a4fa0':'#fff'; ba.style.color=onA?'#fff':'#334155'; ba.style.borderColor=onA?'#1a4fa0':'#cbd5e1'; }
-  if(bp){ bp.style.background=!onA?'#1a4fa0':'#fff'; bp.style.color=!onA?'#fff':'#334155'; bp.style.borderColor=!onA?'#1a4fa0':'#cbd5e1'; }
-  if(pa) pa.style.display=onA?'block':'none';
-  if(pp) pp.style.display=onA?'none':'block';
-  if(onA){ mzRender(); } else { if(typeof regInit==='function') regInit(); }
+  var tabs={auto:'mz-tab-auto', permute:'mz-tab-permute', reg:'mz-tab-reg'};
+  var pans={auto:'mz-pan-auto', permute:'mz-pan-permute', reg:'mz-pan-reg'};
+  Object.keys(tabs).forEach(function(k){
+    var b=document.getElementById(tabs[k]); var on=(k===t);
+    if(b){ b.style.background=on?'#1a4fa0':'#fff'; b.style.color=on?'#fff':'#334155'; b.style.borderColor=on?'#1a4fa0':'#cbd5e1'; }
+    var p=document.getElementById(pans[k]); if(p) p.style.display=on?'block':'none';
+  });
+  if(t==='auto'){ mzRender(); }
+  else if(t==='permute'){ if(typeof pmiInit==='function') pmiInit(); }
+  else { if(typeof regInit==='function') regInit(); }
+}
+
+/* ===================== PERMUTE IN INGRESSO (sotto Magazzino) ===================== */
+var _pmiFiltro='da_gestire';
+function pmiEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function pmiInit(){ pmiRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
+function pmiFiltro(f){ _pmiFiltro=f; pmiRender(); }
+function pmiHasData(pm){ return !!(pm && (pm.modello||pm.targa||pm.prezzoAcq||pm.telaio)); }
+function pmiList(){
+  var out=[]; ((typeof cvLoad==='function')?cvLoad():[]).forEach(function(cv){
+    var pm=cv.permuta; if(!pmiHasData(pm)) return;
+    var st=pm.permutaStato||'da_gestire';
+    if(_pmiFiltro==='da_gestire'){ if(cv.isContratto && cv.permutaOn!==false && (!pm.permutaStato||pm.permutaStato==='da_gestire')) out.push(cv); }
+    else if(st===_pmiFiltro){ out.push(cv); }
+  });
+  out.sort(function(a,b){ return (b.contrattoTs||b.createdAt||0)-(a.contrattoTs||a.createdAt||0); });
+  return out;
+}
+function pmiRender(){
+  var wrap=document.getElementById('pmi-lista'); if(!wrap) return;
+  var fb=document.getElementById('pmi-filtri');
+  if(fb){ var opts=[['da_gestire','Da gestire'],['entrata','Entrate'],['esportata','Esportate']];
+    fb.innerHTML=opts.map(function(o){ var on=_pmiFiltro===o[0]; return '<button onclick="pmiFiltro(\''+o[0]+'\')" style="padding:7px 12px;border-radius:20px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+o[1]+'</button>'; }).join('');
+  }
+  var lab={da_gestire:'da gestire',entrata:'entrate in magazzino',esportata:'esportate'};
+  var list=pmiList();
+  var st=document.getElementById('pmi-stat'); if(st) st.textContent=list.length+' permut'+(list.length===1?'a':'e')+' '+(lab[_pmiFiltro]||'');
+  if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">Nessuna permuta '+(lab[_pmiFiltro]||'')+'.</div>'; return; }
+  wrap.innerHTML=list.map(function(cv){
+    var pm=cv.permuta||{}; var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'Cliente';
+    var val=pm.prezzoAcq?('\u20ac '+parseFloat(pm.prezzoAcq).toLocaleString('it-IT')):'\u2014';
+    var stato=pm.permutaStato||'da_gestire';
+    var badge=stato==='entrata'?['ENTRATA','#dcfce7','#166534']:(stato==='esportata'?['ESPORTATA','#fee2e2','#991b1b']:['DA GESTIRE','#fef3c7','#92400e']);
+    var azioni='';
+    if(stato==='da_gestire'){
+      azioni='<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">'
+        +'<button onclick="pmiConfermaIngresso(\''+cv.id+'\')" style="flex:1;min-width:150px;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Conferma ingresso</button>'
+        +'<button onclick="pmiExport(\''+cv.id+'\')" style="flex:1;min-width:120px;padding:11px;border-radius:8px;border:1px solid #dc2626;background:#fff;color:#dc2626;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udce4 Export</button>'
+        +'</div>';
+    } else if(stato==='entrata'){
+      azioni='<div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:700;">\u2705 Entrata in magazzino e nel registro carico/scarico</div>';
+    } else if(stato==='esportata'){
+      azioni='<div style="margin-top:10px;font-size:12px;color:#991b1b;font-weight:700;">\ud83d\udce4 Esportata \u2014 rimossa dal contratto (archiviata per eventuali controlli)</div>';
+    }
+    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'
+      +'<div style="min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+pmiEsc(pm.modello||'Veicolo permuta')+'</div>'
+      +'<div style="font-size:12px;color:#64748b;margin-top:2px;">'+(pm.targa?('<b>'+pmiEsc(pm.targa)+'</b> \u00b7 '):'')+(pm.km?(pmiEsc(pm.km)+' km \u00b7 '):'')+pmiEsc(pm.alimentazione||'')+'</div>'
+      +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">Da: '+pmiEsc(nome)+(cv.autoDesc?(' \u00b7 acquisto '+pmiEsc(cv.autoDesc)):'')+'</div></div>'
+      +'<div style="text-align:right;flex:0 0 auto;"><span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+badge[1]+';color:'+badge[2]+';white-space:nowrap;">'+badge[0]+'</span><div style="font-weight:800;font-size:14px;color:#0f172a;margin-top:8px;">'+val+'</div></div>'
+      +'</div>'+azioni+'</div>';
+  }).join('');
+}
+function pmiConfermaIngresso(cvId){
+  if(!confirm('Confermare l\'INGRESSO di questa permuta?\n\nIl veicolo entra nel magazzino (disponibile) e nel registro di carico/scarico.')) return;
+  var list=(typeof cvLoad==='function')?cvLoad():[]; var idx=list.findIndex(function(x){return x.id===cvId;}); if(idx<0) return; var cv=list[idx];
+  var pm=cv.permuta||{};
+  var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+  var full=(pm.modello||'').trim(); var sp=full.indexOf(' '); var marca=sp>0?full.slice(0,sp):full; var modello=sp>0?full.slice(sp+1):'';
+  var oggi=new Date().toISOString().slice(0,10);
+  var auto={ id:'mz_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), createdAt:Date.now(), updatedAt:Date.now(),
+    marca:(marca||'').toUpperCase(), modello:(modello||'').toUpperCase(), allestimento:'',
+    targa:(pm.targa||'').toUpperCase(), colore:(pm.colore||'').toUpperCase(), km:pm.km||'', alimentazione:pm.alimentazione||'', cambio:pm.cambio||'',
+    cilindrata:pm.cilindrata||'', potenza:pm.potenza||'', dataImm:pm.dataImm||'', prezzoAcq:pm.prezzoAcq||'', prezzoVen:'', stato:'disponibile',
+    note:'Ingresso da permuta'+(nome?(' \u2014 '+nome):''), dataCarico:oggi, origine:'permuta', permutaContrattoId:cv.id,
+    fornitoreNome:(nome?('Permuta: '+nome):'Permuta cliente'), estera:false };
+  if(typeof mzLoad==='function'){ var ml=mzLoad(); ml.push(auto); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(auto); }
+  cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now(); cv.updatedAt=Date.now();
+  cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  pmiRender();
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Permuta entrata in magazzino e nel registro',true);
+}
+function pmiExport(cvId){
+  if(!confirm('EXPORT: il veicolo NON entra nel nostro magazzino, viene esportato e rimosso dal contratto.\n\nRester\u00e0 consultabile qui nel filtro "Esportate" per eventuali controlli.\n\nProcedere?')) return;
+  var list=(typeof cvLoad==='function')?cvLoad():[]; var idx=list.findIndex(function(x){return x.id===cvId;}); if(idx<0) return; var cv=list[idx];
+  cv.permuta=cv.permuta||{}; cv.permuta.permutaStato='esportata'; cv.permuta.esportataTs=Date.now();
+  cv.permutaOn=false; cv.updatedAt=Date.now();
+  cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  pmiRender();
+  if(typeof tcToastNew==='function') tcToastNew('\ud83d\udce4 Permuta esportata e rimossa dal contratto',true);
 }
 
 function cvRender(){
