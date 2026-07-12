@@ -11911,11 +11911,33 @@ function cvLive(){
   h+=r('Saldo dovuto',t.saldoDovuto,true);
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
 }
+var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le risposte inviate a questo indirizzo non verranno gestite.';
+function eaMailEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function eaMailFooter(){ return '<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>'; }
+function cvEmailCaparraCliente(cv, importo){
+  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  var cl=cv.cliente||{}; if(!cl.email || !/.+@.+\..+/.test(cl.email)) return;
+  var a=cv.autoSnapshot||{};
+  var nome=((cl.nome||'')+(cl.nome&&cl.cognome?' ':'')+(cl.cognome||'')).trim()||cl.ragSociale||'Gentile Cliente';
+  var auto=(a.modello||cv.autoDesc||'la sua nuova auto');
+  var oggetto='Congratulazioni per il suo acquisto \u2014 caparra ricevuta';
+  var html='<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:18px 20px;border-radius:12px 12px 0 0;font-size:18px;font-weight:800;">Europa Auto Srl</div>'
+    +'<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:20px;font-size:14px;line-height:1.6;">'
+    +'<p style="font-size:16px;margin-top:0;">\ud83c\udf89 <b>Congratulazioni '+eaMailEsc(nome)+'!</b></p>'
+    +'<p>Complimenti per il suo fantastico acquisto: <b>'+eaMailEsc(auto)+'</b>.</p>'
+    +'<p>Le confermiamo che la <b>caparra'+(importo?(' di '+cvEuro(importo)):'')+'</b> \u00e8 stata correttamente accreditata.</p>'
+    +'<p>Da questo momento ci occupiamo della sua pratica e le invieremo <b>aggiornamenti sullo stato</b> passo dopo passo, fino alla consegna.</p>'
+    +'<p>Grazie per aver scelto Europa Auto Srl.</p>'
+    +eaMailFooter()
+    +'</div></div>';
+  try{ gsPost({ action:'emailCliente', email:cl.email, oggetto:oggetto, html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
+}
 function cvInviaMailCliente(p){
   if(typeof GS_URL==='undefined' || !GS_URL || !(p.cliente&&p.cliente.email)) return;
   var a=p.autoSnapshot||{}; var nome=((p.cliente.nome||'')+' '+(p.cliente.cognome||'')).trim();
   var html=''; try{ html=cvBuildHTML(p, 'preventivo'); }catch(e){}
-  try{ gsPost({ action:'inviaPreventivoPdf', email:p.cliente.email, nome:nome, auto:(a.modello||p.autoDesc||''), targa:(a.targa||''), html:html }); }catch(e){}
+  try{ gsPost({ action:'inviaPreventivoPdf', email:p.cliente.email, nome:nome, auto:(a.modello||p.autoDesc||''), targa:(a.targa||''), html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
 }
 // Invia il preventivo via email solo se, trascorsa 1 ora, NON è stato trasformato in pre-contratto
 function cvCheckMailPreventivi(){
@@ -12392,7 +12414,25 @@ var _regId=null;
 var REG_CAUSALI=['Vendita','Permuta','Reso','Rottamazione','Trasferimento','Altro'];
 function regEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function regDMY(s){ if(!s) return ''; var m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?(m[3]+'/'+m[2]+'/'+m[1].slice(2)):String(s); }
-function regInit(){ regRender(); }
+function regSelfHealScarico(){
+  try{
+    if(typeof mzLoad!=='function'||typeof cvLoad!=='function') return;
+    var ml=mzLoad(); var cvs=cvLoad(); var changed=[];
+    ml.forEach(function(a){
+      if(a.stato==='venduta' && !(a.scarico&&a.scarico.dataScarico)){
+        var cv=cvs.filter(function(c){return c.autoId===a.id && c.statoVendita==='consegnato';}).sort(function(x,y){return (y.consegnatoTs||0)-(x.consegnatoTs||0);})[0];
+        if(cv){ var _cl=cv.cliente||{};
+          var _dest=(_cl.business&&_cl.ragSociale)?_cl.ragSociale:(((_cl.cognome||'')+' '+(_cl.nome||'')).trim());
+          a.scarico={ causale:'Vendita', dataScarico:(cv.consegnatoTs?new Date(cv.consegnatoTs).toISOString().slice(0,10):new Date().toISOString().slice(0,10)), destinatario:_dest||'Cliente', destinatarioCf:(_cl.business?(_cl.piva||''):(_cl.cf||'')), destinatarioInd:_cl.business?(_cl.sedeLegale||''):[(_cl.via||''),(_cl.civico||''),(_cl.cap||''),(_cl.citta||''),(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ') };
+          if(!a.dataCarico && cv.contrattoTs) a.dataCarico=new Date(cv.contrattoTs).toISOString().slice(0,10);
+          a.updatedAt=Date.now(); changed.push(a);
+        }
+      }
+    });
+    if(changed.length){ mzSave(ml); if(typeof mzSupaUpsert==='function') changed.forEach(function(a){ mzSupaUpsert(a); }); }
+  }catch(e){}
+}
+function regInit(){ regSelfHealScarico(); regRender(); }
 function regAutos(){ return (typeof mzLoad==='function'?mzLoad():[]).slice(); }
 function regForn(a){ return (a && a.fornitoreId && typeof fnById==='function')?fnById(a.fornitoreId):null; }
 
@@ -12571,6 +12611,7 @@ function cvVendConfermaPag(id, ri){
   var dopo=cv.statoVendita;
   cv.updatedAt=Date.now(); cvSave(list); supaUpsert('preventivi', cv);
   cvVendNotificaMail(cv,p);
+  if(/caparra/i.test(p.tipo||'') && !cv.caparraMailInviata){ try{ cvEmailCaparraCliente(cv, cvNum(p.importo)); }catch(e){} cv.caparraMailInviata=true; cvSave(cvLoad().map(function(x){return x.id===cv.id?cv:x;})); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }
   cvVendRender();
   var msg='✓ Pagamento confermato';
   if(dopo!==prima){ if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione'; else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare'; }
@@ -12648,8 +12689,11 @@ function cvVendConsegnaFinale(){
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ cvModChiudi(); return; }
   list[idx].doppiaChiaveConsegnata=_cvCons.doppiaChiave; list[idx].librettoModalita=_cvCons.libretto;
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
-  if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;}); if(_mi>=0){
+  if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;});
+    if(_mi<0){ var _tg=((list[idx].nuovaTarga||(list[idx].autoSnapshot&&list[idx].autoSnapshot.targa)||'')+'').toUpperCase().replace(/\s/g,''); if(_tg) _mi=_ml.findIndex(function(x){return ((x.targa||'')+'').toUpperCase().replace(/\s/g,'')===_tg;}); }
+    if(_mi>=0){
     _ml[_mi].stato='venduta'; _ml[_mi].impegnata=true;
+    if(!_ml[_mi].dataCarico) _ml[_mi].dataCarico=(list[idx].contrattoTs?new Date(list[idx].contrattoTs).toISOString().slice(0,10):new Date().toISOString().slice(0,10));
     var _cl=list[idx].cliente||{};
     var _dest=(_cl.business&&_cl.ragSociale)?_cl.ragSociale:((( _cl.cognome||'')+' '+(_cl.nome||'')).trim());
     var _destCf=(_cl.business?(_cl.piva||''):(_cl.cf||''));
@@ -12669,7 +12713,7 @@ function cvVendNotificaMail(cv,p){
     cliente:(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim(),
     auto:(a.modello||cv.autoDesc||''), targa:(cv.nuovaTarga||a.targa||''),
     tipo:p.tipo||'', metodo:p.metodo||'', importo:cvEuro(p.importo),
-    confermatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''), stato:(cv.statoVendita||'') }); }catch(e){}
+    confermatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''), stato:(cv.statoVendita||''), disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
 }
 
 
