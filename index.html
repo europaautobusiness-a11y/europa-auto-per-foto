@@ -929,9 +929,9 @@ html, body{
     <div id="mz-filtri" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <span style="font-size:12px;color:#64748b;font-weight:700;align-self:center;">Inventario:</span>
-      <button onclick="mzExportInventario('italiane')" style="padding:8px 12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Italiane</button>
+      <button onclick="mzExportInventario('aziendali')" style="padding:8px 12px;border-radius:8px;border:1px solid #9a3412;background:#fff7ed;color:#9a3412;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Aziendali I.E.</button>
       <button onclick="mzExportInventario('estere')" style="padding:8px 12px;border-radius:8px;border:1px solid #1e40af;background:#eff6ff;color:#1e40af;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Estere</button>
-      <button onclick="mzExportInventario('permute')" style="padding:8px 12px;border-radius:8px;border:1px solid #6d28d9;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Permute</button>
+      <button onclick="mzExportInventario('art36')" style="padding:8px 12px;border-radius:8px;border:1px solid #334155;background:#f1f5f9;color:#334155;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Art. 36</button>
     </div>
     <div id="mz-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
     <div id="mz-lista"></div>
@@ -11267,8 +11267,8 @@ function mzExportInventario(cat){
   var all=(typeof mzLoad==='function')?mzLoad():[];
   var rows=all.filter(function(a){
     if(cat==='estere') return a.estera===true;
-    if(cat==='permute') return a.origine==='permuta';
-    return !a.estera && a.origine!=='permuta';
+    if(cat==='aziendali') return a.estera!==true && a.ivaEsposta===true;
+    return a.estera!==true && a.ivaEsposta!==true; // art36 (margine)
   });
   var idCol = (cat==='estere') ? 'Telaio' : 'Targa';
   var idVal = function(a){ return (cat==='estere') ? (a.telaio||'') : (a.targa||''); };
@@ -11277,14 +11277,14 @@ function mzExportInventario(cat){
   var totPrezzo=rows.reduce(function(s,a){var n=parseFloat(a.prezzoAcq);return s+(isNaN(n)?0:n);},0);
   lines.push([]); lines.push([rows.length,'TOTALE','','',Math.round(totPrezzo*100)/100]);
   var csv=lines.map(function(r){ return r.map(function(c){ var s=String(c==null?'':c); if(/[";\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"'; return s; }).join(';'); }).join('\r\n');
-  var nomi={italiane:'Italiane',estere:'Estere',permute:'Permute'};
+  var nomi={aziendali:'Aziendali_IVA_esposta',estere:'Estere',art36:'Art36_margine'};
   try{
     var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob);
     var el=document.createElement('a'); el.href=url; el.download='Inventario_'+(nomi[cat]||cat)+'_'+new Date().toISOString().slice(0,10)+'.csv';
     document.body.appendChild(el); el.click(); document.body.removeChild(el);
     setTimeout(function(){ URL.revokeObjectURL(url); },1500);
-    if(typeof tcToastNew==='function') tcToastNew('⬇️ Inventario '+(nomi[cat]||cat)+' scaricato ('+rows.length+' veicoli)',true);
+    if(typeof tcToastNew==='function') tcToastNew('⬇️ Inventario '+((nomi[cat]||cat).replace(/_/g,' '))+' scaricato ('+rows.length+' veicoli)',true);
   }catch(e){ alert('Errore export: '+e); }
 }
 function mzRender(){
@@ -11296,15 +11296,13 @@ function mzRender(){
   var valore=disp.reduce(function(s,a){var n=parseFloat(a.prezzoVen);return s+(isNaN(n)?0:n);},0);
   var stat=document.getElementById('mz-stat');
   var nEst=all.filter(function(a){return a.estera===true;}).length;
-  var nPerm=all.filter(function(a){return a.origine==='permuta';}).length;
-  var nIta=all.length-nEst-nPerm; if(nIta<0) nIta=0;
-  var nIva=all.filter(function(a){return a.ivaEsposta===true;}).length;
+  var nAzIE=all.filter(function(a){return a.estera!==true && a.ivaEsposta===true;}).length;
+  var nArt36=all.filter(function(a){return a.estera!==true && a.ivaEsposta!==true;}).length;
   if(stat) stat.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
     +'<span style="background:#eef2ff;color:#3730a3;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🚙 '+all.length+' totali</span>'
-    +'<span style="background:#ecfdf5;color:#15803d;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🇮🇹 '+nIta+' italiane</span>'
+    +'<span style="background:#fff7ed;color:#9a3412;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🧾 '+nAzIE+' aziendali I.E.</span>'
     +'<span style="background:#eff6ff;color:#1e40af;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🌍 '+nEst+' estere</span>'
-    +'<span style="background:#f5f3ff;color:#6d28d9;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🔑 '+nPerm+' permute</span>'
-    +'<span style="background:#fff7ed;color:#9a3412;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🧾 '+nIva+' IVA esposta</span>'
+    +'<span style="background:#f1f5f9;color:#334155;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">📄 '+nArt36+' art. 36</span>'
     +'</div><div>'+disp.length+' disponibili · valore magazzino (vendita): <b>'+mzEuro(valore)+'</b></div>';
   var list=all.filter(function(a){
     if(_mzFiltro!=='tutte' && a.stato!==_mzFiltro) return false;
@@ -11319,7 +11317,7 @@ function mzRender(){
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
     h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+(a.numero_interno?(' <span style="font-size:11px;font-weight:800;background:#e0e7ff;color:#3730a3;padding:2px 7px;border-radius:9px;vertical-align:middle;">N\u00b0 '+mzEsc(a.numero_interno)+'</span>'):'')+(a.stato==='venduta'?' <span style="font-size:10px;font-weight:800;background:#fecaca;color:#991b1b;padding:2px 7px;border-radius:10px;vertical-align:middle;">VENDUTA</span>':(a.impegnata?' <span style="font-size:10px;font-weight:800;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:10px;vertical-align:middle;">IMPEGNATA</span>':''))+'</div>';
     if(a.allestimento) h+='<div style="font-size:12px;color:#64748b;">'+mzEsc(a.allestimento)+'</div>';
-    var regBadges=(a.estera?'<span style="font-size:10px;font-weight:800;background:#eff6ff;color:#1e40af;padding:1px 7px;border-radius:9px;">🌍 ESTERA</span> ':(a.origine==='permuta'?'<span style="font-size:10px;font-weight:800;background:#f5f3ff;color:#6d28d9;padding:1px 7px;border-radius:9px;">🔑 PERMUTA</span> ':''))+(a.ivaEsposta?'<span style="font-size:10px;font-weight:800;background:#fff7ed;color:#9a3412;padding:1px 7px;border-radius:9px;">🧾 IVA ESPOSTA</span>':'<span style="font-size:10px;font-weight:700;background:#f1f5f9;color:#64748b;padding:1px 7px;border-radius:9px;">IVA margine</span>');
+    var regBadges=(a.estera?'<span style="font-size:10px;font-weight:800;background:#eff6ff;color:#1e40af;padding:1px 7px;border-radius:9px;">🌍 ESTERA</span> ':(a.origine==='permuta'?'<span style="font-size:10px;font-weight:800;background:#f5f3ff;color:#6d28d9;padding:1px 7px;border-radius:9px;">🔑 PERMUTA</span> ':''))+(a.ivaEsposta?'<span style="font-size:10px;font-weight:800;background:#fff7ed;color:#9a3412;padding:1px 7px;border-radius:9px;">🧾 I.E.</span>':'<span style="font-size:10px;font-weight:700;background:#f1f5f9;color:#64748b;padding:1px 7px;border-radius:9px;">Art. 36</span>');
     h+='<div style="margin-top:4px;">'+regBadges+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:4px;">'+(a.targa?('<b>'+mzEsc(a.targa)+'</b> · '):'')+(a.anno||'—')+' · '+(a.km?((''+a.km).replace(/\B(?=(\d{3})+(?!\d))/g,'.')+' km'):'— km')+'</div>';
     var badges=[]; if(a.alimentazione)badges.push(a.alimentazione); if(a.cambio)badges.push(a.cambio); if(a.colore)badges.push(a.colore);
@@ -11445,7 +11443,7 @@ function mzForm(id){
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:10px 0 3px;text-transform:uppercase;">Provenienza veicolo</label>';
   h+='<div style="display:flex;gap:8px;"><button type="button" id="mz-it-si" onclick="mzTipoAuto(false)" style="flex:1;padding:10px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">🇮🇹 Italiana</button><button type="button" id="mz-it-est" onclick="mzTipoAuto(true)" style="flex:1;padding:10px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">🌍 Estera</button></div>';
   h+='<div id="mz-provit-wrap" style="margin-top:8px;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Venduto/acquisito da</label><div style="display:flex;gap:8px;"><button type="button" id="mz-prov-priv" onclick="mzProvVenditore(\'privato\')" style="flex:1;padding:9px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">\ud83d\udc64 Privato</button><button type="button" id="mz-prov-az" onclick="mzProvVenditore(\'azienda\')" style="flex:1;padding:9px;border-radius:8px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">\ud83c\udfe2 Azienda</button></div></div>';
-  h+='<div id="mz-iva-wrap" style="margin-top:10px;background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:9px 11px;"><label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;font-weight:700;color:#334155;"><input type="checkbox" id="mz_ivaEsposta" '+((a&&a.ivaEsposta)?'checked':'')+' style="width:18px;height:18px;"> Veicolo a IVA esposta</label><div id="mz-iva-hint" style="font-size:11px;color:#94a3b8;margin-top:3px;">Deseleziona per IVA a margine.</div></div>';
+  h+='<div id="mz-iva-wrap" style="margin-top:10px;background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:9px 11px;"><label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;font-weight:700;color:#334155;"><input type="checkbox" id="mz_ivaEsposta" '+((a&&a.ivaEsposta)?'checked':'')+' style="width:18px;height:18px;"> Veicolo I.E. (IVA esposta)</label><div id="mz-iva-hint" style="font-size:11px;color:#94a3b8;margin-top:3px;">Deseleziona per IVA a margine.</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa <span id="mz-targa-req" style="color:#dc2626"></span>','targa','')+'</div><div style="flex:1;">'+f('Anno','anno','es. 2018','number')+'</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Km','km','','number')+'</div><div style="flex:1;">'+f('Colore','colore','')+'</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+sel('Alimentazione','alimentazione',MZ_ALIM)+'</div><div style="flex:1;">'+sel('Cambio','cambio',MZ_CAMBIO)+'</div></div>';
@@ -12370,7 +12368,26 @@ function cvBuildHTML(c, tipo){
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
   if(_cond){ doc+='<div class="cvpb"></div><div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
-  if(c.permutaOn && c.permuta && tipo!=='preventivo'){ var pm=c.permuta; doc+='<div class="cvh">Veicolo in permuta</div><div class="cvbox" style="font-size:11px;line-height:1.5;">Il cliente cede in permuta il veicolo <b>'+cvEsc(pm.modello||'')+'</b>'+(pm.targa?(' targato <b>'+cvEsc(pm.targa)+'</b>'):'')+(pm.dataImm?(' (imm. '+cvEsc(typeof pmDMY==="function"?pmDMY(pm.dataImm):pm.dataImm)+')'):'')+', valutato <b>'+(pm.prezzoAcq?cvEuro(pm.prezzoAcq):'\u2014')+'</b> (importo gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo).<br><br><b>Tutti i dettagli tecnici, lo stato d\'uso, i difetti visibili e non visibili e le condizioni del veicolo ceduto in permuta sono riportati nell\'apposita PERIZIA compilata e sottoscritta dal cliente</b>, che si intende parte integrante e sostanziale del presente '+(isFinale?'contratto':'pre-contratto')+' e che il cliente dichiara veritiera e conforme alla realt\u00e0.</div>'; }
+  if(c.permutaOn && c.permuta){ var pm=c.permuta;
+    doc+='<div class="cvh">Veicolo in permuta</div>';
+    doc+='<div class="cvgrid">'
+      +fld('Modello',pm.modello)
+      +fld('Targa',pm.targa)
+      +fld('Alimentazione',pm.alimentazione)
+      +fld('Cilindrata',pm.cilindrata)
+      +fld('Potenza (kW)',pm.potenza)
+      +fld('Cambio',pm.cambio)
+      +fld('Colore',pm.colore)
+      +fld('Data imm.',(typeof pmDMY==='function'?pmDMY(pm.dataImm):pm.dataImm))
+      +fld('Km',pm.km)
+      +fld('Valutazione permuta',pm.prezzoAcq?cvEuro(pm.prezzoAcq):'\u2014')
+      +'</div>';
+    if(tipo==='preventivo'){
+      doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;">Lo stato d\'uso, i difetti e le condizioni del veicolo in permuta sono riportati nella <b>perizia compilata e sottoscritta dal cliente</b>. Il valore riconosciuto \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
+    } else {
+      doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;"><b>Tutti i dettagli tecnici, lo stato d\'uso, i difetti visibili e non visibili e le condizioni del veicolo ceduto in permuta sono riportati nell\'apposita PERIZIA compilata e sottoscritta dal cliente</b>, che si intende parte integrante e sostanziale del presente '+(isFinale?'contratto':'pre-contratto')+' e che il cliente dichiara veritiera e conforme alla realt\u00e0. Il valore riconosciuto \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
+    }
+  }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
