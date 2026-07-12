@@ -427,12 +427,6 @@ html, body{
 <div class="sidebar">
   <div class="sidebar-logo">
     <div class="sidebar-logo-title">Europa Auto</div>
-    <div class="sidebar-logo-sub">S.r.l. — Paderno Dugnano</div>
-    <div id="login-email-display" style="margin-top:10px;padding:6px 8px;background:rgba(255,255,255,.08);border-radius:4px;display:block;">
-      <div id="login-email-name" style="font-size:12px;font-weight:700;color:white;">Europa Auto Admin</div>
-      <div id="login-email-addr" style="font-size:10px;color:rgba(255,255,255,.5);word-break:break-all;margin-top:1px;">no.reply.europaauto@gmail.com</div>
-      <div id="login-email-role" style="font-size:10px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;">👑 Amministratore</div>
-    </div>
   </div>
 
   <div class="sidebar-section sidebar-group collapsed">
@@ -3978,21 +3972,25 @@ function doLogin() {
   _currentUserRole  = utente.ruolo;
 
   // Aggiorna display sidebar
-  var n = document.getElementById('login-email-name');
-  var a = document.getElementById('login-email-addr');
-  var r = document.getElementById('login-email-role');
+  var n = document.getElementById('login-email-name') || document.getElementById('sidebar-user-name');
+  var a = document.getElementById('login-email-addr') || document.getElementById('sidebar-user-email');
+  var r = document.getElementById('login-email-role') || document.getElementById('sidebar-user-role');
+  var n2=document.getElementById('sidebar-user-name'), a2=document.getElementById('sidebar-user-email'), r2=document.getElementById('sidebar-user-role');
   if(n) n.textContent = utente.nome;
   if(a) a.textContent = utente.email;
-  if(r) {
-    var rl = {admin:'👑 Amministratore', manager:'📊 Manager', dipendente:'👤 Dipendente'};
-    r.textContent = rl[utente.ruolo] || utente.ruolo;
-  }
+  var rl = {admin:'👑 Amministratore', manager:'📊 Manager', dipendente:'👤 Dipendente'};
+  if(r) r.textContent = rl[utente.ruolo] || utente.ruolo;
+  if(n2) n2.textContent = utente.nome;
+  if(a2) a2.textContent = utente.email;
+  if(r2) r2.textContent = rl[utente.ruolo] || utente.ruolo;
 
   // Nascondi login, mostra app
   var ws = document.getElementById('welcome-screen');
   if(ws) ws.style.display = 'none';
 
   applyRoleUI();
+  setTimeout(function(){ try{ if(typeof notifSync==='function') notifSync(); }catch(e){} }, 1500);
+  if(!window._notifTimer){ window._notifTimer=setInterval(function(){ try{ if(typeof notifSync==='function') notifSync(); }catch(e){} }, 90000); }
 
   // Connetti Drive/Sheets in silenzio (senza popup)
   setTimeout(function(){
@@ -9824,6 +9822,7 @@ document.addEventListener('DOMContentLoaded',function(){
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
+    try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo, '\u2705'); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
     document.getElementById('cc-titolo').focus();
   }
   function ccToggle(id){
@@ -9956,7 +9955,7 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} } c.avvisato=true; cambiato=true; }
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
       }
     });
     if (cambiato) ccSave(list);
@@ -11641,6 +11640,7 @@ function pmiConfermaIngresso(cvId){
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
   pmiRender();
   if(typeof tcToastNew==='function') tcToastNew('\u2705 Permuta entrata in magazzino e nel registro',true);
+  try{ if(typeof notifPush==='function') notifPush('Permuta entrata in magazzino: '+((marca||'')+' '+(modello||'')).trim(), '\ud83d\ude97'); }catch(e){}
 }
 function pmiExport(cvId){
   if(!confirm('EXPORT: il veicolo NON entra nel nostro magazzino, viene esportato e rimosso dal contratto.\n\nSe la permuta era conteggiata come pagamento, quell\'importo torner\u00e0 "da incassare".\n\nRester\u00e0 consultabile nel filtro "Esportate". Procedere?')) return;
@@ -12111,7 +12111,7 @@ function cvCheckMailPreventivi(){
     list.forEach(function(p){
       if(!p || p.isContratto || p.emailInviata || !p.mailDaInviareAt) return;
       if(now < p.mailDaInviareAt) return;
-      if(p.cliente && p.cliente.email){ try{ cvInviaMailCliente(p); }catch(e){} p.emailInviata=true; p.emailInviataTs=now; }
+      if(p.cliente && p.cliente.email){ try{ cvInviaMailCliente(p); }catch(e){} p.emailInviata=true; p.emailInviataTs=now; try{ if(typeof notifPush==='function') notifPush('Email preventivo inviata automaticamente a '+(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim(), '\ud83d\udce7'); }catch(e){} }
       p.mailDaInviareAt=null; changed.push(p);
     });
     if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(p){ supaUpsert('preventivi', p); });
@@ -12245,6 +12245,7 @@ function cvTrasformaContrattoFinale(){
   cvSave(list); supaUpsert('preventivi', _cv);
   cvModChiudi(); cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew('Trasformato in contratto \u2014 in attesa pagamento',true);
+  try{ if(typeof notifPush==='function') notifPush('Nuovo pre-contratto: '+(((_cv.cliente&&_cv.cliente.cognome)||'')+' '+((_cv.cliente&&_cv.cliente.nome)||'')).trim()+' \u2014 in attesa pagamento', '\ud83d\udcc4'); }catch(e){}
 }
 function cvValidaAssic(){ if(_cv && _cv.assicOn && (!_cv.assicMesi || Number(_cv.assicMesi)<=0)){ alert('Hai selezionato l\'assicurazione: inserisci i MESI di durata assicurativa prima di procedere.'); return false; } return true; }
 function cvAssicToggle(){
@@ -12255,8 +12256,8 @@ function cvAssicToggle(){
   if(typeof cvLive==='function') cvLive();
 }
 function cvValidaPromo(){
-  var bad=((_cv&&_cv.pagamenti)||[]).some(function(p){ return /promo/i.test(p.metodo||'') && (!p.importo || cvNum(p.importo)<=0); });
-  if(bad){ alert('Hai selezionato Finanziamento PROMO: inserisci l\'IMPORTO del finanziamento promo prima di procedere.'); return false; }
+  var bad=((_cv&&_cv.pagamenti)||[]).some(function(p){ var isFin=/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'; return isFin && (!p.importo || cvNum(p.importo)<=0); });
+  if(bad){ alert('Hai selezionato un Finanziamento: inserisci l\'IMPORTO del finanziamento (non pu\u00f2 restare vuoto) prima di procedere.'); return false; }
   return true;
 }
 function cvValidaPermuta(){
@@ -12285,6 +12286,7 @@ function cvCreaPeriziaDaPermuta(cv){
       difetti:pm.difetti||'', pins:[], origineContrattoId:cv.id, email:(cv.cliente&&cv.cliente.email)||'', tel:(cv.cliente&&cv.cliente.telefono)||'' };
     list.push(per); pmSave(list);
     cv.permuta.periziaId=per.id;
+    try{ if(typeof notifPush==='function') notifPush('Perizia permuta creata: '+(pm.modello||'veicolo')+(nome?(' \u2014 '+nome):''), '\ud83d\udd11'); }catch(e){}
     if(typeof pmPush==='function'){ try{ pmPush(per); }catch(e){} }
   }catch(e){}
 }
@@ -12324,7 +12326,9 @@ function cvStampaESalva(){
   cvSave(list); supaUpsert('preventivi', _cv);
   if(typeof cvRender==='function') cvRender();
   if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Preventivo salvato',true);
+  try{ if(typeof notifPush==='function' && isNew) notifPush('Preventivo salvato: '+(((_cv.cliente&&_cv.cliente.cognome)||'')+' '+((_cv.cliente&&_cv.cliente.nome)||'')).trim()+' \u2014 email programmata tra 1h se non trasformato', '\ud83d\udce7'); }catch(e){}
   cvStampaDoc(_cv, 'preventivo');
+  if(typeof cvForm==='function') cvForm(_cv.id);
 }
 function cvStampaById(id, tipo){ var p=cvLoad().filter(function(x){return x.id===id;})[0]; if(!p){ alert('Contratto non trovato.'); return; } cvStampaDoc(p, tipo); }
 function cvContrattoFinaleStampa(id){
@@ -12903,6 +12907,7 @@ function cvVendConfermaPag(id, ri){
   var msg='✓ Pagamento confermato';
   if(dopo!==prima){ if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione'; else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare'; }
   if(typeof tcToastNew==='function') tcToastNew(msg,true);
+  try{ if(typeof notifPush==='function') notifPush(msg+' \u2014 '+(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim(), '\u2705'); }catch(e){}
 }
 
 function cvVendImmatricola(id){
@@ -12991,6 +12996,7 @@ function cvVendConsegnaFinale(){
   cvModChiudi(); cvVendRender();
   if(typeof cvContrattoFinaleStampa==='function'){ cvContrattoFinaleStampa(id); }
   if(typeof tcToastNew==='function') tcToastNew('\u2705 Consegnato',true);
+  try{ if(typeof notifPush==='function') notifPush('Veicolo consegnato: '+(((list[idx].cliente&&list[idx].cliente.cognome)||'')+' '+((list[idx].cliente&&list[idx].cliente.nome)||'')).trim(), '\u2705'); }catch(e){}
 }
 
 function cvVendNotificaMail(cv,p){
@@ -13060,6 +13066,42 @@ function supaLoadList(table, localLoad, localSave, done){
   }); }catch(e){ if(done)done(); }
 }
 function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, function(arr){ cvSave(arr.filter(function(x){return !(_cvDeleted&&_cvDeleted[x.id]);})); }, function(){ if(typeof cvVendBadge==='function') cvVendBadge(); var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); }); }
+
+/* ===================== NOTIFICHE AUTOMAZIONI (per-utente) ===================== */
+var NOTIF_KEY='ea_notifiche_v1';
+function notifLoad(){ try{ return JSON.parse(localStorage.getItem(NOTIF_KEY)||'[]'); }catch(e){ return []; } }
+function notifSave(list){ try{ localStorage.setItem(NOTIF_KEY, JSON.stringify((list||[]).slice(-300))); }catch(e){} }
+function notifUserKey(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'anon').toLowerCase(); return 'ea_notif_seen_'+e; }
+function notifLastSeen(){ try{ return parseInt(localStorage.getItem(notifUserKey())||'0',10)||0; }catch(e){ return 0; } }
+function notifSetLastSeen(ts){ try{ localStorage.setItem(notifUserKey(), String(ts||Date.now())); }catch(e){} }
+function notifStack(){ var s=document.getElementById('ea-notif-stack'); if(!s){ s=document.createElement('div'); s.id='ea-notif-stack'; s.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100000;display:flex;flex-direction:column;gap:8px;width:min(380px,94vw);pointer-events:none;'; document.body.appendChild(s); } return s; }
+function notifCard(n){
+  var t=new Date(n.ts); var z=function(x){return String(x).padStart(2,'0');}; var ora=z(t.getHours())+':'+z(t.getMinutes());
+  var d=document.createElement('div');
+  d.style.cssText='pointer-events:auto;background:#fff;border:1px solid #e2e8f0;border-left:4px solid #25d366;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.16);padding:11px 12px;display:flex;gap:10px;align-items:flex-start;transform:translateY(-12px);opacity:0;transition:transform .25s,opacity .25s;';
+  d.innerHTML='<div style="font-size:20px;flex:0 0 auto;">'+(n.icon||'\u2699\ufe0f')+'</div><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;line-height:1.35;">'+String(n.testo||'').replace(/</g,'&lt;')+'</div><div style="font-size:10px;color:#94a3b8;margin-top:2px;">Gestionale \u00b7 '+ora+(n.autore?(' \u00b7 '+String(n.autore).replace(/</g,'&lt;')):'')+'</div></div>';
+  var x=document.createElement('button'); x.textContent='\u2715'; x.style.cssText='flex:0 0 auto;background:none;border:none;color:#94a3b8;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;'; x.onclick=function(){ d.style.opacity='0'; d.style.transform='translateY(-12px)'; setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); },220); };
+  d.appendChild(x);
+  return d;
+}
+function notifShowCards(arr){
+  if(!arr||!arr.length) return; var stack=notifStack();
+  arr.slice(-6).forEach(function(n,i){ var c=notifCard(n); stack.appendChild(c); requestAnimationFrame(function(){ c.style.transform='translateY(0)'; c.style.opacity='1'; }); setTimeout(function(){ if(c.parentNode){ c.style.opacity='0'; c.style.transform='translateY(-12px)'; setTimeout(function(){ if(c.parentNode) c.parentNode.removeChild(c); },220); } }, 9000+i*500); });
+}
+function notifPush(testo, icon){
+  try{
+    var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+    var list=notifLoad(); list.push(n); notifSave(list);
+    if(typeof supaUpsert==='function'){ try{ supaUpsert('notifiche', n); }catch(e){} }
+    notifShowCards([n]); notifSetLastSeen(n.ts);
+  }catch(e){}
+}
+function notifSync(){
+  try{
+    var apply=function(){ var last=notifLastSeen(); var unseen=notifLoad().filter(function(n){ return n && n.ts>last; }).sort(function(a,b){return a.ts-b.ts;}); if(unseen.length){ notifShowCards(unseen); notifSetLastSeen(Date.now()); } };
+    if(typeof supaLoadList==='function'){ supaLoadList('notifiche', notifLoad, notifSave, apply); } else { apply(); }
+  }catch(e){}
+}
 
 /* ===================== MODIFICA CONTRATTO (permessi + notifica) ===================== */
 var _cvMod=null; var _cvModOrig=null;
