@@ -489,7 +489,6 @@ html, body{
     <button class="sidebar-item" id="si-parametri" onclick="sidebarNav('parametri',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9881;&#65039;</span><span class="si-label"> Parametri</span></button>
     <button class="sidebar-item" id="si-statistiche" onclick="sidebarNav('statistiche',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128202;</span><span class="si-label"> Statistiche</span></button>
     <button class="sidebar-item" id="si-clienti" onclick="sidebarNav('clienti',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Clienti</span></button>
-    <button class="sidebar-item" id="si-whatsapp" onclick="sidebarNav('whatsapp',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128241;</span><span class="si-label"> WhatsApp</span></button>
     <button class="sidebar-item" id="si-impostazioni" onclick="apriGestioneCredenziali()" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9881;&#65039;</span><span class="si-label"> Impostazioni</span></button>
     </div>
   </div>
@@ -11811,7 +11810,8 @@ var _waRows=[];
 var WA_MSG_DEF={
   appuntamenti:'Gentile {nome}, le ricordiamo l\'appuntamento presso Europa Auto Srl (Via Nigra 4, Paderno Dugnano) il {data} alle {ora}. Per qualsiasi variazione ci contatti. A presto!',
   assicurazioni:'Gentile {nome}, la sua assicurazione auto risulta in scadenza il {scadenza}. La invitiamo a contattarci per il rinnovo. Europa Auto Srl.',
-  preventivi:'Gentile {nome}, il preventivo per {auto} \u00e8 ancora valido! Se desidera procedere o ha domande siamo a disposizione. Europa Auto Srl.'
+  preventivi:'Gentile {nome}, il preventivo per {auto} \u00e8 ancora valido! Se desidera procedere o ha domande siamo a disposizione. Europa Auto Srl.',
+  offerta_prev:'Gentile {nome}, solo per lei un\'offerta speciale sul {auto}, valida esclusivamente 48 ore! Non lasci sfuggire l\'occasione. La aspettiamo in Europa Auto Srl \u2013 Tel. 029181820.'
 };
 function waEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function waMsgStore(){ try{ return JSON.parse(localStorage.getItem(WA_MSG_KEY)||'{}'); }catch(e){ return {}; } }
@@ -12060,7 +12060,7 @@ function cvLive(){
   cvSync();
   var t=cvCalcola(_cv);
   var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
-  var h='<div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">Valore contratto</div>';
+  var h='<div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+((_cv&&_cv.isContratto)?'Valore contratto':'Riepilogo prezzo')+'</div>';
   var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
   h+=r('Prezzo vendita',t.prezzo);
   if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104 (prezzo \u00f7 1,22)', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); }
@@ -12119,7 +12119,24 @@ function cvCheckMailPreventivi(){
     }
   }catch(e){}
 }
-try{ setInterval(function(){ cvCheckMailPreventivi(); }, 60000); setTimeout(function(){ cvCheckMailPreventivi(); }, 5000); }catch(e){}
+function cvCheckPromemoriaWa(){
+  try{
+    if(typeof cvLoad!=='function') return;
+    var list=cvLoad(), now=Date.now(), changed=[];
+    list.forEach(function(p){
+      if(!p || p.isContratto) return;
+      if(!p.cliente || !p.cliente.telefono) return;
+      var base=p.createdAt||0; if(!base) return;
+      var eta=now-base;
+      var nome=(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim()||'cliente';
+      var auto=(p.autoSnapshot&&p.autoSnapshot.modello)||p.autoDesc||'veicolo';
+      if(eta>=48*3600000 && !p.waPromemoria48){ p.waPromemoria48=true; changed.push(p); try{ if(typeof notifPush==='function') notifPush('Ricorda di inviare il messaggio WhatsApp per il preventivo di '+nome+' ('+auto+') \u2014 sono passate 48 ore.', '\ud83d\udcac'); }catch(e){} }
+      if(eta>=96*3600000 && !p.waOfferta96){ p.waOfferta96=true; changed.push(p); try{ if(typeof notifPush==='function') notifPush('Preventivo di '+nome+' non confermato dopo 96h: invia l\'OFFERTA (valida 48h) via WhatsApp dalla Pipeline.', '\ud83c\udff7\ufe0f'); }catch(e){} }
+    });
+    if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(p){ supaUpsert('preventivi', p); }); }
+  }catch(e){}
+}
+try{ setInterval(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); }, 60000); setTimeout(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); }, 5000); }catch(e){}
 function cvTrasformaContratto(){
   cvSync();
   if(typeof cvById==='function' && !cvById(_cv.id)){ alert('Prima devi salvare il preventivo: premi «Stampa preventivo», poi riaprilo dalla lista e trasformalo in pre-contratto.'); return; }
@@ -12256,8 +12273,11 @@ function cvAssicToggle(){
   if(typeof cvLive==='function') cvLive();
 }
 function cvValidaPromo(){
-  var bad=((_cv&&_cv.pagamenti)||[]).some(function(p){ var isFin=/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'; return isFin && (!p.importo || cvNum(p.importo)<=0); });
-  if(bad){ alert('Hai selezionato un Finanziamento: inserisci l\'IMPORTO del finanziamento (non pu\u00f2 restare vuoto) prima di procedere.'); return false; }
+  var pags=((_cv&&_cv.pagamenti)||[]);
+  var badFin=pags.some(function(p){ var isFin=/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'; return isFin && (!p.importo || cvNum(p.importo)<=0); });
+  if(badFin){ alert('Hai selezionato un Finanziamento: inserisci l\'IMPORTO del finanziamento (non pu\u00f2 restare vuoto) prima di procedere.'); return false; }
+  var hasPromo=pags.some(function(p){ return /promo/i.test(p.metodo||''); });
+  if(hasPromo && (!(_cv&&_cv.scontoImporto) || cvNum(_cv.scontoImporto)<=0)){ alert('Con il Finanziamento PROMO devi inserire l\'importo dello SCONTO finanziamento promo: non pu\u00f2 restare vuoto.'); return false; }
   return true;
 }
 function cvValidaPermuta(){
@@ -12391,7 +12411,7 @@ function cvBuildHTML(c, tipo){
       doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;"><b>Tutti i dettagli tecnici, lo stato d\'uso, i difetti visibili e non visibili e le condizioni del veicolo ceduto in permuta sono riportati nell\'apposita PERIZIA compilata e sottoscritta dal cliente</b>, che si intende parte integrante e sostanziale del presente '+(isFinale?'contratto':'pre-contratto')+' e che il cliente dichiara veritiera e conforme alla realt\u00e0. Il valore riconosciuto \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
     }
   }
-  doc+='<div class="cvh">Valore contratto</div>';
+  doc+='<div class="cvh">'+(tipo==='preventivo'?'Riepilogo prezzo':'Valore contratto')+'</div>';
   if(c.listinoOn && cvNum(c.listino)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(cvNum(c.listino))+'</div></div>';
   doc+=row('Prezzo vendita',t.prezzo);
   if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104 (prezzo \u00f7 1,22)', t.imponibile104)+row('IVA agevolata 4%', t.iva104); }
@@ -13361,7 +13381,16 @@ function crmOfferta(nome, tel, email, auto){
   else if(email){ window.open('mailto:'+email+'?subject='+encodeURIComponent('Offerta manutenzione - Europa Auto')+'&body='+encodeURIComponent(txt), '_blank'); }
   else { alert('Questo contatto non ha né telefono né email.'); }
 }
-function crmWa(tel, tab, nome, extra){
+function crmWaEditor(tab, titolo, ph){
+  var val=(typeof waMsgGet==='function')?waMsgGet(tab):'';
+  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:12px;">'
+    +'<div style="font-size:12px;font-weight:800;color:#334155;margin-bottom:4px;">'+titolo+' <span style="font-weight:400;color:#94a3b8;">(segnaposto: '+crmEsc(ph)+')</span></div>'
+    +'<textarea id="crmwa-'+tab+'" style="width:100%;min-height:66px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;box-sizing:border-box;">'+crmEsc(val)+'</textarea>'
+    +'<button onclick="crmWaSaveMsg(\''+tab+'\')" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">\ud83d\udcbe Salva messaggio</button>'
+    +'</div>';
+}
+function crmWaSaveMsg(tab){ var el=document.getElementById('crmwa-'+tab); if(el && typeof waMsgSet==='function'){ waMsgSet(tab, el.value); if(typeof tcToastNew==='function') tcToastNew('Messaggio salvato',true); } }
+function crmWaSend(tel, tab, nome, extra){
   if(typeof waOpen!=='function'){ alert('Modulo WhatsApp non disponibile.'); return; }
   var d={ nome:(String(nome||'').split(' ')[0])||String(nome||''), auto:extra||'', scadenza:extra||'' };
   var tmpl=(typeof waMsgGet==='function')?waMsgGet(tab):'';
@@ -13370,7 +13399,7 @@ function crmWa(tel, tab, nome, extra){
 function crmWaBtn(tel, tab, nome, extra, label){
   if(!tel) return '';
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
-  return '<button onclick="crmWa('+jq(tel)+','+jq(tab)+','+jq(nome)+','+jq(extra)+')" style="margin-top:8px;margin-right:8px;padding:8px 12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\ud83d\udcac '+(label||'WhatsApp')+'</button>';
+  return '<button onclick="crmWaSend('+jq(tel)+','+jq(tab)+','+jq(nome)+','+jq(extra)+')" style="margin-top:8px;margin-right:8px;padding:8px 12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\ud83d\udcac '+(label||'WhatsApp')+'</button>';
 }
 function crmOffBtn(nome,tel,email,auto){ return '<button onclick="crmOfferta('+JSON.stringify(nome||'')+','+JSON.stringify(tel||'')+','+JSON.stringify(email||'')+','+JSON.stringify(auto||'')+')" style="margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🎁 Offerta manutenzione (WhatsApp)</button>'; }
 var CRM_AVCOL=['#1a4fa0','#0891b2','#7c3aed','#16a34a','#d97706','#dc2626','#0f766e','#be185d'];
@@ -13485,9 +13514,9 @@ function crmRenderConsegnate(){
 }
 function crmRenderAssic(){
   var ass=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
-  if(!ass.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
+  if(!ass.length) return crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
   ass=ass.map(function(cv){ var mesi=parseInt(cv.assicMesi,10); if(isNaN(mesi)||mesi<=0||mesi>120) mesi=12; cv._scad=crmAddMesi(cv.consegnatoTs, mesi); cv._gg=Math.round((cv._scad-Date.now())/(1000*60*60*24)); return cv; }).sort(function(a,b){return a._scad-b._scad;});
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze attive. In arancione quelle in scadenza entro 60 giorni.</div>';
+  var h=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze attive. In arancione quelle in scadenza entro 60 giorni.</div>';
   ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<60;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
@@ -13527,17 +13556,22 @@ function crmDaFareBanner(){ var s=crmLoad(); var oggi=crmOggiISO(); var rit=0,og
   return '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'+(rit?'<div style="flex:1;min-width:120px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px;"><div style="font-size:20px;font-weight:800;color:#dc2626;">'+rit+'</div><div style="font-size:12px;color:#991b1b;">promemoria in ritardo</div></div>':'')+(ogg?'<div style="flex:1;min-width:120px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;"><div style="font-size:20px;font-weight:800;color:#d97706;">'+ogg+'</div><div style="font-size:12px;color:#92400e;">da fare oggi</div></div>':'')+'</div>'; }
 function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI.length) return; crmSetStato(key,CRM_STATI[ni]); }
 function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads(); leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
+  var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#64748b','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Scorri in orizzontale per vedere tutte le colonne.</div>';
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
+  h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
+  h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
   h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch;">';
   CRM_STATI.forEach(function(st){ var items=leads.filter(function(l){return l._stato===st;}); var si=CRM_STATI.indexOf(st);
     h+='<div style="flex:0 0 240px;background:#f1f5f9;border-radius:12px;padding:10px;"><div style="font-weight:800;font-size:13px;color:'+(col[st]||'#334155')+';margin-bottom:8px;display:flex;justify-content:space-between;"><span>'+st+'</span><span style="background:#fff;border-radius:20px;padding:1px 8px;font-size:12px;">'+items.length+'</span></div>';
     if(!items.length){ h+='<div style="font-size:12px;color:#94a3b8;padding:8px 0;">\u2014</div>'; }
     items.forEach(function(l){
+      var waBtn=(l.telefono && !l.hasContratto)?('<div style="display:flex;gap:6px;margin-top:7px;"><button onclick="crmWaSend('+jq(l.telefono)+',\'preventivi\','+jq(l.nome)+','+jq(l.auto)+')" style="flex:1;border:none;background:#25D366;color:#fff;border-radius:6px;height:28px;cursor:pointer;font-weight:800;font-size:11px;">\ud83d\udcac Messaggio</button><button onclick="crmWaSend('+jq(l.telefono)+',\'offerta_prev\','+jq(l.nome)+','+jq(l.auto)+')" style="flex:1;border:none;background:#ea580c;color:#fff;border-radius:6px;height:28px;cursor:pointer;font-weight:800;font-size:11px;">\ud83c\udff7\ufe0f Offerta 48h</button></div>'):'';
       h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px;margin-bottom:8px;border-left:3px solid '+(col[st]||'#cbd5e1')+';">'
         +'<div style="font-weight:700;font-size:13px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div>'
         +'<div style="font-size:11px;color:#64748b;margin-top:2px;">\ud83d\ude97 '+crmEsc(l.auto||'\u2014')+'</div>'
         +(l.telefono?('<div style="font-size:11px;color:#94a3b8;">\ud83d\udcde '+crmEsc(l.telefono)+'</div>'):'')
+        +waBtn
         +'<div style="display:flex;justify-content:space-between;margin-top:7px;">'
         +'<button onclick="crmMoveStato(\''+l.key+'\',-1)" '+(si<=0?'disabled':'')+' style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:34px;height:28px;cursor:pointer;'+(si<=0?'opacity:.3;':'')+'">\u25c0</button>'
         +'<button onclick="crmMoveStato(\''+l.key+'\',1)" '+(si>=CRM_STATI.length-1?'disabled':'')+' style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:34px;height:28px;cursor:pointer;'+(si>=CRM_STATI.length-1?'opacity:.3;':'')+'">\u25b6</button>'
