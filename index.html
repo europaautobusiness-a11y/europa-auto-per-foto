@@ -10667,7 +10667,23 @@ function pmSincronizza(btn){
   });
 }
 
-function pmInit(){ pmRender(); pmLoadDaSheets(); }
+function pmDedup(){
+  try{
+    var list=pmLoad(); var byOrigin={};
+    list.forEach(function(p){ var k=p&&p.origineContrattoId; if(!k) return; (byOrigin[k]=byOrigin[k]||[]).push(p); });
+    var toRemove=[];
+    Object.keys(byOrigin).forEach(function(k){
+      var grp=byOrigin[k]; if(grp.length<2) return;
+      grp.sort(function(a,b){ var af=(a.firma||a.firmatoDalCliente||a.firmaTs)?1:0, bf=(b.firma||b.firmatoDalCliente||b.firmaTs)?1:0; if(af!==bf) return bf-af; return (a.createdAt||0)-(b.createdAt||0); });
+      for(var i=1;i<grp.length;i++){ toRemove.push(grp[i].id); }
+    });
+    if(toRemove.length){
+      toRemove.forEach(function(id){ pmAddTombstone(id); if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(PERMUTE_SHEET, id); }catch(e){} } });
+      pmSave(pmLoad().filter(function(x){ return toRemove.indexOf(x.id)<0; }));
+    }
+  }catch(e){}
+}
+function pmInit(){ pmDedup(); pmRender(); pmLoadDaSheets(); }
 
 function pmRender(){
   var wrap=document.getElementById('pm-lista'); if(!wrap) return;
@@ -11907,7 +11923,7 @@ function cvCalcola(c){
 
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
-  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''}] };
+  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
   if(fromVend && _cv.isContratto && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ if(typeof cvVendModificaLimitata==='function'){ cvVendModificaLimitata(_cv.id); } return; }
   if(!_cv.costiExtra) _cv.costiExtra=[]; if(!_cv.pagamenti) _cv.pagamenti=[]; if(!_cv.cliente) _cv.cliente={};
   var autos=(typeof mzLoad==='function'?mzLoad():[]);
@@ -12221,6 +12237,7 @@ function cvTrasformaContrattoFinale(){
   }
   if(_cv.autoId && typeof mzById==='function'){ var _av2=mzById(_cv.autoId); if(_av2 && ((_av2.impegnata && _av2.impegnataDa && _av2.impegnataDa!==_cv.id) || _av2.stato==='venduta')){ alert('\u26a0\ufe0f Nel frattempo questo veicolo \u00e8 stato impegnato in un altro pre-contratto: impossibile procedere.'); return; } }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
+  if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   _cv.mailDaInviareAt=null;
@@ -12254,7 +12271,11 @@ function cvCreaPeriziaDaPermuta(cv){
   try{
     if(!cv || !cv.permutaOn || !cv.permuta) return;
     if(typeof pmLoad!=='function' || typeof pmSave!=='function') return;
-    if(cv.permuta.periziaId && typeof pmById==='function' && pmById(cv.permuta.periziaId)) return;
+    var list=pmLoad();
+    var existing=null;
+    if(cv.permuta.periziaId) existing=list.filter(function(p){return p && p.id===cv.permuta.periziaId;})[0];
+    if(!existing) existing=list.filter(function(p){return p && p.origineContrattoId===cv.id;})[0];
+    if(existing){ cv.permuta.periziaId=existing.id; return; }
     var pm=cv.permuta;
     var nome=((((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim());
     var anno=pm.dataImm?(''+pm.dataImm).slice(0,4):'';
@@ -12262,7 +12283,7 @@ function cvCreaPeriziaDaPermuta(cv){
       cliente:nome, modello:pm.modello||'', anno:anno, km:pm.km||'', targa:pm.targa||'', valutazione:pm.prezzoAcq||'',
       alimentazione:pm.alimentazione||'', cambio:pm.cambio||'', colore:pm.colore||'', cilindrata:pm.cilindrata||'', potenza:pm.potenza||'', dataImm:pm.dataImm||'',
       difetti:pm.difetti||'', pins:[], origineContrattoId:cv.id, email:(cv.cliente&&cv.cliente.email)||'', tel:(cv.cliente&&cv.cliente.telefono)||'' };
-    var list=pmLoad(); list.push(per); pmSave(list);
+    list.push(per); pmSave(list);
     cv.permuta.periziaId=per.id;
     if(typeof pmPush==='function'){ try{ pmPush(per); }catch(e){} }
   }catch(e){}
@@ -12279,7 +12300,6 @@ function cvSalva(){
   var isNew=(idx<0);
   if(isNew && _cv.cliente.email && !_cv.emailInviata && !_cv.mailDaInviareAt){ _cv.mailDaInviareAt=Date.now()+3600000; }
   _cv.updatedAt=Date.now();
-  if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
   cvSave(list); supaUpsert('preventivi', _cv);
   cvChiudi(); cvRender();
@@ -12300,10 +12320,10 @@ function cvStampaESalva(){
   var _tt=cvCalcola(_cv); if(Math.abs(_tt.saldoDovuto)>0.01){ alert('I pagamenti devono coprire l\'intero importo.\nTotale: '+cvEuro(_tt.totaleScontato)+'\nAncora da coprire: '+cvEuro(_tt.saldoDovuto)+'\n\nInserisci gli importi dei pagamenti fino a completare il totale.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0); if(isNew && _cv.cliente.email && !_cv.emailInviata && !_cv.mailDaInviareAt){ _cv.mailDaInviareAt=Date.now()+3600000; }
-  _cv.updatedAt=Date.now(); if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv); if(idx>=0) list[idx]=_cv; else list.push(_cv);
+  _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
   cvSave(list); supaUpsert('preventivi', _cv);
   if(typeof cvRender==='function') cvRender();
-  if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato'+(_cv.permutaOn?' · perizia permuta creata':''):'💾 Preventivo salvato',true);
+  if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Preventivo salvato',true);
   cvStampaDoc(_cv, 'preventivo');
 }
 function cvStampaById(id, tipo){ var p=cvLoad().filter(function(x){return x.id===id;})[0]; if(!p){ alert('Contratto non trovato.'); return; } cvStampaDoc(p, tipo); }
@@ -12347,27 +12367,6 @@ function cvBuildHTML(c, tipo){
   doc+='<div class="cvtop"><div><div class="cvbrand">EUROPA AUTO SRL</div><div style="font-size:13px;font-weight:800;color:#334155;margin:2px 0;">'+titolo+'</div><div class="cvsmall">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &middot; P.IVA 06440210968 &middot; Tel. 029181820</div></div><div style="text-align:right;" class="cvsmall"><div>Venditore: <b style="color:#0f172a;">'+cvEsc(c.venditore||'')+'</b></div><div>Proposta di vendita: <b style="color:#0f172a;">'+cvEsc(c.data||'')+'</b></div></div></div>';
   var _cl=c.cliente||{}; doc+='<div class="cvh">Dati acquirente</div><div class="cvgrid">'+fld('Nome',_cl.nome)+fld('Cognome',_cl.cognome)+(_cl.business?(fld('Ragione sociale',_cl.ragSociale)+fld('P.IVA',_cl.piva)+fld('Codice SDI',_cl.sdi)):fld('Codice fiscale',_cl.cf))+fld('Telefono',_cl.telefono)+fld('Email',_cl.email)+(_cl.business?fld('Sede legale',_cl.sedeLegale):(fld('Indirizzo',((_cl.via||'')+(_cl.civico?(', '+_cl.civico):'')).trim())+fld('CAP',_cl.cap)+fld('Città',_cl.citta)))+'</div>';
   doc+='<div class="cvh">Dati auto</div><div class="cvgrid">'+fld('Modello',a.modello||c.autoDesc)+(cvAutoNum(c)?fld('N\u00b0 auto',cvAutoNum(c)):'')+fld('Targa',a.targa)+fld('Alimentazione',a.alimentazione)+fld('Cilindrata',a.cilindrata)+fld('Potenza (kW)',a.potenza)+fld('Cambio',a.cambio)+fld('Telaio',a.telaio)+fld('Colore',a.colore)+fld('Data imm.',(typeof pmDMY==='function'?pmDMY(a.dataImm):a.dataImm))+fld('Km',c.kmAgg||a.km)+fld('Regime IVA',_ivaLabel)+'</div>';
-  doc+='<div class="cvh">Valore contratto</div>';
-  if(c.listinoOn && cvNum(c.listino)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(cvNum(c.listino))+'</div></div>';
-  doc+=row('Prezzo vendita',t.prezzo);
-  if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104 (prezzo \u00f7 1,22)', t.imponibile104)+row('IVA agevolata 4%', t.iva104); }
-  doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
-  if(c.assicOn) doc+=row('Assicurazione',t.assic);
-  if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
-  (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
-  if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
-  doc+=row('Totale vendita',t.totaleVendita,'sub');
-  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
-  cvPagIncasso(c.pagamenti).forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
-  doc+=row('Saldo dovuto',t.saldoDovuto,'tot');
-  if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } }
-  if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
-  if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; } }
-  if(c.doppiaChiaveConsegnata!=null || c.librettoModalita){ doc+='<div class="cvh">Consegna</div><div class="cvbox"><b>Doppia chiave:</b> '+(c.doppiaChiaveConsegnata?'consegnata al cliente':'NON consegnata')+(c.librettoModalita?('<br><b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente')):'')+'</div>'; }
-  var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
-  if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
-  if(_cond){ doc+='<div class="cvpb"></div><div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.permutaOn && c.permuta){ var pm=c.permuta;
     doc+='<div class="cvh">Veicolo in permuta</div>';
     doc+='<div class="cvgrid">'
@@ -12388,6 +12387,31 @@ function cvBuildHTML(c, tipo){
       doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;"><b>Tutti i dettagli tecnici, lo stato d\'uso, i difetti visibili e non visibili e le condizioni del veicolo ceduto in permuta sono riportati nell\'apposita PERIZIA compilata e sottoscritta dal cliente</b>, che si intende parte integrante e sostanziale del presente '+(isFinale?'contratto':'pre-contratto')+' e che il cliente dichiara veritiera e conforme alla realt\u00e0. Il valore riconosciuto \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
     }
   }
+  doc+='<div class="cvh">Valore contratto</div>';
+  if(c.listinoOn && cvNum(c.listino)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(cvNum(c.listino))+'</div></div>';
+  doc+=row('Prezzo vendita',t.prezzo);
+  if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104 (prezzo \u00f7 1,22)', t.imponibile104)+row('IVA agevolata 4%', t.iva104); }
+  doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
+  if(c.assicOn) doc+=row('Assicurazione',t.assic);
+  if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
+  (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
+  doc+=row('Totale vendita',t.totaleVendita,'sub');
+  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
+  var _pagAll=cvPagIncasso(c.pagamenti).filter(function(x){return cvNum(x.importo);});
+  var _pagShow=(tipo==='finale')?_pagAll:_pagAll.filter(function(x){ return !/saldo/i.test(x.tipo||''); });
+  _pagShow.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
+  var _deduc=_pagShow.reduce(function(s,x){return s+cvNum(x.importo);},0);
+  var _saldoDov=Math.max(0,(t.totaleScontato||0)-_deduc);
+  doc+=row('Saldo dovuto',_saldoDov,'tot');
+  if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } }
+  if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
+  if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; } }
+  if(c.doppiaChiaveConsegnata!=null || c.librettoModalita){ doc+='<div class="cvh">Consegna</div><div class="cvbox"><b>Doppia chiave:</b> '+(c.doppiaChiaveConsegnata?'consegnata al cliente':'NON consegnata')+(c.librettoModalita?('<br><b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente')):'')+'</div>'; }
+  var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
+  if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
+  if(_cond){ doc+='<div class="cvpb"></div><div class="cvh">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -13218,6 +13242,7 @@ function statRender(){
   var venditeMese=venduti/Math.max(monthsInPeriod,0.5);
   var rotGiorni=venditeMese>0?Math.round(stock/venditeMese*30.44):0;
   var rotMesi=venditeMese>0?(Math.round(stock/venditeMese*10)/10):0;
+  var rotRating = !rotGiorni ? ['\u2014','#94a3b8'] : (rotGiorni<60 ? ['Eccellente','#16a34a'] : (rotGiorni<=70 ? ['Ottimale','#0d9488'] : (rotGiorni<=90 ? ['Sufficiente','#d97706'] : ['Scarso','#dc2626'])));
   var mesi=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
   var perMese=[0,0,0,0,0,0,0,0,0,0,0,0];
   recs.forEach(function(x){ if(x.isContratto){ var d=new Date(x.contrattoTs||x.createdAt||Date.now()); perMese[d.getMonth()]++; } });
@@ -13238,9 +13263,9 @@ function statRender(){
     +kpi('Con permuta',conPermuta)
     +kpi('Parco auto (disponibili)',stock,'#0f172a')
     +kpi('Vendite / mese',(Math.round(venditeMese*10)/10),'#1a4fa0')
-    +kpi('Rotazione parco',rotGiorni?(rotGiorni+' gg'):'\u2014','#ea580c')
+    +kpi('Rotazione parco',rotGiorni?(rotGiorni+' gg'):'\u2014',rotRating[1])
     +'</div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.5;">'+(rotGiorni?('\ud83d\udd01 Con lo stock attuale di <b>'+stock+'</b> veicoli e un ritmo medio di <b>'+(Math.round(venditeMese*10)/10)+'</b> vendite al mese, il parco auto si rinnova completamente in circa <b>'+rotGiorni+' giorni</b> (\u2248 '+rotMesi+' mesi). Pi\u00f9 basso \u00e8 il valore, pi\u00f9 velocemente ruota il magazzino.'):'Rotazione non calcolabile: servono vendite nel periodo selezionato e veicoli in magazzino.')+'</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+(rotGiorni?('\ud83d\udd01 Con lo stock attuale di <b>'+stock+'</b> veicoli e un ritmo medio di <b>'+(Math.round(venditeMese*10)/10)+'</b> vendite al mese, il parco si rinnova in circa <b>'+rotGiorni+' giorni</b> (\u2248 '+rotMesi+' mesi). Giudizio: <b style="color:'+rotRating[1]+';">'+rotRating[0]+'</b>.<br><span style="color:#94a3b8;">Riferimento: &lt; 60 gg = eccellente \u00b7 60\u201370 = ottimale \u00b7 70\u201390 = sufficiente \u00b7 &gt; 90 = scarso (i costi rischiano di superare i ricavi).</span>'):'Rotazione non calcolabile: servono vendite nel periodo selezionato e veicoli in magazzino.')+'</div>';
   var maxM=1; for(var k=0;k<12;k++){ if(perMese[k]>maxM) maxM=perMese[k]; }
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;"><div style="font-weight:800;color:#334155;margin-bottom:10px;">Auto vendute per mese</div><div style="display:flex;align-items:flex-end;gap:6px;height:150px;">';
   for(var m=0;m<12;m++){ var hgt=Math.round(perMese[m]/maxM*110); h+='<div style="flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;"><div style="font-size:10px;color:#64748b;">'+perMese[m]+'</div><div style="background:#1a4fa0;border-radius:4px 4px 0 0;height:'+hgt+'px;margin-top:4px;"></div><div style="font-size:10px;color:#94a3b8;margin-top:3px;">'+mesi[m]+'</div></div>'; }
