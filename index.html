@@ -7028,8 +7028,10 @@ async function inviaPermessoEmail(id) {
   var p=list.find(function(x){return x.id===id;});
   if (!p) return;
 
-  var emailDest=prompt('Email del cliente per '+p.targa+' — '+p.intestatario+':','');
-  if (!emailDest||!emailDest.includes('@')){alert('Email non valida.');return;}
+  var fld=document.getElementById('permail-'+id);
+  var emailDest=(fld&&fld.value||'').trim();
+  if(!emailDest){ try{ emailDest=recuperaEmailCliente(p.intestatario)||''; }catch(e){} if(fld&&emailDest) fld.value=emailDest; }
+  if (!emailDest||emailDest.indexOf('@')<0){ alert('Inserisci l\'email del cliente nel campo qui sopra, poi premi Invia.'); if(fld) fld.focus(); return; }
 
   var emailFrom=getPermessiEmail();
   if (!emailFrom){
@@ -7117,11 +7119,30 @@ async function inviaPermessoEmail(id) {
     console.warn('inviaPermessoEmail:',e.message);
     alert('\u274C Errore invio: '+e.message);
   } finally {
-    if(btn){btn.disabled=false;btn.textContent='\u2709\uFE0F Invia PDF';}
+    if(btn){btn.disabled=false;btn.textContent='\u2709\uFE0F Invia al cliente';}
   }
 }
 
 // ── Render griglia permessi ────────────────────────────────────
+function recuperaEmailCliente(nome){
+  if(!nome) return '';
+  var norm=function(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim(); };
+  var target=norm(nome); if(!target) return '';
+  var tokens=target.split(' ').filter(function(t){return t.length>1;});
+  if(!tokens.length) return '';
+  var match=function(full){ full=norm(full); if(!full) return false; if(full===target) return true; return tokens.every(function(t){ return full.indexOf(t)>=0; }); };
+  try{ var cvs=(typeof cvLoad==='function')?cvLoad():[];
+    for(var i=0;i<cvs.length;i++){ var cl=cvs[i].cliente||{}; if(!cl.email) continue;
+      if(match((cl.cognome||'')+' '+(cl.nome||''))||match((cl.nome||'')+' '+(cl.cognome||''))||(cl.ragSociale&&match(cl.ragSociale))) return cl.email;
+    }
+  }catch(e){}
+  try{ var cr=(typeof crmLoad==='function')?crmLoad():{}; var keys=Object.keys(cr||{});
+    for(var j=0;j<keys.length;j++){ var c=cr[keys[j]]||{}; if(!c.email) continue;
+      if(match((c.cognome||'')+' '+(c.nome||''))||match((c.nome||'')+' '+(c.cognome||''))) return c.email;
+    }
+  }catch(e){}
+  return '';
+}
 function renderPermessi() {
   try { pulisciPermessiScaduti(); } catch(e) { console.warn('pulisci error:', e); }
   var list;
@@ -7187,10 +7208,15 @@ function renderPermessi() {
       html+='</div>';
     }
     html+='</div>';
+    var emailCli=''; try{ emailCli=recuperaEmailCliente(p.intestatario)||''; }catch(e){}
+    html+='<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);">';
+    html+='<label style="font-size:11px;color:var(--gray);font-weight:700;display:block;margin-bottom:4px;">&#9993;&#65039; Email cliente (destinatario)</label>';
+    html+='<input id="permail-'+p.id+'" type="email" value="'+(emailCli||'')+'" placeholder="email@cliente.it" style="width:100%;padding:9px;border:1px solid var(--bdr);border-radius:6px;font-family:var(--font);font-size:13px;box-sizing:border-box;">';
+    html+='<div style="font-size:11px;margin-top:4px;color:'+(emailCli?'#27ae60':'#e67e22')+';">'+(emailCli?'&#9989; Email recuperata automaticamente &mdash; premi <b>Invia al cliente</b>':'&#9888;&#65039; Nessuna email trovata: scrivila qui, poi premi Invia')+'</div>';
+    html+='</div>';
     html+='<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;">';
-    html+='<button data-pid="'+p.id+'" data-action="view" style="padding:7px 12px;background:var(--blue);color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#128065; Apri</button>';
-    html+='<button data-pid="'+p.id+'" data-action="send" style="padding:7px 12px;background:#27ae60;color:white;border:none;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#9993;&#65039; Invia PDF</button>';
-    html+='<button data-pid="'+p.id+'" data-action="del" style="padding:7px 12px;background:none;border:1px solid var(--red);color:var(--red);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;">&#10005;</button>';
+    html+='<button data-pid="'+p.id+'" data-action="send" style="flex:1;min-width:150px;padding:11px 12px;background:#27ae60;color:white;border:none;border-radius:6px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;">&#9993;&#65039; Invia al cliente</button>';
+    html+='<button data-pid="'+p.id+'" data-action="del" title="Elimina" style="padding:11px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;">&#10005;</button>';
     html+='</div></div>';
   });
   grid.innerHTML=html;
@@ -7498,6 +7524,13 @@ function applyRoleUI() {
   var _bs1=document.getElementById('btn-apri-sheet'); if(_bs1) _bs1.style.display=(role==='admin')?'':'none';
   var _bs2=document.getElementById('btn-apri-sheet-presenze'); if(_bs2) _bs2.style.display=(role==='admin')?'':'none';
 
+  // Schermata iniziale: l'admin apre direttamente le Vendite (In attesa pagamento)
+  if (role === 'admin' && !_landingApplied) {
+    _landingApplied = true;
+    var bV = document.getElementById('si-vendite');
+    if (bV) setTimeout(function(){ try{ bV.click(); }catch(e){} }, 200);
+    return;
+  }
   // Schermata iniziale: al login i non-admin (dipendenti/staff, incluso Rudy) aprono le Timbrature
   var landing = (role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0];
   if (role !== 'admin' && !_landingApplied && allowed.indexOf('presenze') !== -1) {
@@ -9417,24 +9450,27 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div class="cc-dayhead"><div class="cc-daydate" id="cc-daydate"></div><button class="cc-btn" id="cc-close">Chiudi</button></div>'
   +     '<div id="cc-list"></div>'
   +     '<div class="cc-addbox">'
-  +       '<div class="cc-addtitle">➕ Nuovo compito</div>'
+  +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<button class="cc-btn cc-btn-primary" id="cc-mic-tutto" style="width:100%;margin-bottom:6px">🎤 Detta tutto in un colpo</button>'
-  +       '<div class="cc-hint" id="cc-hint-tutto" style="margin-bottom:12px">Premi e parla, es: "ordina i guanti domani alle 9 per Davide". Poi controlla e premi Salva.</div>'
-  +       '<div class="cc-field"><label>Compito (scrivi o detta con 🎤)</label>'
-  +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Consegnare materiale al cliente"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
+  +       '<div class="cc-hint" id="cc-hint-tutto" style="margin-bottom:12px">Premi e parla, es: "tagliando Peugeot domani alle 9 per Fabio". Poi controlla e premi Salva.</div>'
+  +       '<div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-field"><label>Cliente / descrizione</label>'
+  +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Tagliando Peugeot 3008 - Rossi"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
   +         '<div class="cc-hint" id="cc-hint-titolo">Tocca il microfono e parla.</div>'
   +       '</div>'
   +       '<div class="cc-row2">'
+  +         '<div class="cc-field"><label>Email cliente *</label><input type="email" id="cc-email" placeholder="cliente@email.it"></div>'
+  +         '<div class="cc-field"><label>Telefono cliente *</label><input type="tel" id="cc-tel" placeholder="333 1234567"></div>'
+  +       '</div>'
+  +       '<div class="cc-row2">'
   +         '<div class="cc-field"><label>Assegna a</label><select id="cc-dip"></select></div>'
-  +         '<div class="cc-field"><label>Ora compito (opzionale)</label><input type="text" id="cc-ora" placeholder="Es. 14:30"></div>'
+  +         '<div class="cc-field"><label>Ora</label><input type="text" id="cc-ora" placeholder="Es. 09:30"></div>'
   +       '</div>'
-  +       '<div class="cc-field"><label>🔔 Ricordamelo (opzionale)</label>'
-  +         '<div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"><button class="cc-mic" id="cc-mic-ricorda" title="Detta data e ora">🎤</button></div>'
-  +         '<div class="cc-hint" id="cc-hint-ricorda">Scrivi, oppure detta: "domani alle 9", "venerdì alle 14:30", "tra 2 ore".</div>'
-  +       '</div>'
+  +       '<div class="cc-field" style="display:none"><label>Ricordamelo</label><div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"><button class="cc-mic" id="cc-mic-ricorda" title="Detta">🎤</button></div><div class="cc-hint" id="cc-hint-ricorda"></div></div>'
+  +       '<div class="cc-hint" style="margin:-2px 0 12px;color:#0891b2;font-weight:600;">🔔 Il cliente riceverà un promemoria automatico il giorno prima (email obbligatoria).</div>'
   +       '<div class="cc-field"><label>Nota (opzionale)</label><textarea id="cc-nota" placeholder="Dettagli aggiuntivi…"></textarea></div>'
   +       '<div class="cc-inserito" id="cc-inserito"></div>'
-  +       '<button class="cc-btn cc-btn-primary" id="cc-salva" style="width:100%">Salva compito</button>'
+  +       '<button class="cc-btn cc-btn-primary" id="cc-salva" style="width:100%">Salva appuntamento</button>'
   +     '</div>'
   +   '</div>'
   + '</div>';
@@ -9497,6 +9533,7 @@ document.addEventListener('DOMContentLoaded',function(){
     gsJsonp({ action:'upsert', sheet:CC_SHEET, record:{
       id:c.id, data:c.data, titolo:c.titolo, dipendente:c.dipNome, dipEmail:c.dipEmail,
       ora:c.ora||'', ricorda:c.ricorda||'', nota:c.nota||'', creatoDa:c.creatoDa||'',
+      tipo:c.tipo||'', email:c.email||'', tel:c.tel||'',
       fatto:c.fatto?'SI':'NO', fattoDa:c.fattoDa||''
     }});
   }
@@ -9556,11 +9593,13 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccColoreCompito(c){ return ccColore((c.dipEmail||c.dipNome||'')); }
 
   var ccFC=null;
+  function ccTipoInfo(t){ return (t==='vendita')?['\ud83e\udd1d','Vendita','#2563eb']:['\ud83d\udd27','Intervento','#ea580c']; }
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
     return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f); }).map(function(c){
-      var col=c.fatto?'#94a3b8':ccColoreCompito(c);
-      var titolo=(c.titolo||'Compito')+(c.dipNome?(' \u00b7 '+c.dipNome):'');
+      var ti=ccTipoInfo(c.tipo);
+      var col=c.fatto?'#94a3b8':ti[2];
+      var titolo=ti[0]+' '+(c.titolo||'Appuntamento')+(c.dipNome?(' \u00b7 '+c.dipNome):'');
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
       var mm=ora.match(/^(\d{1,2}):(\d{2})$/);
@@ -9573,9 +9612,11 @@ document.addEventListener('DOMContentLoaded',function(){
     var mount=document.getElementById('cc-fc'); if(!mount) return;
     if(typeof FullCalendar==='undefined' || !FullCalendar.Calendar){ mount.innerHTML='<div style="padding:24px;text-align:center;color:#64748b;font-size:13px;">Calendario non disponibile: controlla la connessione e ricarica la pagina.</div>'; return; }
     if(!ccFC){
+      var _mob = (typeof isMobile==='function') ? isMobile() : (window.innerWidth<=768);
       try{
         ccFC=new FullCalendar.Calendar(mount, {
-          initialView:'timeGridWeek',
+          initialView: _mob ? 'timeGrid3' : 'timeGridWeek',
+          views:{ timeGrid3:{ type:'timeGrid', duration:{days:3}, buttonText:'3 giorni' } },
           locale:'it',
           firstDay:1,
           height:'auto',
@@ -9583,8 +9624,8 @@ document.addEventListener('DOMContentLoaded',function(){
           nowIndicator:true,
           slotMinTime:'07:00:00',
           slotMaxTime:'21:00:00',
-          allDayText:'tutto il g.',
-          headerToolbar:{ left:'prev,next oggi', center:'title', right:'dayGridMonth,timeGridWeek,listWeek' },
+          allDayText:'giornata',
+          headerToolbar:{ left:'prev,next oggi', center:'title', right:_mob?'timeGrid3,dayGridMonth,listWeek':'dayGridMonth,timeGridWeek,timeGrid3,listWeek' },
           buttonText:{ today:'oggi', month:'mese', week:'settimana', list:'lista', day:'giorno' },
           slotLabelFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           eventTimeFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
@@ -9629,17 +9670,21 @@ document.addEventListener('DOMContentLoaded',function(){
         + '</div>';
       g.items.sort(function(a,b){ return (a.fatto===b.fatto)?0:(a.fatto?1:-1); });
       g.items.forEach(function(c){
+        var ti=ccTipoInfo(c.tipo);
         html += '<div class="cc-task'+(c.fatto?' cc-done':'')+'" style="border-left:5px solid '+_col+'">'
           + '<div class="cc-check'+(c.fatto?' cc-on':'')+'" data-id="'+c.id+'" data-act="toggle">'+(c.fatto?'✓':'')+'</div>'
           + '<div class="cc-tbody">'
-          +   '<div class="cc-tt">'+ccEsc(c.titolo)+'</div>'
+          +   '<div class="cc-tt"><span style="display:inline-block;font-size:10px;font-weight:800;background:'+ti[2]+'22;color:'+ti[2]+';padding:1px 7px;border-radius:9px;margin-right:6px;vertical-align:middle;">'+ti[0]+' '+ti[1]+'</span>'+ccEsc(c.titolo)+'</div>'
           +   '<div class="cc-meta">'
           +     (c.ora?'<span>🕐 '+ccEsc(c.ora)+'</span>':'')
-          +     (c.ricorda?'<span>🔔 '+ccEsc(ccFmtRicorda(c.ricorda))+'</span><span class="cc-callink" data-id="'+c.id+'" data-act="ics">📅 avvisami</span>':'')
+          +     (c.tel?'<span>📞 '+ccEsc(c.tel)+'</span>':'')
+          +     (c.email?'<span>✉️ '+ccEsc(c.email)+'</span>':'')
+          +     (c.ricorda?'<span>🔔 promemoria '+ccEsc(ccFmtRicorda(c.ricorda))+'</span><span class="cc-callink" data-id="'+c.id+'" data-act="ics">📅 avvisami</span>':'')
           +     (c.creatoDa?'<span>da '+ccEsc(c.creatoDa)+'</span>':'')
           +     (c.fatto&&c.fattoDa?'<span>✓ fatto da '+ccEsc(c.fattoDa)+'</span>':'')
           +   '</div>'
           +   (c.nota?'<div class="cc-note">'+ccEsc(c.nota)+'</div>':'')
+          +   ((c.tipo!=='vendita')?'<div style="margin-top:6px;"><span class="cc-callink" data-id="'+c.id+'" data-act="doc" style="display:inline-block;font-size:12px;font-weight:700;color:#1a4fa0;background:#eff6ff;border:1px solid #dbe4f0;padding:5px 10px;border-radius:7px;cursor:pointer;text-decoration:none;">📎 Preventivo / Fattura</span></div>':'')
           + '</div>'
           + '<button class="cc-del" data-id="'+c.id+'" data-act="del" title="Elimina">×</button>'
           + '</div>';
@@ -9653,6 +9698,7 @@ document.addEventListener('DOMContentLoaded',function(){
         if (act==='toggle') ccToggle(id);
         else if (act==='del') ccElimina(id);
         else if (act==='ics') ccIcsById(id);
+        else if (act==='doc') ccDocAppuntamento(id);
       });
     });
   }
@@ -9723,14 +9769,21 @@ document.addEventListener('DOMContentLoaded',function(){
   }
   function ccAggiungi(){
     var titolo = document.getElementById('cc-titolo').value.trim();
-    if (!titolo){ ccToast('Scrivi o detta un compito'); return; }
+    if (!titolo){ ccToast('Inserisci cliente o descrizione'); return; }
+    var emEl=document.getElementById('cc-email'), telEl=document.getElementById('cc-tel');
+    var email=(emEl&&emEl.value||'').trim(), tel=(telEl&&telEl.value||'').trim();
+    if(!email || !/.+@.+\..+/.test(email)){ ccToast('Email cliente obbligatoria'); if(emEl) emEl.focus(); return; }
+    if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
     var u = ccUtente();
-    var ricorda = document.getElementById('cc-ricorda').value;
+    var tipo=(document.getElementById('cc-tipo')||{}).value||'intervento';
+    // promemoria automatico il giorno PRIMA alle 18:00
+    var ricorda='';
+    try{ if(ccGiornoSel){ var pp=ccGiornoSel.split('-'); var dprev=new Date(parseInt(pp[0]),parseInt(pp[1])-1,parseInt(pp[2])-1,18,0,0); var z=function(n){return String(n).padStart(2,'0');}; ricorda=dprev.getFullYear()+'-'+z(dprev.getMonth()+1)+'-'+z(dprev.getDate())+'T18:00'; } }catch(e){}
     var c = {
       id: 'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
-      data: ccGiornoSel, titolo: titolo,
+      data: ccGiornoSel, titolo: titolo, tipo:tipo, email:email, tel:tel,
       dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
       ora: document.getElementById('cc-ora').value.trim(),
       ricorda: ricorda,
@@ -9738,10 +9791,10 @@ document.addEventListener('DOMContentLoaded',function(){
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
     };
     var list = ccLoad(); list.push(c); ccSave(list); ccSync(c);
-    if (ricorda) ccPermessoNotifiche();
-    document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value=''; document.getElementById('cc-ricorda').value='';
-    document.getElementById('cc-hint-ricorda').textContent = 'Scrivi, oppure detta: "domani alle 9", "venerdì alle 14:30", "tra 2 ore".';
-    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast('Compito salvato');
+    ccPermessoNotifiche();
+    document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
+    if(emEl) emEl.value=''; if(telEl) telEl.value='';
+    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast('Appuntamento salvato');
     document.getElementById('cc-titolo').focus();
   }
   function ccToggle(id){
@@ -9874,7 +9927,7 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); c.avvisato=true; cambiato=true; }
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} } c.avvisato=true; cambiato=true; }
       }
     });
     if (cambiato) ccSave(list);
@@ -9895,6 +9948,20 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   function ccToast(m){ var t=document.getElementById('cc-toast'); t.textContent=m; t.classList.add('cc-show'); setTimeout(function(){ t.classList.remove('cc-show'); },2200); }
+  function ccDocAppuntamento(id){
+    var c=ccLoad().filter(function(x){return x.id===id;})[0]; if(!c) return;
+    if(typeof cvModModal!=='function' || typeof docPannelloHTML!=='function'){ ccToast('Archivio documenti non disponibile'); return; }
+    var m=cvModModal();
+    m.innerHTML='<div style="max-width:520px;margin:6vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+      +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;">📎 Preventivo / Fattura</span><button onclick="cvModChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>'
+      +'<div style="padding:16px 18px;max-height:74vh;overflow:auto;">'
+      +'<div style="font-size:13px;color:#334155;font-weight:700;">'+ccEsc(c.titolo||'Appuntamento')+'</div>'
+      +'<div style="font-size:12px;color:#64748b;margin-bottom:8px;">'+ccEsc(c.data||'')+(c.ora?(' \u00b7 '+ccEsc(c.ora)):'')+'</div>'
+      +docPannelloHTML('pratica', c.id, 'ccdoc')
+      +'</div></div>';
+    m.style.display='block';
+    try{ docListaRender('pratica', c.id, 'ccdoc'); }catch(e){}
+  }
 
   /* ===================== Render principale (all'apertura) ===================== */
   function ccRender(){
@@ -11403,10 +11470,10 @@ function cvCalcola(c){
   return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
 }
 
-function cvForm(id){
+function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
   _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''}] };
-  if(_cv.isContratto && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ if(typeof cvVendModificaLimitata==='function'){ cvVendModificaLimitata(_cv.id); } return; }
+  if(fromVend && _cv.isContratto && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ if(typeof cvVendModificaLimitata==='function'){ cvVendModificaLimitata(_cv.id); } return; }
   if(!_cv.costiExtra) _cv.costiExtra=[]; if(!_cv.pagamenti) _cv.pagamenti=[]; if(!_cv.cliente) _cv.cliente={};
   var autos=(typeof mzLoad==='function'?mzLoad():[]);
   var optAuto='<option value="">— seleziona auto dal magazzino —</option>'+autos.filter(function(a){ return (!a.impegnata && a.stato!=='venduta') || a.id===_cv.autoId; }).map(function(a){ var lab='#'+(a.targa||'???')+' - '+(a.marca||'')+' '+(a.modello||''); return '<option value="'+a.id+'"'+(_cv.autoId===a.id?' selected':'')+'>'+cvEsc(lab)+'</option>'; }).join('');
@@ -11453,20 +11520,23 @@ function cvForm(id){
   h+='</div>';
   h+=lab('Note contratto')+'<textarea id="cv_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+cvEsc(_cv.note||'')+'</textarea>';
   h+='<div id="cv-riepilogo" style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;"></div>';
-  if(_cv.isContratto){
+  if(fromVend && _cv.isContratto){
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('pratica', _cv.id, 'cvdoc')+'</div>';
     h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa pre-contratto</button>';
-  } else {
+  } else if(!_cv.isContratto){
     h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
     h+='<button onclick="cvTrasformaContratto()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:2px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83d\udcc4 Trasforma in pre-contratto</button>';
     h+='<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;">Solo trasformandolo in pre-contratto entra nelle Vendite (in attesa pagamento). Alla creazione il preventivo viene inviato via email al cliente.</div>';
     if(c) h+='<button onclick="cvElimina(\''+c.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
+  } else {
+    h+='<button onclick="cvStampa(\'preventivo\')" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
+    h+='<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:8px;">Questo preventivo è già stato trasformato in pre-contratto: gestiscilo nella sezione <b>Vendite</b>.</div>';
   }
   h+='</div></div>';
   var m=document.getElementById('cv-modal'); if(m && m.parentNode!==document.body){ document.body.appendChild(m); } m.innerHTML=h; m.style.display='block';
   cvGar(_cv.garanziaMesi||'12'); cvRenderExtra(); cvRenderPag(); cvLive();
-  if(_cv.isContratto){ try{ docListaRender('pratica', _cv.id, 'cvdoc'); }catch(e){} }
+  if(fromVend && _cv.isContratto){ try{ docListaRender('pratica', _cv.id, 'cvdoc'); }catch(e){} }
 }
 function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')?parLoad():{}; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; _cv.garanziaImporto=(mesi==='24')?n(p.garanzia24):0; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} var gc=document.getElementById('cv-gar-costo'); if(gc){ gc.innerHTML=(mesi==='24')?('Costo garanzia 24 mesi (da Parametri): <b>'+cvEuro(_cv.garanziaImporto)+'</b>'):'Garanzia 12 mesi inclusa (legale)'; } if(typeof cvLive==='function') cvLive(); }
@@ -12227,7 +12297,7 @@ function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, function(arr){ cvSave(
 
 /* ===================== MODIFICA CONTRATTO (permessi + notifica) ===================== */
 var _cvMod=null; var _cvModOrig=null;
-function cvVendModifica(id){ if(typeof cvForm==='function') cvForm(id); }
+function cvVendModifica(id){ if(typeof cvForm==='function') cvForm(id, true); }
 function cvVendDettagli(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var tipo=(cv.statoVendita==='da_consegnare'||cv.statoVendita==='consegnato')?'finale':'pre';
