@@ -926,6 +926,12 @@ html, body{
       <input id="mz-cerca" oninput="mzRender()" placeholder="🔎 Cerca marca, modello, targa…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">
     </div>
     <div id="mz-filtri" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <span style="font-size:12px;color:#64748b;font-weight:700;align-self:center;">Inventario:</span>
+      <button onclick="mzExportInventario('italiane')" style="padding:8px 12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Italiane</button>
+      <button onclick="mzExportInventario('estere')" style="padding:8px 12px;border-radius:8px;border:1px solid #1e40af;background:#eff6ff;color:#1e40af;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Estere</button>
+      <button onclick="mzExportInventario('permute')" style="padding:8px 12px;border-radius:8px;border:1px solid #6d28d9;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Permute</button>
+    </div>
     <div id="mz-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
     <div id="mz-lista"></div>
   </div>
@@ -7441,7 +7447,7 @@ var SEZIONI_DEFS = [
   {v:'foto',     label:'Foto'},
   {v:'permessi', label:'Permessi'},
   {v:'presenze', label:'Presenze'},
-  {v:'compiti',  label:'Compiti'},
+  {v:'compiti',  label:'Calendario / Task'},
   {v:'sinistri', label:'Sinistri'},
   {v:'permute', label:'Permute'}
 ];
@@ -9454,6 +9460,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<select id="cc-filtro"><option value="">Tutti i dipendenti</option></select>'
   +     '<button class="cc-btn" id="cc-refresh" title="Aggiorna dal cloud">🔄</button>'
   +   '</div>'
+  +   '<div id="cc-catfiltro" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"><button class="cc-btn" id="cc-cf-all" style="font-weight:800;">Tutti</button><button class="cc-btn" id="cc-cf-app">📅 Appuntamenti</button><button class="cc-btn" id="cc-cf-task">✅ Task</button></div>'
   +   '<div id="cc-fc" style="background:#fff;border:1px solid #e4e9f2;border-radius:12px;padding:10px;"></div>'
   +   '<div class="cc-panel" id="cc-daypanel" style="display:none">'
   +     '<div class="cc-dayhead"><div class="cc-daydate" id="cc-daydate"></div><button class="cc-btn" id="cc-close">Chiudi</button></div>'
@@ -9462,6 +9469,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<button class="cc-btn cc-btn-primary" id="cc-mic-tutto" style="width:100%;margin-bottom:6px">🎤 Detta tutto in un colpo</button>'
   +       '<div class="cc-hint" id="cc-hint-tutto" style="margin-bottom:12px">Premi e parla, es: "tagliando Peugeot domani alle 9 per Fabio". Poi controlla e premi Salva.</div>'
+  +       '<div class="cc-field"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
   +       '<div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Tagliando Peugeot 3008 - Rossi"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
@@ -9584,9 +9592,12 @@ document.addEventListener('DOMContentLoaded',function(){
   /* ===================== Render calendario ===================== */
   var ccVMese, ccVAnno;
   function ymd(y,m,d){ return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
+  var ccCatFiltro='';
+  function ccCatOk(c){ if(!ccCatFiltro) return true; return (c.categoria||'appuntamento')===ccCatFiltro; }
+  function ccSetCatFiltro(v){ ccCatFiltro=v; var ids={'':'cc-cf-all','appuntamento':'cc-cf-app','task':'cc-cf-task'}; ['cc-cf-all','cc-cf-app','cc-cf-task'].forEach(function(id){ var b=document.getElementById(id); if(b){ b.style.fontWeight=(ids[v]===id)?'800':'400'; b.style.background=(ids[v]===id)?'#1a4fa0':''; b.style.color=(ids[v]===id)?'#fff':''; } }); try{ ccRenderCal(); ccRenderList(); }catch(e){} }
   function ccCompitiGiorno(ds){
     var f = (document.getElementById('cc-filtro')||{}).value || '';
-    return ccLoad().filter(function(c){ return c.data===ds && (!f || c.dipEmail===f); });
+    return ccLoad().filter(function(c){ return c.data===ds && (!f || c.dipEmail===f) && ccCatOk(c); });
   }
   function ccEsc(s){ return String(s||'').replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];}); }
   function ccFmtRicorda(iso){ try{ return new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return iso; } }
@@ -9605,10 +9616,11 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccTipoInfo(t){ return (t==='vendita')?['\ud83e\udd1d','Vendita','#2563eb']:['\ud83d\udd27','Intervento','#ea580c']; }
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
-    return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f); }).map(function(c){
+    return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
+      var isTask=(c.categoria==='task');
       var ti=ccTipoInfo(c.tipo);
-      var col=c.fatto?'#94a3b8':ti[2];
-      var titolo=ti[0]+' '+(c.titolo||'Appuntamento')+(c.dipNome?(' \u00b7 '+c.dipNome):'');
+      var col=c.fatto?'#94a3b8':(isTask?'#0d9488':ti[2]);
+      var titolo=(isTask?'\u2705 ':(ti[0]+' '))+(c.titolo||(isTask?'Task':'Appuntamento'))+(c.dipNome?(' \u00b7 '+c.dipNome):'');
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
       var mm=ora.match(/^(\d{1,2}):(\d{2})$/);
@@ -9628,6 +9640,7 @@ document.addEventListener('DOMContentLoaded',function(){
           views:{ timeGrid3:{ type:'timeGrid', duration:{days:3}, buttonText:'3 giorni' } },
           locale:'it',
           firstDay:1,
+          hiddenDays:[0],
           height:'auto',
           expandRows:true,
           nowIndicator:true,
@@ -9779,20 +9792,22 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccAggiungi(){
     var titolo = document.getElementById('cc-titolo').value.trim();
     if (!titolo){ ccToast('Inserisci cliente o descrizione'); return; }
+    var categoria=(document.getElementById('cc-cat')||{}).value||'appuntamento';
     var emEl=document.getElementById('cc-email'), telEl=document.getElementById('cc-tel');
     var email=(emEl&&emEl.value||'').trim(), tel=(telEl&&telEl.value||'').trim();
-    if(!email || !/.+@.+\..+/.test(email)){ ccToast('Email cliente obbligatoria'); if(emEl) emEl.focus(); return; }
-    if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
+    if(categoria!=='task'){
+      if(!email || !/.+@.+\..+/.test(email)){ ccToast('Email cliente obbligatoria'); if(emEl) emEl.focus(); return; }
+      if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
+    }
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
     var u = ccUtente();
     var tipo=(document.getElementById('cc-tipo')||{}).value||'intervento';
-    // promemoria automatico il giorno PRIMA alle 18:00
     var ricorda='';
     try{ if(ccGiornoSel){ var pp=ccGiornoSel.split('-'); var dprev=new Date(parseInt(pp[0]),parseInt(pp[1])-1,parseInt(pp[2])-1,18,0,0); var z=function(n){return String(n).padStart(2,'0');}; ricorda=dprev.getFullYear()+'-'+z(dprev.getMonth()+1)+'-'+z(dprev.getDate())+'T18:00'; } }catch(e){}
     var c = {
       id: 'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
-      data: ccGiornoSel, titolo: titolo, tipo:tipo, email:email, tel:tel,
+      data: ccGiornoSel, titolo: titolo, tipo:tipo, categoria:categoria, email:email, tel:tel,
       dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
       ora: document.getElementById('cc-ora').value.trim(),
       ricorda: ricorda,
@@ -9801,9 +9816,10 @@ document.addEventListener('DOMContentLoaded',function(){
     };
     var list = ccLoad(); list.push(c); ccSave(list); ccSync(c);
     ccPermessoNotifiche();
+    if(categoria!=='task' && email && typeof gsPost==='function'){ try{ gsPost({action:'confermaAppuntamento', email:email, tel:tel, cliente:titolo, tipo:tipo, data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} }
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
-    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast('Appuntamento salvato');
+    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
     document.getElementById('cc-titolo').focus();
   }
   function ccToggle(id){
@@ -9992,6 +10008,9 @@ document.addEventListener('DOMContentLoaded',function(){
   _ccBind('cc-refresh','click', function(){ ccFetchSheet(); ccToast('Aggiornamento…'); });
   _ccBind('cc-close','click', ccChiudi);
   _ccBind('cc-salva','click', ccAggiungi);
+  _ccBind('cc-cf-all','click', function(){ ccSetCatFiltro(''); });
+  _ccBind('cc-cf-app','click', function(){ ccSetCatFiltro('appuntamento'); });
+  _ccBind('cc-cf-task','click', function(){ ccSetCatFiltro('task'); });
   _ccBind('cc-mic-titolo','click', function(){ ccAvviaVoce('titolo'); });
   _ccBind('cc-mic-ricorda','click', function(){ ccAvviaVoce('ricorda'); });
   _ccBind('cc-mic-tutto','click', function(){ ccAvviaVoce('tutto'); });
@@ -11230,6 +11249,30 @@ function mzRenderFiltri(){
 }
 function mzFiltro(s){ _mzFiltro=s; mzRenderFiltri(); mzRender(); }
 
+function mzExportInventario(cat){
+  var all=(typeof mzLoad==='function')?mzLoad():[];
+  var rows=all.filter(function(a){
+    if(cat==='estere') return a.estera===true;
+    if(cat==='permute') return a.origine==='permuta';
+    return !a.estera && a.origine!=='permuta';
+  });
+  var idCol = (cat==='estere') ? 'Telaio' : 'Targa';
+  var idVal = function(a){ return (cat==='estere') ? (a.telaio||'') : (a.targa||''); };
+  var lines=[['Quantità','Marca','Modello',idCol,'Prezzo acquisto']];
+  rows.forEach(function(a){ lines.push([1,(a.marca||''),(a.modello||''),idVal(a),(a.prezzoAcq||'')]); });
+  var totPrezzo=rows.reduce(function(s,a){var n=parseFloat(a.prezzoAcq);return s+(isNaN(n)?0:n);},0);
+  lines.push([]); lines.push([rows.length,'TOTALE','','',Math.round(totPrezzo*100)/100]);
+  var csv=lines.map(function(r){ return r.map(function(c){ var s=String(c==null?'':c); if(/[";\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"'; return s; }).join(';'); }).join('\r\n');
+  var nomi={italiane:'Italiane',estere:'Estere',permute:'Permute'};
+  try{
+    var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var el=document.createElement('a'); el.href=url; el.download='Inventario_'+(nomi[cat]||cat)+'_'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.appendChild(el); el.click(); document.body.removeChild(el);
+    setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+    if(typeof tcToastNew==='function') tcToastNew('⬇️ Inventario '+(nomi[cat]||cat)+' scaricato ('+rows.length+' veicoli)',true);
+  }catch(e){ alert('Errore export: '+e); }
+}
 function mzRender(){
   var wrap=document.getElementById('mz-lista'); if(!wrap) return;
   var q=(document.getElementById('mz-cerca')||{}).value||''; q=q.toLowerCase().trim();
@@ -11574,8 +11617,8 @@ function pmiExport(cvId){
   cv.permutaOn=false;
   var rimosso=0;
   if(cv.pagamenti){ cv.pagamenti=cv.pagamenti.filter(function(p){ if(/permuta/i.test(p.metodo||'')){ rimosso+=cvNum(p.importo); return false; } return true; }); }
-  if(rimosso>0 && cv.isContratto){
-    var t=cvCalcola(cv); var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
+  if(cv.isContratto){
+    var t=cvCalcola(cv); var pags=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
     var incassato=pags.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
     if(incassato < (t.totaleVendita-0.01) && (cv.statoVendita==='in_attesa_immatricolazione'||cv.statoVendita==='da_consegnare')){ cv.statoVendita='in_attesa_pagamento'; }
   }
@@ -11744,17 +11787,20 @@ function cvRender(){
   }).join('');
 }
 
+function cvPagIncasso(pags){ return (pags||[]).filter(function(p){return !/permuta/i.test(p.metodo||'');}); }
 function cvCalcola(c){
   var prezzo=cvNum(c.prezzoVendita), passaggio=cvNum(c.passaggio), gar=cvNum(c.garanziaImporto), assic=(c.assicOn?cvNum(c.assicImporto):0);
   var extra=(c.costiExtra||[]).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var sconto=(c.scontoOn?cvNum(c.scontoImporto):0);
+  var permVal=(c.permutaOn && c.permuta)?cvNum(c.permuta.prezzoAcq):0;
+  var minivolt=(c.permutaOn && c.permuta && cvNum(c.permuta.prezzoAcq)>0)?cvNum((typeof parLoad==='function'?(parLoad().minivoltura):200)||200):0;
   var iva104=0, imponibile104=0, veicolo=prezzo;
   if(c.legge104On){ var lordo104=Math.max(0, prezzo - sconto); imponibile104=Math.round(lordo104/1.22*100)/100; iva104=Math.round(imponibile104*0.04*100)/100; veicolo=Math.round((imponibile104+iva104)*100)/100; }
-  var totaleVendita=veicolo+passaggio+gar+assic+extra;
+  var totaleVendita=veicolo+passaggio+gar+assic+extra+minivolt-permVal;
   var totaleScontato = c.legge104On ? totaleVendita : (totaleVendita - sconto);
-  var pagTot=(c.pagamenti||[]).reduce(function(s,x){return s+cvNum(x.importo);},0);
+  var pagTot=cvPagIncasso(c.pagamenti).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var saldoDovuto=totaleScontato-pagTot;
-  return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
+  return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, permVal:permVal, minivolt:minivolt, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
 }
 
 function cvForm(id, fromVend){
@@ -11858,7 +11904,7 @@ function cvPagMetodo(i, val){
 function cvRenderPag(){
   var c=document.getElementById('cv-pag'); if(!c)return;
   var tipi=['Caparra','Acconto','Saldo','Finanziamento'];
-  var metodi=['Bonifico','Contanti','POS','Finanziamento','Finanziamento PROMO','Permuta'];
+  var metodi=['Bonifico','Contanti','POS','Finanziamento','Finanziamento PROMO'];
   var ss='padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-width:0;box-sizing:border-box;';
   c.innerHTML=_cv.pagamenti.map(function(x,i){
     var isFin = x.tipo==='Finanziamento' || /finanziamento/i.test(x.metodo||'');
@@ -11905,9 +11951,10 @@ function cvLive(){
   if(t.gar) h+=r('Garanzia',t.gar);
   if(_cv.assicOn) h+=r('Assicurazione',t.assic);
   (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
   h+=r('Totale vendita',t.totaleVendita,true);
   if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale scontato',t.totaleScontato,true); }
-  (_cv.pagamenti||[]).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
+  cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
   h+=r('Saldo dovuto',t.saldoDovuto,true);
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
 }
@@ -12137,9 +12184,10 @@ function cvBuildHTML(c, tipo){
   if(c.assicOn) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
   (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
   doc+=row('Totale vendita',t.totaleVendita,'sub');
   if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
-  pagList.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
+  cvPagIncasso(c.pagamenti).forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
   doc+=row('Saldo dovuto',t.saldoDovuto,'tot');
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
   if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } }
@@ -12524,7 +12572,7 @@ function cvVendAvanzaStato(cv){
   if(!cv || !cv.isContratto) return false;
   var st=cv.statoVendita||'in_attesa_pagamento';
   if(st==='consegnato') return false;
-  var pags=(cv.pagamenti||[]).filter(function(x){return cvNum(x.importo);});
+  var pags=cvPagIncasso(cv.pagamenti).filter(function(x){return cvNum(x.importo);});
   var incassato=pags.filter(function(x){return x.confermato;}).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleVendita:0};
   var saldata = pags.length>0 && incassato >= ((t.totaleVendita||0)-0.01);
@@ -12578,7 +12626,7 @@ function cvVendCard(cv){
   var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='consegnato')?('<button onclick="cvStampaById(\''+cv.id+'\',\'finale\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+'</div>';
   var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato (DEMO)</a></div>'):'';
-  var pagsAll=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
+  var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
   var incassato=pagsAll.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
   var totale=t.totaleVendita;
   var daIncassare=Math.max(0, totale-incassato);
