@@ -3705,13 +3705,21 @@ function utentiSupaLoad(done){
     sb.from('utenti').select('data').then(function(res){
       if(!res||res.error){ if(done)done(); return; }
       var rows=(res.data||[]).map(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } return d; }).filter(function(d){ return d&&d.email; });
-      if(rows.length){
-        var m=loadPermessiSezioni(), seen={}, ua=[];
-        rows.forEach(function(r){ var k=String(r.email).toLowerCase(); if(seen[k]) return; seen[k]=1; if(r.sezioni!=null) m[k]=r.sezioni; ua.push({ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }); });
-        UTENTI_APP=ua; salvaUtentiApp(); savePermessiSezioniLocal(m);
-        if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
-        if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
-      }
+      var m=loadPermessiSezioni();
+      var byEmail={}; UTENTI_APP.forEach(function(u){ if(u&&u.email) byEmail[String(u.email).toLowerCase()]=u; });
+      var deleted; try{ deleted=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; }catch(e){ deleted=[]; }
+      rows.forEach(function(r){
+        var k=String(r.email).toLowerCase();
+        if(deleted.indexOf(k)>=0) return;               // eliminato di proposito: non reintrodurlo
+        var ex=byEmail[k];
+        if(!ex || (r.updatedAt||0) >= (ex.updatedAt||0)){ byEmail[k]={ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }; }
+        if(r.sezioni!=null && !(k in m)) m[k]=r.sezioni; // le spunte locali vincono sempre
+      });
+      UTENTI_APP=Object.keys(byEmail).map(function(k){ return byEmail[k]; });
+      salvaUtentiApp(); savePermessiSezioniLocal(m);
+      if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
+      if(typeof renderPermessiSezioni==='function') renderPermessiSezioni();
+      if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
       if(done)done();
     });
   }catch(e){ if(done)done(); }
@@ -3951,6 +3959,7 @@ function credAggiungi() {
 
   UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
   salvaUtentiApp();
+  try{ var _del=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; _del=_del.filter(function(x){return x!==email;}); localStorage.setItem('ea_utenti_deleted', JSON.stringify(_del)); }catch(e){}
   if(typeof utentiSupaSave==='function') utentiSupaSave(UTENTI_APP[UTENTI_APP.length-1]);
   document.getElementById('cred-nome').value='';
   document.getElementById('cred-email').value='';
@@ -3960,9 +3969,10 @@ function credAggiungi() {
 
 function credRimuovi(idx) {
   if (!confirm('Rimuovere '+UTENTI_APP[idx].nome+'?')) return;
-  var _remEmail=UTENTI_APP[idx].email;
+  var _remEmail=String(UTENTI_APP[idx].email||'').toLowerCase();
   UTENTI_APP.splice(idx, 1);
   salvaUtentiApp();
+  try{ var _del=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; if(_del.indexOf(_remEmail)<0){ _del.push(_remEmail); localStorage.setItem('ea_utenti_deleted', JSON.stringify(_del)); } }catch(e){}
   if(typeof utentiSupaDelete==='function') utentiSupaDelete(_remEmail);
   renderCredenzialiLista();
 }
