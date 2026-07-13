@@ -3688,6 +3688,34 @@ var UTENTI_APP = (function(){
 function salvaUtentiApp() {
   try { localStorage.setItem('ea_utenti_app', JSON.stringify(UTENTI_APP)); } catch(e) {}
 }
+function utenteId(email){ return 'u_'+String(email||'').toLowerCase().replace(/[^a-z0-9]/gi,'_'); }
+function utentiSupaSave(u){
+  if(!u||!u.email||typeof supaUpsert!=='function') return;
+  var k=String(u.email).toLowerCase(); var sz=null; try{ sz=getPermessiUtente(k); }catch(e){}
+  supaUpsert('utenti', { id:utenteId(k), email:k, nome:u.nome||'', ruolo:u.ruolo||'dipendente', password:u.password||'-', sezioni:sz, updatedAt:Date.now() });
+}
+function utentiSupaDelete(email){ if(typeof supaDelete==='function') supaDelete('utenti', utenteId(email)); }
+function utentiMigraDaPresenze(){
+  try{ var dips=(typeof tcLoadDip==='function')?tcLoadDip():[]; dips.forEach(function(d){ if(d.email && !UTENTI_APP.find(function(u){return String(u.email).toLowerCase()===String(d.email).toLowerCase();})){ UTENTI_APP.push({email:String(d.email).toLowerCase(), password:d.password||'-', nome:d.nome||d.email.split('@')[0], ruolo:d.ruolo||'dipendente'}); } }); salvaUtentiApp(); }catch(e){}
+}
+function utentiSupaLoad(done){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ if(done)done(); return; }
+  if(localStorage.getItem('ea_utenti_migrated')!=='1'){ utentiMigraDaPresenze(); UTENTI_APP.forEach(function(u){ utentiSupaSave(u); }); localStorage.setItem('ea_utenti_migrated','1'); }
+  try{
+    sb.from('utenti').select('data').then(function(res){
+      if(!res||res.error){ if(done)done(); return; }
+      var rows=(res.data||[]).map(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } return d; }).filter(function(d){ return d&&d.email; });
+      if(rows.length){
+        var m=loadPermessiSezioni(), seen={}, ua=[];
+        rows.forEach(function(r){ var k=String(r.email).toLowerCase(); if(seen[k]) return; seen[k]=1; if(r.sezioni!=null) m[k]=r.sezioni; ua.push({ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }); });
+        UTENTI_APP=ua; salvaUtentiApp(); savePermessiSezioniLocal(m);
+        if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
+        if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
+      }
+      if(done)done();
+    });
+  }catch(e){ if(done)done(); }
+}
 
 
 // ══════════════════════════════════════════════════════════════
@@ -3823,7 +3851,7 @@ function renderCredenzialiLista() {
     html += '<td style="padding:9px 10px;">';
     html += '<input type="text" value="'+u.password+'" onchange="credCambiaPassword('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;width:130px;">';
     html += '</td>';
-    var _fisso = (u.email === 'europaautobusiness@gmail.com' || u.email === 'no.reply.europaauto@gmail.com');
+    var _fisso = (u.email === 'europaautobusiness@gmail.com');
     if (_fisso) {
       html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[_ruoloEff]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[_ruoloEff]+'</span></td>';
     } else {
@@ -3839,19 +3867,6 @@ function renderCredenzialiLista() {
       html += '<button data-idx="'+i+'" onclick="credRimuovi(parseInt(this.dataset.idx))" style="background:none;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;">✕</button>';
     }
     html += '</td></tr>';
-  });
-  // Dipendenti (es. da Presenze) non ancora tra le credenziali: mostrali e permetti di aggiungerli
-  var extraDips = [];
-  try { extraDips = (tcLoadDip()||[]).filter(function(d){ return d.email && !UTENTI_APP.find(function(u){return u.email.toLowerCase()===d.email.toLowerCase();}); }); } catch(e){}
-  extraDips.forEach(function(d){
-    var rr = ruoloEffettivo(d.email, d.ruolo||'dipendente');
-    html += '<tr style="border-bottom:1px solid #f1f5f9;background:#fffdf5;">';
-    html += '<td style="padding:9px 10px;font-weight:600;">'+(d.nome||d.email.split('@')[0])+'</td>';
-    html += '<td style="padding:9px 10px;color:#64748b;font-size:12px;">'+d.email+'</td>';
-    html += '<td style="padding:9px 10px;color:#94a3b8;font-size:11px;">da Presenze</td>';
-    html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[rr]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[rr]+'</span></td>';
-    html += '<td style="padding:9px 10px;"><button data-email="'+d.email+'" onclick="credAggiungiDaDip(this.dataset.email)" style="background:#1a4fa0;border:none;color:#fff;padding:4px 10px;font-size:11px;cursor:pointer;border-radius:4px;white-space:nowrap;">➕ Credenziali</button></td>';
-    html += '</tr>';
   });
   html += '</tbody></table>';
   el.innerHTML = html;
@@ -3909,6 +3924,7 @@ function credCambiaRuolo(idx, ruolo) {
   if (!UTENTI_APP[idx]) return;
   UTENTI_APP[idx].ruolo = ruolo;
   salvaUtentiApp();
+  if(typeof utentiSupaSave==='function') utentiSupaSave(UTENTI_APP[idx]);
   renderCredenzialiLista();
   renderPermessiSezioni();
   if (_currentUserEmail === UTENTI_APP[idx].email) { try { setCurrentUser(_currentUserEmail); } catch(e){} }
@@ -3917,6 +3933,7 @@ function credCambiaPassword(idx, nuovaPass) {
   if (!nuovaPass.trim()) return;
   UTENTI_APP[idx].password = nuovaPass.trim();
   salvaUtentiApp();
+  if(typeof utentiSupaSave==='function') utentiSupaSave(UTENTI_APP[idx]);
   alert('✅ Password aggiornata per ' + UTENTI_APP[idx].nome);
 }
 
@@ -3934,6 +3951,7 @@ function credAggiungi() {
 
   UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
   salvaUtentiApp();
+  if(typeof utentiSupaSave==='function') utentiSupaSave(UTENTI_APP[UTENTI_APP.length-1]);
   document.getElementById('cred-nome').value='';
   document.getElementById('cred-email').value='';
   renderCredenzialiLista();
@@ -3942,8 +3960,10 @@ function credAggiungi() {
 
 function credRimuovi(idx) {
   if (!confirm('Rimuovere '+UTENTI_APP[idx].nome+'?')) return;
+  var _remEmail=UTENTI_APP[idx].email;
   UTENTI_APP.splice(idx, 1);
   salvaUtentiApp();
+  if(typeof utentiSupaDelete==='function') utentiSupaDelete(_remEmail);
   renderCredenzialiLista();
 }
 
@@ -7441,7 +7461,7 @@ function isManager() { return _currentUserRole === 'admin' || _currentUserRole =
 
 // ── Applica UI in base al ruolo ───────────────────────────────
 // ══ PERMESSI SEZIONI PER UTENTE ══
-var PERMESSI_KEY   = 'ea_permessi_sezioni_v1';
+var PERMESSI_SEZ_KEY   = 'ea_permessi_sezioni_v1';
 var PERMESSI_SHEET = 'PermessiSezioni';
 var SEZIONI_DEFS = [
   {v:'editor',      label:'Certificazione'},
@@ -7470,8 +7490,8 @@ var SEZIONI_DEFAULT_RUOLO = {
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
 };
-function loadPermessiSezioni(){ try{ return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'{}')||{}; }catch(e){ return {}; } }
-function savePermessiSezioniLocal(map){ try{ localStorage.setItem(PERMESSI_KEY, JSON.stringify(map)); }catch(e){} }
+function loadPermessiSezioni(){ try{ return JSON.parse(localStorage.getItem(PERMESSI_SEZ_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function savePermessiSezioniLocal(map){ try{ localStorage.setItem(PERMESSI_SEZ_KEY, JSON.stringify(map)); }catch(e){} }
 function getPermessiUtente(email){
   if(!email) return null;
   var m=loadPermessiSezioni(); var k=String(email).toLowerCase();
@@ -7480,11 +7500,13 @@ function getPermessiUtente(email){
 function setPermessiUtente(email, views){
   var m=loadPermessiSezioni(); var k=String(email||'').toLowerCase();
   m[k]=views; savePermessiSezioniLocal(m);
-  if(typeof GS_URL!=='undefined' && GS_URL){
-    try{ gsJsonp({action:'upsert', sheet:PERMESSI_SHEET, record:{ id:'perm_'+k.replace(/[^a-z0-9]/gi,'_'), email:k, sezioni:(views||[]).join(','), ts:Date.now() }}); }catch(e){}
+  if(typeof utentiSupaSave==='function'){
+    var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===k;}):null;
+    utentiSupaSave(u||{email:k, nome:'', ruolo:'dipendente', password:'-'});
   }
 }
 function caricaPermessiDaSheets(){
+  if(typeof utentiSupaLoad==='function'){ utentiSupaLoad(); return; }
   if(typeof gsLoad!=='function') return;
   try{
     gsLoad(PERMESSI_SHEET).then(function(rows){
@@ -12142,7 +12164,7 @@ function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')
 function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof mzById==='function')?mzById(sel.value):null; if(a){ _cv.autoId=a.id; _cv.autoDesc=(a.targa?('#'+a.targa+' - '):'')+(a.marca||'')+' '+(a.modello||''); _cv.autoSnapshot={modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(),alimentazione:a.alimentazione,cilindrata:a.cilindrata,potenza:a.potenza,cambio:a.cambio,telaio:a.telaio,targa:a.targa,numeroInterno:a.numero_interno,estera:a.estera,ivaEsposta:!!a.ivaEsposta,dataImm:a.dataImm,colore:a.colore,km:a.km}; var pz=document.getElementById('cv_prezzo'); if(pz&&!pz.value&&a.prezzoVen) pz.value=a.prezzoVen; var km=document.getElementById('cv_km'); if(km&&!km.value&&a.km) km.value=a.km; if(a.listino){ _cv.listino=a.listino; _cv.listinoOn=true; var _li=document.getElementById('cv_listino'); if(_li) _li.value=a.listino; var _lo=document.getElementById('cv_listinoOn'); if(_lo) _lo.checked=true; var _lb=document.getElementById('cv-listino-box'); if(_lb) _lb.style.display='block'; } cvAggiornaPassaggio(); } }
 function cvAutoNum(c){ var n=(c&&c.autoSnapshot&&c.autoSnapshot.numeroInterno)||''; if(!n && c && c.autoId && typeof mzById==='function'){ var a=mzById(c.autoId); if(a) n=a.numero_interno||''; } return n?String(n):''; }
 function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
-function cvPassaggioKw(kw, estera){ var p=(typeof parLoad==='function')?parLoad():null; if(!p) return ''; kw=parseFloat(kw)||0; if(kw<=0) return ''; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; var g=function(b){ return (estera && p[b+'Est']!=null && p[b+'Est']!=='') ? p[b+'Est'] : p[b]; }; if(kw<54) return n(g('ppMinore54')); if(kw==54) return n(g('ppUguale54')); return n(g('ppUguale54'))+(kw-54)*n(g('ppOltre54')); }
+function cvPassaggioKw(kw, estera){ var p=(typeof parLoad==='function')?parLoad():null; if(!p) return ''; kw=parseFloat(kw)||0; if(kw<=0) return ''; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; var base; if(kw<54) base=n(p.ppMinore54); else if(kw==54) base=n(p.ppUguale54); else base=n(p.ppUguale54)+(kw-54)*n(p.ppOltre54); if(estera) base+=n(p.immatricolazione); return base; }
 function cvAddExtra(){ cvSync(); _cv.costiExtra.push({desc:'',importo:''}); cvRenderExtra(); cvLive(); }
 function cvRenderExtra(){ var c=document.getElementById('cv-extra'); if(!c)return; c.innerHTML=_cv.costiExtra.map(function(x,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px;"><input value="'+cvEsc(x.desc)+'" placeholder="descrizione" oninput="_cv.costiExtra['+i+'].desc=this.value" style="flex:2;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><input value="'+cvEsc(x.importo)+'" placeholder="€" type="number" oninput="_cv.costiExtra['+i+'].importo=this.value;cvLive()" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><button onclick="_cv.costiExtra.splice('+i+',1);cvRenderExtra();cvLive()" style="border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;cursor:pointer;">✕</button></div>'; }).join(''); }
 function cvAddPag(){ cvSync(); _cv.pagamenti.push({tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}); cvRenderPag(); cvLive(); }
@@ -12611,20 +12633,21 @@ function cvFattN(n){ n=isNaN(n)?0:n; var neg=n<0; n=Math.abs(n); var p=n.toFixed
 function cvPassaggioTab(){
   var p=(typeof parLoad==='function')?(parLoad()||{}):{};
   var n=function(v,d){ var x=parseFloat(v); return isNaN(x)?d:x; };
-  return { soglia:n(p.pxSogliaKw,100),
-    ita:{ low:n(p.pxCoeffItaLow,5.748), high:n(p.pxCoeffItaHigh,5.3) },
-    est:{ low:n(p.pxCoeffEstLow,7.05), high:n(p.pxCoeffEstHigh,6.228) } };
+  return { soglia:n(p.pxSogliaKw,100), low:n(p.pxCoeffItaLow,5.748), high:n(p.pxCoeffItaHigh,5.3) };
 }
 function cvPassaggioSplit(c){
   var a=(c&&c.autoSnapshot)||{}; var t=cvPassaggioTab();
-  var kw=parseFloat(a.potenza)||0; var band=(kw>t.soglia)?'high':'low';
-  var coeff=(a.estera===true)?t.est[band]:t.ita[band];
+  var p=(typeof parLoad==='function')?(parLoad()||{}):{};
+  var kw=parseFloat(a.potenza)||0; var coeff=(kw>t.soglia)?t.high:t.low;
+  var estera=(a.estera===true);
+  var imm=estera?(parseFloat(p.immatricolazione)||0):0;
   var totale=cvNum(c.passaggio);
-  var ipt=coeff*kw; if(ipt>totale) ipt=totale;
-  var servLordo=Math.max(0, totale-ipt);
+  var base=Math.max(0, totale-imm);
+  var ipt=coeff*kw; if(ipt>base) ipt=base;
+  var servLordo=Math.max(0, base-ipt);
   var servImp=Math.round(servLordo/1.22*100)/100;
   var servIva=Math.round(servImp*0.22*100)/100;
-  return { ipt:ipt, servLordo:servLordo, servImp:servImp, servIva:servIva, totale:totale };
+  return { ipt:ipt, imm:imm, servLordo:servLordo, servImp:servImp, servIva:servIva, totale:totale };
 }
 function cvFatturaHTML(c){
   var a=c.autoSnapshot||{}, cl=c.cliente||{};
@@ -12653,7 +12676,7 @@ function cvFatturaHTML(c){
   } else {
     var v=scorp(N(c.prezzoVendita)); imp22+=v.imp; iva22+=v.iva;
     righe.push({cod:'/M', desc:vDesc, imp:v.imp, civa:'22'});
-    if(ps.ipt>0){ impEsente+=ps.ipt; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:ps.ipt, civa:'N1'}); }
+    if(ps.ipt>0){ impEsente+=ps.ipt; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:ps.ipt, civa:'N1'}); } if(ps.imm>0){ impEsente+=ps.imm; righe.push({cod:'IMMATR', desc:'IMMATRICOLAZIONE (art. 15)', imp:ps.imm, civa:'N1'}); }
     if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:'SERVIZIO PASSAGGIO DI PROPRIETA', imp:ps.servImp, civa:'22'}); }
     var extra=(c.costiExtra||[]).reduce(function(s,x){return s+N(x.importo);},0);
     var serv=N(c.garanziaImporto)+((c.assicOn)?N(c.assicImporto):0)+extra;
@@ -12915,10 +12938,6 @@ function parInit(){
   h+=lab('€ per potenza < 54 kw')+inp('par_ppMinore54',p.ppMinore54,'number');
   h+=lab('€ per potenza = 54 kw')+inp('par_ppUguale54',p.ppUguale54,'number');
   h+=lab('€ a kw per superiori a 54 kw')+inp('par_ppOltre54',p.ppOltre54,'number');
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Passaggio ESTERE / immatricolazione (se vuoto usa gli italiani)</div>';
-  h+=lab('€ estera per potenza < 54 kw')+inp('par_ppMinore54Est',p.ppMinore54Est,'number');
-  h+=lab('€ estera per potenza = 54 kw')+inp('par_ppUguale54Est',p.ppUguale54Est,'number');
-  h+=lab('€ estera a kw per superiori a 54 kw')+inp('par_ppOltre54Est',p.ppOltre54Est,'number');
   h+=lab('Trasferimento di proprietà legge Dini €')+inp('par_dini',p.dini,'number');
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Costi</div>';
   h+=lab('Costo immatricolazione €')+inp('par_immatricolazione',p.immatricolazione,'number');
@@ -12947,7 +12966,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','ppMinore54Est','ppUguale54Est','ppOltre54Est','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni'].forEach(function(k){ p[k]=g(k); });
+  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni'].forEach(function(k){ p[k]=g(k); });
   try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
   var st=document.getElementById('par-stato'); if(st) st.textContent='✅ Parametri salvati'; setTimeout(function(){ if(st)st.textContent=''; },2500);
 }
