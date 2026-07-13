@@ -9554,9 +9554,10 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '<button class="cc-btn cc-btn-primary" id="cc-mic-tutto" style="width:100%;margin-bottom:6px">🎤 Detta tutto in un colpo</button>'
   +       '<div class="cc-hint" id="cc-hint-tutto" style="margin-bottom:12px">Premi e parla, es: "tagliando Peugeot domani alle 9 per Fabio". Poi controlla e premi Salva.</div>'
   +       '<div class="cc-field"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
-  +       '<div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault()"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-field"><label>Veicolo (magazzino) — suggerimenti</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n° veicolo…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
-  +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" placeholder="Es. Tagliando Peugeot 3008 - Rossi"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div>'
+  +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"><button class="cc-mic" id="cc-mic-titolo" title="Detta a voce">🎤</button></div><datalist id="cc-clienti-list"></datalist>'
   +         '<div class="cc-hint" id="cc-hint-titolo">Tocca il microfono e parla.</div>'
   +       '</div>'
   +       '<div class="cc-row2">'
@@ -9567,6 +9568,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +         '<div class="cc-field"><label>Assegna a</label><select id="cc-dip"></select></div>'
   +         '<div class="cc-field"><label>Ora</label><input type="text" id="cc-ora" placeholder="Es. 09:30"></div>'
   +       '</div>'
+  +       '<div class="cc-field"><label>Durata</label><select id="cc-durata"><option value="45">45 min (visione/preventivo)</option><option value="90">1h 30 (intervento/manutenzione)</option><option value="30">30 min</option><option value="60">1 ora</option><option value="120">2 ore</option></select></div>'
   +       '<div class="cc-field" style="display:none"><label>Ricordamelo</label><div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"><button class="cc-mic" id="cc-mic-ricorda" title="Detta">🎤</button></div><div class="cc-hint" id="cc-hint-ricorda"></div></div>'
   +       '<div class="cc-hint" style="margin:-2px 0 12px;color:#0891b2;font-weight:600;">🔔 Il cliente riceverà un promemoria automatico il giorno prima (email obbligatoria).</div>'
   +       '<div class="cc-field"><label>Nota (opzionale)</label><textarea id="cc-nota" placeholder="Dettagli aggiuntivi…"></textarea></div>'
@@ -9713,7 +9715,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
       var mm=ora.match(/^(\d{1,2}):(\d{2})$/);
-      if(mm){ var hh=('0'+mm[1]).slice(-2); ev.start=c.data+'T'+hh+':'+mm[2]+':00'; ev.allDay=false; }
+      if(mm){ var hh=('0'+mm[1]).slice(-2); ev.start=c.data+'T'+hh+':'+mm[2]+':00'; ev.allDay=false; if(c.durata){ var _tot=parseInt(hh,10)*60+parseInt(mm[2],10)+parseInt(c.durata,10); if(_tot<1440){ var _eh=('0'+Math.floor(_tot/60)).slice(-2); var _em=('0'+(_tot%60)).slice(-2); ev.end=c.data+'T'+_eh+':'+_em+':00'; } } }
       else { ev.start=c.data; ev.allDay=true; }
       return ev;
     });
@@ -9741,7 +9743,7 @@ document.addEventListener('DOMContentLoaded',function(){
           slotLabelFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           eventTimeFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           events:function(info,success){ try{ success(ccBuildEvents()); }catch(e){ success([]); } },
-          dateClick:function(info){ ccApri(String(info.dateStr).slice(0,10)); },
+          dateClick:function(info){ var ds=String(info.dateStr); var d=ds.slice(0,10); var tm=ds.match(/T(\d{2}:\d{2})/); ccApri(d); setTimeout(function(){ try{ if(typeof ccDurataDefault==='function') ccDurataDefault(); if(tm){ var oe=document.getElementById('cc-ora'); if(oe) oe.value=tm[1]; } var te=document.getElementById('cc-titolo'); if(te) te.focus(); }catch(e){} }, 150); },
           eventClick:function(info){ var ds=(info.event.extendedProps&&info.event.extendedProps.ds)||String(info.event.startStr||'').slice(0,10); if(ds) ccApri(ds); }
         });
         ccFC.render();
@@ -9754,6 +9756,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccApri(ds, noScroll){
     ccGiornoSel = ds; ccRenderCal();
     var p = document.getElementById('cc-daypanel'); p.style.display = 'block';
+    try{ if(typeof ccPopolaSuggerimenti==='function') ccPopolaSuggerimenti(); }catch(e){}
     var parts = ds.split('-');
     document.getElementById('cc-daydate').textContent = parseInt(parts[2])+' '+MESI[parseInt(parts[1])-1]+' '+parts[0];
     ccRenderList();
@@ -9878,6 +9881,23 @@ document.addEventListener('DOMContentLoaded',function(){
       if (fd) for (var i=0;i<fd.options.length;i++){ if (fd.options[i].value===u.email){ fd.selectedIndex=i; break; } }
     }
   }
+  function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita')?'45':'90'; }catch(e){} }
+  function ccNomeCliente(o){ var c=(o&&o.cliente)?o.cliente:o||{}; return (c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()); }
+  function ccPopolaSuggerimenti(){
+    try{
+      var vl=document.getElementById('cc-veicoli-list');
+      if(vl && typeof mzLoad==='function'){ vl.innerHTML=mzLoad().filter(function(a){return a && a.stato!=='venduta';}).map(function(a){ var lab=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):''))); return '<option value="'+ccEsc(lab)+'"></option>'; }).join(''); }
+      var cl=document.getElementById('cc-clienti-list');
+      if(cl && typeof clAggrega==='function'){ var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join(''); }
+    }catch(e){}
+  }
+  function ccClienteSel(){
+    try{
+      var v=((document.getElementById('cc-titolo')||{}).value||'').toLowerCase().trim(); if(!v||typeof clAggrega!=='function') return;
+      var match=clAggrega().filter(function(o){ return ccNomeCliente(o).toLowerCase()===v; })[0];
+      if(match){ var c=(match.cliente)?match.cliente:match; var em=document.getElementById('cc-email'), te=document.getElementById('cc-tel'); if(em && c.email) em.value=c.email; if(te && c.telefono) te.value=c.telefono; }
+    }catch(e){}
+  }
   function ccAggiungi(){
     var titolo = document.getElementById('cc-titolo').value.trim();
     if (!titolo){ ccToast('Inserisci cliente o descrizione'); return; }
@@ -9899,6 +9919,7 @@ document.addEventListener('DOMContentLoaded',function(){
       data: ccGiornoSel, titolo: titolo, tipo:tipo, categoria:categoria, email:email, tel:tel,
       dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
       ora: document.getElementById('cc-ora').value.trim(),
+      veicolo: ((document.getElementById('cc-veicolo')||{}).value||'').trim(), durata: parseInt(((document.getElementById('cc-durata')||{}).value)||'0',10)||0,
       ricorda: ricorda,
       nota: document.getElementById('cc-nota').value.trim(),
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
