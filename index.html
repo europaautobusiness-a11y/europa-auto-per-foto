@@ -3713,7 +3713,7 @@ function utentiSupaLoad(done){
         if(deleted.indexOf(k)>=0) return;               // eliminato di proposito: non reintrodurlo
         var ex=byEmail[k];
         if(!ex || (r.updatedAt||0) >= (ex.updatedAt||0)){ byEmail[k]={ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }; }
-        if(r.sezioni!=null && !(k in m)) m[k]=r.sezioni; // le spunte locali vincono sempre
+        if(r.sezioni!=null) m[k]=r.sezioni; // Supabase = fonte di verità dei permessi
       });
       UTENTI_APP=Object.keys(byEmail).map(function(k){ return byEmail[k]; });
       salvaUtentiApp(); savePermessiSezioniLocal(m);
@@ -3928,10 +3928,25 @@ function salvaPermessiTutti(){
       if(cb.checked) perEmail[email].push(view);
     });
     Object.keys(perEmail).forEach(function(email){ m[email]=perEmail[email]; });
-    savePermessiSezioniLocal(m);
-    var st=document.getElementById('perm-salvato'); if(st){ st.style.display='inline'; setTimeout(function(){ var s=document.getElementById('perm-salvato'); if(s) s.style.display='none'; },3000); }
+    var st=document.getElementById('perm-salvato');
+    var setStatus=function(txt,color){ if(st){ st.textContent=txt; st.style.color=color||'#16a34a'; st.style.display='inline'; } };
+    // 1) salvataggio locale + verifica read-back
+    var localOk=true;
+    try{ localStorage.setItem(PERMESSI_SEZ_KEY, JSON.stringify(m)); var chk=JSON.parse(localStorage.getItem(PERMESSI_SEZ_KEY)||'{}'); Object.keys(perEmail).forEach(function(e){ if(JSON.stringify(chk[e])!==JSON.stringify(perEmail[e])) localOk=false; }); }catch(e){ localOk=false; }
     try{ if(typeof _currentUserEmail!=='undefined' && _currentUserEmail && typeof applyRoleUI==='function') applyRoleUI(); }catch(e){}
-    try{ Object.keys(perEmail).forEach(function(email){ var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===email;}):null; if(typeof utentiSupaSave==='function') utentiSupaSave(u||{email:email, nome:email.split('@')[0], ruolo:'dipendente', password:'-'}); }); }catch(e){}
+    // 2) salvataggio Supabase con esito reale
+    setStatus('\u23f3 Salvataggio\u2026', '#64748b');
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    var emails=Object.keys(perEmail);
+    if(!sb || !emails.length){ setStatus(localOk?'\u2705 Salvato (locale)':'\u26a0\ufe0f Memoria locale piena', localOk?'#16a34a':'#dc2626'); return; }
+    var done=0, err=null, total=emails.length;
+    emails.forEach(function(email){
+      var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===email;}):null;
+      var rec={ id:utenteId(email), email:email, nome:(u&&u.nome)||email.split('@')[0], ruolo:(u&&u.ruolo)||'dipendente', password:(u&&u.password)||'-', sezioni:perEmail[email], updatedAt:Date.now() };
+      var fin=function(e){ done++; if(e) err=String(e); if(done>=total){ if(err) setStatus('\u26a0\ufe0f Errore Supabase: '+err, '#dc2626'); else setStatus(localOk?'\u2705 Salvato (locale + Supabase)':'\u2705 Salvato su Supabase', '#16a34a'); } };
+      try{ sb.from('utenti').upsert({ id:String(rec.id), data:rec }).then(function(res){ fin(res&&res.error?res.error.message:null); }, function(e){ fin(e); }); }
+      catch(e){ fin(e); }
+    });
   }catch(e){ alert('Errore salvataggio permessi: '+e); }
 }
 function tcTogglePermesso(cb) {
