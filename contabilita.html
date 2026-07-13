@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Europa Auto · Contabilità (test isolato)</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--ink:#0e2a31;--paper:#e9ecee;--surface:#fff;--line:#d5dade;--muted:#5d6b70;--pos:#1f7a4d;--neg:#b23b3b;--brass:#b3893f}
+  *{box-sizing:border-box}html,body{margin:0}
+  body{background:var(--paper);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45;-webkit-font-smoothing:antialiased;padding-bottom:56px}
+  .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,"SF Mono","Roboto Mono",Menlo,Consolas,monospace;white-space:nowrap}
+  .wrap{max-width:820px;margin:0 auto;padding:0 16px}
+  header{background:var(--ink);color:#eef4f5;padding:18px 0 20px}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#8fb2b8;margin:0 0 8px}
+  .company{font-size:17px;font-weight:650;margin:0}
+  .flag{display:inline-block;margin-top:8px;font-size:11px;color:#e7c988;background:rgba(179,137,63,.14);border:1px solid rgba(179,137,63,.45);padding:4px 9px;border-radius:999px}
+  .ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:14px 0 18px}
+  .fld{display:flex;flex-direction:column;gap:3px}
+  .fld label{font-size:11px;color:var(--muted)}
+  .fld input,.fld select{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff}
+  .btn{font:inherit;font-size:14px;font-weight:600;padding:9px 14px;border-radius:9px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer}
+  .btn.ghost{background:#fff;color:var(--ink)}
+  .status{font-size:12px;color:var(--muted);margin:0 0 14px;min-height:16px}
+  .kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:0 0 18px}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 13px}
+  .kpi .k{font-size:11px;color:var(--muted);margin:0 0 5px}
+  .kpi .v{font-size:19px;font-weight:670}
+  .kpi .p{font-size:12px;color:var(--brass);font-weight:600;margin-left:3px}
+  .tabs{display:flex;gap:6px;margin:0 0 14px}
+  .tab{flex:1;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 8px;font:inherit;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+  .tab[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:16px}
+  .panel h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0;padding:13px 16px 10px;border-bottom:1px solid var(--line)}
+  .row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:9px 16px;border-bottom:1px solid #eef1f2}
+  .row:last-child{border-bottom:none}
+  .row .lbl{font-size:13.5px}.row .amt{font-size:13.5px}
+  .row .src{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#9aa7ac;margin-left:8px}
+  .subtotal{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:12px 16px;background:var(--ink);color:#fff}
+  .subtotal .lbl{font-size:13px;font-weight:650}.subtotal .amt{font-size:15px;font-weight:680}
+  .subtotal .pct{font-size:12px;color:#e7c988;margin-left:8px;font-weight:600}
+  .subtotal.final .amt{font-size:18px}
+  .note{font-size:11.5px;color:var(--muted);padding:8px 16px;background:#fafbfb;border-bottom:1px solid #eef1f2}
+  .pn-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .pn-form .full{grid-column:1/-1}
+  .pn-form input,.pn-form select{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;width:100%}
+  .pn-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;border-bottom:1px solid #eef1f2}
+  .pn-item .meta{font-size:12.5px}
+  .pn-item .meta b{font-weight:650}.pn-item .meta span{color:var(--muted)}
+  .pn-item .del{background:none;border:none;color:var(--neg);cursor:pointer;font-size:13px}
+  .empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:13px}
+  footer{font-size:12px;color:var(--muted);margin-top:8px}
+  footer .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  footer b{color:var(--ink)}
+  .hidden{display:none}
+  @media(min-width:620px){.kpis{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <p class="eyebrow">Modulo test · isolato · cancellabile</p>
+  <p class="company">Europa Auto · Conto economico gestionale</p>
+  <span class="flag">Legge i contratti in sola lettura · scrive solo su contab_costi</span>
+</div></header>
+
+<div class="wrap">
+  <div class="ctrls">
+    <div class="fld"><label>Da</label><input type="date" id="da" value="2026-01-01"></div>
+    <div class="fld"><label>A</label><input type="date" id="a" value="2026-06-30"></div>
+    <button class="btn" id="carica">Calcola</button>
+    <button class="btn ghost" id="demo">Dati demo</button>
+  </div>
+  <p class="status" id="status">Premi <b>Calcola</b> per leggere i contratti, oppure <b>Dati demo</b> per vedere come funziona senza toccare il database.</p>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-ce" aria-selected="true">Conto economico</button>
+    <button class="tab" role="tab" id="t-pn" aria-selected="false">Prima nota costi</button>
+  </div>
+
+  <section id="v-ce"><div class="panel" id="ce"><div class="empty">Nessun dato ancora.</div></div></section>
+  <section id="v-pn" class="hidden"><div class="panel" id="pn"></div></section>
+
+  <footer><div class="card">
+    <b>Come funziona.</b> La parte auto (ricavi, costo del venduto, margine) esce <b>da sola</b> dai contratti:
+    estere in competenza alla firma, tutte le altre alla consegna. Struttura, provvigioni e oneri finanziari/tributari
+    si inseriscono nella <b>prima nota</b> (una manciata di righe al mese). Il totale è gestionale, non fiscale.
+    <br><br><b>Per eliminarlo:</b> cancella questo file e fai <span class="num">drop table contab_costi; drop table contab_config;</span> — il gestionale resta identico.
+  </div></footer>
+</div>
+
+<script>
+/* ============ CONFIG (stessa istanza del gestionale, sola lettura su preventivi) ============ */
+var SB_URL='https://jasrectyddshjizpxiia.supabase.co';
+var SB_KEY='sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
+var MINIVOLTURA=200; // da Parametri; qui default
+var _sb=null;
+function sb(){ if(_sb) return _sb; try{ return (_sb=supabase.createClient(SB_URL,SB_KEY)); }catch(e){ return null; } }
+
+/* ============ RICLASSIFICATO: definizione categorie ============ */
+// fonte: 'auto' = calcolato dai contratti · 'manual' = prima nota
+var CATS=[
+  {id:'ric_veicoli',   label:'Ricavi vendita veicoli', tipo:'ric_car', fonte:'auto'},
+  {id:'ric_trapassi',  label:'Ricavi trapassi',        tipo:'ric_car', fonte:'auto'},
+  {id:'ric_minivolt',  label:'Rimborsi anticipi trapassi', tipo:'ric_car', fonte:'auto'},
+  {id:'ric_servizi',   label:'Garanzia, assicurazione, extra', tipo:'ric_car', fonte:'auto'},
+  {id:'ric_provv',     label:'Provvigioni attive (fattura mensile)', tipo:'ric_car', fonte:'manual'},
+  {id:'cv_veicoli',    label:'Acquisto veicoli venduti', tipo:'cdv', fonte:'auto'},
+  {id:'str_personale', label:'Personale',       tipo:'str', fonte:'manual'},
+  {id:'str_locazioni', label:'Locazioni e canoni', tipo:'str', fonte:'manual'},
+  {id:'str_generali',  label:'Spese generali',  tipo:'str', fonte:'manual'},
+  {id:'str_ammin',     label:'Spese amministrative', tipo:'str', fonte:'manual'},
+  {id:'str_utenze',    label:'Utenze e servizi', tipo:'str', fonte:'manual'},
+  {id:'str_consulenze',label:'Consulenze',      tipo:'str', fonte:'manual'},
+  {id:'str_commerciali',label:'Spese commerciali', tipo:'str', fonte:'manual'},
+  {id:'str_automezzi', label:'Esercizio automezzi', tipo:'str', fonte:'manual'},
+  {id:'acc_ricavi',    label:'Altri ricavi accessori', tipo:'acc', fonte:'manual'},
+  {id:'fin_oneri',     label:'Oneri finanziari', tipo:'fin', fonte:'manual'},
+  {id:'trib',          label:'Oneri tributari / straordinari', tipo:'trib', fonte:'manual'}
+];
+var CAT_MANUAL=CATS.filter(function(c){return c.fonte==='manual';});
+
+/* ============ MOTORE: un contratto -> righe di conto economico ============ */
+function ceNum(x){ var n=parseFloat(x); return isNaN(n)?0:n; }
+
+function ceRegime(c){
+  var a=c.autoSnapshot||{};
+  if(a.estera===true) return 'estera';
+  if(a.ivaEsposta===true) return 'aziendale';
+  return 'art36';
+}
+// timestamp di competenza secondo la regola di Davide
+function ceCompetenzaTs(c){
+  if(ceRegime(c)==='estera'){
+    return c.contrattoTs || (c.dataFirma? Date.parse(c.dataFirma) : (c.createdAt||null));
+  }
+  // tutte le altre: solo se consegnate
+  if(c.statoVendita==='consegnato') return c.consegnatoTs || c.updatedAt || null;
+  return null;
+}
+function ceInPeriodo(ts, da, a){
+  if(!ts) return false;
+  var d=new Date(ts); var d0=new Date(da+'T00:00:00'); var d1=new Date(a+'T23:59:59');
+  return d>=d0 && d<=d1;
+}
+// è un contratto/vendita (non un semplice preventivo)?
+function ceIsVendita(c){ return !!(c && (c.statoVendita || c.contrattoTs)); }
+
+// scompone un contratto nelle sue voci di ricavo/costo
+function ceContratto(c){
+  var prezzo=ceNum(c.prezzoVendita);
+  var sconto=(c.scontoOn? ceNum(c.scontoImporto):0);
+  var veicolo;
+  if(c.legge104On){
+    var lordo=Math.max(0, prezzo - sconto);
+    var imp=Math.round(lordo/1.22*100)/100;
+    var iva=Math.round(imp*0.04*100)/100;
+    veicolo=Math.round((imp+iva)*100)/100;
+  } else {
+    veicolo=Math.max(0, prezzo - sconto);
+  }
+  var passaggio=ceNum(c.passaggio);
+  var gar=ceNum(c.garanziaImporto);
+  var assic=(c.assicOn? ceNum(c.assicImporto):0);
+  var extra=(c.costiExtra||[]).reduce(function(s,x){return s+ceNum(x.importo);},0);
+  var permOn=(c.permutaOn && c.permuta && ceNum(c.permuta.prezzoAcq)>0);
+  var minivolt=permOn? MINIVOLTURA : 0;
+  var a=c.autoSnapshot||{};
+  var prezzoAcq=ceNum(a.prezzoAcq!=null?a.prezzoAcq:c.prezzoAcq);
+  return {
+    regime:ceRegime(c),
+    ric_veicoli:veicolo,
+    ric_trapassi:passaggio,
+    ric_minivolt:minivolt,
+    ric_servizi:gar+assic+extra,
+    cv_veicoli:prezzoAcq
+  };
+}
+
+/* ============ AGGREGAZIONE ============ */
+function ceAggrega(contratti, costiManuali, da, a){
+  var tot={}; CATS.forEach(function(c){ tot[c.id]=0; });
+  var nAuto=0;
+  (contratti||[]).forEach(function(c){
+    if(!ceIsVendita(c)) return;
+    var ts=ceCompetenzaTs(c);
+    if(!ceInPeriodo(ts,da,a)) return;
+    var r=ceContratto(c); nAuto++;
+    tot.ric_veicoli+=r.ric_veicoli; tot.ric_trapassi+=r.ric_trapassi;
+    tot.ric_minivolt+=r.ric_minivolt; tot.ric_servizi+=r.ric_servizi;
+    tot.cv_veicoli+=r.cv_veicoli;
+  });
+  (costiManuali||[]).forEach(function(m){
+    if(!ceInPeriodo(Date.parse(m.data), da, a)) return;
+    if(tot[m.categoria]==null) return;
+    tot[m.categoria]+=ceNum(m.importo);
+  });
+  // waterfall
+  var ricCar=tot.ric_veicoli+tot.ric_trapassi+tot.ric_minivolt+tot.ric_servizi+tot.ric_provv;
+  var cdv=tot.cv_veicoli;
+  var primo=ricCar-cdv;
+  var strutt=tot.str_personale+tot.str_locazioni+tot.str_generali+tot.str_ammin+tot.str_utenze+tot.str_consulenze+tot.str_commerciali+tot.str_automezzi;
+  var acc=tot.acc_ricavi;
+  var ebitda=primo-strutt+acc;
+  var ordin=ebitda-tot.fin_oneri;
+  var utile=ordin-tot.trib;
+  return {tot:tot, nAuto:nAuto, ricCar:ricCar, cdv:cdv, primo:primo, strutt:strutt, ebitda:ebitda, ordin:ordin, utile:utile};
+}
+
+/* ============ RENDER ============ */
+var eur=function(n){ return (n||0).toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0}); };
+var pct=function(v,base){ return base? (v/base*100).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1})+'%':'—'; };
+var _costi=[]; var _lastAgg=null;
+
+function rowCat(id, sign){
+  var c=CATS.filter(function(x){return x.id===id;})[0]; var v=_lastAgg.tot[id];
+  if(!v && c.fonte==='manual') return ''; // nascondi categorie manuali vuote
+  return '<div class="row"><span class="lbl">'+c.label+'<span class="src">'+(c.fonte==='auto'?'auto':'nota')+'</span></span>'+
+         '<span class="amt num">'+(sign<0?'−':'')+eur(v)+'</span></div>';
+}
+function sub(label,val,base,final){
+  return '<div class="subtotal'+(final?' final':'')+'"><span class="lbl">'+label+'</span>'+
+    '<span><span class="amt num">'+eur(val)+' €</span>'+(base?'<span class="pct num">'+pct(val,base)+'</span>':'')+'</span></div>';
+}
+function renderCE(){
+  var A=_lastAgg; if(!A){ return; }
+  var b=A.ricCar;
+  document.getElementById('kpis').innerHTML=[
+    ['Ricavi caratteristici', eur(A.ricCar)+' €',''],
+    ['Primo margine', eur(A.primo)+' €', pct(A.primo,b)],
+    ['EBITDA', eur(A.ebitda)+' €', pct(A.ebitda,b)],
+    ['Utile', eur(A.utile)+' €', pct(A.utile,b)]
+  ].map(function(k){return '<div class="kpi"><p class="k">'+k[0]+'</p><div class="v num">'+k[1]+'<span class="p">'+k[2]+'</span></div></div>';}).join('');
+
+  var h='<h2>Dai ricavi all\u2019utile · '+A.nAuto+' vendite nel periodo</h2>';
+  h+=rowCat('ric_veicoli',1)+rowCat('ric_trapassi',1)+rowCat('ric_minivolt',1)+rowCat('ric_servizi',1)+rowCat('ric_provv',1);
+  h+=sub('Ricavi caratteristici', A.ricCar, 0,false);
+  h+=rowCat('cv_veicoli',-1);
+  h+=sub('= Primo margine', A.primo, b,false);
+  ['str_personale','str_locazioni','str_generali','str_ammin','str_utenze','str_consulenze','str_commerciali','str_automezzi'].forEach(function(id){ h+=rowCat(id,-1); });
+  h+=rowCat('acc_ricavi',1);
+  if(A.strutt===0) h+='<div class="note">Nessun costo di struttura inserito: aggiungili nella scheda <b>Prima nota costi</b>.</div>';
+  h+=sub('= EBITDA / MOL', A.ebitda, b,false);
+  h+=rowCat('fin_oneri',-1);
+  h+=sub('= Risultato ordinario', A.ordin, 0,false);
+  h+=rowCat('trib',-1);
+  h+=sub('= Utile d\u2019esercizio', A.utile, b,true);
+  document.getElementById('ce').innerHTML=h;
+}
+function renderPN(){
+  var opts=CAT_MANUAL.map(function(c){return '<option value="'+c.id+'">'+c.label+'</option>';}).join('');
+  var today=new Date().toISOString().slice(0,10);
+  var h='<h2>Prima nota costi · '+_costi.length+' voci</h2>';
+  h+='<div class="pn-form">'+
+     '<input type="date" id="pn-data" value="'+today+'">'+
+     '<select id="pn-cat">'+opts+'</select>'+
+     '<input class="full" type="text" id="pn-desc" placeholder="Descrizione (es. Affitto capannone marzo)">'+
+     '<input type="number" id="pn-imp" placeholder="Importo €" step="0.01">'+
+     '<button class="btn full" id="pn-add">Aggiungi voce</button></div>';
+  if(!_costi.length){ h+='<div class="empty">Nessuna voce. Aggiungi affitto, personale, utenze, provvigioni del mese…</div>'; }
+  else {
+    _costi.slice().sort(function(x,y){return (y.data||'').localeCompare(x.data||'');}).forEach(function(m){
+      var c=CATS.filter(function(x){return x.id===m.categoria;})[0]||{label:m.categoria};
+      h+='<div class="pn-item"><div class="meta"><b>'+eur(ceNum(m.importo))+' €</b> · '+c.label+
+         '<br><span>'+(m.data||'')+(m.descrizione?(' · '+m.descrizione):'')+'</span></div>'+
+         '<button class="del" data-id="'+m.id+'">Elimina</button></div>';
+    });
+  }
+  document.getElementById('pn').innerHTML=h;
+  document.getElementById('pn-add').onclick=pnAdd;
+  Array.prototype.forEach.call(document.querySelectorAll('.pn-item .del'),function(b){ b.onclick=function(){ pnDel(b.getAttribute('data-id')); }; });
+}
+
+/* ============ DATI: lettura contratti + prima nota ============ */
+function recalc(){
+  var da=document.getElementById('da').value, a=document.getElementById('a').value;
+  _lastAgg=ceAggrega(_contratti, _costi, da, a);
+  renderCE();
+}
+var _contratti=[];
+function carica(){
+  var s=sb(); var st=document.getElementById('status');
+  if(!s){ st.innerHTML='⚠️ Supabase non raggiungibile (connessione). Usa <b>Dati demo</b> per provare.'; return; }
+  st.textContent='Lettura contratti…';
+  Promise.all([
+    s.from('preventivi').select('data'),
+    s.from('contab_costi').select('data')
+  ]).then(function(res){
+    var pv=res[0], cc=res[1];
+    if(pv.error){ st.textContent='Errore lettura preventivi: '+pv.error.message; return; }
+    _contratti=(pv.data||[]).map(function(r){return r.data;}).filter(Boolean);
+    _costi=(cc && !cc.error)?(cc.data||[]).map(function(r){return r.data;}).filter(Boolean):[];
+    st.innerHTML='Letti <b>'+_contratti.length+'</b> record da preventivi · <b>'+_costi.length+'</b> voci di prima nota.';
+    recalc(); renderPN();
+  }).catch(function(e){ st.textContent='Errore: '+e.message; });
+}
+function pnPersist(rec){ var s=sb(); if(s) s.from('contab_costi').upsert({id:String(rec.id),data:rec}).then(function(){}); }
+function pnPersistDel(id){ var s=sb(); if(s) s.from('contab_costi').delete().eq('id',String(id)).then(function(){}); }
+function pnAdd(){
+  var data=document.getElementById('pn-data').value;
+  var categoria=document.getElementById('pn-cat').value;
+  var descrizione=document.getElementById('pn-desc').value.trim();
+  var importo=ceNum(document.getElementById('pn-imp').value);
+  if(!data || !importo){ alert('Servono data e importo.'); return; }
+  var rec={id:Date.now(), data:data, categoria:categoria, descrizione:descrizione, importo:importo};
+  _costi.push(rec); pnPersist(rec); renderPN(); recalc();
+}
+function pnDel(id){
+  _costi=_costi.filter(function(m){return String(m.id)!==String(id);});
+  pnPersistDel(id); renderPN(); recalc();
+}
+
+/* ============ DEMO (nessuna scrittura, solo per vedere il meccanismo) ============ */
+function demo(){
+  _contratti=[
+    {statoVendita:'consegnato', consegnatoTs:Date.parse('2026-03-10'), prezzoVendita:18000, passaggio:300, garanziaImporto:500, autoSnapshot:{prezzoAcq:14500, ivaEsposta:false, estera:false}}, // art36
+    {statoVendita:'consegnato', consegnatoTs:Date.parse('2026-04-02'), prezzoVendita:25000, passaggio:300, assicOn:true, assicImporto:400, autoSnapshot:{prezzoAcq:20000, ivaEsposta:true, estera:false}}, // aziendale IE
+    {statoVendita:'da_consegnare', contrattoTs:Date.parse('2026-02-15'), prezzoVendita:32000, passaggio:300, autoSnapshot:{prezzoAcq:27000, estera:true}}, // estera: conta alla firma anche se non consegnata
+    {statoVendita:'in_attesa_pagamento', contrattoTs:Date.parse('2026-05-20'), prezzoVendita:15000, autoSnapshot:{prezzoAcq:12000, estera:false, ivaEsposta:false}} // NON estera, non consegnata: NON conta
+  ];
+  _costi=[
+    {id:1, data:'2026-03-31', categoria:'ric_provv', descrizione:'Provvigioni marzo', importo:12000},
+    {id:2, data:'2026-03-05', categoria:'str_locazioni', descrizione:'Affitto', importo:2500},
+    {id:3, data:'2026-03-27', categoria:'str_personale', descrizione:'Stipendi', importo:6000}
+  ];
+  document.getElementById('status').innerHTML='<b>Modalità demo</b> — dati finti, nessuna scrittura. Le estere entrano alla firma, le altre solo se consegnate.';
+  recalc(); renderPN();
+}
+
+/* tabs */
+document.getElementById('t-ce').onclick=function(){ tab(true); };
+document.getElementById('t-pn').onclick=function(){ tab(false); };
+function tab(ce){
+  document.getElementById('t-ce').setAttribute('aria-selected',String(ce));
+  document.getElementById('t-pn').setAttribute('aria-selected',String(!ce));
+  document.getElementById('v-ce').classList.toggle('hidden',!ce);
+  document.getElementById('v-pn').classList.toggle('hidden',ce);
+}
+document.getElementById('carica').onclick=carica;
+document.getElementById('demo').onclick=demo;
+document.getElementById('da').onchange=function(){ if(_lastAgg) recalc(); };
+document.getElementById('a').onchange=function(){ if(_lastAgg) recalc(); };
+renderPN();
+</script>
+</body>
+</html>
