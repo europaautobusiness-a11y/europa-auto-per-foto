@@ -1318,6 +1318,7 @@ html, body{
 <div id="tc-vista-dip" style="display:none;">
   <div class="tc-wrap">
     <div class="tc-header"><div><div class="tc-user" id="tc-nome-dip">Ciao</div><div class="tc-date" id="tc-data-dip"></div></div><div class="tc-avatar" id="tc-avatar-dip">?</div></div>
+    <div id="tc-promemoria" style="width:100%;max-width:480px;"></div>
     <div class="tc-clock-big" id="tc-orologio">00:00:00</div>
     <div class="tc-working-label" id="tc-working-label"></div>
     <div class="tc-gps-status">
@@ -7850,6 +7851,7 @@ function presenzeInit() {
   var role = _currentUserRole || 'dipendente';
   
   console.log('presenzeInit — email:', _currentUserEmail, 'ruolo:', role);
+  try{ if(typeof ccPromemoriaTimbrature==='function') setTimeout(ccPromemoriaTimbrature, 350); }catch(e){}
   
   if (role === 'admin' || role === 'manager') {
     vDip.style.display='none'; vAdmin.style.display='block';
@@ -9543,7 +9545,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<select id="cc-filtro"><option value="">Tutti i dipendenti</option></select>'
   +     '<button class="cc-btn" id="cc-refresh" title="Aggiorna dal cloud">🔄</button>'
   +   '</div>'
-  +   '<div id="cc-catfiltro" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"><button class="cc-btn" id="cc-cf-all" style="font-weight:800;">Tutti</button><button class="cc-btn" id="cc-cf-app">📅 Appuntamenti</button><button class="cc-btn" id="cc-cf-task">✅ Task</button></div>'
+  +   '<div id="cc-catfiltro" style="display:flex;gap:8px;margin-bottom:14px;"><button class="cc-btn" id="cc-cf-app" style="flex:1;font-weight:800;padding:12px;font-size:14px;border-radius:9px;">📅 Appuntamenti</button><button class="cc-btn" id="cc-cf-task" style="flex:1;padding:12px;font-size:14px;border-radius:9px;">✅ Task</button></div>'
   +   '<div id="cc-fc" style="background:#fff;border:1px solid #e4e9f2;border-radius:12px;padding:10px;"></div>'
   +   '<div class="cc-panel" id="cc-daypanel" style="display:none">'
   +     '<div class="cc-dayhead"><div class="cc-daydate" id="cc-daydate"></div><button class="cc-btn" id="cc-close">Chiudi</button></div>'
@@ -9632,7 +9634,7 @@ document.addEventListener('DOMContentLoaded',function(){
     gsJsonp({ action:'upsert', sheet:CC_SHEET, record:{
       id:c.id, data:c.data, titolo:c.titolo, dipendente:c.dipNome, dipEmail:c.dipEmail,
       ora:c.ora||'', ricorda:c.ricorda||'', nota:c.nota||'', creatoDa:c.creatoDa||'',
-      tipo:c.tipo||'', email:c.email||'', tel:c.tel||'', categoria:c.categoria||'',
+      tipo:c.tipo||'', email:c.email||'', tel:c.tel||'', categoria:c.categoria||'', veicolo:c.veicolo||'', durata:c.durata||'',
       fatto:c.fatto?'SI':'NO', fattoDa:c.fattoDa||'',
       solleciti:c.solleciti||0, sollecitoLastAt:c.sollecitoLastAt||'', escalato:c.escalato?'SI':'NO'
     }});
@@ -9655,6 +9657,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var byId = {}; locali.forEach(function(c){ byId[c.id] = c; });
       data.forEach(function(r){
         if (!r || !r.id) return;
+        if (byId[r.id]) return;   // gia' presente in locale: NON sovrascrivere (evita la perdita di appuntamenti)
         byId[r.id] = {
           id:r.id, data:ccNormDate(r.data), titolo:r.titolo||'',
           dipNome:r.dipendente||'', dipEmail:r.dipEmail||'',
@@ -9679,9 +9682,9 @@ document.addEventListener('DOMContentLoaded',function(){
   /* ===================== Render calendario ===================== */
   var ccVMese, ccVAnno;
   function ymd(y,m,d){ return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
-  var ccCatFiltro='';
+  var ccCatFiltro='appuntamento';
   function ccCatOk(c){ if(!ccCatFiltro) return true; return (c.categoria||'appuntamento')===ccCatFiltro; }
-  function ccSetCatFiltro(v){ ccCatFiltro=v; var ids={'':'cc-cf-all','appuntamento':'cc-cf-app','task':'cc-cf-task'}; ['cc-cf-all','cc-cf-app','cc-cf-task'].forEach(function(id){ var b=document.getElementById(id); if(b){ b.style.fontWeight=(ids[v]===id)?'800':'400'; b.style.background=(ids[v]===id)?'#1a4fa0':''; b.style.color=(ids[v]===id)?'#fff':''; } }); try{ ccRenderCal(); ccRenderList(); }catch(e){} }
+  function ccSetCatFiltro(v){ ccCatFiltro=v; var ids={'appuntamento':'cc-cf-app','task':'cc-cf-task'}; ['cc-cf-app','cc-cf-task'].forEach(function(id){ var b=document.getElementById(id); if(b){ b.style.fontWeight=(ids[v]===id)?'800':'400'; b.style.background=(ids[v]===id)?'#1a4fa0':''; b.style.color=(ids[v]===id)?'#fff':''; } }); try{ ccRenderCal(); ccRenderList(); }catch(e){} }
   function ccCompitiGiorno(ds){
     var f = (document.getElementById('cc-filtro')||{}).value || '';
     return ccLoad().filter(function(c){ return c.data===ds && (!f || c.dipEmail===f) && ccCatOk(c); });
@@ -10144,8 +10147,29 @@ document.addEventListener('DOMContentLoaded',function(){
       }
     });
     if (changed.length){ ccSave(list); changed.forEach(function(c){ try{ ccSync(c); }catch(e){} }); }
+    try{ if(typeof ccPromemoriaTimbrature==='function') ccPromemoriaTimbrature(); }catch(e){}
   }
 
+  function ccPromemoriaTimbrature(){
+    var el=document.getElementById('tc-promemoria'); if(!el) return;
+    var u=(typeof ccUtente==='function')?ccUtente():null; var me=((u&&u.email)||'').toLowerCase();
+    if(!me){ el.innerHTML=''; return; }
+    var now=Date.now(), list=(typeof ccLoad==='function')?ccLoad():[];
+    var pend=list.filter(function(c){ if(!c||c.fatto) return false; if((c.categoria||'')!=='task') return false; if(String(c.dipEmail||'').toLowerCase()!==me) return false; var due=(typeof ccDueTs==='function')?ccDueTs(c):null; return (due!==null && due<=now); });
+    if(!pend.length){ el.innerHTML=''; return; }
+    pend.sort(function(a,b){ return (ccDueTs(a)||0)-(ccDueTs(b)||0); });
+    var h='<div style="background:#7f1d1d;border:2px solid #ef4444;border-radius:14px;padding:14px 16px;color:#fff;margin-bottom:18px;">';
+    h+='<div style="font-weight:900;font-size:15px;margin-bottom:8px;">\u23f0 '+pend.length+' promemoria da fare \u2014 smarca ognuno</div>';
+    pend.forEach(function(c){
+      var n=(c.solleciti||0);
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid rgba(255,255,255,.15);">';
+      h+='<button onclick="ccToggle(\''+c.id+'\'); if(typeof ccPromemoriaTimbrature===\'function\') ccPromemoriaTimbrature();" title="Fatto" style="flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:none;background:#22c55e;color:#fff;font-size:18px;font-weight:900;cursor:pointer;">\u2713</button>';
+      h+='<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:14px;">'+ccEsc(c.titolo||'task')+'</div><div style="font-size:12px;color:#fecaca;">'+ccEsc(c.data||'')+(c.ora?(' '+ccEsc(c.ora)):'')+(n>=5?(' \u00b7 \u26a0\ufe0f '+n+' solleciti'):(n>0?(' \u00b7 '+n+' solleciti'):''))+'</div></div>';
+      h+='</div>';
+    });
+    h+='</div>';
+    el.innerHTML=h;
+  }
   /* ===================== Calendario dispositivo (.ics) ===================== */
   function ccEscICS(t){ return String(t||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n'); }
   function ccIcsById(id){ var c=ccLoad().filter(function(x){return x.id===id;})[0]; if(c) ccScaricaICS(c); }
@@ -10196,9 +10220,9 @@ document.addEventListener('DOMContentLoaded',function(){
   _ccBind('cc-refresh','click', function(){ ccFetchSheet(); ccToast('Aggiornamento…'); });
   _ccBind('cc-close','click', ccChiudi);
   _ccBind('cc-salva','click', ccAggiungi);
-  _ccBind('cc-cf-all','click', function(){ ccSetCatFiltro(''); });
   _ccBind('cc-cf-app','click', function(){ ccSetCatFiltro('appuntamento'); });
   _ccBind('cc-cf-task','click', function(){ ccSetCatFiltro('task'); });
+  try{ ccSetCatFiltro('appuntamento'); }catch(e){}
   _ccBind('cc-mic-titolo','click', function(){ ccAvviaVoce('titolo'); });
   _ccBind('cc-mic-ricorda','click', function(){ ccAvviaVoce('ricorda'); });
   _ccBind('cc-mic-tutto','click', function(){ ccAvviaVoce('tutto'); });
@@ -13267,13 +13291,21 @@ function cvVeicoloLink(cv){
   var isAdmin=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
   var estera=(a.estera===true);
   var targa=cv.nuovaTarga||a.targa||'';
-  var idAuto=estera?((typeof cvAutoNum==='function'?cvAutoNum(cv):'')||a.numeroInterno||a.numero_interno||a.telaio||''):targa;
-  var testo=cvEsc((((a.marca||'')+' '+(a.modello||cv.autoDesc||'')).trim()))+(idAuto?(' \u00b7 '+cvEsc(idAuto)):'');
-  var col=estera?'#16a34a':'#1a4fa0';
-  var canClick=!!(isAdmin && cv.autoId);
-  var attr=canClick?(' onclick="event.stopPropagation(); cvApriAuto(\''+cv.autoId+'\')"'):'';
-  var cur=canClick?'cursor:pointer;':'';
-  return '<div'+attr+' style="font-size:13px;font-weight:800;color:'+col+';margin-top:3px;'+cur+'"'+(canClick?' title="Modifica veicolo"':'')+'>'+testo+'</div>';
+  var num=(typeof cvAutoNum==='function'?cvAutoNum(cv):'')||a.numeroInterno||a.numero_interno||'';
+  var marcaMod=cvEsc((((a.marca||'')+' '+(a.modello||cv.autoDesc||'')).trim()))||'Veicolo';
+  var autoId=cv.autoId||'';
+  if(!autoId && typeof mzLoad==='function'){
+    var key=String(a.telaio||targa||num||'').toLowerCase();
+    if(key){ var found=mzLoad().filter(function(x){ return x && [String(x.telaio||''),String(x.targa||''),String(x.numero_interno||'')].map(function(s){return s.toLowerCase();}).indexOf(key)>=0; })[0]; if(found) autoId=found.id; }
+  }
+  var idHtml='';
+  if(estera && num){ idHtml=' \u00b7 <span style="color:#16a34a;">N\u00b0 '+cvEsc(num)+'</span>'; }
+  else if(targa){ idHtml=' \u00b7 '+cvEsc(targa); }
+  else if(num){ idHtml=' \u00b7 '+cvEsc(num); }
+  var canClick=!!(isAdmin && autoId);
+  var attr=canClick?(' onclick="event.stopPropagation(); cvApriAuto(\''+autoId+'\')"'):'';
+  var cur=canClick?'cursor:pointer;text-decoration:underline;':'';
+  return '<div'+attr+' style="font-size:13px;font-weight:800;color:#1a4fa0;margin-top:3px;'+cur+'"'+(canClick?' title="Apri veicolo in magazzino"':'')+'>'+marcaMod+idHtml+'</div>';
 }
 function cvVendCard(cv){
   var t=cvCalcola(cv); var a=cv.autoSnapshot||{}; var puo=cvPuoConfermarePagamenti(); var st=cv.statoVendita||'in_attesa_pagamento';
@@ -13359,7 +13391,8 @@ function cvVendConfermaPag(id, ri){
 }
 
 function cvVendImmatricola(id){
-  if(typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ alert('L\u2019immatricolazione la completa l\u2019amministrazione.'); return; }
+  var _cvE=(typeof cvLoad==='function')?cvLoad().filter(function(x){return x.id===id;})[0]:null; var _est=_cvE&&((typeof cvVendEstera==='function')?cvVendEstera(_cvE):(_cvE.autoSnapshot&&_cvE.autoSnapshot.estera));
+  if(_est && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ alert('L\u2019immatricolazione delle auto estere la completa l\u2019amministrazione.'); return; }
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
   if(cvVendEstera(cv)){
     cvVendImmatModal(id, cv);
