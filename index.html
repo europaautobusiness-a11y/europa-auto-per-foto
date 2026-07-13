@@ -512,7 +512,7 @@ html, body{
   <div class="content-header">
     <div>
       <div class="content-header-title" id="contentTitle">Nuovo Report</div>
-      <div class="content-header-sub">Stato d'Uso — Certificazione Autoveicolo</div>
+      <div class="content-header-sub"></div>
     </div>
     <div class="content-header-right">
       <div id="gsearch-wrap" style="position:relative;width:min(340px,46vw);">
@@ -921,7 +921,7 @@ html, body{
       <input id="mz-cerca" oninput="mzRender()" placeholder="🔎 Cerca marca, modello, targa…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">
     </div>
     <div id="mz-filtri" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+    <div id="mz-export-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <span style="font-size:12px;color:#64748b;font-weight:700;align-self:center;">Inventario:</span>
       <button onclick="mzExportInventario('aziendali')" style="padding:8px 12px;border-radius:8px;border:1px solid #9a3412;background:#fff7ed;color:#9a3412;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Aziendali I.E.</button>
       <button onclick="mzExportInventario('estere')" style="padding:8px 12px;border-radius:8px;border:1px solid #1e40af;background:#eff6ff;color:#1e40af;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Estere</button>
@@ -11375,6 +11375,7 @@ function mzRenderFiltri(){
 function mzFiltro(s){ _mzFiltro=s; mzRenderFiltri(); mzRender(); }
 
 function mzExportInventario(cat){
+  if(!(typeof isAdmin==='function'&&isAdmin())){ alert('Export riservato all\'amministratore.'); return; }
   var all=(typeof mzLoad==='function')?mzLoad():[];
   var rows=all.filter(function(a){
     if(cat==='estere') return a.estera===true;
@@ -11400,6 +11401,7 @@ function mzExportInventario(cat){
 }
 function mzRender(){
   var wrap=document.getElementById('mz-lista'); if(!wrap) return;
+  try{ var _eb=document.getElementById('mz-export-bar'); if(_eb) _eb.style.display=(typeof isAdmin==='function'&&isAdmin())?'flex':'none'; }catch(e){}
   var q=(document.getElementById('mz-cerca')||{}).value||''; q=q.toLowerCase().trim();
   var all=mzLoad();
   // statistiche
@@ -11561,7 +11563,7 @@ function mzForm(id){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Cilindrata (cc)','cilindrata','','number')+'</div><div style="flex:1;">'+f('Potenza (kW)','potenza','','number')+'</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Telaio <span id="mz-telaio-req" style="color:#dc2626"></span>','telaio','')+'</div><div style="flex:1;">'+f('Immatricolazione','dataImm','','date')+'</div></div>';
   h+='<div id="mz-numauto-wrap" style="display:none;">'+f('N. auto (numero interno)','numero_interno','es. 120')+'</div>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Prezzo acquisto €','prezzoAcq','','number')+'</div><div style="flex:1;">'+f('Prezzo vendita €','prezzoVen','','number')+'</div></div>';
+  h+='<div style="display:flex;gap:10px;">'+((typeof isAdmin==='function'&&isAdmin())?('<div style="flex:1;">'+f('Prezzo acquisto €','prezzoAcq','','number')+'</div>'):('<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo acquisto €</label><div style="padding:10px;border:1px dashed #cbd5e1;border-radius:8px;color:#94a3b8;font-size:13px;background:#f8fafc;">\ud83d\udd12 riservato</div></div>'))+'<div style="flex:1;">'+f('Prezzo vendita €','prezzoVen','','number')+'</div></div>';
   h+=f('Prezzo di listino € (compare nel preventivo)','listino','','number');
   h+=sel('Stato','stato',MZ_STATI.map(function(s){return [s[0],s[1]];}));
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Note</label><textarea id="mz_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+v('note')+'</textarea>';
@@ -11605,8 +11607,10 @@ function mzSalva(){
   if(_mzEstera && !g('numero_interno')){ alert('Auto estera: il N. auto è obbligatorio.'); return; }
   var _fsel=document.getElementById('mz_fornitore'); var _fid=_fsel?_fsel.value:'';
   if(!_fid){ alert('Seleziona la provenienza / fornitore. Se non esiste, aggiungilo con "+ nuovo".'); return; }
+  var _isNewAuto=!mzById(_mzId);
   var a=mzById(_mzId)||{ id:_mzId, createdAt:Date.now() };
-  ['marca','modello','allestimento','targa','anno','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note'].forEach(function(k){ a[k]=g(k); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
+  var _canPrAcq=(typeof isAdmin==='function'&&isAdmin());
+  ['marca','modello','allestimento','targa','anno','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note'].forEach(function(k){ if(k==='prezzoAcq' && !_canPrAcq) return; a[k]=g(k); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
   a.estera=_mzEstera;
   a.provenienzaVenditore=_mzEstera?'':_mzProvVend;
   a.ivaEsposta = _mzEstera ? true : (function(){ var el=document.getElementById('mz_ivaEsposta'); return !!(el&&el.checked); })();
@@ -11616,6 +11620,7 @@ function mzSalva(){
   if(idx>=0) list[idx]=a; else list.push(a);
   mzSave(list); mzSupaUpsert(a); mzChiudi(); mzRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Auto salvata',true);
+  if(_isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
 }
 function mzElimina(id){
   if(!confirm('Eliminare questa auto dal magazzino?')) return;
@@ -12480,7 +12485,8 @@ function cvFinaleDatiSalvaStampa(id, needAssic, needFin){
   cvModChiudi(); cvStampaById(id,'finale');
 }
 function cvBuildHTML(c, tipo){
-  var isFinale=(tipo==='finale'); var titolo=isFinale?'Contratto':(tipo==='preventivo'?'Preventivo':'Pre-contratto');
+  var isFinale=(tipo==='finale'); var isFatt=(tipo==='fattura');
+  var titolo=isFatt?('Fattura n. '+((c.fattura&&c.fattura.numero)||'\u2014')+'/'+((c.fattura&&c.fattura.anno)||'')+((c.fattura&&c.fattura.data)?(' del '+(typeof pmDMY==='function'?pmDMY(c.fattura.data):c.fattura.data)):'')):(isFinale?'Contratto':(tipo==='preventivo'?'Preventivo':'Pre-contratto'));
   var t=cvCalcola(c), a=c.autoSnapshot||{};
   var _ivaEsp = (a.ivaEsposta!=null) ? !!a.ivaEsposta : ((typeof mzById==='function' && c.autoId) ? (function(){ var mv=mzById(c.autoId); return !!(mv&&mv.ivaEsposta); })() : false);
   var _ivaLabel = _ivaEsp ? 'IVA esposta' : 'IVA a margine';
@@ -12550,7 +12556,8 @@ function cvBuildHTML(c, tipo){
     +".cvbox{background:#f8fafc;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.4;white-space:pre-line;}"
     +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:18px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:36px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:10px;font-size:9.5px;color:#475569;line-height:1.4;page-break-inside:avoid;} .cvacc-ul{margin:4px 0 0;padding-left:18px;} .cvacc-ul li{margin:1px 0;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;} .cvpb{height:8px;} .cvfoot{margin-top:26px;padding:6px 0 0;background:#fff;display:flex;justify-content:space-between;gap:50px;page-break-inside:avoid;} .cvfoot .fs{flex:1;text-align:center;font-size:10px;color:#334155;} .cvfoot .fs .fl{height:24px;border-bottom:1px solid #334155;margin-bottom:3px;}";
   var footHtml=needSign?'<div class="cvfoot"><div class="fs"><div class="fl"></div>Firma venditore</div><div class="fs"><div class="fl"></div>Firma acquirente</div></div>':'';
-  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>'+titolo+' '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+footHtml+'</body></html>';
+  var fattDicitura = isFatt ? ('<div class="cvbox" style="margin-top:12px;">'+(_ivaEsp?'Operazione con IVA esposta.':'Operazione soggetta al regime del margine \u2013 beni usati (art. 36 D.L. 41/1995, conv. L. 85/1995). IVA assolta dal rivenditore e non separatamente esposta.')+'\n\nDocumento generato dal gestionale a fini interni: non sostituisce la fattura elettronica trasmessa allo SdI.</div>') : '';
+  var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>'+titolo+' '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+fattDicitura+(isFatt?'':footHtml)+'</body></html>';
   return html;
 }
 function cvStampaDoc(c, tipo){
@@ -12936,6 +12943,48 @@ function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 function cvVendEstera(cv){ if(cv.autoSnapshot && cv.autoSnapshot.estera) return true; if(cv.autoId && typeof mzById==='function'){ var a=mzById(cv.autoId); if(a && a.estera) return true; } return false; }
 
+/* ===== FATTURA: genera una volta, blocca, annulla per rigenerare ===== */
+function cvFattAnno(){ return new Date().getFullYear(); }
+function cvPuoFatturare(){ try{ var e=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); return (typeof isAdmin==='function'&&isAdmin()) || e==='ariannapresta80@gmail.com'; }catch(_e){ return false; } }
+function cvFatturaNextNum(){
+  var y=cvFattAnno(), max=0, base=0;
+  try{ if(typeof parLoad==='function'){ base=parseInt((parLoad().fatturaBase||0),10)||0; } }catch(e){}
+  cvLoad().forEach(function(x){ if(x.fattura && x.fattura.anno===y && x.fattura.numero>max) max=x.fattura.numero; });
+  return Math.max(max, base)+1;
+}
+function cvFatturaGenera(id){
+  if(!cvPuoFatturare()){ alert('Le fatture le genera Arianna.'); return; }
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ alert('Contratto non trovato.'); return; }
+  var cv=list[idx];
+  if(cv.fattura){ cvStampaById(id,'fattura'); return; }
+  var num=cvFatturaNextNum(), anno=cvFattAnno();
+  if(!confirm('Genero la fattura n. '+num+'/'+anno+' per questo contratto?\n\nDopo la generazione il numero resta fisso: per rifarla dovrai prima annullarla.')) return;
+  cv.fattura={ numero:num, anno:anno, data:new Date().toISOString().slice(0,10), ts:Date.now(), da:(typeof _currentUserEmail!=='undefined'?(_currentUserEmail||''):'') };
+  cv.updatedAt=Date.now(); cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  if(typeof cvVendRender==='function') cvVendRender();
+  cvStampaById(id,'fattura');
+  if(typeof tcToastNew==='function') tcToastNew('\ud83e\uddfe Fattura n. '+num+'/'+anno+' generata',true);
+}
+function cvFatturaAnnulla(id){
+  if(!cvPuoFatturare()){ alert('Solo Arianna può annullare una fattura.'); return; }
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  var cv=list[idx]; if(!cv.fattura) return;
+  if(!confirm('Annullare la fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno+'?\n\nIl documento verr\u00e0 rimosso e potrai rigenerarla (con un nuovo numero).')) return;
+  delete cv.fattura; cv.updatedAt=Date.now(); cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  if(typeof cvVendRender==='function') cvVendRender();
+  if(typeof tcToastNew==='function') tcToastNew('Fattura annullata',true);
+}
+function cvFatturaBtn(cv){
+  var _puo=cvPuoFatturare();
+  if(cv && cv.fattura){
+    return '<div style="flex:1 1 100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px;">'
+      +'<span style="font-size:12px;font-weight:800;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:7px;white-space:nowrap;">\ud83e\uddfe Fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno+'</span>'
+      +'<button onclick="cvStampaById(\''+cv.id+'\',\'fattura\')" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #16a34a;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83d\udda8\ufe0f Ristampa</button>'
+      +(_puo?'<a onclick="cvFatturaAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">Annulla fattura</a>':'')+'</div>';
+  }
+  if(!_puo) return '';
+  return '<button onclick="cvFatturaGenera(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83e\uddfe Genera fattura</button>';
+}
 function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!wrap) return;
   cvVendAutoAvanza();
   if(typeof cvVendBadge==='function') cvVendBadge();
@@ -12956,7 +13005,7 @@ function cvVendCard(cv){
     return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
       +'<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'
-      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+_demoC+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
   var pag=(cv.pagamenti||[]).map(function(p,ri){ if(!cvNum(p.importo)) return '';
@@ -12971,7 +13020,7 @@ function cvVendCard(cv){
   else if(st==='consegnato'){ azione='<div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'; }
   var _isAdm=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
   var mod='<button onclick="'+(_isAdm?('cvVendModifica(\''+cv.id+'\')'):('cvVendModificaLimitata(\''+cv.id+'\')'))+'" style="flex:1 1 46%;padding:8px;border-radius:7px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\u270f\ufe0f Modifica'+(_isAdm?' (completa)':' finanz./assic.')+'</button>';
-  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='consegnato')?('<button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+'</div>';
+  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='consegnato')?('<button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
   var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato (DEMO)</a></div>'):'';
   var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
@@ -13218,7 +13267,7 @@ function notifPush(testo, icon){
 }
 function notifSync(){
   try{
-    var apply=function(){ var last=notifLastSeen(); var unseen=notifLoad().filter(function(n){ return n && n.ts>last; }).sort(function(a,b){return a.ts-b.ts;}); if(unseen.length){ notifShowCards(unseen); notifSetLastSeen(Date.now()); } if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); };
+    var apply=function(){ var last=notifLastSeen(); var unseen=notifLoad().filter(function(n){ return n && n.ts>last; }).sort(function(a,b){return a.ts-b.ts;}); if(!window._notifToasted) window._notifToasted={}; var daToast=unseen.filter(function(n){ return n.id && !window._notifToasted[n.id]; }); if(daToast.length){ notifShowCards(daToast); daToast.forEach(function(n){ window._notifToasted[n.id]=1; }); } if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); };
     if(typeof supaLoadList==='function'){ supaLoadList('notifiche', notifLoad, notifSave, apply); } else { apply(); }
   }catch(e){}
 }
