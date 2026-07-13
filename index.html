@@ -3898,6 +3898,7 @@ function renderPermessiSezioni() {
   var html = '<div style="font-size:13px;font-weight:700;color:#1a4fa0;margin-bottom:6px;text-transform:uppercase;">Sezioni visibili per persona</div>';
   html += '<div style="font-size:12px;color:#64748b;margin-bottom:12px;">Spunta le sezioni che ogni persona può vedere quando accede. L\u2019admin vede sempre tutto.</div>';
   if (!people.length) { el.innerHTML = html + '<div style="color:#64748b;">Nessun utente: aggiungi prima i dipendenti in Presenze.</div>'; return; }
+  html += '<button onclick="salvaPermessiTutti()" style="margin:0 0 12px;padding:9px 18px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(22,163,74,.3);">\ud83d\udcbe Salva permessi</button>';
   html += '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:12px;min-width:560px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;text-align:left;position:sticky;left:0;background:#f1f5f9;z-index:1;">Persona</th>';
   SEZIONI_DEFS.forEach(function(s){ html += '<th style="padding:8px 6px;text-align:center;white-space:nowrap;">'+s.label+'</th>'; });
   html += '</tr></thead><tbody>';
@@ -3914,10 +3915,31 @@ function renderPermessiSezioni() {
   html += '</tbody></table></div>';
   el.innerHTML = html;
 }
+function salvaPermessiTutti(){
+  var el=document.getElementById('cred-permessi'); if(!el) return;
+  var m=loadPermessiSezioni();
+  var boxes=el.querySelectorAll('input[type=checkbox][data-email]');
+  var perEmail={};
+  Array.prototype.forEach.call(boxes, function(cb){
+    if(cb.disabled) return;
+    var email=String(cb.getAttribute('data-email')||'').toLowerCase(); var view=cb.getAttribute('data-view');
+    if(!email||!view) return;
+    if(!perEmail[email]) perEmail[email]=[];
+    if(cb.checked) perEmail[email].push(view);
+  });
+  Object.keys(perEmail).forEach(function(email){ m[email]=perEmail[email]; });
+  savePermessiSezioniLocal(m);
+  Object.keys(perEmail).forEach(function(email){
+    var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===email;}):null;
+    if(typeof utentiSupaSave==='function') utentiSupaSave(u||{email:email, nome:email.split('@')[0], ruolo:'dipendente', password:'-'});
+  });
+  if(typeof _currentUserEmail!=='undefined' && _currentUserEmail && typeof applyRoleUI==='function'){ try{ applyRoleUI(); }catch(e){} }
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Permessi salvati',true); else alert('\u2705 Permessi salvati');
+}
 function tcTogglePermesso(cb) {
   var email = cb.getAttribute('data-email'), view = cb.getAttribute('data-view');
   var perm = loadPermessiSezioni();
-  var cur = (perm[email] && perm[email].length) ? perm[email].slice() : null;
+  var cur = Object.prototype.hasOwnProperty.call(perm, email) ? (perm[email]||[]).slice() : null;
   if (!cur) {
     var person = _tuttiUtenti().find(function(x){ return x.email===email; });
     cur = (SEZIONI_DEFAULT_RUOLO[(person&&person.ruolo)||'dipendente'] || SEZIONI_DEFAULT_RUOLO['dipendente']).slice();
