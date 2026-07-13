@@ -3705,21 +3705,13 @@ function utentiSupaLoad(done){
     sb.from('utenti').select('data').then(function(res){
       if(!res||res.error){ if(done)done(); return; }
       var rows=(res.data||[]).map(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } return d; }).filter(function(d){ return d&&d.email; });
-      var m=loadPermessiSezioni();
-      var byEmail={}; UTENTI_APP.forEach(function(u){ if(u&&u.email) byEmail[String(u.email).toLowerCase()]=u; });
-      var deleted; try{ deleted=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; }catch(e){ deleted=[]; }
-      rows.forEach(function(r){
-        var k=String(r.email).toLowerCase();
-        if(deleted.indexOf(k)>=0) return;               // eliminato di proposito: non reintrodurlo
-        var ex=byEmail[k];
-        if(!ex || (r.updatedAt||0) >= (ex.updatedAt||0)){ byEmail[k]={ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }; }
-        if(r.sezioni!=null) m[k]=r.sezioni; // Supabase = fonte di verità dei permessi
-      });
-      UTENTI_APP=Object.keys(byEmail).map(function(k){ return byEmail[k]; });
-      salvaUtentiApp(); savePermessiSezioniLocal(m);
-      if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
-      if(typeof renderPermessiSezioni==='function') renderPermessiSezioni();
-      if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
+      if(rows.length){
+        var m=loadPermessiSezioni(), seen={}, ua=[];
+        rows.forEach(function(r){ var k=String(r.email).toLowerCase(); if(seen[k]) return; seen[k]=1; if(r.sezioni!=null) m[k]=r.sezioni; ua.push({ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }); });
+        UTENTI_APP=ua; salvaUtentiApp(); savePermessiSezioniLocal(m);
+        if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
+        if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
+      }
       if(done)done();
     });
   }catch(e){ if(done)done(); }
@@ -3898,7 +3890,6 @@ function renderPermessiSezioni() {
   var html = '<div style="font-size:13px;font-weight:700;color:#1a4fa0;margin-bottom:6px;text-transform:uppercase;">Sezioni visibili per persona</div>';
   html += '<div style="font-size:12px;color:#64748b;margin-bottom:12px;">Spunta le sezioni che ogni persona può vedere quando accede. L\u2019admin vede sempre tutto.</div>';
   if (!people.length) { el.innerHTML = html + '<div style="color:#64748b;">Nessun utente: aggiungi prima i dipendenti in Presenze.</div>'; return; }
-  html += '<button onclick="salvaPermessiTutti()" style="margin:0 0 12px;padding:9px 18px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(22,163,74,.3);">\ud83d\udcbe Salva permessi</button><span id="perm-salvato" style="display:none;margin-left:12px;color:#16a34a;font-weight:800;font-size:13px;">\u2705 Salvato</span>';
   html += '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:12px;min-width:560px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;text-align:left;position:sticky;left:0;background:#f1f5f9;z-index:1;">Persona</th>';
   SEZIONI_DEFS.forEach(function(s){ html += '<th style="padding:8px 6px;text-align:center;white-space:nowrap;">'+s.label+'</th>'; });
   html += '</tr></thead><tbody>';
@@ -3915,44 +3906,10 @@ function renderPermessiSezioni() {
   html += '</tbody></table></div>';
   el.innerHTML = html;
 }
-function salvaPermessiTutti(){
-  try{
-    var el=document.getElementById('cred-permessi');
-    var boxes=el?el.querySelectorAll('input[type=checkbox][data-email]'):[];
-    var m=loadPermessiSezioni(); var perEmail={};
-    Array.prototype.forEach.call(boxes, function(cb){
-      if(cb.disabled) return;
-      var email=String(cb.getAttribute('data-email')||'').toLowerCase(); var view=cb.getAttribute('data-view');
-      if(!email||!view) return;
-      if(!perEmail[email]) perEmail[email]=[];
-      if(cb.checked) perEmail[email].push(view);
-    });
-    Object.keys(perEmail).forEach(function(email){ m[email]=perEmail[email]; });
-    var st=document.getElementById('perm-salvato');
-    var setStatus=function(txt,color){ if(st){ st.textContent=txt; st.style.color=color||'#16a34a'; st.style.display='inline'; } };
-    // 1) salvataggio locale + verifica read-back
-    var localOk=true;
-    try{ localStorage.setItem(PERMESSI_SEZ_KEY, JSON.stringify(m)); var chk=JSON.parse(localStorage.getItem(PERMESSI_SEZ_KEY)||'{}'); Object.keys(perEmail).forEach(function(e){ if(JSON.stringify(chk[e])!==JSON.stringify(perEmail[e])) localOk=false; }); }catch(e){ localOk=false; }
-    try{ if(typeof _currentUserEmail!=='undefined' && _currentUserEmail && typeof applyRoleUI==='function') applyRoleUI(); }catch(e){}
-    // 2) salvataggio Supabase con esito reale
-    setStatus('\u23f3 Salvataggio\u2026', '#64748b');
-    var sb=(typeof sbClient==='function')?sbClient():null;
-    var emails=Object.keys(perEmail);
-    if(!sb || !emails.length){ setStatus(localOk?'\u2705 Salvato (locale)':'\u26a0\ufe0f Memoria locale piena', localOk?'#16a34a':'#dc2626'); return; }
-    var done=0, err=null, total=emails.length;
-    emails.forEach(function(email){
-      var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===email;}):null;
-      var rec={ id:utenteId(email), email:email, nome:(u&&u.nome)||email.split('@')[0], ruolo:(u&&u.ruolo)||'dipendente', password:(u&&u.password)||'-', sezioni:perEmail[email], updatedAt:Date.now() };
-      var fin=function(e){ done++; if(e) err=String(e); if(done>=total){ if(err) setStatus('\u26a0\ufe0f Errore Supabase: '+err, '#dc2626'); else setStatus(localOk?'\u2705 Salvato (locale + Supabase)':'\u2705 Salvato su Supabase', '#16a34a'); } };
-      try{ sb.from('utenti').upsert({ id:String(rec.id), data:rec }).then(function(res){ fin(res&&res.error?res.error.message:null); }, function(e){ fin(e); }); }
-      catch(e){ fin(e); }
-    });
-  }catch(e){ alert('Errore salvataggio permessi: '+e); }
-}
 function tcTogglePermesso(cb) {
   var email = cb.getAttribute('data-email'), view = cb.getAttribute('data-view');
   var perm = loadPermessiSezioni();
-  var cur = Object.prototype.hasOwnProperty.call(perm, email) ? (perm[email]||[]).slice() : null;
+  var cur = (perm[email] && perm[email].length) ? perm[email].slice() : null;
   if (!cur) {
     var person = _tuttiUtenti().find(function(x){ return x.email===email; });
     cur = (SEZIONI_DEFAULT_RUOLO[(person&&person.ruolo)||'dipendente'] || SEZIONI_DEFAULT_RUOLO['dipendente']).slice();
@@ -3994,7 +3951,6 @@ function credAggiungi() {
 
   UTENTI_APP.push({email:email, password:pass, nome:nome, ruolo:ruolo});
   salvaUtentiApp();
-  try{ var _del=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; _del=_del.filter(function(x){return x!==email;}); localStorage.setItem('ea_utenti_deleted', JSON.stringify(_del)); }catch(e){}
   if(typeof utentiSupaSave==='function') utentiSupaSave(UTENTI_APP[UTENTI_APP.length-1]);
   document.getElementById('cred-nome').value='';
   document.getElementById('cred-email').value='';
@@ -4004,10 +3960,9 @@ function credAggiungi() {
 
 function credRimuovi(idx) {
   if (!confirm('Rimuovere '+UTENTI_APP[idx].nome+'?')) return;
-  var _remEmail=String(UTENTI_APP[idx].email||'').toLowerCase();
+  var _remEmail=UTENTI_APP[idx].email;
   UTENTI_APP.splice(idx, 1);
   salvaUtentiApp();
-  try{ var _del=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; if(_del.indexOf(_remEmail)<0){ _del.push(_remEmail); localStorage.setItem('ea_utenti_deleted', JSON.stringify(_del)); } }catch(e){}
   if(typeof utentiSupaDelete==='function') utentiSupaDelete(_remEmail);
   renderCredenzialiLista();
 }
@@ -11838,13 +11793,23 @@ function pmiConfermaIngresso(cvId){
     if(per) periziaId=per.id;
   } }catch(e){}
   var ivaEsp=confirm('Regime IVA della permuta.\n\nLe permute sono quasi sempre a IVA a MARGINE.\n\nSi tratta invece di un veicolo a IVA ESPOSTA?\n\n• OK = IVA esposta\n• Annulla = IVA a margine');
+  var cl=cv.cliente||{};
+  var _cf=(cl.cf||'').toUpperCase();
+  var _rag=(nome||'').trim() || (cl.ragSociale||'') || 'Cliente permuta';
+  var _fornId='';
+  try{
+    var _fl=(typeof fnLoad==='function')?fnLoad():[];
+    var _ex=_fl.filter(function(f){ return (_cf && String(f.cfiscale||'').toUpperCase()===_cf) || (_rag && String(f.ragione||'').toLowerCase()===_rag.toLowerCase()); })[0];
+    if(_ex){ _fornId=_ex.id; }
+    else { var _forn={ id:'fn_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ragione:_rag, piva:(cl.business?(cl.piva||''):''), cfiscale:_cf, pec:'', indirizzo:[(cl.via||''),(cl.civico||''),(cl.cap||''),(cl.citta||'')].filter(Boolean).join(' '), note:'Cliente diventato fornitore (permuta)', createdAt:Date.now(), updatedAt:Date.now() }; _fl.push(_forn); if(typeof fnSave==='function') fnSave(_fl); if(typeof fnSupaUpsert==='function') fnSupaUpsert(_forn); _fornId=_forn.id; }
+  }catch(e){}
   var auto={ id:'mz_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), createdAt:Date.now(), updatedAt:Date.now(),
     marca:(marca||'').toUpperCase(), modello:(modello||'').toUpperCase(), allestimento:'',
     targa:(pm.targa||'').toUpperCase(), colore:(pm.colore||'').toUpperCase(), km:pm.km||'', alimentazione:pm.alimentazione||'', cambio:pm.cambio||'',
     cilindrata:pm.cilindrata||'', potenza:pm.potenza||'', dataImm:pm.dataImm||'', prezzoAcq:pm.prezzoAcq||'', prezzoVen:'', stato:'disponibile',
     note:'Ingresso da permuta'+(nome?(' \u2014 '+nome):''), dataCarico:oggi, origine:'permuta', permutaContrattoId:cv.id,
     permutaDifetti:(pm.difetti||''), periziaId:periziaId, ivaEsposta:!!ivaEsp, provenienzaVenditore:'privato',
-    fornitoreNome:(nome?('Permuta: '+nome):'Permuta cliente'), estera:false };
+    fornitoreNome:_rag, fornitoreId:_fornId, estera:false };
   if(typeof mzLoad==='function'){ var ml=mzLoad(); ml.push(auto); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(auto); }
   cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now(); cv.updatedAt=Date.now();
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
@@ -12645,7 +12610,7 @@ function cvBuildHTML(c, tipo){
   var _saldoDov=Math.max(0,(t.totaleScontato||0)-_deduc);
   doc+=row('Saldo dovuto',_saldoDov,'tot');
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div style="page-break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo') doc+=cvFirmaHTML(); doc+='</div>'; }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo') doc+=cvFirmaHTML(); }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
   if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; } }
   if(c.doppiaChiaveConsegnata!=null || c.librettoModalita){ doc+='<div class="cvh">Consegna</div><div class="cvbox"><b>Doppia chiave:</b> '+(c.doppiaChiaveConsegnata?'consegnata al cliente':'NON consegnata')+(c.librettoModalita?('<br><b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente')):'')+'</div>'; }
@@ -13216,6 +13181,18 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
   wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start;}.cv-vend-grid>div{margin-bottom:0!important;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
 }
 
+function cvApriAuto(autoId){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  if(!autoId){ if(typeof tcToastNew==='function') tcToastNew('Nessuna auto collegata a questa pratica',false); return; }
+  if(typeof mzById==='function' && !mzById(autoId)){ if(typeof tcToastNew==='function') tcToastNew('Auto non trovata in magazzino',false); return; }
+  try{ if(typeof sidebarNav==='function') sidebarNav('magazzino', document.getElementById('si-magazzino')); }catch(e){}
+  setTimeout(function(){ try{ if(typeof mzForm==='function') mzForm(autoId); }catch(e){} }, 160);
+}
+function cvApriAutoBtn(cv){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return '';
+  if(!cv || !cv.autoId) return '';
+  return '<button onclick="cvApriAuto(\''+cv.autoId+'\')" style="flex:0 0 auto;padding:8px 11px;border-radius:7px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">\ud83d\udd27 Auto</button>';
+}
 function cvVendCard(cv){
   var t=cvCalcola(cv); var a=cv.autoSnapshot||{}; var puo=cvPuoConfermarePagamenti(); var st=cv.statoVendita||'in_attesa_pagamento';
   var targa=cv.nuovaTarga||a.targa||'';
@@ -13225,7 +13202,7 @@ function cvVendCard(cv){
     return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+cvEsc((a.modello||cv.autoDesc||''))+(targa?(' · '+cvEsc(targa)):'')+'</div></div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
       +'<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'
-      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+cvApriAutoBtn(cv)+cvFatturaBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
   var pag=(cv.pagamenti||[]).map(function(p,ri){ if(!cvNum(p.importo)) return '';
@@ -13240,7 +13217,7 @@ function cvVendCard(cv){
   else if(st==='consegnato'){ azione='<div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'; }
   var _isAdm=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
   var mod='<button onclick="'+(_isAdm?('cvVendModifica(\''+cv.id+'\')'):('cvVendModificaLimitata(\''+cv.id+'\')'))+'" style="flex:1 1 46%;padding:8px;border-radius:7px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\u270f\ufe0f Modifica'+(_isAdm?' (completa)':' finanz./assic.')+'</button>';
-  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='consegnato')?('<button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
+  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Pre-contratto</button>'+((st==='consegnato')?('<button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+cvApriAutoBtn(cv)+cvFatturaBtn(cv)+'</div>';
   var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato (DEMO)</a></div>'):'';
   var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
