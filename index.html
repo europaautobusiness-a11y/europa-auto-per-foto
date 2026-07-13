@@ -3706,10 +3706,13 @@ function utentiSupaLoad(done){
       if(!res||res.error){ if(done)done(); return; }
       var rows=(res.data||[]).map(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } return d; }).filter(function(d){ return d&&d.email; });
       if(rows.length){
-        var m=loadPermessiSezioni(), seen={}, ua=[];
-        rows.forEach(function(r){ var k=String(r.email).toLowerCase(); if(seen[k]) return; seen[k]=1; if(r.sezioni!=null) m[k]=r.sezioni; ua.push({ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }); });
-        UTENTI_APP=ua; salvaUtentiApp(); savePermessiSezioniLocal(m);
+        var m=loadPermessiSezioni();
+        var byE={}; UTENTI_APP.forEach(function(u){ if(u&&u.email) byE[String(u.email).toLowerCase()]=u; });
+        var del; try{ del=JSON.parse(localStorage.getItem('ea_utenti_deleted')||'[]')||[]; }catch(e){ del=[]; }
+        rows.forEach(function(r){ var k=String(r.email).toLowerCase(); if(del.indexOf(k)>=0){ delete byE[k]; return; } if(r.sezioni!=null) m[k]=r.sezioni; var ex=byE[k]; if(!ex||(r.updatedAt||0)>=(ex.updatedAt||0)) byE[k]={ email:k, nome:r.nome||'', ruolo:r.ruolo||'dipendente', password:r.password||'-', updatedAt:r.updatedAt||0 }; });
+        UTENTI_APP=Object.keys(byE).map(function(k){return byE[k];}); salvaUtentiApp(); savePermessiSezioniLocal(m);
         if(typeof renderCredenzialiLista==='function') renderCredenzialiLista();
+        if(typeof renderPermessiSezioni==='function') renderPermessiSezioni();
         if(typeof applyRoleUI==='function' && typeof _currentUserEmail!=='undefined' && _currentUserEmail) applyRoleUI();
       }
       if(done)done();
@@ -4013,6 +4016,7 @@ function doLogin() {
   if(ws) ws.style.display = 'none';
 
   applyRoleUI();
+  try{ if(typeof utentiSupaLoad==='function') utentiSupaLoad(); }catch(e){}
   setTimeout(function(){ try{ if(typeof notifSync==='function') notifSync(); }catch(e){} }, 1500);
   if(!window._notifTimer){ window._notifTimer=setInterval(function(){ try{ if(typeof notifSync==='function') notifSync(); }catch(e){} }, 90000); }
 
@@ -7490,8 +7494,9 @@ var SEZIONI_DEFAULT_RUOLO = {
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
 };
-function loadPermessiSezioni(){ try{ return JSON.parse(localStorage.getItem(PERMESSI_SEZ_KEY)||'{}')||{}; }catch(e){ return {}; } }
-function savePermessiSezioniLocal(map){ try{ localStorage.setItem(PERMESSI_SEZ_KEY, JSON.stringify(map)); }catch(e){} }
+var _permSezMem = null;
+function loadPermessiSezioni(){ if(_permSezMem) return _permSezMem; try{ _permSezMem=JSON.parse(localStorage.getItem(PERMESSI_SEZ_KEY)||'{}')||{}; }catch(e){ _permSezMem={}; } return _permSezMem; }
+function savePermessiSezioniLocal(map){ _permSezMem=map||{}; try{ localStorage.setItem(PERMESSI_SEZ_KEY, JSON.stringify(_permSezMem)); }catch(e){} }
 function getPermessiUtente(email){
   if(!email) return null;
   var m=loadPermessiSezioni(); var k=String(email).toLowerCase();
@@ -12587,7 +12592,7 @@ function cvBuildHTML(c, tipo){
       +fld('Valutazione permuta',pm.prezzoAcq?cvEuro(pm.prezzoAcq):'\u2014')
       +'</div>';
     if(tipo==='preventivo'){
-      doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;">Il valore riconosciuto per la permuta \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
+      doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;"></div>';
     } else {
       doc+='<div class="cvbox" style="font-size:11px;line-height:1.5;"><b>Tutti i dettagli tecnici, lo stato d\'uso, i difetti visibili e non visibili e le condizioni del veicolo ceduto in permuta sono riportati nell\'apposita PERIZIA compilata e sottoscritta dal cliente</b>, che si intende parte integrante e sostanziale del presente '+(isFinale?'contratto':'pre-contratto')+' e che il cliente dichiara veritiera e conforme alla realt\u00e0. Il valore riconosciuto \u00e8 gi\u00e0 scalato dal totale, oltre a minivoltura come da voce di costo.</div>';
     }
