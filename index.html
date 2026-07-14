@@ -11719,7 +11719,50 @@ document.addEventListener('click', function(ev){
   if(wrap && !wrap.contains(ev.target)){ var box=document.getElementById('gsearch-results'); if(box) box.style.display='none'; }
 });
 
+var WORKER_FOTO='https://europaauto-upload.amministrazione-0e0.workers.dev';
+var _mzFoto=[];
+function mzFotoHtml(){
+  return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:12px 0 3px;text-transform:uppercase;">Foto veicolo</label>'
+    +'<div id="mz-foto-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>'
+    +'<input type="file" id="mz-foto-input" accept="image/*" multiple style="display:none;" onchange="mzFotoUpload(this.files)">'
+    +'<button type="button" onclick="document.getElementById(\'mz-foto-input\').click()" style="width:100%;padding:11px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u2795 Aggiungi foto</button>'
+    +'<div id="mz-foto-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>';
+}
+function mzFotoInit(a){ _mzFoto=(a && Array.isArray(a.foto))?a.foto.slice():[]; mzFotoRender(); }
+function mzFotoRender(){
+  var el=document.getElementById('mz-foto-list'); if(!el) return;
+  if(!_mzFoto.length){ el.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessuna foto caricata</div>'; return; }
+  el.innerHTML=_mzFoto.map(function(f,i){
+    return '<div style="position:relative;width:84px;height:84px;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;'+(i===0?'box-shadow:0 0 0 2px #1a4fa0;':'')+'">'
+      +'<img src="'+f.url+'" style="width:100%;height:100%;object-fit:cover;display:block;">'
+      +(i===0?'<div style="position:absolute;bottom:0;left:0;right:0;background:#1a4fa0;color:#fff;font-size:9px;font-weight:800;text-align:center;padding:1px;">COPERTINA</div>':'')
+      +'<button type="button" onclick="mzFotoDelete('+i+')" title="Elimina" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;border:none;background:rgba(220,38,38,.92);color:#fff;font-size:13px;font-weight:900;cursor:pointer;line-height:18px;padding:0;">\u00d7</button>'
+      +(i>0?'<button type="button" onclick="mzFotoCopertina('+i+')" title="Imposta come copertina" style="position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;border:none;background:rgba(15,23,42,.72);color:#fff;font-size:11px;cursor:pointer;line-height:18px;padding:0;">\u2605</button>':'')
+      +'</div>';
+  }).join('');
+}
+function mzFotoUpload(files){
+  if(!files || !files.length) return;
+  var st=document.getElementById('mz-foto-stato');
+  var arr=Array.prototype.slice.call(files), done=0, tot=arr.length;
+  if(st) st.textContent='Caricamento 0/'+tot+'\u2026';
+  arr.forEach(function(file){
+    fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(file.name||'foto.jpg'), { method:'POST', headers:{'Content-Type':(file.type||'image/jpeg')}, body:file })
+      .then(function(r){ return r.json(); })
+      .then(function(res){ if(res && res.ok && res.url){ _mzFoto.push({url:res.url, key:res.key}); mzFotoRender(); } done++; if(st) st.textContent=(done>=tot)?('\u2705 '+_mzFoto.length+' foto caricate. Ricordati di salvare l\u2019auto.'):('Caricamento '+done+'/'+tot+'\u2026'); })
+      .catch(function(){ done++; if(st) st.textContent='\u26a0\ufe0f Errore nel caricamento di una foto'; });
+  });
+  var inp=document.getElementById('mz-foto-input'); if(inp) inp.value='';
+}
+function mzFotoDelete(i){
+  if(i<0 || i>=_mzFoto.length) return;
+  var f=_mzFoto[i];
+  if(f && f.key){ try{ fetch(WORKER_FOTO+'/delete?key='+encodeURIComponent(f.key), {method:'DELETE'}); }catch(e){} }
+  _mzFoto.splice(i,1); mzFotoRender();
+}
+function mzFotoCopertina(i){ if(i<=0 || i>=_mzFoto.length) return; var f=_mzFoto.splice(i,1)[0]; _mzFoto.unshift(f); mzFotoRender(); }
 function mzForm(id){
+
   var a = id ? mzById(id) : null;
   _mzId = (a&&a.id) || ('mz_'+Date.now());
   var v=function(k){ return a&&a[k]!=null?mzEsc(a[k]):''; };
@@ -11747,6 +11790,7 @@ function mzForm(id){
   h+=f('Prezzo di listino € (compare nel preventivo)','listino','','number');
   h+=sel('Stato','stato',MZ_STATI.map(function(s){return [s[0],s[1]];}));
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Note</label><textarea id="mz_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+v('note')+'</textarea>';
+  h+=(typeof mzFotoHtml==='function'?mzFotoHtml():'');
   var perizHtml='';
   if(a && (a.origine==='permuta' || a.periziaId || a.permutaDifetti)){
     var per=(a.periziaId && typeof pmById==='function')?pmById(a.periziaId):null;
@@ -11770,6 +11814,7 @@ function mzForm(id){
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
   var m=document.getElementById('mz-modal'); m.innerHTML=h; m.style.display='block';
+  try{ if(typeof mzFotoInit==='function') mzFotoInit(a); }catch(e){}
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
   mzProvVenditore(_mzProvVend);
@@ -11796,6 +11841,7 @@ function mzSalva(){
   a.ivaEsposta = _mzEstera ? true : (function(){ var el=document.getElementById('mz_ivaEsposta'); return !!(el&&el.checked); })();
   a.fornitoreId=_fid; var _f=fnById(_fid); a.fornitoreNome=_f?_f.ragione:'';
   a.targa=(a.targa||'').toUpperCase(); a.updatedAt=Date.now();
+  a.foto = (typeof _mzFoto!=='undefined' && Array.isArray(_mzFoto)) ? _mzFoto.slice() : (a.foto||[]);
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
   mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a); mzChiudi(); mzRender();
@@ -12405,6 +12451,15 @@ function cvEmailCaparraCliente(cv, importo){
     +'</div></div>';
   try{ gsPost({ action:'emailCliente', email:cl.email, oggetto:oggetto, html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
 }
+function cvProgrammaMailCliente(cv){
+  if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
+  cv.mailDaInviareAt = Date.now()+3600000;
+  try{
+    var a=cv.autoSnapshot||{}; var nome=((cv.cliente.nome||'')+' '+(cv.cliente.cognome||'')).trim();
+    var html=''; try{ html=cvBuildHTML(cv,'preventivo'); }catch(e){}
+    cv.mailProg = { email:cv.cliente.email, nome:nome, auto:(a.modello||cv.autoDesc||''), targa:(a.targa||''), html:html, disclaimer:(typeof EA_MAIL_DISCLAIMER!=='undefined'?EA_MAIL_DISCLAIMER:'') };
+  }catch(e){}
+}
 function cvInviaMailCliente(p){
   if(typeof GS_URL==='undefined' || !GS_URL || !(p.cliente&&p.cliente.email)) return;
   var a=p.autoSnapshot||{}; var nome=((p.cliente.nome||'')+' '+(p.cliente.cognome||'')).trim();
@@ -12630,7 +12685,7 @@ function cvSalva(){
   if(!cvValidaPermuta()) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0);
-  if(isNew && _cv.cliente.email && !_cv.emailInviata && !_cv.mailDaInviareAt){ _cv.mailDaInviareAt=Date.now()+3600000; }
+  if(isNew){ cvProgrammaMailCliente(_cv); }
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
   cvSave(list); supaUpsert('preventivi', _cv);
@@ -12651,7 +12706,7 @@ function cvStampaESalva(){
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
   var _tt=cvCalcola(_cv); if(Math.abs(_tt.saldoDovuto)>0.01){ alert('I pagamenti devono coprire l\'intero importo.\nTotale: '+cvEuro(_tt.totaleScontato)+'\nAncora da coprire: '+cvEuro(_tt.saldoDovuto)+'\n\nInserisci gli importi dei pagamenti fino a completare il totale.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
-  var isNew=(idx<0); if(isNew && _cv.cliente.email && !_cv.emailInviata && !_cv.mailDaInviareAt){ _cv.mailDaInviareAt=Date.now()+3600000; }
+  var isNew=(idx<0); if(isNew){ cvProgrammaMailCliente(_cv); }
   _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
   cvSave(list); supaUpsert('preventivi', _cv);
   if(typeof cvRender==='function') cvRender();
