@@ -9587,8 +9587,8 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div class="cc-addbox">'
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
-  +       '<div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault()"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
-  +       '<div class="cc-field"><label>Veicolo (magazzino) — suggerimenti</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n° veicolo…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div>'
+  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault()"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-field"><label>Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" onchange="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"></div><datalist id="cc-clienti-list"></datalist>'
   +       '</div>'
@@ -9775,7 +9775,7 @@ document.addEventListener('DOMContentLoaded',function(){
           eventTimeFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           events:function(info,success){ try{ success(ccBuildEvents()); }catch(e){ success([]); } },
           dateClick:function(info){ var ds=String(info.dateStr); var d=ds.slice(0,10); var tm=ds.match(/T(\d{2}:\d{2})/); ccApri(d); setTimeout(function(){ try{ if(typeof ccDurataDefault==='function') ccDurataDefault(); if(tm){ var oe=document.getElementById('cc-ora'); if(oe) oe.value=tm[1]; } var te=document.getElementById('cc-titolo'); if(te) te.focus(); }catch(e){} }, 150); },
-          eventClick:function(info){ var ds=(info.event.extendedProps&&info.event.extendedProps.ds)||String(info.event.startStr||'').slice(0,10); if(ds) ccApri(ds); }
+          eventClick:function(info){ var _id=info.event.id||(info.event.extendedProps&&info.event.extendedProps.id); if(_id && typeof ccApriEvento==='function'){ ccApriEvento(_id); } else { var ds=(info.event.extendedProps&&info.event.extendedProps.ds)||String(info.event.startStr||'').slice(0,10); if(ds) ccApri(ds); } }
         });
         ccFC.render();
       }catch(e){ mount.innerHTML='<div style="padding:24px;text-align:center;color:#dc2626;font-size:13px;">Errore calendario: '+ccEsc(e&&e.message||'')+'</div>'; }
@@ -9796,8 +9796,10 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccChiudi(){ document.getElementById('cc-daypanel').style.display='none'; ccGiornoSel=null; ccRenderCal(); }
 
   function ccRenderList(){
-    var list = ccCompitiGiorno(ccGiornoSel);
     var el = document.getElementById('cc-list');
+    if(el && typeof ccCatFiltro!=='undefined' && ccCatFiltro==='appuntamento'){ el.innerHTML='<div style="text-align:center;color:#94a3b8;font-size:12px;padding:12px;">Clicca un appuntamento sul calendario per aprirlo, modificarlo o eliminarlo.</div>'; return; }
+    var list = ccCompitiGiorno(ccGiornoSel);
+    if(!el) el = document.getElementById('cc-list');
     if (!list.length){ el.innerHTML = '<div class="cc-emptymsg">Nessun compito per questo giorno.</div>'; return; }
     // raggruppa NETTO per utente
     var groups={};
@@ -9931,7 +9933,55 @@ document.addEventListener('DOMContentLoaded',function(){
       if(match){ var c=(match.cliente)?match.cliente:match; var em=document.getElementById('cc-email'), te=document.getElementById('cc-tel'); if(em && c.email) em.value=c.email; if(te && (c.telefono||c.tel)) te.value=(c.telefono||c.tel); }
     }catch(e){}
   }
+  var _ccEditId = null;
+  function ccChiudiEvento(){ var ov=document.getElementById('cc-evento-overlay'); if(ov) ov.style.display='none'; }
+  function ccEliminaEvento(id){ ccChiudiEvento(); if(typeof ccElimina==='function') ccElimina(id); }
+  function ccApriEvento(id){
+    var list=ccLoad(), c=null; for(var i=0;i<list.length;i++){ if(list[i].id===id){ c=list[i]; break; } }
+    if(!c) return;
+    var quando=(c.data||'')+(c.ora?(' \u00b7 '+c.ora):'');
+    var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?'\ud83e\udd1d Appuntamento vendita':'\ud83d\udcc5 Appuntamento'));
+    var rows='<div style="font-size:13px;color:#475569;margin-bottom:8px;">'+tipoLbl+' \u00b7 '+ccEsc(quando)+'</div>';
+    if(c.veicolo) rows+='<div style="font-size:13px;margin:5px 0;"><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</div>';
+    if(c.email) rows+='<div style="font-size:13px;margin:5px 0;"><b>Email:</b> '+ccEsc(c.email)+'</div>';
+    if(c.tel) rows+='<div style="font-size:13px;margin:5px 0;"><b>Telefono:</b> '+ccEsc(c.tel)+'</div>';
+    if(c.nota) rows+='<div style="font-size:13px;margin:5px 0;"><b>Note:</b> '+ccEsc(c.nota)+'</div>';
+    var ov=document.getElementById('cc-evento-overlay');
+    if(!ov){ ov=document.createElement('div'); ov.id='cc-evento-overlay'; ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;'; document.body.appendChild(ov); }
+    ov.innerHTML='<div style="background:#fff;border-radius:16px;max-width:420px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3);font-family:inherit;">'
+      +'<div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:10px;">'+ccEsc(c.titolo||'Appuntamento')+'</div>'
+      +rows
+      +'<div style="display:flex;gap:8px;margin-top:18px;">'
+      +'<button onclick="ccModificaEvento(\''+c.id+'\')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;cursor:pointer;">\u270f\ufe0f Modifica</button>'
+      +'<button onclick="ccEliminaEvento(\''+c.id+'\')" style="flex:1;padding:11px;border-radius:9px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">\ud83d\uddd1\ufe0f Elimina</button>'
+      +'</div>'
+      +'<button onclick="ccChiudiEvento()" style="width:100%;margin-top:8px;padding:10px;border-radius:9px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+      +'</div>';
+    ov.style.display='flex';
+    ov.onclick=function(e){ if(e.target===ov) ccChiudiEvento(); };
+  }
+  function ccModificaEvento(id){
+    if(!confirm('Sei sicuro di voler modificare l\u2019appuntamento?\n\nAlla conferma verr\u00e0 inviata una NUOVA email di conferma al cliente.')) return;
+    var list=ccLoad(), c=null; for(var i=0;i<list.length;i++){ if(list[i].id===id){ c=list[i]; break; } }
+    if(!c) return;
+    ccChiudiEvento(); _ccEditId=id;
+    if(typeof ccApri==='function') ccApri(c.data);
+    setTimeout(function(){
+      try{
+        var g=function(k){return document.getElementById(k);};
+        if(g('cc-titolo')) g('cc-titolo').value=c.titolo||'';
+        if(g('cc-email')) g('cc-email').value=c.email||'';
+        if(g('cc-tel')) g('cc-tel').value=c.tel||'';
+        if(g('cc-ora')) g('cc-ora').value=c.ora||'';
+        if(g('cc-veicolo')) g('cc-veicolo').value=c.veicolo||'';
+        if(g('cc-nota')) g('cc-nota').value=c.nota||'';
+        if(g('cc-tipo')) g('cc-tipo').value=c.tipo||'intervento';
+        if(g('cc-durata')) g('cc-durata').value=String(c.durata||45);
+      }catch(e){}
+    }, 260);
+  }
   function ccAggiungi(){
+
     var titolo = document.getElementById('cc-titolo').value.trim();
     if (!titolo){ ccToast('Inserisci cliente o descrizione'); return; }
     var categoria=(typeof ccCatFiltro!=='undefined' && ccCatFiltro) ? ccCatFiltro : ((document.getElementById('cc-cat')||{}).value||'appuntamento');
@@ -9957,7 +10007,9 @@ document.addEventListener('DOMContentLoaded',function(){
       nota: document.getElementById('cc-nota').value.trim(),
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
     };
-    var list = ccLoad(); list.push(c); ccSave(list); ccSync(c);
+    var list = ccLoad();
+    if(typeof _ccEditId!=='undefined' && _ccEditId){ var _ei=-1; for(var _k=0;_k<list.length;_k++){ if(list[_k].id===_ccEditId){ _ei=_k; break; } } if(_ei>=0){ c.id=_ccEditId; c.avvisato=list[_ei].avvisato; c.solleciti=list[_ei].solleciti; list[_ei]=c; } else { list.push(c); } _ccEditId=null; } else { list.push(c); }
+    ccSave(list); ccSync(c);
     ccPermessoNotifiche();
     if(categoria!=='task' && email && typeof eaInviaMessaggio==='function'){ try{
       var _acData=c.data||'', _acOra=c.ora||'';
