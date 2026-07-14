@@ -4333,6 +4333,17 @@ function gsJsonp(payload){
   document.body.appendChild(s);
 }
 // POST senza limiti di lunghezza (per record grandi es. con firma). Risposta opaca (no-cors): fire-and-forget con Promise.
+var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-function';
+var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
+function eaInviaMessaggio(msg){
+  // msg = {to, subject, html?, text?, canale?} — canale default 'email'
+  if(!msg || !msg.to) return Promise.reject(new Error('no destinatario'));
+  return fetch(EA_MSG_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
+    body: JSON.stringify(Object.assign({ canale:'email' }, msg))
+  }).then(function(r){ return r.json().catch(function(){ return {}; }); });
+}
 function gsPost(payload){
   if(typeof GS_URL==='undefined' || !GS_URL) return Promise.reject(new Error('no GS_URL'));
   return fetch(GS_URL, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
@@ -9933,7 +9944,16 @@ document.addEventListener('DOMContentLoaded',function(){
     };
     var list = ccLoad(); list.push(c); ccSave(list); ccSync(c);
     ccPermessoNotifiche();
-    if(categoria!=='task' && email && typeof gsPost==='function'){ try{ gsPost({action:'confermaAppuntamento', email:email, tel:tel, cliente:titolo, tipo:tipo, data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} }
+    if(categoria!=='task' && email && typeof eaInviaMessaggio==='function'){ try{
+      var _acData=c.data||'', _acOra=c.ora||'';
+      var _acHtml='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.5;">'
+        +'<p>Gentile '+(titolo||'cliente')+',</p>'
+        +'<p>le confermiamo l\u2019appuntamento'+(tipo?(' per <b>'+tipo+'</b>'):'')+(_acData?(' del <b>'+_acData+'</b>'):'')+(_acOra?(' alle <b>'+_acOra+'</b>'):'')+'.</p>'
+        +(c.nota?('<p><b>Note:</b> '+c.nota+'</p>'):'')
+        +'<p>A presto,<br>Europa Auto Srl</p></div>';
+      var _acText='Gentile '+(titolo||'cliente')+',\nle confermiamo l\u2019appuntamento'+(tipo?(' per '+tipo):'')+(_acData?(' del '+_acData):'')+(_acOra?(' alle '+_acOra):'')+'.'+(c.nota?('\nNote: '+c.nota):'')+'\n\nA presto,\nEuropa Auto Srl';
+      eaInviaMessaggio({ to:email, subject:'Conferma appuntamento \u2014 Europa Auto', html:_acHtml, text:_acText });
+    }catch(e){} }
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
@@ -12419,17 +12439,17 @@ function cvLive(){
   var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
   var h='<div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+((_cv&&_cv.isContratto)?'Valore contratto':'Riepilogo prezzo')+'</div>';
   var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
-  var _scOn=(!_cv.legge104On && _cv.scontoOn && t.sconto);
-  var _extraSum=0; (_cv.costiExtra||[]).forEach(function(x){ _extraSum+=cvNum(x.importo); });
-  var _prezzoTot=t.prezzo+t.passaggio+(t.gar||0)+_extraSum;
   h+=r('Prezzo vendita',t.prezzo);
   if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
   h+=r('Passaggio di proprietà / Imm.',t.passaggio);
   if(t.gar) h+=r('Garanzia',t.gar);
+  if(_cv.assicOn) h+=r('Assicurazione',t.assic);
   (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
-  if(_scOn){ h+=r('Prezzo totale',_prezzoTot,true); h+=neg(cvEsc(_cv.scontoDesc||'Sconto finanziamento promo'),t.sconto); h+=r('Prezzo veicolo valido solo con finanziamento',_prezzoTot-t.sconto,true); }
-  if(_cv.permutaOn && t.permVal){ h+=neg('Permuta', t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
-  h+=r('Totale',t.totaleScontato,true);
+  if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
+  h+=r('Totale vendita',t.totaleVendita,true);
+  if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale scontato',t.totaleScontato,true); }
+  cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
+  h+=r('Saldo dovuto',t.saldoDovuto,true);
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
 }
 var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le risposte inviate a questo indirizzo non verranno gestite.';
@@ -12748,7 +12768,7 @@ function cvFinaleDatiSalvaStampa(id, needAssic, needFin){
   cvModChiudi(); cvStampaById(id,'finale');
 }
 function cvFirmaHTML(){ return '<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente</div></div>'; }
-function cvBuildHTML(c, tipo, soloRiep){
+function cvBuildHTML(c, tipo){
   var isFinale=(tipo==='finale'); var isFatt=(tipo==='fattura');
   var titolo=isFatt?('Fattura n. '+((c.fattura&&c.fattura.numero)||'\u2014')+'/'+((c.fattura&&c.fattura.anno)||'')+((c.fattura&&c.fattura.data)?(' del '+(typeof pmDMY==='function'?pmDMY(c.fattura.data):c.fattura.data)):'')):(isFinale?'Contratto':(tipo==='preventivo'?'Preventivo':'Proposta d’acquisto'));
   var t=cvCalcola(c), a=c.autoSnapshot||{};
@@ -12783,25 +12803,29 @@ function cvBuildHTML(c, tipo, soloRiep){
   }
   doc+='<div class="cvh">'+(tipo==='preventivo'?'Riepilogo prezzo':'Valore contratto')+'</div>';
   if(c.listinoOn && cvNum(c.listino)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(cvNum(c.listino))+'</div></div>';
-  var _docScOn=(!c.legge104On && c.scontoOn && t.sconto);
-  var _dExtra=0; (c.costiExtra||[]).forEach(function(x){ _dExtra+=cvNum(x.importo); });
-  var _dPrezzoTot=t.prezzo+t.passaggio+(t.gar||0)+_dExtra;
   doc+=row('Prezzo vendita',t.prezzo);
   if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104', t.imponibile104)+row('IVA agevolata 4%', t.iva104)+row('Totale (escluso passaggio)', t.veicolo); }
   doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
+  if(c.assicOn) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
   (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
-  if(_docScOn){ doc+=row('Prezzo totale',_dPrezzoTot,'sub')+row(cvEsc(c.scontoDesc||'Sconto finanziamento promo'),t.sconto,'',true)+row('Prezzo veicolo valido solo con finanziamento',_dPrezzoTot-t.sconto,'sub'); }
-  if(c.permutaOn && t.permVal){ doc+=row('Permuta', t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
-  doc+=row('Totale',t.totaleScontato,'sub');
+  if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
+  doc+=row('Totale vendita',t.totaleVendita,'sub');
+  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row('Totale scontato',t.totaleScontato,'sub'); }
+  var _pagAll=cvPagIncasso(c.pagamenti).filter(function(x){return cvNum(x.importo);});
+  var _pagShow=(tipo==='finale')?_pagAll:_pagAll.filter(function(x){ return !/saldo/i.test(x.tipo||''); });
+  _pagShow.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
+  var _deduc=_pagShow.reduce(function(s,x){return s+cvNum(x.importo);},0);
+  var _saldoDov=Math.max(0,(t.totaleScontato||0)-_deduc);
+  doc+=row('Saldo dovuto',_saldoDov,'tot');
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div class="cvkeep"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:5px 9px;margin:2px 0 5px;font-size:11.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:6px;font-size:12px;font-weight:700;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+(pagList.some(function(x){return /bonific/i.test((x.metodo||'')+' '+(x.tipo||'')+' '+(x.note||''));})?(' &middot; Causale bonifico: '+cvEsc(cvCausale(c))):'')+'</div>'; if(tipo!=='preventivo') doc+=cvFirmaHTML(); doc+='</div>'; }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo') doc+=cvFirmaHTML(); }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
   if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; } }
   if(c.doppiaChiaveConsegnata!=null || c.librettoModalita){ doc+='<div class="cvh">Consegna</div><div class="cvbox"><b>Doppia chiave:</b> '+(c.doppiaChiaveConsegnata?'consegnata al cliente':'NON consegnata')+(c.librettoModalita?('<br><b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente')):'')+'</div>'; }
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
-  if(_cond && !soloRiep){ doc+='<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+  if(_cond){ doc+='<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -12814,7 +12838,7 @@ function cvBuildHTML(c, tipo, soloRiep){
     +".cvrow{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid #f1f5f9;font-size:12px;page-break-inside:avoid;} .cvrow .amt{font-weight:600;white-space:nowrap;padding-left:14px;}"
     +".cvrow.sub{font-weight:800;} .cvrow.neg .amt{color:#b91c1c;} .cvrow.tot{border-top:2px solid #1a4fa0;border-bottom:none;font-weight:800;font-size:13.5px;color:#1a4fa0;margin-top:3px;padding-top:7px;}"
     +".cvbox{background:#f8fafc;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.4;white-space:pre-line;page-break-inside:avoid;}"
-    +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:18px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:36px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:10px;font-size:9.5px;color:#475569;line-height:1.4;page-break-inside:avoid;} .cvacc-ul{margin:4px 0 0;padding-left:18px;} .cvacc-ul li{margin:1px 0;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;} .cvpb{height:8px;} .cvfoot{margin-top:26px;padding:6px 0 0;background:#fff;display:flex;justify-content:space-between;gap:50px;page-break-inside:avoid;} .cvfoot .fs{flex:1;text-align:center;font-size:10px;color:#334155;} .cvfoot .fs .fl{height:24px;border-bottom:1px solid #334155;margin-bottom:3px;} .cvkeep{page-break-inside:avoid;break-inside:avoid;}";
+    +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:18px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:36px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:10px;font-size:9.5px;color:#475569;line-height:1.4;page-break-inside:avoid;} .cvacc-ul{margin:4px 0 0;padding-left:18px;} .cvacc-ul li{margin:1px 0;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;} .cvpb{height:8px;} .cvfoot{margin-top:26px;padding:6px 0 0;background:#fff;display:flex;justify-content:space-between;gap:50px;page-break-inside:avoid;} .cvfoot .fs{flex:1;text-align:center;font-size:10px;color:#334155;} .cvfoot .fs .fl{height:24px;border-bottom:1px solid #334155;margin-bottom:3px;}";
   var footHtml=needSign?'<div class="cvfoot"><div class="fs"><div class="fl"></div>Firma venditore</div><div class="fs"><div class="fl"></div>Firma acquirente</div></div>':'';
   var fattDicitura = isFatt ? ('<div class="cvbox" style="margin-top:12px;">'+(_ivaEsp?'Operazione con IVA esposta.':'Operazione soggetta al regime del margine \u2013 beni usati (art. 36 D.L. 41/1995, conv. L. 85/1995). IVA assolta dal rivenditore e non separatamente esposta.')+'\n\nDocumento generato dal gestionale a fini interni: non sostituisce la fattura elettronica trasmessa allo SdI.</div>') : '';
   var html='<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>'+titolo+' '+cvEsc((c.cliente.cognome||'')+' '+(c.cliente.nome||''))+'</title><style>'+css+'</style></head><body>'+doc+fattDicitura+((isFatt||_cond)?'':footHtml)+'</body></html>';
@@ -12864,14 +12888,13 @@ function cvFatturaHTML(c){
   var righe=[], impEsente=0, imp22=0, iva22=0, impMargine=0;
   var ps=cvPassaggioSplit(c);
 
-  var scontoV=(!c.legge104On && c.scontoOn)?N(c.scontoImporto):0;
   if(margine){
-    var totM = (N(c.prezzoVendita)-scontoV)+ps.totale;
+    var totM = N(c.prezzoVendita)+ps.totale;
     impMargine += totM;
-    righe.push({cod:'/M', desc:(vDesc+(scontoV>0?' \u2013 PREZZO SCONTATO FINANZ. PROMO':'')+' - INCLUSO PASSAGGIO'), imp:totM, civa:'MG36'});
+    righe.push({cod:'/M', desc:(vDesc+' - INCLUSO PASSAGGIO'), imp:totM, civa:'MG36'});
   } else {
-    var v=scorp(N(c.prezzoVendita)-scontoV); imp22+=v.imp; iva22+=v.iva;
-    righe.push({cod:'/M', desc:vDesc+(scontoV>0?' (prezzo scontato finanz. promo)':''), imp:v.imp, civa:'22'});
+    var v=scorp(N(c.prezzoVendita)); imp22+=v.imp; iva22+=v.iva;
+    righe.push({cod:'/M', desc:vDesc, imp:v.imp, civa:'22'});
     if(ps.ipt>0){ impEsente+=ps.ipt; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:ps.ipt, civa:'N1'}); } if(ps.imm>0){ impEsente+=ps.imm; righe.push({cod:'IMMATR', desc:'IMMATRICOLAZIONE (art. 15)', imp:ps.imm, civa:'N1'}); }
     if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:'SERVIZIO PASSAGGIO DI PROPRIETA', imp:ps.servImp, civa:'22'}); }
     var extra=(c.costiExtra||[]).reduce(function(s,x){return s+N(x.importo);},0);
@@ -13289,7 +13312,7 @@ function cvVendAvanzaStato(cv){
   var pags=cvPagIncasso(cv.pagamenti).filter(function(x){return cvNum(x.importo);});
   var incassato=pags.filter(function(x){return x.confermato;}).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleVendita:0};
-  var saldata = pags.length>0 && incassato >= ((t.totaleScontato||0)-0.01);
+  var saldata = pags.length>0 && incassato >= ((t.totaleVendita||0)-0.01);
   var cap=pags.filter(function(x){return /caparra/i.test(x.tipo||'');});
   var caparraConf = cap.length ? cap.every(function(x){return x.confermato;}) : pags.some(function(x){return x.confermato;});
   var nuovo;
@@ -13434,7 +13457,7 @@ function cvVendCard(cv){
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato</a></div>'):'';
   var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
   var incassato=pagsAll.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
-  var totale=t.totaleScontato;
+  var totale=t.totaleVendita;
   var daIncassare=Math.max(0, totale-incassato);
   var finTot=pagsAll.filter(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';}).reduce(function(s,p){return s+cvNum(p.importo);},0);
   var permVal=(cv.permutaOn && cv.permuta)?cvNum(cv.permuta.prezzoAcq):0;
@@ -13725,12 +13748,12 @@ function cvVendModifica(id){ if(typeof cvForm==='function') cvForm(id, true); }
 function cvVendDettagli(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var tipo=(cv.statoVendita==='da_consegnare'||cv.statoVendita==='consegnato')?'finale':'pre';
-  var html=''; try{ html=cvBuildHTML(cv, tipo, true); }catch(e){ html='<html><body><p>Impossibile generare il dettaglio.</p></body></html>'; }
+  var html=''; try{ html=cvBuildHTML(cv, tipo); }catch(e){ html='<html><body><p>Impossibile generare il dettaglio.</p></body></html>'; }
   html=html.replace('</head>','<style>@media screen{.cvfoot{position:static !important;margin-top:24px;} .cvdoc{padding:16px !important;} .cvpb{height:0 !important;}}</style></head>');
   var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleVendita:0};
   var pags=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
   var incassato=pags.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
-  var daInc=Math.max(0,(t.totaleScontato||0)-incassato);
+  var daInc=Math.max(0,(t.totaleVendita||0)-incassato);
   var puoConf=(typeof cvPuoConfermarePagamenti==='function')?cvPuoConfermarePagamenti():false;
   var pagRows=(cv.pagamenti||[]).map(function(p,ri){
     if(!cvNum(p.importo)) return '';
@@ -13748,7 +13771,7 @@ function cvVendDettagli(id){
   var payBox='<div style="padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;">'
     +'<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin-bottom:8px;">Pagamenti</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
-      +'<div style="flex:1 1 100px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px;"><div style="font-size:11px;color:#64748b;">Totale contratto</div><div style="font-size:17px;font-weight:800;">'+cvEuro(t.totaleScontato)+'</div></div>'
+      +'<div style="flex:1 1 100px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px;"><div style="font-size:11px;color:#64748b;">Totale contratto</div><div style="font-size:17px;font-weight:800;">'+cvEuro(t.totaleVendita)+'</div></div>'
       +'<div style="flex:1 1 100px;background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:8px;"><div style="font-size:11px;color:#64748b;">Ricevuti</div><div style="font-size:17px;font-weight:800;color:#16a34a;">'+cvEuro(incassato)+'</div></div>'
       +'<div style="flex:1 1 100px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:8px;"><div style="font-size:11px;color:#64748b;">Da ricevere</div><div style="font-size:17px;font-weight:800;color:#ea580c;">'+cvEuro(daInc)+'</div></div>'
     +'</div>'
