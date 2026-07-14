@@ -509,7 +509,7 @@ html, body{
   </div>
 </div>
 
-<button id="eaBackBtn" onclick="eaGoBack()" title="Indietro" style="display:none;position:fixed;left:14px;bottom:18px;z-index:10000;align-items:center;gap:6px;padding:10px 15px;border-radius:24px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);">&#8592; Indietro</button>
+<button id="eaBackBtn" onclick="eaGoBack()" title="Indietro" style="display:none;position:fixed;left:14px;bottom:18px;z-index:100001;align-items:center;gap:6px;padding:10px 15px;border-radius:24px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);">&#8592; Indietro</button>
 <!-- ── MAIN CONTENT ── -->
 <div class="main-content">
   <div class="content-header">
@@ -3369,6 +3369,9 @@ function connectGoogleDriveSilent() {
         fetchUserEmailAndSetRole(response.access_token);
         updateDriveConnectBar(true);
         hideDriveLoginBar();
+        try{ localStorage.setItem('ea_last_login','1'); }catch(e){}
+        window._eaRestoring=false;
+        try{ if(typeof hideWelcomeScreen==='function') hideWelcomeScreen(); }catch(e){}
         console.log('Drive connesso silenziosamente ✅');
         // Sync automatica all'accesso
         setTimeout(function(){
@@ -3387,6 +3390,7 @@ function connectGoogleDriveSilent() {
         // Silent fallito — mostra pulsante manuale nella barra Drive
         console.warn('Silent Drive connect fallito:', response.error);
         updateDriveConnectBar(false);
+        if(window._eaRestoring){ window._eaRestoring=false; var _b=document.getElementById('welcome-login-btn'); if(_b){ _b.disabled=false; if(window._eaLoginBtnHtml) _b.innerHTML=window._eaLoginBtnHtml; } var _ws=document.getElementById('welcome-screen'); if(_ws){ _ws.style.display='flex'; _ws.style.opacity='1'; } }
       }
     }
   });
@@ -3649,6 +3653,7 @@ async function welcomeLogin() {
         hideDriveLoginBar();
         hideWelcomeScreen();
         localStorage.setItem('ea_drive_skipped', '0');
+        try{ localStorage.setItem('ea_last_login','1'); }catch(e){}
         setTimeout(refreshFotoButtons, 800);
         // Sync completa automatica dopo login
         setTimeout(function(){
@@ -4076,6 +4081,7 @@ function doLogin() {
 
 function disconnettiUtente() {
   if (!confirm('Vuoi uscire?')) return;
+  try{ localStorage.removeItem('ea_last_login'); }catch(e){}
   _currentUserEmail = null;
   _currentUserRole  = null;
   _driveAccessToken = null;
@@ -4086,10 +4092,24 @@ function disconnettiUtente() {
   if(ws) { ws.style.display = 'flex'; ws.style.opacity = '1'; }
 }
 
-function initApp() {
+function eaBootRestore(){
   var ws = document.getElementById('welcome-screen');
   if(ws) { ws.style.display = 'flex'; ws.style.opacity = '1'; }
+  var had=false; try{ had=localStorage.getItem('ea_last_login')==='1'; }catch(e){}
+  if(!had) return; // utente mai loggato: mostra normalmente il login
+  var btn=document.getElementById('welcome-login-btn');
+  if(btn){ window._eaLoginBtnHtml=btn.innerHTML; btn.disabled=true; btn.textContent='Ripristino sessione…'; }
+  window._eaRestoring=true;
+  try{ connectGoogleDriveSilent(); }catch(e){}
+  // Se entro 5s il ripristino silenzioso non riesce, riabilita l'accesso manuale
+  setTimeout(function(){
+    if(window._eaRestoring){
+      window._eaRestoring=false;
+      if(btn){ btn.disabled=false; if(window._eaLoginBtnHtml) btn.innerHTML=window._eaLoginBtnHtml; }
+    }
+  }, 5000);
 }
+function initApp() { eaBootRestore(); }
 
 setTimeout(initApp, 600);
 
@@ -7722,6 +7742,7 @@ function fetchUserEmailAndSetRole(token) {
 
 function disconnettiUtente() {
   if (!confirm("Vuoi uscire?")) return;
+  try{ localStorage.removeItem('ea_last_login'); }catch(e){}
   _driveAccessToken = null;
   _driveTokenExpiry = 0;
   _currentUserEmail = null;
@@ -9392,6 +9413,20 @@ function eaGoBack(){
   var m2=document.getElementById('cv-mod-modal'); if(m2 && m2.style.display==='block'){ m2.style.display='none'; return; }
   if(_navHistory.length){ var prev=_navHistory.pop(); _navBack=true; sidebarNav(prev, document.getElementById('si-'+prev)); } }
 function eaBackShow(){ var b=document.getElementById('eaBackBtn'); if(b) b.style.display='flex'; }
+// ── Tasto INDIETRO del telefono/browser = un solo passo, non esce dall'app ──
+function eaHasBackTarget(){
+  var m=document.getElementById('cv-modal'); if(m && m.style.display==='block') return true;
+  var m2=document.getElementById('cv-mod-modal'); if(m2 && m2.style.display==='block') return true;
+  return !!(typeof _navHistory!=='undefined' && _navHistory && _navHistory.length>0);
+}
+(function eaInitBackTrap(){
+  try{ history.pushState({ea:1}, ''); }catch(e){}
+  window.addEventListener('popstate', function(){
+    // Rimettiamo sempre uno stato: così il tasto indietro non porta mai fuori dall'app
+    try{ history.pushState({ea:1}, ''); }catch(e){}
+    if(eaHasBackTarget()){ try{ eaGoBack(); }catch(e){} }
+  });
+})();
 function apriCalCat(cat, btn){
   try{ if(typeof sidebarNav==='function') sidebarNav('compiti', btn); }catch(e){}
   setTimeout(function(){ try{ if(typeof ccSetCatFiltro==='function') ccSetCatFiltro(cat); }catch(e){} }, 130);
@@ -11667,7 +11702,7 @@ function mzRender(){
     var _puoMod=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
     h+='<div '+(_puoMod?('onclick="mzForm(\''+a.id+'\')" '):'')+'style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);'+(_puoMod?'cursor:pointer;':'')+'">';
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
-    h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+(a.numero_interno?(' <span style="font-size:11px;font-weight:800;background:#e0e7ff;color:#3730a3;padding:2px 7px;border-radius:9px;vertical-align:middle;">N\u00b0 '+mzEsc(a.numero_interno)+'</span>'):'')+(a.stato==='venduta'?' <span style="font-size:10px;font-weight:800;background:#fecaca;color:#991b1b;padding:2px 7px;border-radius:10px;vertical-align:middle;">VENDUTA</span>':(a.impegnata?' <span style="font-size:10px;font-weight:800;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:10px;vertical-align:middle;">OPZIONATA</span>':''))+'</div>';
+    h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+(a.estera?(a.numero_interno?(' <span style="font-size:11px;font-weight:800;background:#e0e7ff;color:#3730a3;padding:2px 7px;border-radius:9px;vertical-align:middle;">N\u00b0 '+mzEsc(a.numero_interno)+'</span>'):''):(a.targa?(' <span style="font-size:11px;font-weight:800;background:#fff;color:#111827;border:1.5px solid #111827;padding:1px 7px;border-radius:4px;letter-spacing:.5px;vertical-align:middle;">'+mzEsc(a.targa)+'</span>'):''))+(a.stato==='venduta'?' <span style="font-size:10px;font-weight:800;background:#fecaca;color:#991b1b;padding:2px 7px;border-radius:10px;vertical-align:middle;">VENDUTA</span>':(a.impegnata?' <span style="font-size:10px;font-weight:800;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:10px;vertical-align:middle;">OPZIONATA</span>':''))+'</div>';
     if(a.allestimento) h+='<div style="font-size:12px;color:#64748b;">'+mzEsc(a.allestimento)+'</div>';
     var regBadges=(a.estera?'<span style="font-size:10px;font-weight:800;background:#eff6ff;color:#1e40af;padding:1px 7px;border-radius:9px;">🌍 ESTERA</span> ':(a.origine==='permuta'?'<span style="font-size:10px;font-weight:800;background:#f5f3ff;color:#6d28d9;padding:1px 7px;border-radius:9px;">🔑 PERMUTA</span> ':''))+(a.ivaEsposta?'<span style="font-size:10px;font-weight:800;background:#fff7ed;color:#9a3412;padding:1px 7px;border-radius:9px;">🧾 I.E.</span>':'<span style="font-size:10px;font-weight:700;background:#f1f5f9;color:#64748b;padding:1px 7px;border-radius:9px;">Art. 36</span>');
     h+='<div style="margin-top:4px;">'+regBadges+'</div>';
@@ -12418,6 +12453,7 @@ function cvForm(id, fromVend){
   }
   h+='</div></div>';
   var m=document.getElementById('cv-modal'); if(m && m.parentNode!==document.body){ document.body.appendChild(m); } m.innerHTML=h; m.style.display='block';
+  try{ if(typeof eaBackShow==='function') eaBackShow(); }catch(e){}
   cvGar(_cv.garanziaMesi||'12'); cvRenderExtra(); cvRenderPag(); cvLive();
   if(fromVend && _cv.isContratto){ try{ docListaRender('pratica', _cv.id, 'cvdoc'); }catch(e){} }
 }
@@ -13865,6 +13901,7 @@ function cvVendDettagli(id){
     +'<div style="padding:10px 18px;border-top:1px solid #e2e8f0;text-align:right;"><button onclick="cvModChiudi()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button></div>'
     +'</div>';
   m.style.display='block';
+  try{ if(typeof eaBackShow==='function') eaBackShow(); }catch(e){}
   var fr=document.getElementById('cv-det-frame');
   if(fr){ try{ var d=fr.contentDocument||fr.contentWindow.document; d.open(); d.write(html); d.close(); }catch(e){} }
 }
