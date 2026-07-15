@@ -443,6 +443,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Preventivi</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-preventivi" onclick="sidebarNav('preventivi',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128196;</span><span class="si-label"> Preventivi</span></button>
+    <button class="sidebar-item" id="si-simulatore" onclick="sidebarNav('simulatore',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#129518;</span><span class="si-label"> Simulatore finanz.</span></button>
     </div>
   </div>
   <div class="sidebar-divider"></div>
@@ -1213,6 +1214,7 @@ html, body{
   <div id="cv-lista"></div>
   <div id="cv-modal" style="display:none;position:fixed;inset:0;background:#eef2f7;z-index:9999;padding:0;overflow:auto;"></div>
 </div>
+<div class="view" id="view-simulatore" style="padding:22px 16px;"></div>
 <div class="view" id="view-vendite" style="padding:22px 16px;">
   <div style="max-width:640px;margin:40px auto;text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:34px;">
     <div style="font-size:42px;">&#129534;</div>
@@ -9417,6 +9419,7 @@ function presenzeEsportaExcel(){
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
+  'simulatore': 'Simulatore finanziamento',
   'editor':  'Nuovo Report',
   'ready':   'Report Pronti',
   'archive': 'Report Inviati a Clienti',
@@ -9465,7 +9468,7 @@ function sidebarNav(view,btn){
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
   if(!_navBack){ if(_navCurrent && _navCurrent!==view) _navHistory.push(_navCurrent); } _navBack=false; _navCurrent=view; if(typeof eaBackShow==='function') eaBackShow();
   // Usa solo classList — il CSS usa .view.active{display:block !important}
-  ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','magazzino','preventivi','crm','vendite','fornitori','parametri','statistiche','clienti','whatsapp'].forEach(function(v){
+  ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','magazzino','preventivi','simulatore','crm','vendite','fornitori','parametri','statistiche','clienti','whatsapp'].forEach(function(v){
     var el = document.getElementById('view-' + v);
     if (!el) return;
     el.classList.remove('active');
@@ -9478,6 +9481,7 @@ function sidebarNav(view,btn){
   var title = SIDEBAR_TITLES ? SIDEBAR_TITLES[view] : view;
   if (t) t.textContent = (Array.isArray(title) ? title[0] : title) || view;
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
+  if(view==='simulatore'){ if(typeof simInit==='function') simInit(); }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
@@ -13608,6 +13612,462 @@ function cvVendAutoAvanza(){
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
+/* ===================== SIMULATORE FINANZIAMENTO =====================
+   Fa girare nel browser il file Excel della finanziaria, senza riscriverne
+   le formule: SheetJS legge il .xlsx, HyperFormula ne ricalcola le 4.936
+   formule (TAN/TAEG/TEG sono IRR sul piano di ammortamento).
+   Aggiornamento trimestrale = si ricarica il file, zero codice da toccare.
+   HyperFormula e' usato sotto licenza GPLv3 (licenseKey 'gpl-v3').        */
+
+var SIM_BUCKET = 'simulatore';
+var SIM_FILE   = 'simulatore.xlsx';
+var SIM_LIBS = [
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdn.jsdelivr.net/npm/hyperformula@3.3.0/dist/hyperformula.full.min.js'
+];
+var _simHF = null, _simS = null, _simP = null;
+var _simLibs = false, _simCaricato = false, _simInCorso = false, _simMeta = null;
+
+function simPuoCaricare(){
+  try{
+    var e = (typeof _currentUserEmail !== 'undefined' ? String(_currentUserEmail||'').toLowerCase() : '');
+    return (typeof isAdmin === 'function' && isAdmin()) || e === 'ariannapresta80@gmail.com';
+  }catch(e){ return false; }
+}
+function simEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function simEuro(n){ if(typeof n!=='number'||!isFinite(n)) return '—'; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
+function simPct(n){ if(typeof n!=='number'||!isFinite(n)) return '—'; return (n*100).toFixed(2).replace('.',',')+'%'; }
+
+/* ---- caricamento librerie solo quando serve ---- */
+function simLoadLibs(cb){
+  if(_simLibs){ cb(true); return; }
+  var i = 0;
+  (function next(){
+    if(i >= SIM_LIBS.length){ _simLibs = true; cb(true); return; }
+    var sc = document.createElement('script');
+    sc.src = SIM_LIBS[i++];
+    sc.onload = next;
+    sc.onerror = function(){ cb(false); };
+    document.head.appendChild(sc);
+  })();
+}
+
+/* ---- scarica il file dallo storage ---- */
+function simFetch(cb){
+  var sb = (typeof sbClient==='function') ? sbClient() : null;
+  if(!sb){ cb(null, 'Supabase non disponibile'); return; }
+  try{
+    sb.storage.from(SIM_BUCKET).list('', {limit:100}).then(function(l){
+      if(l && l.data){ for(var i=0;i<l.data.length;i++){ if(l.data[i].name===SIM_FILE) _simMeta=l.data[i]; } }
+    }).catch(function(){});
+    sb.storage.from(SIM_BUCKET).download(SIM_FILE).then(function(r){
+      if(r && r.error){ cb(null, 'Nessun simulatore caricato'); return; }
+      if(!r || !r.data){ cb(null, 'File non trovato'); return; }
+      r.data.arrayBuffer().then(function(buf){ cb(buf, null); })
+        .catch(function(e){ cb(null, String(e && e.message || e)); });
+    }).catch(function(e){ cb(null, String(e && e.message || e)); });
+  }catch(e){ cb(null, String(e && e.message || e)); }
+}
+
+/* ---- costruisce il motore dal file ---- */
+function simBuild(buf){
+  var wb = XLSX.read(new Uint8Array(buf), { type:'array', cellFormula:true });
+  var sheets = {};
+  wb.SheetNames.forEach(function(n){
+    var ws = wb.Sheets[n];
+    if(!ws || !ws['!ref']){ sheets[n] = [[]]; return; }
+    var r = XLSX.utils.decode_range(ws['!ref']), out = [];
+    for(var R=0; R<=r.e.r; R++){
+      var row = [];
+      for(var C=0; C<=r.e.c; C++){
+        var c = ws[XLSX.utils.encode_cell({r:R, c:C})];
+        row.push(!c ? null : (c.f ? ('='+c.f) : (c.v===undefined ? null : c.v)));
+      }
+      out.push(row);
+    }
+    sheets[n] = out;
+  });
+  /* useColumnIndex:true e' OBBLIGATORIO: senza, le VLOOKUP a corrispondenza
+     approssimata di questo file danno #N/A e la rata non esce. */
+  _simHF = HyperFormula.buildFromSheets(sheets, {
+    licenseKey: 'gpl-v3', smartRounding: true, useColumnIndex: true
+  });
+  _simS = _simHF.getSheetId('SIMULATORE');
+  try{ _simP = _simHF.getSheetId('Piano amm.to'); }catch(e){ _simP = null; }
+  _simCaricato = true;
+}
+
+/* ---- lettura/scrittura celle ---- */
+function simAddr(a){ var c = XLSX.utils.decode_cell(a); return { sheet:_simS, col:c.c, row:c.r }; }
+function simGet(a){ try{ return _simHF.getCellValue(simAddr(a)); }catch(e){ return null; } }
+function simSet(a, v){ try{ _simHF.setCellContents(simAddr(a), [[v]]); }catch(e){} }
+function simErr(v){ return !!(v && typeof v==='object' && typeof v.value==='string' && v.value.charAt(0)==='#'); }
+function simTxt(v){ if(simErr(v)) return v.value; if(v===null||v===undefined) return ''; return String(v); }
+function simNum(v){ return (typeof v==='number' && isFinite(v)) ? v : null; }
+/* data -> seriale Excel (base 30/12/1899, come Excel e HyperFormula) */
+function simDataSeriale(iso){
+  if(!iso) return null;
+  var p = String(iso).split('-');
+  if(p.length !== 3) return null;
+  var ms = Date.UTC(+p[0], (+p[1])-1, +p[2]) - Date.UTC(1899, 11, 30);
+  return Math.round(ms / 86400000);
+}
+
+/* ---- liste di scelta: lette DAL FILE, non scritte a mano ---- */
+function simLista(foglio, colonna, r1, r2){
+  var out = [];
+  try{
+    var sid = _simHF.getSheetId(foglio);
+    if(sid === undefined || sid === null) return out;
+    var ci = XLSX.utils.decode_col(colonna);
+    for(var r=r1; r<=r2; r++){
+      var v = _simHF.getCellValue({sheet:sid, col:ci, row:r-1});
+      if(v!==null && v!=='' && !simErr(v) && out.indexOf(String(v))<0) out.push(String(v));
+    }
+  }catch(e){}
+  return out;
+}
+function simProvince(){
+  var set = {}, out = [];
+  try{
+    var sid = _simHF.getSheetId('assicurazioni');
+    var ci = XLSX.utils.decode_col('P');
+    for(var r=4; r<=1000; r++){
+      var v = _simHF.getCellValue({sheet:sid, col:ci, row:r-1});
+      if(!v || simErr(v)) continue;
+      var parts = String(v).split(' ');
+      var pr = parts[parts.length-1];
+      if(pr && pr.length===2 && !set[pr]){ set[pr]=1; out.push(pr); }
+    }
+  }catch(e){}
+  out.sort();
+  return out;
+}
+
+/* ===================== INTERFACCIA ===================== */
+function simInit(){
+  var w = document.getElementById('view-simulatore'); if(!w) return;
+  if(_simCaricato){ simRender(); return; }
+  if(_simInCorso) return;
+  _simInCorso = true;
+  w.innerHTML = '<div style="padding:40px 16px;text-align:center;color:#64748b;">'
+    + '<div style="font-size:15px;font-weight:700;margin-bottom:6px;">Avvio simulatore\u2026</div>'
+    + '<div id="sim-boot" style="font-size:12px;">carico il motore di calcolo</div></div>';
+  var st = function(t){ var e=document.getElementById('sim-boot'); if(e) e.textContent=t; };
+  simLoadLibs(function(ok){
+    if(!ok){ _simInCorso=false; simErrore('Impossibile caricare il motore di calcolo (connessione assente?)'); return; }
+    st('scarico il file del simulatore\u2026');
+    simFetch(function(buf, err){
+      if(!buf){ _simInCorso=false; simErrore(err || 'File non disponibile'); return; }
+      st('ricalcolo le formule\u2026');
+      setTimeout(function(){
+        try{ simBuild(buf); }
+        catch(e){ _simInCorso=false; simErrore('Il file non e\u2019 leggibile: '+(e && e.message || e)); return; }
+        _simInCorso = false;
+        simRender();
+      }, 30);
+    });
+  });
+}
+
+function simErrore(msg){
+  var w = document.getElementById('view-simulatore'); if(!w) return;
+  w.innerHTML = '<div style="padding:30px 16px;text-align:center;">'
+    + '<div style="font-size:40px;">\uD83D\uDCC4</div>'
+    + '<div style="font-weight:800;color:#0f172a;margin:8px 0;">Simulatore non disponibile</div>'
+    + '<div style="color:#64748b;font-size:13px;margin-bottom:16px;">'+simEsc(msg)+'</div>'
+    + (simPuoCaricare()
+       ? ('<div style="max-width:420px;margin:0 auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;">'
+          + '<div style="font-size:12px;color:#475569;margin-bottom:8px;">Carica il file Excel della finanziaria (.xlsx)</div>'
+          + '<input type="file" id="sim-file" accept=".xlsx" style="width:100%;font-size:12px;" onchange="simUpload(this)">'
+          + '</div>')
+       : '<div style="color:#94a3b8;font-size:12px;">Il file lo carica l\u2019amministrazione.</div>')
+    + '</div>';
+}
+
+function simUpload(input){
+  var f = input && input.files && input.files[0]; if(!f) return;
+  if(!simPuoCaricare()){ alert('Solo l\u2019amministrazione puo\u2019 caricare il simulatore.'); return; }
+  if(!/\.xlsx$/i.test(f.name)){ alert('Serve un file .xlsx'); return; }
+  var sb = (typeof sbClient==='function') ? sbClient() : null;
+  if(!sb){ alert('Supabase non disponibile'); return; }
+  var w = document.getElementById('view-simulatore');
+  if(w) w.innerHTML = '<div style="padding:40px 16px;text-align:center;color:#64748b;">Caricamento del file in corso\u2026</div>';
+  sb.storage.from(SIM_BUCKET).upload(SIM_FILE, f, {
+    upsert: true,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }).then(function(r){
+    if(r && r.error){ simErrore('Caricamento fallito: '+r.error.message+(/bucket/i.test(r.error.message||'')?' \u2014 crea il bucket \u00ab'+SIM_BUCKET+'\u00bb su Supabase.':'')); return; }
+    _simCaricato = false; _simHF = null;
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Simulatore aggiornato', true);
+    simInit();
+  }).catch(function(e){ simErrore('Caricamento fallito: '+(e && e.message || e)); });
+}
+
+function simOpts(list, sel){
+  var h = '';
+  for(var i=0;i<list.length;i++){
+    h += '<option value="'+simEsc(list[i])+'"'+(String(list[i])===String(sel)?' selected':'')+'>'+simEsc(list[i])+'</option>';
+  }
+  return h;
+}
+
+function simRender(){
+  var w = document.getElementById('view-simulatore'); if(!w || !_simCaricato) return;
+  var prodotti = simLista('prodotti','B',4,12);
+  var cpi      = ['NO'].concat(simLista('assicurazioni','B',4,6));
+  var cvt      = ['NO'].concat(simLista('assicurazioni','E',5,20));
+  var durate   = ['12','24','36','48','60','72'];
+  var care     = ['NO','12','24','36','48','60'];
+  var prov     = simProvince();
+
+  var lbl = 'display:block;font-size:11px;color:#64748b;margin-bottom:3px;font-weight:600;';
+  var inp = 'width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var box = 'background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:12px;';
+  var f = function(label, html){ return '<div style="flex:1 1 140px;min-width:120px;"><label style="'+lbl+'">'+label+'</label>'+html+'</div>'; };
+
+  var h = '';
+
+  /* barra file */
+  var quando = '';
+  try{ if(_simMeta && _simMeta.updated_at) quando = new Date(_simMeta.updated_at).toLocaleDateString('it-IT'); }catch(e){}
+  h += '<div style="display:flex;align-items:center;gap:8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 11px;margin-bottom:12px;font-size:11px;color:#1e40af;">'
+    +  '<span>\uD83D\uDCC4 Calcoli eseguiti sul file Excel della finanziaria'+(quando?(' \u00b7 aggiornato il '+quando):'')+'</span>'
+    +  (simPuoCaricare()
+        ? '<label style="margin-left:auto;background:#1e40af;color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:700;white-space:nowrap;">Aggiorna file<input type="file" accept=".xlsx" style="display:none;" onchange="simUpload(this)"></label>'
+        : '')
+    +  '</div>';
+
+  /* INPUT */
+  h += '<div style="'+box+'">';
+  h += '<div style="font-weight:800;color:#1e40af;font-size:13px;margin-bottom:10px;">DATI FINANZIAMENTO</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+  h += f('Prodotto', '<select id="sim_C6" style="'+inp+'" onchange="simCalc()">'+simOpts(prodotti, simGet('C6'))+'</select>');
+  h += f('Tasso (TAN)', '<input id="sim_E7" type="number" step="0.01" style="'+inp+'" value="'+((simNum(simGet('E7'))||0)*100).toFixed(2)+'" oninput="simCalc()"> ');
+  h += f('Valore bene \u20ac', '<input id="sim_C10" type="number" style="'+inp+'" value="'+(simNum(simGet('C10'))||0)+'" oninput="simCalc()">');
+  h += f('Anticipo \u20ac', '<input id="sim_C11" type="number" style="'+inp+'" value="'+(simNum(simGet('C11'))||0)+'" oninput="simCalc()">');
+  h += f('Durata mesi', '<input id="sim_E10" type="number" style="'+inp+'" value="'+(simNum(simGet('E10'))||0)+'" oninput="simCalc()">');
+  h += f('Spese istruttoria \u20ac', '<input id="sim_C12" type="number" style="'+inp+'" value="'+(simNum(simGet('C12'))||0)+'" oninput="simCalc()">');
+  h += f('1a rata a giorni', '<select id="sim_E11" style="'+inp+'" onchange="simCalc()">'+simOpts(['30','60','90','120'], simGet('E11'))+'</select>');
+  h += '</div>';
+
+  /* maxirata: solo per i prodotti che iniziano per M */
+  var isMax = /^M/i.test(String(simGet('C6')||''));
+  h += '<div id="sim-max" style="display:'+(isMax?'flex':'none')+';flex-wrap:wrap;gap:10px;margin-top:10px;padding-top:10px;border-top:1px dashed #e2e8f0;">';
+  h += f('Tasso maxirata', '<input id="sim_E6" type="number" step="0.01" style="'+inp+'" value="'+((simNum(simGet('E6'))||0)*100).toFixed(2)+'" oninput="simCalc()">');
+  h += f('% Maxirata', '<input id="sim_C16" type="number" step="1" style="'+inp+'" value="'+((simNum(simGet('C16'))||0)*100).toFixed(0)+'" oninput="simCalc()">');
+  h += f('Durata 2a fase', '<input id="sim_E16" type="number" style="'+inp+'" value="'+(simNum(simGet('E16'))||0)+'" oninput="simCalc()">');
+  h += '</div>';
+  h += '</div>';
+
+  /* POLIZZE */
+  h += '<div style="'+box+'">';
+  h += '<div style="font-weight:800;color:#1e40af;font-size:13px;margin-bottom:10px;">POLIZZE</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+  h += f('CPI', '<select id="sim_C21" style="'+inp+'" onchange="simCalc()">'+simOpts(cpi, simGet('C21'))+'</select>');
+  h += f('Data nascita', '<input id="sim_D21" type="date" style="'+inp+'" oninput="simCalc()">');
+  h += f('CVT', '<select id="sim_C24" style="'+inp+'" onchange="simCalc()">'+simOpts(cvt, simGet('C24'))+'</select>');
+  h += f('Durata CVT', '<select id="sim_D24" style="'+inp+'" onchange="simCalc()">'+simOpts(durate, simGet('D24'))+'</select>');
+  h += f('Provincia', '<select id="sim_E24" style="'+inp+'" onchange="simCalc()">'+simOpts(prov, simGet('E24'))+'</select>');
+  h += f('Easy Care', '<select id="sim_D26" style="'+inp+'" onchange="simCalc()">'+simOpts(care, simGet('D26'))+'</select>');
+  h += f('Easy Drive', '<select id="sim_D27" style="'+inp+'" onchange="simCalc()">'+simOpts(care, simGet('D27'))+'</select>');
+  h += f('Kasko fin.', '<select id="sim_D28" style="'+inp+'" onchange="simCalc()">'+simOpts(['NO','Si'], simGet('D28'))+'</select>');
+  h += '</div></div>';
+
+  h += '<div id="sim-out"></div>';
+  h += '<div id="sim-piano-wrap" style="'+box+'">'
+    +  '<div style="display:flex;align-items:center;gap:8px;">'
+    +  '<div style="font-weight:800;color:#1e40af;font-size:13px;">PIANO DI AMMORTAMENTO</div>'
+    +  '<button onclick="simPianoToggle()" id="sim-piano-btn" style="margin-left:auto;padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">Mostra</button>'
+    +  '<button onclick="simPianoStampa()" style="padding:7px 12px;border-radius:7px;border:none;background:#1e40af;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Stampa</button>'
+    +  '</div><div id="sim-piano" style="display:none;margin-top:10px;"></div></div>';
+
+  w.innerHTML = h;
+
+  /* data di nascita */
+  var d = simNum(simGet('D21'));
+  if(d){
+    var ms = Date.UTC(1899,11,30) + d*86400000;
+    var dt = new Date(ms);
+    var el = document.getElementById('sim_D21');
+    if(el) el.value = dt.toISOString().slice(0,10);
+  }
+  simCalc();
+}
+
+function simCalc(){
+  if(!_simCaricato) return;
+  var g = function(id){ var e=document.getElementById(id); return e?e.value:null; };
+  var num = function(id){ var v=parseFloat(g(id)); return isNaN(v)?0:v; };
+
+  /* scrittura input nel foglio */
+  simSet('C6',  g('sim_C6'));
+  simSet('E7',  num('sim_E7')/100);
+  simSet('C10', num('sim_C10'));
+  simSet('C11', num('sim_C11'));
+  simSet('E10', num('sim_E10'));
+  simSet('C12', num('sim_C12'));
+  simSet('E11', parseInt(g('sim_E11'),10)||30);
+  if(document.getElementById('sim_E6')){
+    simSet('E6',  num('sim_E6')/100);
+    simSet('C16', num('sim_C16')/100);
+    simSet('E16', num('sim_E16'));
+  }
+  simSet('C21', g('sim_C21'));
+  var ds = simDataSeriale(g('sim_D21')); if(ds) simSet('D21', ds);
+  simSet('C24', g('sim_C24'));
+  simSet('D24', parseInt(g('sim_D24'),10)||60);
+  simSet('E24', g('sim_E24'));
+  simSet('D26', g('sim_D26'));
+  simSet('D27', g('sim_D27'));
+  simSet('D28', g('sim_D28'));
+
+  /* mostra/nascondi maxirata */
+  var mx = document.getElementById('sim-max');
+  if(mx) mx.style.display = /^M/i.test(String(g('sim_C6')||'')) ? 'flex' : 'none';
+
+  /* avvisi dal foglio (le stesse celle che colora Excel) */
+  var avvisi = [];
+  ['F6','F7','F10','F11','E12','D13','E13','J6','F17','F21','G24','G26','G27','G28','H29'].forEach(function(a){
+    var v = simGet(a);
+    if(v && !simErr(v) && String(v).trim() !== '') avvisi.push(String(v));
+  });
+
+  var rata = simGet('I6');
+  var rataErr = simErr(rata) || String(rata) === 'ERRORE';
+  var teg = simNum(simGet('I11')), soglia = simNum(simGet('I28'));
+
+  var card = function(t, v, col){
+    return '<div style="flex:1 1 100px;min-width:96px;background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:10px;">'
+      + '<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.03em;">'+t+'</div>'
+      + '<div style="font-size:17px;font-weight:800;color:'+(col||'#0f172a')+';margin-top:2px;">'+v+'</div></div>';
+  };
+  var riga = function(t, v){
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #f1f5f9;">'
+      + '<span style="color:#475569;">'+t+'</span><b>'+v+'</b></div>';
+  };
+
+  var h = '';
+  if(avvisi.length){
+    h += '<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;margin-bottom:12px;">';
+    avvisi.forEach(function(a){ h += '<div style="color:#991b1b;font-weight:700;font-size:12px;">\u26a0\ufe0f '+simEsc(a)+'</div>'; });
+    h += '</div>';
+  }
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
+  h += card('Rata mensile', rataErr ? '<span style="color:#dc2626;">ERRORE</span>' : simEuro(simNum(rata)), '#16a34a');
+  h += card('TAN', simPct(simNum(simGet('I9'))));
+  h += card('TAEG', simPct(simNum(simGet('I10'))));
+  h += card('TEG', simPct(teg), (teg!==null && soglia!==null && teg>soglia) ? '#dc2626' : '#0f172a');
+  h += '</div>';
+
+  if(teg!==null && soglia!==null){
+    var over = teg > soglia;
+    h += '<div style="background:'+(over?'#fef2f2':'#f0fdf4')+';border:1px solid '+(over?'#fecaca':'#bbf7d0')+';border-radius:8px;padding:8px 11px;margin-bottom:12px;font-size:12px;font-weight:700;color:'+(over?'#991b1b':'#166534')+';">'
+      + (over ? '\u26d4 TEG '+simPct(teg)+' OLTRE la soglia d\u2019usura di '+simPct(soglia) : '\u2705 TEG entro la soglia d\u2019usura ('+simPct(soglia)+')')
+      + '</div>';
+  }
+
+  h += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:12px;">';
+  h += riga('Importo richiesto', simEuro(simNum(simGet('C13'))));
+  h += riga('Importo finanziato', simEuro(simNum(simGet('I19'))));
+  h += riga('Importo premi assicurativi', simEuro(simNum(simGet('I20'))));
+  h += riga('Netto erogato', simEuro(simNum(simGet('I21'))));
+  h += riga('Totale dovuto', simEuro(simNum(simGet('I22'))));
+  var proc = simNum(simGet('I7')); if(proc) h += riga('Interessi di procrastinazione', simEuro(proc));
+  var contr = simNum(simGet('I26')); if(contr) h += riga('Contributo a carico dealer', simEuro(contr));
+  if(typeof simPuoCaricare==='function' && simPuoCaricare()){
+    var pr = simNum(simGet('I24')); if(pr!==null) h += riga('<span style="color:#7c3aed;">Provvigioni</span>', '<span style="color:#7c3aed;">'+simEuro(pr)+'</span>');
+  }
+  h += '</div>';
+
+  var o = document.getElementById('sim-out'); if(o) o.innerHTML = h;
+  var pw = document.getElementById('sim-piano');
+  if(pw && pw.style.display !== 'none') simPianoRender();
+}
+
+/* ---- piano di ammortamento ---- */
+function simPianoDati(){
+  var out = [];
+  if(_simP === null || _simP === undefined) return out;
+  for(var r=6; r<153; r++){
+    var n = _simHF.getCellValue({sheet:_simP, col:0, row:r});
+    if(n === null || n === '' || simErr(n)) continue;
+    var imp = _simHF.getCellValue({sheet:_simP, col:1, row:r});
+    if(typeof imp !== 'number' || imp <= 0) continue;
+    out.push({
+      n: n,
+      rata: imp,
+      proc: _simHF.getCellValue({sheet:_simP, col:2, row:r}),
+      cap:  _simHF.getCellValue({sheet:_simP, col:3, row:r}),
+      int:  _simHF.getCellValue({sheet:_simP, col:4, row:r}),
+      res:  _simHF.getCellValue({sheet:_simP, col:5, row:r})
+    });
+  }
+  return out;
+}
+function simPianoToggle(){
+  var p = document.getElementById('sim-piano'), b = document.getElementById('sim-piano-btn');
+  if(!p) return;
+  if(p.style.display === 'none'){ p.style.display='block'; if(b) b.textContent='Nascondi'; simPianoRender(); }
+  else { p.style.display='none'; if(b) b.textContent='Mostra'; }
+}
+function simPianoRender(){
+  var p = document.getElementById('sim-piano'); if(!p) return;
+  var d = simPianoDati();
+  if(!d.length){ p.innerHTML = '<div style="color:#94a3b8;font-size:12px;">Piano non disponibile per questi dati.</div>'; return; }
+  var n2 = function(x){ return (typeof x==='number') ? x.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'; };
+  var h = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
+    + '<thead><tr style="background:#f1f5f9;">'
+    + ['Rata','Importo','Interessi','Quota cap.','Cap. residuo'].map(function(t){
+        return '<th style="padding:6px 8px;text-align:'+(t==='Rata'?'left':'right')+';border-bottom:1px solid #e2e8f0;white-space:nowrap;">'+t+'</th>';
+      }).join('') + '</tr></thead><tbody>';
+  d.forEach(function(x){
+    h += '<tr>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f8fafc;">'+x.n+'</td>'
+      + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f8fafc;font-weight:700;">'+n2(x.rata)+'</td>'
+      + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f8fafc;color:#64748b;">'+n2(x.int)+'</td>'
+      + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f8fafc;color:#64748b;">'+n2(x.cap)+'</td>'
+      + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f8fafc;">'+n2(x.res)+'</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table></div><div style="font-size:11px;color:#94a3b8;margin-top:6px;">'+d.length+' rate</div>';
+  p.innerHTML = h;
+}
+function simPianoStampa(){
+  var d = simPianoDati();
+  if(!d.length){ alert('Nessun piano da stampare.'); return; }
+  var n2 = function(x){ return (typeof x==='number') ? x.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}) : ''; };
+  var rows = d.map(function(x){
+    return '<tr><td>'+x.n+'</td><td class="r">'+n2(x.rata)+'</td><td class="r">'+n2(x.int)+'</td><td class="r">'+n2(x.cap)+'</td><td class="r">'+n2(x.res)+'</td></tr>';
+  }).join('');
+  var doc = '<html><head><meta charset="utf-8"><title>Piano di ammortamento</title><style>'
+    + '@page{size:A4;margin:14mm;} body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#111;}'
+    + 'h1{font-size:15px;margin:0 0 2px;} .sub{color:#555;font-size:9px;margin-bottom:10px;}'
+    + 'table{width:100%;border-collapse:collapse;} th{background:#eef2f7;text-align:right;padding:4px 6px;border-bottom:1px solid #999;font-size:9px;}'
+    + 'th:first-child,td:first-child{text-align:left;} td{padding:3px 6px;border-bottom:1px solid #eee;} .r{text-align:right;}'
+    + '.box{border:1px solid #999;padding:7px;margin-bottom:10px;font-size:10px;} .box b{font-size:11px;}'
+    + '</style></head><body>'
+    + '<h1>EUROPA AUTO S.R.L. \u2014 Piano di ammortamento</h1>'
+    + '<div class="sub">Via Nigra, 4 \u2014 20037 Paderno Dugnano (MI) \u00b7 P.IVA 06440210968 \u00b7 emesso il '+new Date().toLocaleDateString('it-IT')+'</div>'
+    + '<div class="box">'
+    + 'Importo finanziato <b>'+simEuro(simNum(simGet('I19')))+'</b> &nbsp;\u00b7&nbsp; '
+    + 'Rata <b>'+simEuro(simNum(simGet('I6')))+'</b> &nbsp;\u00b7&nbsp; '
+    + 'Durata <b>'+d.length+' mesi</b><br>'
+    + 'TAN <b>'+simPct(simNum(simGet('I9')))+'</b> &nbsp;\u00b7&nbsp; '
+    + 'TAEG <b>'+simPct(simNum(simGet('I10')))+'</b> &nbsp;\u00b7&nbsp; '
+    + 'Totale dovuto <b>'+simEuro(simNum(simGet('I22')))+'</b>'
+    + '</div>'
+    + '<table><thead><tr><th>Rata</th><th>Importo</th><th>Interessi</th><th>Quota capitale</th><th>Capitale residuo</th></tr></thead><tbody>'
+    + rows + '</tbody></table>'
+    + '<div class="sub" style="margin-top:10px;">Il presente calcolo \u00e8 da considerarsi unicamente a titolo esemplificativo e non costituisce offerta contrattuale.</div>'
+    + '</body></html>';
+  var w = window.open('', '_blank');
+  if(!w){ alert('Consenti le finestre popup per stampare.'); return; }
+  w.document.write(doc); w.document.close();
+  setTimeout(function(){ try{ w.print(); }catch(e){} }, 400);
+}
+
+
 /* ===== BADGE SIDEBAR =====
    Prima l'unica chiamata di avvio stava scritta dentro il tag della libreria jspdf
    (che ha l'attributo src) e quindi non veniva MAI eseguita: i contatori comparivano
@@ -13760,7 +14220,7 @@ function cvVendCard(cv){
   var daIncassare=Math.max(0, totale-incassato);
   var finTot=pagsAll.filter(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';}).reduce(function(s,p){return s+cvNum(p.importo);},0);
   var permVal=(cv.permutaOn && cv.permuta)?cvNum(cv.permuta.prezzoAcq):0;
-  var recap='<div style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px;margin-top:10px;font-size:12px;">'
+  var recap='<div onclick="cvVendDettagli(\''+cv.id+'\')" style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px;margin-top:10px;font-size:12px;cursor:pointer;">'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>Totale contratto</span><b>'+cvEuro(totale)+'</b></div>'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#16a34a;"><span>✓ Incassato (confermato)</span><b>'+cvEuro(incassato)+'</b></div>'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626;font-weight:700;"><span>Da incassare</span><b>'+cvEuro(daIncassare)+'</b></div>'
@@ -13790,11 +14250,36 @@ function cvConfLabel(){
   else ruolo='Staff';
   return ruolo+(nome?(' \u2013 '+nome):'');
 }
+/* Identificativo del veicolo: per le ESTERE il N. auto, per le ITALIANE la targa.
+   Se un'estera ha gia' la targa (immatricolata) la mostra insieme al numero. */
+function cvAutoIdent(cv){
+  try{
+    var a=(cv&&cv.autoSnapshot)||{};
+    var tg=(cv&&cv.nuovaTarga)||a.targa||'';
+    var est=(typeof cvVendEstera==='function')?cvVendEstera(cv):(a.estera===true);
+    if(est){
+      var n=a.numero_interno||'';
+      if(n && tg) return 'N\u00b0 '+n+' \u00b7 '+tg;
+      if(n) return 'N\u00b0 '+n;
+      return tg;
+    }
+    return tg;
+  }catch(e){ return ''; }
+}
+function cvAutoLabel(cv){
+  try{
+    var a=(cv&&cv.autoSnapshot)||{};
+    var base=(((a.marca?a.marca+' ':'')+(a.modello||'')).trim())||(cv&&cv.autoDesc)||'';
+    var id=cvAutoIdent(cv);
+    return (base+(id?(' ('+id+')'):'')).trim();
+  }catch(e){ return ''; }
+}
 function cvVendConfermaPag(id, ri){
   if(!cvPuoConfermarePagamenti()){ alert('Solo Amministrazione e Contabilità possono confermare i pagamenti.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
   var cv=list[idx]; var p=cv.pagamenti&&cv.pagamenti[ri]; if(!p || p.confermato) return;
-  if(!confirm('Confermare il pagamento '+(p.tipo||'')+' di '+cvEuro(p.importo)+'?')) return;
+  var _al=cvAutoLabel(cv);
+  if(!confirm('Confermare il pagamento '+(p.tipo||'')+' di '+cvEuro(p.importo)+'?'+(_al?('\n\nVeicolo: '+_al):''))) return;
   p.confermato=true; p.confermatoDa=cvConfLabel(); p.confermatoTs=Date.now();
   var prima=cv.statoVendita||'in_attesa_pagamento';
   cvVendAvanzaStato(cv);
@@ -13807,7 +14292,10 @@ function cvVendConfermaPag(id, ri){
   var msg='✓ Pagamento confermato';
   if(dopo!==prima){ if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione'; else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare'; }
   if(typeof tcToastNew==='function') tcToastNew(msg,true);
-  try{ if(typeof notifPush==='function') notifPush(msg+' \u2014 '+(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim(), '\u2705'); }catch(e){}
+  try{ if(typeof notifPush==='function'){
+    var _cli=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+    notifPush(msg+' \u2014 '+_cli+(_al?(' \u00b7 '+_al):''), '\u2705');
+  } }catch(e){}
 }
 
 function cvVendImmatricola(id){
@@ -13906,7 +14394,8 @@ function cvVendNotificaMail(cv,p){
   var a=cv.autoSnapshot||{};
   try{ gsJsonp({ action:'notificaPagamento',
     cliente:(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim(),
-    auto:(a.modello||cv.autoDesc||''), targa:(cv.nuovaTarga||a.targa||''),
+    auto:((typeof cvAutoLabel==='function')?cvAutoLabel(cv):(a.modello||cv.autoDesc||'')),
+    targa:((typeof cvAutoIdent==='function')?cvAutoIdent(cv):(cv.nuovaTarga||a.targa||'')),
     tipo:p.tipo||'', metodo:p.metodo||'', importo:cvEuro(p.importo),
     confermatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''), stato:(cv.statoVendita||''), disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
 }
