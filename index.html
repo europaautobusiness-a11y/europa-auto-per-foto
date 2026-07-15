@@ -14008,10 +14008,12 @@ function fcBottone(s){
     if(typeof sinVedePreventivo==='function' && !sinVedePreventivo()) return '';
     var f=s.fatturaCarr||{};
     var fatta=!!f.numero;
+    var ann=(s.fattureAnnullate||[]).length;
     return '<button onclick="fcApri(\'' + s.id + '\')" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid '
       + (fatta?'#16a34a':'#1a4fa0') + ';background:' + (fatta?'#f0fdf4':'#eff6ff') + ';color:' + (fatta?'#166534':'#1a4fa0')
       + ';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
-      + (fatta ? ('\uD83D\uDDA8 Scarica fattura n. '+f.numero+'/'+f.anno) : '\uD83E\uDDFE Genera fattura carrozzeria')
+      + (fatta ? ('\uD83D\uDDA8 Fattura n. '+f.numero+'/'+f.anno+' \u2014 scarica o annulla')
+               : ('\uD83E\uDDFE Genera fattura carrozzeria'+(ann?(' (rigenera)'):'')))
       + '</button>';
   }catch(e){ return ''; }
 }
@@ -14224,8 +14226,18 @@ function fcRender(){
   h+='<div style="padding:14px;max-height:74vh;overflow:auto;">';
 
   if(s.fatturaCarr && s.fatturaCarr.numero){
-    h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:700;">'
-      +'\u2705 Fattura n. '+s.fatturaCarr.numero+'/'+s.fatturaCarr.anno+' gi\u00e0 generata il '+(s.fatturaCarr.data||'')+'</div>';
+    h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;">'
+      +'<div style="font-size:13px;color:#166534;font-weight:700;margin-bottom:8px;">\u2705 Fattura n. '+s.fatturaCarr.numero+'/'+s.fatturaCarr.anno+' emessa il '+((s.fatturaCarr.data||'').split('-').reverse().join('/'))+'</div>'
+      +'<div style="display:flex;gap:8px;">'
+      +'<button onclick="fcStampa(\''+_fcId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Scarica di nuovo</button>'
+      +'<button onclick="fcAnnulla(\''+_fcId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #dc2626;background:#fff;color:#991b1b;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u274c Annulla fattura</button>'
+      +'</div></div>';
+  }
+  /* storico degli annullamenti: resta traccia di cosa e' stato emesso e ritirato */
+  if((s.fattureAnnullate||[]).length){
+    h+='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11px;color:#991b1b;">'
+      +'<b>Fatture annullate:</b> '+s.fattureAnnullate.map(function(x){ return 'n. '+x.numero+'/'+x.anno+' (il '+((x.annullataIl||'').split('-').reverse().join('/'))+')'; }).join(' \u00b7 ')
+      +'</div>';
   }
 
   /* anagrafica */
@@ -14344,18 +14356,19 @@ function fcProssimoNumero(){
   try{ if(typeof parLoad==='function'){ base=parseInt((parLoad()['fatturaBaseCarrozzeria']||0),10)||0; } }catch(e){}
   try{
     sinLoad().forEach(function(x){
-      if(x.fatturaCarr && x.fatturaCarr.anno===y && fcNum(x.fatturaCarr.numero)>max) max=fcNum(x.fatturaCarr.numero);
+      if(x.fatturaCarr && x.fatturaCarr.numero && x.fatturaCarr.anno===y && fcNum(x.fatturaCarr.numero)>max) max=fcNum(x.fatturaCarr.numero);
     });
   }catch(e){}
   return Math.max(max, base)+1;
 }
 /* Il numero e' gia' usato in questa serie e in quest'anno? */
 function fcNumeroUsato(num, escludiId){
+  /* Conta solo le fatture VIVE: un numero annullato torna disponibile. */
   var y=fcAnno(), usato=false;
   try{
     sinLoad().forEach(function(x){
       if(x.id===escludiId) return;
-      if(x.fatturaCarr && x.fatturaCarr.anno===y && fcNum(x.fatturaCarr.numero)===fcNum(num)) usato=true;
+      if(x.fatturaCarr && x.fatturaCarr.numero && x.fatturaCarr.anno===y && fcNum(x.fatturaCarr.numero)===fcNum(num)) usato=true;
     });
   }catch(e){}
   return usato;
@@ -14385,6 +14398,30 @@ function fcGenera(){
   try{ sinRender(); }catch(e){}
 }
 
+/* Annulla la fattura carrozzeria. Il numero torna libero e il documento si puo'
+   rigenerare. Doppia conferma: annullare una fattura emessa non e' un click qualsiasi. */
+function fcAnnulla(id){
+  try{
+    var s=sinById(id); if(!s || !s.fatturaCarr || !s.fatturaCarr.numero){ alert('Nessuna fattura da annullare.'); return; }
+    var f=s.fatturaCarr;
+    var et='n. '+f.numero+'/'+f.anno;
+    if(!confirm('Annullare la fattura carrozzeria '+et+'?\n\nConferma 1 di 2.')) return;
+    if(!confirm('Annullare la fattura '+et+' intestata a '+(f.nome||'')+'?\n\nIl documento verr\u00e0 rimosso. Potrai rigenerarla, e il numero '+f.numero+' torner\u00e0 disponibile.')) return;
+    var list=sinLoad(), i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
+    /* conservo i dati gia' inseriti (intestatario, CF, modo): si ricomincia da li' */
+    var tenuti={ nome:f.nome, indirizzo:f.indirizzo, cf:f.cf, piva:f.piva, modo:f.modo, concIvaInclusa:f.concIvaInclusa };
+    var storico=(list[i].fattureAnnullate||[]);
+    storico.push({ numero:f.numero, anno:f.anno, data:f.data, annullataIl:new Date().toISOString().slice(0,10),
+                   da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'') });
+    list[i].fattureAnnullate=storico;
+    list[i].fatturaCarr=tenuti;
+    sinSave(list);
+    try{ sinPush(list[i]); }catch(e){}
+    if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
+    try{ sinRender(); }catch(e){}
+    if(_fcId===id) fcRender();
+  }catch(e){ alert('Errore: '+(e && e.message || e)); }
+}
 function fcStampa(id){
   var s=sinById(id); if(!s || !s.fatturaCarr) return;
   var f=s.fatturaCarr, pv=s.preventivo||{}, p=pv.params||{}, t=fcTotaliDaPreventivo(s);
