@@ -1090,6 +1090,7 @@ html, body{
             <button class="ptb on" onclick="ptog('gap','NO',this)">No</button>
             <button class="ptb" onclick="ptog('gap','SI',this)">Sì</button>
           </div>
+          <div id="pGapNota" style="font-size:11px;color:#92400e;background:#fff8e1;border-left:3px solid #f39c12;padding:6px 10px;margin-top:6px;">🔒 Attivabile solo dopo aver selezionato <b>Compass</b> come finanziaria, qui sotto nei risultati.</div>
         </div>
 
         </div><!-- /pBloccoFin -->
@@ -5608,12 +5609,13 @@ function pCalcola() {
   const dbR      = Math.round(dbAvvera);
   const bestR    = Math.round(bestProvv);
 
-  _pFinSelezionata = null;
-  // Reset radio
-  document.querySelectorAll('input[name="pFin"]').forEach(r => r.checked = false);
+  /* La finanziaria selezionata si mantiene tra un ricalcolo e l'altro:
+     serve per tenere sbloccato il flag GAP mentre si modifica il resto. */
   ['compass','db','best'].forEach(t => {
     const c = document.getElementById('pCard' + t.charAt(0).toUpperCase() + t.slice(1));
-    if (c) c.style.borderColor = 'transparent';
+    if (c) c.style.borderColor = (t===_pFinSelezionata) ? 'white' : 'transparent';
+    const r = document.querySelector('input[name="pFin"][value="'+t+'"]');
+    if (r) r.checked = (t===_pFinSelezionata);
   });
   const fw = document.getElementById('pRisFinWrap');
   if (fw) fw.style.display = 'block';
@@ -5625,7 +5627,9 @@ function pCalcola() {
     if (bestCard) bestCard.style.display = 'flex';
   } else {
     if (bestCard) bestCard.style.display = 'none';
+    if (_pFinSelezionata==='best') _pFinSelezionata=null;
   }
+  try{ pGapLock(); }catch(e){}
 
   return { tipo: 'fin', compass: compassR, dbAvvera: dbR, bestProvv: bestCondition ? bestR : null, C15, tan };
 }
@@ -5736,6 +5740,30 @@ function pLoadFromGS() {
 // Selezione finanziaria
 let _pFinSelezionata = null;
 let _pEditingId = null;
+/* La GAP e' un prodotto Compass: il flag si puo' spuntare solo se la finanziaria
+   selezionata e' Compass. Se si sceglie un'altra finanziaria il flag torna a NO. */
+function pGapLock(){
+  var g=document.getElementById('ptg-gap'); if(!g) return;
+  var ok=(_pFinSelezionata==='compass');
+  g.querySelectorAll('.ptb').forEach(function(b){
+    b.disabled=!ok;
+    b.style.opacity=ok?'':'0.45';
+    b.style.cursor=ok?'pointer':'not-allowed';
+  });
+  var n=document.getElementById('pGapNota');
+  if(n) n.style.display=ok?'none':'block';
+}
+function pGapReset(){
+  if(PS.gap==='SI'){
+    PS.gap='NO';
+    var g=document.getElementById('ptg-gap');
+    if(g){ g.querySelectorAll('.ptb').forEach(function(b){
+      if((b.textContent||'').trim()==='No') b.classList.add('on'); else b.classList.remove('on');
+    }); }
+    return true;
+  }
+  return false;
+}
 function pSeleziona(tipo) {
   _pFinSelezionata = tipo;
   // Evidenzia card selezionata
@@ -5744,6 +5772,10 @@ function pSeleziona(tipo) {
     if (card) card.style.borderColor = t === tipo ? 'white' : 'transparent';
   });
   document.getElementById('pSelWarn').style.display = 'none';
+  /* Finanziaria diversa da Compass: la GAP non e' applicabile -> torna a NO e ricalcolo */
+  var _tolta=(tipo!=='compass') ? pGapReset() : false;
+  pGapLock();
+  if(_tolta) pCalcola();
 }
 
 function pSalva() {
@@ -11895,18 +11927,101 @@ function mzFotoRender(){
       +'</div>';
   }).join('');
 }
+/* ===== FOTO: ridimensionamento lato client + coda a concorrenza limitata =====
+   Prima: ogni foto selezionata partiva in upload TUTTA INSIEME e a risoluzione piena
+   (20 foto x 8MB = 160MB in parallelo) -> l'app si bloccava.
+   Ora: ogni foto viene ridimensionata a MZ_FOTO_MAXPX sul lato lungo (qualita' alta,
+   piu' che sufficiente per il sito) e caricata al massimo MZ_FOTO_PARALLELE alla volta. */
+var MZ_FOTO_MAXPX = 2560;   // lato lungo in pixel (alza/abbassa qui la qualita')
+var MZ_FOTO_Q     = 0.85;   // qualita' JPEG (0-1)
+var MZ_FOTO_PARALLELE = 2;  // upload contemporanei
+var _mzFotoBusy = false;
+
+function mzFotoBytes(n){ n=n||0; return (n>=1048576)?((n/1048576).toFixed(1)+' MB'):(Math.round(n/1024)+' KB'); }
+
+function mzFotoResize(file){
+  return new Promise(function(resolve){
+    if(!file || !/^image\//i.test(file.type||'')){ resolve(file); return; }
+    var finito=false;
+    var chiudi=function(v){ if(finito) return; finito=true; resolve(v); };
+    var disegna=function(src, isBitmap){
+      try{
+        var w=src.width, h=src.height, lato=Math.max(w,h);
+        if(!w || !h){ chiudi(file); return; }
+        if(lato>MZ_FOTO_MAXPX){ var sc=MZ_FOTO_MAXPX/lato; w=Math.round(w*sc); h=Math.round(h*sc); }
+        var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+        var ctx=cv.getContext('2d');
+        if(!ctx){ chiudi(file); return; }
+        ctx.drawImage(src,0,0,w,h);
+        if(isBitmap){ try{ src.close(); }catch(e){} }
+        cv.toBlob(function(blob){
+          try{ ctx.clearRect(0,0,w,h); cv.width=1; cv.height=1; }catch(e){}
+          /* se il "compresso" non fa guadagnare spazio, tengo l'originale */
+          if(!blob || blob.size>=file.size){ chiudi(file); return; }
+          chiudi(blob);
+        }, 'image/jpeg', MZ_FOTO_Q);
+      }catch(e){ chiudi(file); }
+    };
+    var fallback=function(){
+      try{
+        var url=URL.createObjectURL(file); var img=new Image();
+        img.onload=function(){ URL.revokeObjectURL(url); disegna(img,false); };
+        img.onerror=function(){ URL.revokeObjectURL(url); chiudi(file); };
+        img.src=url;
+      }catch(e){ chiudi(file); }
+    };
+    /* createImageBitmap decodifica fuori dal thread principale: la UI non si blocca */
+    if(typeof createImageBitmap==='function'){
+      try{ createImageBitmap(file).then(function(bmp){ disegna(bmp,true); }).catch(fallback); }
+      catch(e){ fallback(); }
+    } else fallback();
+  });
+}
+
 function mzFotoUpload(files){
   if(!files || !files.length) return;
+  if(_mzFotoBusy){ alert('Attendi: c\u2019\u00e8 gi\u00e0 un caricamento foto in corso.'); return; }
   var st=document.getElementById('mz-foto-stato');
-  var arr=Array.prototype.slice.call(files), done=0, tot=arr.length;
-  if(st) st.textContent='Caricamento 0/'+tot+'\u2026';
-  arr.forEach(function(file){
-    fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(file.name||'foto.jpg'), { method:'POST', headers:{'Content-Type':(file.type||'image/jpeg')}, body:file })
-      .then(function(r){ return r.json(); })
-      .then(function(res){ if(res && res.ok && res.url){ _mzFoto.push({url:res.url, key:res.key}); mzFotoRender(); } done++; if(st) st.textContent=(done>=tot)?('\u2705 '+_mzFoto.length+' foto caricate. Ricordati di salvare l\u2019auto.'):('Caricamento '+done+'/'+tot+'\u2026'); })
-      .catch(function(){ done++; if(st) st.textContent='\u26a0\ufe0f Errore nel caricamento di una foto'; });
-  });
+  var arr=Array.prototype.slice.call(files).filter(function(f){ return f && f.size; });
   var inp=document.getElementById('mz-foto-input'); if(inp) inp.value='';
+  if(!arr.length) return;
+  var tot=arr.length, done=0, ok=0, ko=0, idx=0, risp=0, orig=0;
+  _mzFotoBusy=true;
+  var stato=function(){
+    if(!st) return;
+    if(done<tot){ st.innerHTML='\u23f3 Caricamento <b>'+(done+1>tot?tot:done+1)+'/'+tot+'</b>\u2026 <span style="color:#94a3b8;">non chiudere la scheda</span>'; }
+    else {
+      var msg='\u2705 '+ok+' foto caricate';
+      if(ko) msg+=' \u00b7 <span style="color:#dc2626;font-weight:700;">'+ko+' non riuscite</span>';
+      if(orig>0 && risp>0) msg+=' <span style="color:#94a3b8;">('+mzFotoBytes(orig)+' \u2192 '+mzFotoBytes(risp)+')</span>';
+      msg+='<br><b>Ricordati di salvare l\u2019auto.</b>';
+      st.innerHTML=msg;
+    }
+  };
+  stato();
+  var nome=function(f, blob){
+    var n=f.name||'foto.jpg';
+    if(blob!==f) n=n.replace(/\.[^.]+$/,'')+'.jpg';
+    return n;
+  };
+  var uno=function(){
+    if(idx>=arr.length) return Promise.resolve();
+    var file=arr[idx++];
+    return mzFotoResize(file).then(function(blob){
+      orig+=file.size; risp+=(blob&&blob.size)?blob.size:file.size;
+      return fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(nome(file,blob)), {
+        method:'POST',
+        headers:{'Content-Type':((blob&&blob.type)||file.type||'image/jpeg')},
+        body:blob
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(res){ if(res && res.ok && res.url){ _mzFoto.push({url:res.url, key:res.key}); ok++; mzFotoRender(); } else { ko++; } })
+      .catch(function(){ ko++; });
+    }).catch(function(){ ko++; })
+    .then(function(){ done++; stato(); return uno(); });
+  };
+  var code=[]; for(var i=0;i<Math.min(MZ_FOTO_PARALLELE, arr.length); i++) code.push(uno());
+  Promise.all(code).then(function(){ _mzFotoBusy=false; done=tot; stato(); });
 }
 function mzFotoDelete(i){
   if(i<0 || i>=_mzFoto.length) return;
@@ -11978,6 +12093,7 @@ function mzForm(id){
 }
 function mzChiudi(){ var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function mzSalva(){
+  if(typeof _mzFotoBusy!=='undefined' && _mzFotoBusy){ alert('Caricamento foto ancora in corso: attendi che finisca prima di salvare.'); return; }
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
   var _req=[['marca','Marca'],['modello','Modello'],['anno','Anno'],['km','Km'],['colore','Colore'],['alimentazione','Alimentazione'],['cambio','Cambio']];
   for(var _i=0;_i<_req.length;_i++){ if(!g(_req[_i][0])){ alert('Campo obbligatorio: '+_req[_i][1]); return; } }
@@ -13040,13 +13156,17 @@ function cvFatturaHTML(c){
   var righe=[], impEsente=0, imp22=0, iva22=0, impMargine=0;
   var ps=cvPassaggioSplit(c);
 
+  var _scOn = (!c.legge104On && c.scontoOn) ? N(c.scontoImporto) : 0;
+  var _scDesc = String(c.scontoDesc||'Sconto').toUpperCase();
   if(margine){
     var totM = N(c.prezzoVendita)+ps.totale;
     impMargine += totM;
     righe.push({cod:'/M', desc:(vDesc+' - INCLUSO PASSAGGIO'), imp:totM, civa:'MG36'});
+    if(_scOn>0){ var _scM=Math.min(_scOn, totM); impMargine-=_scM; righe.push({cod:'SCONTO', desc:_scDesc, imp:-_scM, civa:'MG36'}); }
   } else {
     var v=scorp(N(c.prezzoVendita)); imp22+=v.imp; iva22+=v.iva;
     righe.push({cod:'/M', desc:vDesc, imp:v.imp, civa:'22'});
+    if(_scOn>0){ var _scL=Math.min(_scOn, N(c.prezzoVendita)); var _scS=scorp(_scL); imp22-=_scS.imp; iva22-=_scS.iva; righe.push({cod:'SCONTO', desc:_scDesc, imp:-_scS.imp, civa:'22'}); }
     var _iptTot=cvNum(ps.ipt)+cvNum(ps.imm);
     if(_iptTot>0){ impEsente+=_iptTot; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:_iptTot, civa:'N1'}); }
     if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:'SERVIZIO PASSAGGIO DI PROPRIETA', imp:ps.servImp, civa:'22'}); }
