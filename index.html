@@ -7,9 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Certificazione Stato d'Uso — Europa Auto</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
-try{ setTimeout(function(){ if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }, 800); }catch(e){}
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -9917,6 +9915,7 @@ document.addEventListener('DOMContentLoaded',function(){
     });
   }
 
+  try{ if(typeof window!=='undefined') window.eaCcBadge=ccUpdateBadge; }catch(e){}
   function ccUpdateBadge(){
     var b = document.getElementById('cc-badge'); if (!b) return;
     var now = new Date(); var ds = ymd(now.getFullYear(), now.getMonth(), now.getDate());
@@ -13156,17 +13155,20 @@ function cvFatturaHTML(c){
   var righe=[], impEsente=0, imp22=0, iva22=0, impMargine=0;
   var ps=cvPassaggioSplit(c);
 
+  /* Sconto: scalato direttamente dal prezzo del veicolo (nessuna riga dedicata in fattura).
+     Con Legge 104 lo sconto e' gia' incorporato nel calcolo -> non va tolto due volte. */
   var _scOn = (!c.legge104On && c.scontoOn) ? N(c.scontoImporto) : 0;
-  var _scDesc = String(c.scontoDesc||'Sconto').toUpperCase();
   if(margine){
-    var totM = N(c.prezzoVendita)+ps.totale;
+    /* prezzo veicolo gia' al netto dello sconto: nessuna riga sconto separata */
+    var _vzM = Math.max(0, N(c.prezzoVendita) - _scOn);
+    var totM = _vzM+ps.totale;
     impMargine += totM;
     righe.push({cod:'/M', desc:(vDesc+' - INCLUSO PASSAGGIO'), imp:totM, civa:'MG36'});
-    if(_scOn>0){ var _scM=Math.min(_scOn, totM); impMargine-=_scM; righe.push({cod:'SCONTO', desc:_scDesc, imp:-_scM, civa:'MG36'}); }
   } else {
-    var v=scorp(N(c.prezzoVendita)); imp22+=v.imp; iva22+=v.iva;
+    /* prezzo veicolo gia' al netto dello sconto: nessuna riga sconto separata */
+    var _vz=Math.max(0, N(c.prezzoVendita) - _scOn);
+    var v=scorp(_vz); imp22+=v.imp; iva22+=v.iva;
     righe.push({cod:'/M', desc:vDesc, imp:v.imp, civa:'22'});
-    if(_scOn>0){ var _scL=Math.min(_scOn, N(c.prezzoVendita)); var _scS=scorp(_scL); imp22-=_scS.imp; iva22-=_scS.iva; righe.push({cod:'SCONTO', desc:_scDesc, imp:-_scS.imp, civa:'22'}); }
     var _iptTot=cvNum(ps.ipt)+cvNum(ps.imm);
     if(_iptTot>0){ impEsente+=_iptTot; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:_iptTot, civa:'N1'}); }
     if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:'SERVIZIO PASSAGGIO DI PROPRIETA', imp:ps.servImp, civa:'22'}); }
@@ -13605,6 +13607,30 @@ function cvVendAutoAvanza(){
 }
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
+
+/* ===== BADGE SIDEBAR =====
+   Prima l'unica chiamata di avvio stava scritta dentro il tag della libreria jspdf
+   (che ha l'attributo src) e quindi non veniva MAI eseguita: i contatori comparivano
+   solo entrando nelle singole sezioni.
+   Ora i dati si caricano all'avvio e i badge si aggiornano da soli. */
+function eaBadgeRefreshAll(){
+  try{ if(typeof cvVendBadge==='function') cvVendBadge(); }catch(e){}
+  try{ if(typeof updatePermessiBadge==='function') updatePermessiBadge(); }catch(e){}
+  try{ if(typeof window.eaCcBadge==='function') window.eaCcBadge(); }catch(e){}
+  try{ if(typeof riAggiornaBadge==='function') riAggiornaBadge(); }catch(e){}
+  try{ if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); }catch(e){}
+}
+function eaBadgeBoot(){
+  /* carica i contratti anche se l'utente non apre nessuna sezione:
+     cvSupaLoad, a caricamento finito, richiama da solo i badge */
+  try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  eaBadgeRefreshAll();
+}
+try{
+  setTimeout(eaBadgeBoot, 1200);      // primo giro appena l'app e' pronta
+  setTimeout(eaBadgeRefreshAll, 5000); // secondo giro quando Supabase ha risposto
+  setInterval(eaBadgeRefreshAll, 60000); // poi si tiene aggiornato da solo
+}catch(e){}
 function cvVendEstera(cv){ if(cv.autoSnapshot && cv.autoSnapshot.estera) return true; if(cv.autoId && typeof mzById==='function'){ var a=mzById(cv.autoId); if(a && a.estera) return true; } return false; }
 
 /* ===== FATTURA: genera una volta, blocca, annulla per rigenerare ===== */
