@@ -9481,7 +9481,7 @@ function sidebarNav(view,btn){
   var title = SIDEBAR_TITLES ? SIDEBAR_TITLES[view] : view;
   if (t) t.textContent = (Array.isArray(title) ? title[0] : title) || view;
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
-  if(view==='simulatore'){ if(typeof simInit==='function') simInit(); }
+  if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
@@ -10547,7 +10547,7 @@ function sinCard(s){
     var impVal = (s.importoConcordato!=null && s.importoConcordato!=='') ? s.importoConcordato : '';
     html+='<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">';
     html+='<input id="sinimp-'+s.id+'" type="number" inputmode="decimal" step="0.01" value="'+sinEsc(impVal)+'" placeholder="Importo concordato €" style="flex:1;min-width:0;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;">';
-    html+='<button onclick="sinConcorda(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">→ Saldo</button>';
+    html+='<button onclick="sinConcordaEFattura(\''+s.id+'\')" style="flex:0 0 auto;padding:9px 12px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">→ Saldo / Genera fattura</button>';
     html+='</div>';
   }
   html+=sinPanelSoldi(s, st);
@@ -10609,6 +10609,7 @@ function sinPanelSoldi(s, st){
     html+='<div style="padding:10px 12px;background:'+(ric?'#f0fdf4':'#f8fafc')+';'+(hasIntegr?'border-bottom:1px solid #eef2f7;':'')+'">';
     html+='<div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:#64748b;">CONCORDATO</span><span style="font-size:17px;font-weight:800;color:#15803d;">€ '+sinFmtEuro(s.importoConcordato)+'</span></div>';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;"><span style="font-size:12px;font-weight:700;color:'+(ric?'#16a34a':'#94a3b8')+';">'+(ric?'✅ Ricevuto il':'Ricevuto il')+'</span>'+dInput('dataRicezione',s.dataRicezione)+'</div>';
+    html+=fcBottone(s);
     html+='</div>';
   }
   // --- INTEGRAZIONE ---
@@ -10736,6 +10737,13 @@ function sinInviaConcordato(id){
   if(typeof tcToastNew==='function') tcToastNew('📤 Documenti e foto inviati · passato a Concluso / In concordato',true);
 }
 function sinFmtEuro(n){ try{ return Number(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return n; } }
+/* Conferma il concordato e apre subito la creazione della fattura. */
+function sinConcordaEFattura(id){
+  sinConcorda(id);
+  var s=sinById(id);
+  if(!s || !(s.importoConcordato>0)) return;   // sinConcorda ha gia' avvisato
+  setTimeout(function(){ try{ fcApri(id); }catch(e){} }, 250);
+}
 function sinConcorda(id){
   var el=document.getElementById('sinimp-'+id);
   var val=el?parseFloat(String(el.value).replace(',','.')):NaN;
@@ -12689,7 +12697,7 @@ function cvRenderPag(){
       +'<input value="'+cvEsc(x.importo)+'" placeholder="importo €" type="number" inputmode="decimal" oninput="_cv.pagamenti['+i+'].importo=this.value;cvLive()" style="flex:1;padding:11px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:15px;font-weight:700;min-width:0;box-sizing:border-box;">'
       +'<button onclick="_cv.pagamenti.splice('+i+',1);cvRenderPag();cvLive()" style="border:none;background:#fff;color:#dc2626;border-radius:7px;width:42px;height:42px;cursor:pointer;font-size:16px;flex:0 0 auto;">✕</button>'
       +'</div>'
-      +(isFin?('<div style="display:flex;gap:8px;margin-top:6px;"><input value="'+cvEsc(x.rate||'')+'" placeholder="n° rate" type="number" oninput="_cv.pagamenti['+i+'].rate=this.value" style="flex:1;'+ss+'"><input value="'+cvEsc(x.importoRata||'')+'" placeholder="importo rata €" type="number" oninput="_cv.pagamenti['+i+'].importoRata=this.value" style="flex:1;'+ss+'"></div>'):'')
+      +(isFin?('<div style="display:flex;gap:8px;margin-top:6px;"><input value="'+cvEsc(x.rate||'')+'" placeholder="n° rate" type="number" oninput="_cv.pagamenti['+i+'].rate=this.value" style="flex:1;'+ss+'"><input value="'+cvEsc(x.importoRata||'')+'" placeholder="importo rata €" type="number" oninput="_cv.pagamenti['+i+'].importoRata=this.value" style="flex:1;'+ss+'">'+'<button onclick="simDaPreventivo('+i+')" title="Calcola la rata col simulatore" style="flex:0 0 auto;padding:9px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">\uD83E\uDDEE Simula</button>'+'</div>'):'')
       +'<input value="'+cvEsc(x.note||'')+'" placeholder="note (es. causale)" oninput="_cv.pagamenti['+i+'].note=this.value" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;">'
       +'</div>';
   }).join('');
@@ -13672,6 +13680,381 @@ function cvVendAutoAvanza(){
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
+/* Pulsante nel pannello Concordato: genera o riscarica la fattura carrozzeria. */
+function fcBottone(s){
+  try{
+    if(!s || !(fcNum(s.importoConcordato)>0)) return '';
+    if(typeof sinVedePreventivo==='function' && !sinVedePreventivo()) return '';
+    var f=s.fatturaCarr||{};
+    var fatta=!!f.numero;
+    return '<button onclick="fcApri(\'' + s.id + '\')" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid '
+      + (fatta?'#16a34a':'#1a4fa0') + ';background:' + (fatta?'#f0fdf4':'#eff6ff') + ';color:' + (fatta?'#166534':'#1a4fa0')
+      + ';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
+      + (fatta ? ('\uD83D\uDDA8 Scarica fattura n. '+f.numero+'/'+f.anno) : '\uD83E\uDDFE Genera fattura carrozzeria')
+      + '</button>';
+  }catch(e){ return ''; }
+}
+
+/* ===================== FATTURA CARROZZERIA (da Sinistri) =====================
+   Intestata SEMPRE al cliente, con il DETTAGLIO delle lavorazioni.
+   Nodo: l'importo concordato col perito non coincide mai col preventivo.
+   Percio' le voci vengono riallineate al concordato prima di fatturare:
+   di default il taglio cade sulla MANODOPERA (i ricambi hanno un costo reale
+   e una fattura d'acquisto alle spalle), in alternativa si spalma in
+   proporzione su tutto. Il totale fattura deve fare esattamente il concordato. */
+
+var _fcId = null, _fcT = null;
+
+function fcNum(x){ var n=parseFloat(String(x==null?0:x).replace(',','.')); return isNaN(n)?0:n; }
+function fcEu(n){ return (Math.round(fcNum(n)*100)/100).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fcEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* Ricalcola i totali del preventivo carrozzeria salvato sul sinistro,
+   senza dipendere dal form aperto (pvCompute legge dal DOM). */
+function fcTotaliDaPreventivo(s){
+  var pv=(s&&s.preventivo)||{}, p=pv.params||{}, righe=pv.righe||[];
+  var t={sumSR:0,sumLA:0,sumVE:0,sumME:0,sumRic:0};
+  righe.forEach(function(r){
+    t.sumSR+=fcNum(r.sr); t.sumLA+=fcNum(r.la); t.sumVE+=fcNum(r.ve);
+    t.sumME+=fcNum(r.me); t.sumRic+=fcNum(r.ric);
+  });
+  t.orario=fcNum(p.orario!=null?p.orario:40);
+  t.materialeH=fcNum(p.materiale!=null?p.materiale:0);
+  t.tagg=fcNum(p.tagg); t.smalt=fcNum(p.smalt!=null?p.smalt:30);
+  t.ivaPct=fcNum(p.iva!=null?p.iva:22);
+  t.levabolli=fcNum(p.levabolli);
+  t.pctDoppio=fcNum(p.doppio!=null?p.doppio:15);
+  t.finMax=fcNum(p.finmax!=null?p.finmax:3);
+  t.supplDoppio=t.sumVE*(t.pctDoppio/100);
+  var fin=t.sumVE*0.10; t.supplFin=Math.min(fin, t.finMax);
+  t.veTot=t.sumVE+t.supplDoppio+t.supplFin+t.tagg;
+  t.oreMan=t.sumSR+t.sumLA+t.veTot+t.sumME;
+  t.manodopera=t.oreMan*t.orario + t.levabolli;
+  t.materiale=t.veTot*t.materialeH;
+  t.imponibile=t.manodopera+t.materiale+t.sumRic+t.smalt;
+  t.iva=t.imponibile*(t.ivaPct/100);
+  t.totale=t.imponibile+t.iva;
+  return t;
+}
+
+/* Riallinea le 4 macro-voci al target di imponibile */
+function fcRiallinea(t, target, modo){
+  var v={ manodopera:t.manodopera, materiale:t.materiale, ricambi:t.sumRic, smalt:t.smalt };
+  var orig=v.manodopera+v.materiale+v.ricambi+v.smalt;
+  if(orig<=0) return v;
+  if(modo==='proporzionale'){
+    var k=target/orig;
+    v.manodopera*=k; v.materiale*=k; v.ricambi*=k; v.smalt*=k;
+  } else {
+    var diff=target-orig;
+    if(v.manodopera+diff > 0){ v.manodopera+=diff; }
+    else { var k2=target/orig; v.manodopera*=k2; v.materiale*=k2; v.ricambi*=k2; v.smalt*=k2; }
+  }
+  ['manodopera','materiale','ricambi','smalt'].forEach(function(k){ v[k]=Math.round(v[k]*100)/100; });
+  /* l'arrotondamento non deve far ballare il totale: la differenza va sulla manodopera */
+  var somma=v.manodopera+v.materiale+v.ricambi+v.smalt;
+  v.manodopera=Math.round((v.manodopera+(target-somma))*100)/100;
+  return v;
+}
+
+function fcApri(id){
+  var s=(typeof sinById==='function')?sinById(id):null;
+  if(!s){ alert('Sinistro non trovato.'); return; }
+  if(!s.preventivo || !(s.preventivo.righe||[]).length){
+    alert('Questo sinistro non ha un preventivo carrozzeria compilato: non posso fatturare il dettaglio delle lavorazioni.');
+    return;
+  }
+  var conc=fcNum(s.importoConcordato);
+  if(conc<=0){ alert('Manca l\u2019importo concordato.'); return; }
+  _fcId=id; _fcT=fcTotaliDaPreventivo(s);
+  var m=document.getElementById('fc-modal');
+  if(!m){ m=document.createElement('div'); m.id='fc-modal';
+    m.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:100060;overflow:auto;padding:12px;';
+    document.body.appendChild(m); }
+  m.style.display='block';
+  fcRender();
+}
+function fcChiudi(){ var m=document.getElementById('fc-modal'); if(m) m.style.display='none'; _fcId=null; }
+
+function fcRender(){
+  var m=document.getElementById('fc-modal'); if(!m||!_fcId) return;
+  var s=sinById(_fcId); if(!s) return;
+  var pv=s.preventivo||{}, t=_fcT;
+  var f=(s.fatturaCarr)||{};
+  var conc=fcNum(s.importoConcordato);
+  var ivaPct=t.ivaPct||22;
+  var ivaInc=(f.concIvaInclusa!=null)?f.concIvaInclusa:false;
+  var modo=f.modo||'manodopera';
+  var target= ivaInc ? (conc/(1+ivaPct/100)) : conc;
+  target=Math.round(target*100)/100;
+  var v=fcRiallinea(t, target, modo);
+  var iva=Math.round((target*ivaPct/100)*100)/100;
+  var tot=Math.round((target+iva)*100)/100;
+  var diff=Math.round((target-t.imponibile)*100)/100;
+
+  var lbl='display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;';
+  var inp='width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var riga=function(a,b,bold){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #f1f5f9;'+(bold?'font-weight:800;':'')+'"><span>'+a+'</span><span>'+b+'</span></div>'; };
+
+  var h='<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
+  h+='<div style="background:#1a4fa0;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+    +'<span style="font-weight:800;">\uD83E\uDDFE Fattura carrozzeria</span>'
+    +'<button onclick="fcChiudi()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    +'</div>';
+  h+='<div style="padding:14px;max-height:74vh;overflow:auto;">';
+
+  if(s.fatturaCarr && s.fatturaCarr.numero){
+    h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:700;">'
+      +'\u2705 Fattura n. '+s.fatturaCarr.numero+'/'+s.fatturaCarr.anno+' gi\u00e0 generata il '+(s.fatturaCarr.data||'')+'</div>';
+  }
+
+  /* anagrafica */
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">INTESTATARIO (cliente)</div>';
+  h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
+  h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Nome e cognome</label><input id="fc_nome" style="'+inp+'" value="'+fcEsc(f.nome||pv.cliente||s.nome||'')+'"></div>';
+  h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Indirizzo</label><input id="fc_ind" style="'+inp+'" value="'+fcEsc(f.indirizzo||pv.indirizzo||s.residenza||'')+'"></div>';
+  h+='<div style="display:flex;gap:8px;">';
+  h+='<div style="flex:1;"><label style="'+lbl+'">Codice fiscale <span style="color:#dc2626;">*</span></label><input id="fc_cf" style="'+inp+'" value="'+fcEsc(f.cf||'')+'" placeholder="obbligatorio"></div>';
+  h+='<div style="flex:1;"><label style="'+lbl+'">P.IVA (se azienda)</label><input id="fc_piva" style="'+inp+'" value="'+fcEsc(f.piva||'')+'"></div>';
+  h+='</div></div>';
+
+  /* concordato */
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">IMPORTO CONCORDATO</div>';
+  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;">'
+    +'<span style="font-size:20px;font-weight:800;color:#1e40af;">\u20ac '+fcEu(conc)+'</span>'
+    +'<select id="fc_ivainc" onchange="fcSalvaScelte();fcRender()" style="'+inp+'width:auto;">'
+    +'<option value="0"'+(!ivaInc?' selected':'')+'>IVA esclusa (imponibile)</option>'
+    +'<option value="1"'+(ivaInc?' selected':'')+'>IVA inclusa (totale)</option>'
+    +'</select></div>';
+  h+='<div style="font-size:11px;color:#1e40af;margin-top:6px;">Il perito ha concordato questa cifra al netto o al lordo dell\u2019IVA? Cambia il totale della fattura.</div>';
+  h+='</div>';
+
+  /* riallineamento */
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">RIALLINEAMENTO AL CONCORDATO</div>';
+  h+='<div style="background:'+(Math.abs(diff)<0.01?'#f8fafc':'#fffbeb')+';border:1px solid '+(Math.abs(diff)<0.01?'#e2e8f0':'#fde68a')+';border-radius:8px;padding:10px;margin-bottom:12px;">';
+  h+=riga('Imponibile da preventivo', '\u20ac '+fcEu(t.imponibile));
+  h+=riga('Imponibile da fatturare (concordato)', '\u20ac '+fcEu(target));
+  h+=riga('<b>Differenza da assorbire</b>', '<b style="color:'+(diff<0?'#dc2626':'#16a34a')+';">'+(diff>0?'+':'')+fcEu(diff)+' \u20ac</b>');
+  h+='<div style="margin-top:8px;"><label style="'+lbl+'">Dove far cadere la differenza</label>'
+    +'<select id="fc_modo" onchange="fcSalvaScelte();fcRender()" style="'+inp+'">'
+    +'<option value="manodopera"'+(modo==='manodopera'?' selected':'')+'>Solo manodopera (ricambi al prezzo reale)</option>'
+    +'<option value="proporzionale"'+(modo==='proporzionale'?' selected':'')+'>In proporzione su tutte le voci</option>'
+    +'</select></div>';
+  h+='</div>';
+
+  /* dettaglio fattura */
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">DETTAGLIO CHE ANDR\u00c0 IN FATTURA</div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
+  h+=riga('Manodopera ('+(Math.round(t.oreMan*100)/100).toString().replace('.',',')+' h)', '\u20ac '+fcEu(v.manodopera));
+  if(v.materiale>0) h+=riga('Materiale di consumo verniciatura', '\u20ac '+fcEu(v.materiale));
+  if(v.ricambi>0)  h+=riga('Ricambi', '\u20ac '+fcEu(v.ricambi));
+  if(v.smalt>0)    h+=riga('Smaltimento rifiuti', '\u20ac '+fcEu(v.smalt));
+  h+=riga('<b>Imponibile</b>', '<b>\u20ac '+fcEu(target)+'</b>', true);
+  h+=riga('IVA '+fcEu(ivaPct)+'%', '\u20ac '+fcEu(iva));
+  h+=riga('<b>TOTALE FATTURA</b>', '<b style="color:#16a34a;">\u20ac '+fcEu(tot)+'</b>', true);
+  h+='</div>';
+
+  if(v.manodopera<0) h+='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px;margin-bottom:10px;color:#991b1b;font-size:12px;font-weight:700;">\u26a0\ufe0f Il concordato \u00e8 troppo basso: la manodopera andrebbe in negativo. Usa il riparto proporzionale.</div>';
+
+  h+='</div>';
+  h+='<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
+    +'<button onclick="fcChiudi()" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+    +'<button onclick="fcGenera()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">'
+    + ((s.fatturaCarr&&s.fatturaCarr.numero)?'\uD83D\uDDA8 Scarica fattura':'\uD83E\uDDFE Genera fattura')+'</button>'
+    +'</div></div>';
+  m.innerHTML=h;
+}
+
+function fcSalvaScelte(){
+  try{
+    var s=sinById(_fcId); if(!s) return;
+    var list=sinLoad(), i=list.findIndex(function(x){return x.id===_fcId;}); if(i<0) return;
+    var f=list[i].fatturaCarr||{};
+    var e1=document.getElementById('fc_ivainc'); if(e1) f.concIvaInclusa=(e1.value==='1');
+    var e2=document.getElementById('fc_modo');   if(e2) f.modo=e2.value;
+    ['nome','ind','cf','piva'].forEach(function(k){
+      var el=document.getElementById('fc_'+k); if(!el) return;
+      f[k==='ind'?'indirizzo':k]=el.value.trim();
+    });
+    list[i].fatturaCarr=f; sinSave(list);
+  }catch(e){}
+}
+
+/* numerazione: stessa serie IVA esposta delle fatture veicolo */
+function fcProssimoNumero(){
+  var y=(typeof cvFattAnno==='function')?cvFattAnno():new Date().getFullYear();
+  var max=(typeof cvFatturaNextNum==='function')?(cvFatturaNextNum('esposta')-1):0;
+  try{
+    sinLoad().forEach(function(x){
+      if(x.fatturaCarr && x.fatturaCarr.anno===y && fcNum(x.fatturaCarr.numero)>max) max=fcNum(x.fatturaCarr.numero);
+    });
+  }catch(e){}
+  return max+1;
+}
+
+function fcGenera(){
+  fcSalvaScelte();
+  var s=sinById(_fcId); if(!s) return;
+  if(s.fatturaCarr && s.fatturaCarr.numero){ fcStampa(_fcId); return; }
+  var f=s.fatturaCarr||{};
+  if(!f.cf && !f.piva){ alert('Il codice fiscale del cliente \u00e8 obbligatorio in fattura.'); return; }
+  if(!f.nome){ alert('Manca il nome dell\u2019intestatario.'); return; }
+  var y=(typeof cvFattAnno==='function')?cvFattAnno():new Date().getFullYear();
+  var num=fcProssimoNumero();
+  if(!confirm('Genero la fattura n. '+num+'/'+y+' intestata a '+f.nome+'?\n\nDopo la generazione il numero non cambia pi\u00f9.')) return;
+  var list=sinLoad(), i=list.findIndex(function(x){return x.id===_fcId;}); if(i<0) return;
+  f.numero=num; f.anno=y; f.data=new Date().toISOString().slice(0,10); f.ts=Date.now();
+  f.da=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  list[i].fatturaCarr=f; sinSave(list);
+  try{ sinPush(list[i]); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\uD83E\uDDFE Fattura n. '+num+'/'+y+' generata', true);
+  fcRender();
+  fcStampa(_fcId);
+  try{ sinRender(); }catch(e){}
+}
+
+function fcStampa(id){
+  var s=sinById(id); if(!s || !s.fatturaCarr) return;
+  var f=s.fatturaCarr, pv=s.preventivo||{}, t=fcTotaliDaPreventivo(s);
+  var conc=fcNum(s.importoConcordato), ivaPct=t.ivaPct||22;
+  var target = f.concIvaInclusa ? (conc/(1+ivaPct/100)) : conc;
+  target=Math.round(target*100)/100;
+  var v=fcRiallinea(t, target, f.modo||'manodopera');
+  var iva=Math.round((target*ivaPct/100)*100)/100, tot=Math.round((target+iva)*100)/100;
+  var righe=[];
+  righe.push(['MANODOPERA', 'MANODOPERA DI CARROZZERIA \u2014 '+(Math.round(t.oreMan*100)/100).toString().replace('.',',')+' ore', v.manodopera]);
+  if(v.materiale>0) righe.push(['MATERIALE','MATERIALE DI CONSUMO VERNICIATURA', v.materiale]);
+  if(v.ricambi>0)   righe.push(['RICAMBI','RICAMBI E FORNITURE', v.ricambi]);
+  if(v.smalt>0)     righe.push(['SMALT','SMALTIMENTO RIFIUTI SPECIALI', v.smalt]);
+  var rows=righe.map(function(r){
+    return '<tr><td>'+fcEsc(r[0])+'</td><td>'+fcEsc(r[1])+'</td><td class="c">NR</td><td class="c">1</td><td class="r">'+fcEu(r[2])+'</td><td class="r">'+fcEu(r[2])+'</td><td class="c">'+fcEu(ivaPct)+'</td></tr>';
+  }).join('');
+  var veicolo=(pv.veicolo||s.modello||'')+(  (pv.targa||s.targa) ? (' \u2014 targa '+(pv.targa||s.targa)) : '');
+  var rifSin=(s.numeroSinistro?('Sinistro n. '+s.numeroSinistro):'')+(s.compagnia?(' \u00b7 '+s.compagnia):'');
+  var doc='<html><head><meta charset="utf-8"><title>Fattura '+f.numero+'-'+f.anno+'</title><style>'
+    +'@page{size:A4;margin:14mm;} body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#111;}'
+    +'.hd{display:flex;justify-content:space-between;margin-bottom:12px;}'
+    +'.az{font-size:11px;line-height:1.45;} .az b{font-size:12px;}'
+    +'.cli{border:1px solid #333;padding:8px 10px;min-width:230px;font-size:11px;line-height:1.45;}'
+    +'table{width:100%;border-collapse:collapse;margin-top:6px;} th{background:#eef2f7;border:1px solid #999;padding:4px 5px;font-size:9px;}'
+    +'td{border:1px solid #ddd;padding:4px 5px;} .r{text-align:right;} .c{text-align:center;}'
+    +'.meta{width:100%;border-collapse:collapse;margin-bottom:8px;} .meta td{border:1px solid #999;padding:5px 6px;font-size:10px;}'
+    +'.meta .k{color:#666;font-size:8px;text-transform:uppercase;display:block;}'
+    +'.tot{border:2px solid #111;padding:7px 9px;margin-top:10px;display:flex;justify-content:space-between;font-size:12px;font-weight:bold;}'
+    +'.note{color:#555;font-size:9px;margin-top:8px;line-height:1.5;}'
+    +'</style></head><body>'
+    +'<div class="hd"><div class="az"><b>EUROPA AUTO S.R.L.</b><br>Via Nigra, 4 \u2014 20037 Paderno Dugnano (MI)<br>'
+    +'Tel./Fax 029181820<br>Cod. Fiscale / P.IVA 06440210968<br>R.E.A. 1892676 \u2014 CCIAA MI<br>amministrazione@europaautosrl.it</div>'
+    +'<div class="cli"><b>'+fcEsc(f.nome||'')+'</b><br>'+fcEsc(f.indirizzo||'')+'<br>'
+    + (f.cf?('C.F. '+fcEsc(f.cf)):'') + (f.piva?('<br>P.IVA '+fcEsc(f.piva)):'') +'</div></div>'
+    +'<table class="meta"><tr>'
+    +'<td><span class="k">Tipo documento</span><b>Fattura emessa</b></td>'
+    +'<td><span class="k">Data fattura</span><b>'+(f.data?f.data.split('-').reverse().join('/'):'')+'</b></td>'
+    +'<td><span class="k">Numero</span><b>'+f.numero+' / '+f.anno+'</b></td>'
+    +'<td><span class="k">Pagamento</span><b>Bonifico bancario</b></td>'
+    +'</tr></table>'
+    +'<div style="font-size:10px;margin-bottom:4px;"><b>Veicolo:</b> '+fcEsc(veicolo)+(rifSin?(' &nbsp;\u00b7&nbsp; <b>Rif.:</b> '+fcEsc(rifSin)):'')+'</div>'
+    +'<table><thead><tr><th>COD.</th><th>DESCRIZIONE</th><th>U.M.</th><th>Q.T\u00c0</th><th>PREZZO</th><th>IMPORTO</th><th>IVA %</th></tr></thead><tbody>'
+    +rows+'</tbody></table>'
+    +'<div class="tot"><span>TOTALE IMPONIBILE '+fcEu(target)+' \u00b7 IVA '+fcEu(iva)+'</span><span>TOTALE DOCUMENTO \u20ac '+fcEu(tot)+'</span></div>'
+    +'<div class="note">Riparazione eseguita come da importo concordato con il perito'+(s.perito?(' ('+fcEsc(s.perito)+')'):'')+'.'
+    +'<br>Documento generato dal gestionale \u2014 non \u00e8 la fattura elettronica trasmessa allo SdI.</div>'
+    +'</body></html>';
+  var w=window.open('','_blank');
+  if(!w){ alert('Consenti le finestre popup per scaricare la fattura.'); return; }
+  w.document.write(doc); w.document.close();
+  setTimeout(function(){ try{ w.print(); }catch(e){} }, 400);
+}
+
+
+
+/* ===== SIMULATORE CHIAMATO DAL PREVENTIVO =====
+   Rudy compila il preventivo, sulla riga del finanziamento preme "Simula":
+   si apre il simulatore gia' impostato sull'importo da finanziare; quando ha
+   la rata giusta preme "Usa nel preventivo" e rate + importo rata tornano
+   nella riga del pagamento. Non deve cambiare pagina. */
+function simChiudiModal(){
+  var m = document.getElementById('sim-modal');
+  if(m) m.style.display = 'none';
+  _simTargetId = 'view-simulatore';
+  _simPagIdx = null;
+}
+function simDaPreventivo(idx){
+  try{
+    if(typeof _cv==='undefined' || !_cv || !_cv.pagamenti || !_cv.pagamenti[idx]){ alert('Pagamento non trovato.'); return; }
+    var pag = _cv.pagamenti[idx];
+    var imp = (typeof cvNum==='function') ? cvNum(pag.importo) : parseFloat(pag.importo||0);
+    if(!imp || imp<=0){ alert('Inserisci prima l\u2019importo da finanziare in questa riga.'); return; }
+    _simPagIdx = idx;
+
+    var m = document.getElementById('sim-modal');
+    if(!m){
+      m = document.createElement('div');
+      m.id = 'sim-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100050;overflow:auto;padding:12px;';
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div style="max-width:640px;margin:0 auto;background:#f1f5f9;border-radius:14px;overflow:hidden;">'
+      + '<div style="background:#1a4fa0;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+      +   '<span style="font-weight:800;">\uD83E\uDDEE Simulatore finanziamento</span>'
+      +   '<button onclick="simChiudiModal()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+      + '</div>'
+      + '<div style="padding:12px;">'
+      +   '<div style="background:#dbeafe;border:1px solid #bfdbfe;border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:12px;color:#1e40af;">'
+      +     'Importo da finanziare del preventivo: <b>'+((typeof cvEuro==='function')?cvEuro(imp):imp)+'</b>'
+      +   '</div>'
+      +   '<div id="sim-modal-box"></div>'
+      + '</div>'
+      + '<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
+      +   '<button onclick="simChiudiModal()" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+      +   '<button onclick="simUsaNelPreventivo()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u2705 Usa nel preventivo</button>'
+      + '</div></div>';
+    m.style.display = 'block';
+
+    _simTargetId = 'sim-modal-box';
+    _simCaricatoPrefill = { importo: imp, rate: (typeof cvNum==='function'?cvNum(pag.rate):parseFloat(pag.rate||0)) };
+    simInit();
+  }catch(e){ alert('Errore apertura simulatore: '+(e && e.message || e)); }
+}
+var _simCaricatoPrefill = null;
+/* Precompila importo e durata dal preventivo, subito dopo il disegno del form */
+function simApplicaPrefill(){
+  try{
+    if(!_simCaricatoPrefill) return;
+    var i = document.getElementById('sim_C10');   // valore bene
+    var a = document.getElementById('sim_C11');   // anticipo
+    var d = document.getElementById('sim_E10');   // durata
+    if(i) i.value = _simCaricatoPrefill.importo;
+    if(a) a.value = 0;                            // l'importo e' gia' quello netto da finanziare
+    if(d && _simCaricatoPrefill.rate>0) d.value = _simCaricatoPrefill.rate;
+    _simCaricatoPrefill = null;
+    simCalc();
+  }catch(e){}
+}
+function simUsaNelPreventivo(){
+  try{
+    if(_simPagIdx===null || typeof _cv==='undefined' || !_cv || !_cv.pagamenti[_simPagIdx]){ simChiudiModal(); return; }
+    var rata = simNum(simGet('I6'));
+    var teg = simNum(simGet('I11')), soglia = simNum(simGet('I28'));
+    if(rata===null){ alert('La rata non e\u2019 calcolabile con questi dati: correggi gli avvisi in rosso.'); return; }
+    if(teg!==null && soglia!==null && teg>soglia){
+      if(!confirm('Attenzione: il TEG supera la soglia d\u2019usura.\n\nVuoi usare comunque questi valori nel preventivo?')) return;
+    }
+    var durata = parseInt((document.getElementById('sim_E10')||{}).value, 10) || 0;
+    _cv.pagamenti[_simPagIdx].rate = durata || _cv.pagamenti[_simPagIdx].rate;
+    _cv.pagamenti[_simPagIdx].importoRata = Math.round(rata*100)/100;
+    var tan = simNum(simGet('I9')), taeg = simNum(simGet('I10'));
+    var nota = 'TAN '+(tan!==null?(tan*100).toFixed(2).replace('.',','):'-')+'% \u00b7 TAEG '+(taeg!==null?(taeg*100).toFixed(2).replace('.',','):'-')+'%';
+    var vecchia = String(_cv.pagamenti[_simPagIdx].note||'').replace(/TAN [^\u00b7]*\u00b7 TAEG [^%]*%/,'').trim();
+    _cv.pagamenti[_simPagIdx].note = (vecchia? (vecchia+' \u2014 ') : '') + nota;
+    simChiudiModal();
+    if(typeof cvRenderPag==='function') cvRenderPag();
+    if(typeof cvLive==='function') cvLive();
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Rata inserita nel preventivo', true);
+  }catch(e){ alert('Errore: '+(e && e.message || e)); }
+}
+
 /* ===================== SIMULATORE FINANZIAMENTO =====================
    Fa girare nel browser il file Excel della finanziaria, senza riscriverne
    le formule: SheetJS legge il .xlsx, HyperFormula ne ricalcola le 4.936
@@ -13691,13 +14074,21 @@ var SIM_LIBS = [
   'https://cdn.jsdelivr.net/npm/hyperformula@3.3.0/dist/hyperformula.full.min.js'
 ];
 var _simHF = null, _simS = null, _simP = null;
+var _simTargetId = 'view-simulatore';   // dove si disegna: sezione o finestra del preventivo
+var _simPagIdx = null;                  // indice del pagamento a finanziamento da compilare
+function simBox(){ return document.getElementById(_simTargetId); }
 var _simLibs = false, _simCaricato = false, _simInCorso = false, _simMeta = null;
 
+/* Aggiornamento del file: amministrazione (admin + Arianna). Rudy no. */
 function simPuoCaricare(){
   try{
     var e = (typeof _currentUserEmail !== 'undefined' ? String(_currentUserEmail||'').toLowerCase() : '');
     return (typeof isAdmin === 'function' && isAdmin()) || e === 'ariannapresta80@gmail.com';
   }catch(e){ return false; }
+}
+/* Provvigioni: SOLO admin. */
+function simPuoProvvigioni(){
+  try{ return !!(typeof isAdmin === 'function' && isAdmin()); }catch(e){ return false; }
 }
 function simEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function simEuro(n){ if(typeof n!=='number'||!isFinite(n)) return '—'; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
@@ -13824,7 +14215,7 @@ function simProvince(){
 
 /* ===================== INTERFACCIA ===================== */
 function simInit(){
-  var w = document.getElementById('view-simulatore'); if(!w) return;
+  var w = simBox(); if(!w) return;
   if(_simCaricato){ simRender(); return; }
   if(_simInCorso) return;
   _simInCorso = true;
@@ -13849,7 +14240,7 @@ function simInit(){
 }
 
 function simErrore(msg){
-  var w = document.getElementById('view-simulatore'); if(!w) return;
+  var w = simBox(); if(!w) return;
   w.innerHTML = '<div style="padding:30px 16px;text-align:center;">'
     + '<div style="font-size:40px;">\uD83D\uDCC4</div>'
     + '<div style="font-weight:800;color:#0f172a;margin:8px 0;">Simulatore non disponibile</div>'
@@ -13869,7 +14260,7 @@ function simUpload(input){
   if(!/\.xlsx$/i.test(f.name)){ alert('Serve un file .xlsx'); return; }
   var sb = (typeof sbClient==='function') ? sbClient() : null;
   if(!sb){ alert('Supabase non disponibile'); return; }
-  var w = document.getElementById('view-simulatore');
+  var w = simBox();
   if(w) w.innerHTML = '<div style="padding:40px 16px;text-align:center;color:#64748b;">Caricamento del file in corso\u2026</div>';
   sb.storage.from(SIM_BUCKET).upload(SIM_FILE, f, {
     upsert: true,
@@ -13891,7 +14282,7 @@ function simOpts(list, sel){
 }
 
 function simRender(){
-  var w = document.getElementById('view-simulatore'); if(!w || !_simCaricato) return;
+  var w = simBox(); if(!w || !_simCaricato) return;
   var prodotti = simLista('prodotti','B',4,12);
   var cpi      = ['NO'].concat(simLista('assicurazioni','B',4,6));
   var cvt      = ['NO'].concat(simLista('assicurazioni','E',5,20));
@@ -13971,6 +14362,7 @@ function simRender(){
     if(el) el.value = dt.toISOString().slice(0,10);
   }
   simCalc();
+  try{ simApplicaPrefill(); }catch(e){}
 }
 
 function simCalc(){
@@ -14053,7 +14445,7 @@ function simCalc(){
   h += riga('Totale dovuto', simEuro(simNum(simGet('I22'))));
   var proc = simNum(simGet('I7')); if(proc) h += riga('Interessi di procrastinazione', simEuro(proc));
   var contr = simNum(simGet('I26')); if(contr) h += riga('Contributo a carico dealer', simEuro(contr));
-  if(typeof simPuoCaricare==='function' && simPuoCaricare()){
+  if(typeof simPuoProvvigioni==='function' && simPuoProvvigioni()){
     var pr = simNum(simGet('I24')); if(pr!==null) h += riga('<span style="color:#7c3aed;">Provvigioni</span>', '<span style="color:#7c3aed;">'+simEuro(pr)+'</span>');
   }
   h += '</div>';
