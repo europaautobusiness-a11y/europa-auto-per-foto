@@ -10234,11 +10234,12 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   /* ===================== SOLLECITI TASK (tampina finché non "fatto") =====================
-     Un task assegnato e non eseguito viene sollecitato ogni 10 min: popup in-app + email
-     all'assegnatario. Alla 5ª volta scatta l'escalation all'admin. Si ferma da solo
-     quando il task viene segnato "fatto". */
-  var CC_SOLL_INTERVALLO = 20*60*1000;   // 20 minuti
-  var CC_SOLL_MAX = 5;                    // alla 5ª: escalation admin
+     Un task assegnato e non eseguito viene sollecitato ogni 30 min: popup in-app + email
+     all'assegnatario, fino a un massimo di 10 volte. Alla 6ª parte anche la mail all'admin.
+     Si ferma da solo quando il task viene segnato "fatto" (spunta nel task o nella notifica). */
+  var CC_SOLL_INTERVALLO = 30*60*1000;   // 30 minuti fra un sollecito e il successivo
+  var CC_SOLL_MAX = 10;                   // dopo 10 solleciti smette
+  var CC_SOLL_ESCAL = 6;                  // alla 6a: mail all'admin
   function ccDueTs(c){
     if (c.ricorda){ var t=new Date(c.ricorda).getTime(); if(!isNaN(t)) return t; }
     if (c.data){ var s=String(c.data)+(c.ora?('T'+c.ora):'T09:00'); var t2=new Date(s).getTime(); if(!isNaN(t2)) return t2; }
@@ -10301,12 +10302,13 @@ document.addEventListener('DOMContentLoaded',function(){
       // 2) Invio email + contatore + escalation: solo dalla sessione admin (evita doppioni)
       if (!isAdmin) return;
       var last=c.sollecitoLastAt?new Date(c.sollecitoLastAt).getTime():0;
-      if (last && (now-last)<CC_SOLL_INTERVALLO) return;  // non sono ancora passati 10 min
+      if (last && (now-last)<CC_SOLL_INTERVALLO) return;  // non sono ancora passati 30 min
       var n=(c.solleciti||0)+1;
+      if (n>CC_SOLL_MAX) return;                          // esauriti i 10 solleciti: basta
       c.solleciti=n; c.sollecitoLastAt=new Date(now).toISOString(); changed.push(c);
       if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoTask', email:c.dipEmail, nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||'', numero:n}); }catch(e){} }
-      try{ if(typeof notifPush==='function') notifPush('\u23f0 Sollecito '+n+': \u00ab'+(c.titolo||'task')+'\u00bb da fare \u2014 '+(c.dipNome||''), '\u23f0'); }catch(e){}
-      if (n>=CC_SOLL_MAX && !c.escalato){
+      try{ if(typeof notifPush==='function') notifPush('\u23f0 Sollecito '+n+'/'+CC_SOLL_MAX+': \u00ab'+(c.titolo||'task')+'\u00bb da fare \u2014 '+(c.dipNome||''), '\u23f0', {tipo:'task_soll', refId:c.id}); }catch(e){}
+      if (n>=CC_SOLL_ESCAL && !c.escalato){
         c.escalato=true;
         if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoEscalation', email:'europaautobusiness@gmail.com', nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', numero:n}); }catch(e){} }
         try{ if(typeof notifPush==='function') notifPush('\u26a0\ufe0f '+(c.dipNome||'Assegnatario')+' non ha eseguito \u00ab'+(c.titolo||'task')+'\u00bb dopo '+n+' solleciti. Serve un tuo intervento.', '\u26a0\ufe0f'); }catch(e){}
@@ -10379,6 +10381,26 @@ document.addEventListener('DOMContentLoaded',function(){
   window.ccRender = ccRender;        // usato dal wrapper di sidebarNav
   window.ccUpdateBadge = ccUpdateBadge;
   window.ccRefresh = ccFetchSheet;   // usato da "Aggiorna Tutto"
+  /* ccToggle era usata in un onclick HTML (scope globale) ma restava chiusa qui dentro:
+     il pulsante \u00abFatto\u00bb del riquadro rosso non funzionava. */
+  window.ccToggle = ccToggle;
+  /* Segna FATTO (non alterna) dalla notifica in app: lo usa anche Rudy. */
+  window.ccFattoDaNotifica = function(id){
+    try{
+      var u=ccUtente(), list=ccLoad(), trovato=false;
+      list.forEach(function(c){ if(c.id===id && !c.fatto){ c.fatto=true; c.fattoDa=(u&&u.nome)||''; ccSync(c); trovato=true; } });
+      if(!trovato){ ccToast('Task gi\u00e0 segnato come fatto'); return; }
+      ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo();
+      try{ ccPromemoriaTimbrature(); }catch(e){}
+      ccToast('\u2705 Task segnato come fatto');
+      var m=document.getElementById('notif-panel');
+      if(m && m.style.display==='block' && typeof notifApri==='function') notifApri();
+    }catch(e){}
+  };
+  /* Il task ha ancora un sollecito aperto? (serve per mostrare il pulsante) */
+  window.ccTaskInSospeso = function(id){
+    try{ var c=ccLoad().filter(function(x){return x.id===id;})[0]; return !!(c && !c.fatto); }catch(e){ return false; }
+  };
 
   /* ===================== Listener fissi ===================== */
   var _ccBind=function(id,ev,fn){ var el=document.getElementById(id); if(el) el.addEventListener(ev,fn); };
@@ -12769,6 +12791,31 @@ function cvCheckMailPreventivi(){
     }
   }catch(e){}
 }
+var WA_RIP_MIN = 30;  // ogni quanti MINUTI ripete il promemoria
+var WA_RIP_MAX = 10;  // quante volte al massimo
+/* Segna il messaggio WhatsApp come inviato: ferma i solleciti. */
+function cvWaFatto(id){
+  try{
+    var list=cvLoad(), idx=list.findIndex(function(x){return x.id===id;});
+    if(idx<0){ alert('Preventivo non trovato.'); return; }
+    list[idx].waFatto=true; list[idx].waFattoTs=Date.now();
+    list[idx].waFattoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+    list[idx].updatedAt=Date.now();
+    cvSave(list);
+    if(typeof supaUpsert==='function') supaUpsert('preventivi', list[idx]);
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Segnato come inviato', true);
+    if(typeof notifApri==='function'){ var m=document.getElementById('notif-panel'); if(m && m.style.display==='block') notifApri(); }
+  }catch(e){}
+}
+/* Un preventivo ha ancora un promemoria WhatsApp in sospeso? */
+function cvWaInSospeso(id){
+  try{
+    var p=(typeof cvById==='function')?cvById(id):null;
+    if(!p) return false;
+    if(p.waFatto || p.isContratto) return false;
+    return (parseInt(p.waPromCount||0,10)||0) > 0;
+  }catch(e){ return false; }
+}
 function cvCheckPromemoriaWa(){
   try{
     if(typeof cvLoad!=='function') return;
@@ -12781,8 +12828,21 @@ function cvCheckPromemoriaWa(){
       var eta=now-base;
       var nome=(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim()||'cliente';
       var auto=(p.autoSnapshot&&p.autoSnapshot.modello)||p.autoDesc||'veicolo';
-      if(eta>=48*3600000 && !p.waPromemoria48){ p.waPromemoria48=true; changed.push(p); try{ if(typeof notifPush==='function') notifPush('Ricorda di inviare il messaggio WhatsApp per il preventivo di '+nome+' ('+auto+') \u2014 sono passate 48 ore.', '\ud83d\udcac'); }catch(e){} }
-      if(eta>=96*3600000 && !p.waOfferta96){ p.waOfferta96=true; changed.push(p); try{ if(typeof notifPush==='function') notifPush('Preventivo di '+nome+' non confermato dopo 96h: invia l\'OFFERTA (valida 48h) via WhatsApp dalla Pipeline.', '\ud83c\udff7\ufe0f'); }catch(e){} }
+      /* Il promemoria torna finche' non risulta fatto: uno ogni WA_RIP_MIN minuti,
+         massimo WA_RIP_MAX volte, solo in orario di apertura. Si ferma se il
+         messaggio risulta inviato (waFatto) o se il preventivo diventa contratto. */
+      if(!p.waFatto && eta>=48*3600000){
+        var _n=parseInt(p.waPromCount||0,10)||0;
+        var _last=parseInt(p.waPromLast||0,10)||0;
+        var _scaduto = (_n===0) || ((now-_last) >= WA_RIP_MIN*60000);
+        if(_n < WA_RIP_MAX && _scaduto){
+          p.waPromCount=_n+1; p.waPromLast=now; p.waPromemoria48=true; changed.push(p);
+          var _txt = (_n===0)
+            ? ('Ricorda di inviare il messaggio WhatsApp a '+nome+' \u2014 '+auto)
+            : ('Sollecito '+(_n+1)+'/'+WA_RIP_MAX+': messaggio WhatsApp a '+nome+' ancora da inviare \u2014 '+auto);
+          try{ if(typeof notifPush==='function') notifPush(_txt, '\uD83D\uDCAC', {tipo:'wa_prom', refId:p.id}); }catch(e){}
+        }
+      }
     });
     if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(p){ supaUpsert('preventivi', p); }); }
   }catch(e){}
@@ -13619,8 +13679,13 @@ function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupa
    Aggiornamento trimestrale = si ricarica il file, zero codice da toccare.
    HyperFormula e' usato sotto licenza GPLv3 (licenseKey 'gpl-v3').        */
 
-var SIM_BUCKET = 'simulatore';
-var SIM_FILE   = 'simulatore.xlsx';
+/* Riusa il bucket 'documenti', gia' esistente e con le policy funzionanti:
+   evita di doverne creare uno nuovo e riconfigurare i permessi. */
+var SIM_BUCKET = 'documenti';
+var SIM_FILE   = 'simulatore/simulatore.xlsx';   // dove viene salvato dal tasto Aggiorna
+/* Percorsi in cui cercarlo, in ordine: il secondo copre il file caricato a mano
+   dentro la cartella 'auto' dalla console Supabase. */
+var SIM_PATHS  = ['simulatore/simulatore.xlsx', 'auto/simulatore.xlsx', 'simulatore.xlsx'];
 var SIM_LIBS = [
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://cdn.jsdelivr.net/npm/hyperformula@3.3.0/dist/hyperformula.full.min.js'
@@ -13656,17 +13721,30 @@ function simLoadLibs(cb){
 function simFetch(cb){
   var sb = (typeof sbClient==='function') ? sbClient() : null;
   if(!sb){ cb(null, 'Supabase non disponibile'); return; }
-  try{
-    sb.storage.from(SIM_BUCKET).list('', {limit:100}).then(function(l){
-      if(l && l.data){ for(var i=0;i<l.data.length;i++){ if(l.data[i].name===SIM_FILE) _simMeta=l.data[i]; } }
-    }).catch(function(){});
-    sb.storage.from(SIM_BUCKET).download(SIM_FILE).then(function(r){
-      if(r && r.error){ cb(null, 'Nessun simulatore caricato'); return; }
-      if(!r || !r.data){ cb(null, 'File non trovato'); return; }
-      r.data.arrayBuffer().then(function(buf){ cb(buf, null); })
-        .catch(function(e){ cb(null, String(e && e.message || e)); });
-    }).catch(function(e){ cb(null, String(e && e.message || e)); });
-  }catch(e){ cb(null, String(e && e.message || e)); }
+  var i = 0, ultimo = '';
+  var prova = function(){
+    if(i >= SIM_PATHS.length){
+      cb(null, 'Nessun file simulatore trovato nel bucket \u00ab'+SIM_BUCKET+'\u00bb.'+(ultimo?(' ('+ultimo+')'):''));
+      return;
+    }
+    var path = SIM_PATHS[i++];
+    try{
+      sb.storage.from(SIM_BUCKET).download(path).then(function(r){
+        if(!r || r.error || !r.data){ ultimo = (r && r.error && r.error.message) || ''; prova(); return; }
+        /* metadati: data ultimo aggiornamento, per mostrarla in alto */
+        try{
+          var dir = path.indexOf('/')>=0 ? path.slice(0, path.lastIndexOf('/')) : '';
+          var nome = path.slice(path.lastIndexOf('/')+1);
+          sb.storage.from(SIM_BUCKET).list(dir, {limit:100}).then(function(l){
+            if(l && l.data){ for(var k=0;k<l.data.length;k++){ if(l.data[k].name===nome) _simMeta=l.data[k]; } }
+          }).catch(function(){});
+        }catch(e){}
+        r.data.arrayBuffer().then(function(buf){ cb(buf, null); })
+          .catch(function(e){ ultimo=String(e && e.message || e); prova(); });
+      }).catch(function(e){ ultimo=String(e && e.message || e); prova(); });
+    }catch(e){ ultimo=String(e && e.message || e); prova(); }
+  };
+  prova();
 }
 
 /* ---- costruisce il motore dal file ---- */
@@ -13797,7 +13875,7 @@ function simUpload(input){
     upsert: true,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   }).then(function(r){
-    if(r && r.error){ simErrore('Caricamento fallito: '+r.error.message+(/bucket/i.test(r.error.message||'')?' \u2014 crea il bucket \u00ab'+SIM_BUCKET+'\u00bb su Supabase.':'')); return; }
+    if(r && r.error){ simErrore('Caricamento fallito: '+r.error.message); return; }
     _simCaricato = false; _simHF = null;
     if(typeof tcToastNew==='function') tcToastNew('\u2705 Simulatore aggiornato', true);
     simInit();
@@ -14084,6 +14162,7 @@ function eaBadgeBoot(){
   /* carica i contratti anche se l'utente non apre nessuna sezione:
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
   eaBadgeRefreshAll();
 }
 try{
@@ -14479,12 +14558,33 @@ function notifShowCards(arr){
   if(!arr||!arr.length) return; var stack=notifStack();
   arr.slice(-6).forEach(function(n,i){ var c=notifCard(n); stack.appendChild(c); requestAnimationFrame(function(){ c.style.transform='translateY(0)'; c.style.opacity='1'; }); setTimeout(function(){ if(c.parentNode){ c.style.opacity='0'; c.style.transform='translateY(-12px)'; setTimeout(function(){ if(c.parentNode) c.parentNode.removeChild(c); },220); } }, 9000+i*500); });
 }
-function notifPush(testo, icon){
+function notifPush(testo, icon, extra){
   try{
     var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+    if(extra && typeof extra==='object'){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra,k)) n[k]=extra[k]; } }
     var list=notifLoad(); list.push(n); notifSave(list);
     if(typeof supaUpsert==='function'){ try{ supaUpsert('notifiche', n); }catch(e){} }
     notifShowCards([n]); notifSetLastSeen(n.ts); if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
+  }catch(e){}
+}
+function notifAvvia(){
+  /* Avvia sync + timer su OGNI percorso di accesso (login manuale o sessione
+     ripristinata). Attende di conoscere l'utente: notifLastSeen dipende
+     dall'email, partire da 'anon' segnerebbe le notifiche come gia' viste. */
+  try{
+    if(window._notifAvviato) return; window._notifAvviato=true;
+    var t0=Date.now();
+    (function attendi(){
+      var mail='';
+      try{ mail=(typeof _currentUserEmail!=='undefined' && _currentUserEmail)?String(_currentUserEmail):''; }catch(e){}
+      if(mail){
+        try{ notifSync(); }catch(e){}
+        if(!window._notifTimer){ window._notifTimer=setInterval(function(){ try{ notifSync(); }catch(e){} }, 90000); }
+        return;
+      }
+      if(Date.now()-t0 > 30000){ window._notifAvviato=false; return; }
+      setTimeout(attendi, 500);
+    })();
   }catch(e){}
 }
 function notifSync(){
@@ -14523,7 +14623,19 @@ function notifApri(){
   else h+='<div style="margin-bottom:14px;">'+auto.map(function(a){ return '<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12.5px;align-items:flex-start;"><span>'+a.icon+'</span><span style="flex:1;color:#334155;">'+esc(a.testo)+'</span></div>'; }).join('')+'</div>';
   h+='<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin-bottom:6px;">\ud83d\udd14 Notifiche recenti</div>';
   if(!notifs.length){ h+='<div style="font-size:12px;color:#94a3b8;">Nessuna notifica registrata.</div>'; }
-  else h+=notifs.map(function(n){ return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span><div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div></div>'; }).join('');
+  else h+=notifs.map(function(n){
+    /* Promemoria WhatsApp ancora in sospeso: compare il pulsante Fatto.
+       Finche' non lo premi (o il messaggio non risulta inviato) il sollecito ritorna. */
+    var _btn='';
+    /* Sollecito di una task del calendario ancora aperta: pulsante Fatto.
+       Serve a Rudy per confermare direttamente dal messaggio in app. */
+    try{ if(n.tipo==='task_soll' && n.refId && typeof window.ccTaskInSospeso==='function' && window.ccTaskInSospeso(n.refId)){
+      _btn='<button onclick="ccFattoDaNotifica(\''+n.refId+'\')" style="flex:0 0 auto;align-self:center;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 9px;font-family:inherit;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;">\u2705 Fatto</button>';
+    } }catch(e){}
+    try{ if(n.tipo==='wa_prom' && n.refId && typeof cvWaInSospeso==='function' && cvWaInSospeso(n.refId)){
+      _btn='<button onclick="cvWaFatto(\''+n.refId+'\')" style="flex:0 0 auto;align-self:center;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 9px;font-family:inherit;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;">\u2705 Fatto</button>';
+    } }catch(e){}
+    return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span><div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div>'+_btn+'</div>'; }).join('');
   h+='</div></div>';
   m.innerHTML=h; m.style.display='block';
   if(typeof notifSetLastSeen==='function') notifSetLastSeen(Date.now());
