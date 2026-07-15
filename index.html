@@ -9762,7 +9762,11 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '<div class="cc-field"><label>Durata</label><select id="cc-durata"><option value="45">45 min (visione/preventivo)</option><option value="90">1h 30 (intervento/manutenzione)</option><option value="30">30 min</option><option value="60">1 ora</option><option value="120">2 ore</option></select></div>'
   +       '<div class="cc-field" style="display:none"><label>Ricordamelo</label><div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"></div><div class="cc-hint" id="cc-hint-ricorda"></div></div>'
   +       '<div class="cc-hint" style="margin:-2px 0 12px;color:#0891b2;font-weight:600;">🔔 Il cliente riceverà un promemoria automatico il giorno prima (email obbligatoria).</div>'
-  +       '<div class="cc-field"><label>Nota (opzionale)</label><textarea id="cc-nota" placeholder="Dettagli aggiuntivi…"></textarea></div>'
+  +       '<div class="cc-field"><label>Tipo di intervento *</label>'
+  +         '<textarea id="cc-nota" list="cc-interventi-list" placeholder="Es. tagliando, pastiglie freni, spia motore accesa…"></textarea>'
+  +         '<div style="font-size:10px;color:#94a3b8;margin-top:3px;">Obbligatorio: \u00e8 quello che finisce sulla fattura e nello storico del veicolo.</div>'
+  +         '<div id="cc-nota-sugg" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;"></div>'
+  +       '</div>'
   +       '<div class="cc-inserito" id="cc-inserito"></div>'
   +       '<button class="cc-btn cc-btn-primary" id="cc-salva" style="width:100%">Salva appuntamento</button>'
   +     '</div>'
@@ -10080,6 +10084,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccNomeCliente(o){ var c=(o&&o.cliente)?o.cliente:o||{}; return (c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()); }
   function ccPopolaSuggerimenti(){
     try{
+      try{ ccNotaSugg(); }catch(e){}
       var vl=document.getElementById('cc-veicoli-list');
       if(vl && typeof mzLoad==='function'){ vl.innerHTML=mzLoad().filter(function(a){return a && a.stato!=='venduta';}).map(function(a){ var lab=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):''))); return '<option value="'+ccEsc(lab)+'"></option>'; }).join(''); }
       var cl=document.getElementById('cc-clienti-list');
@@ -10161,6 +10166,15 @@ document.addEventListener('DOMContentLoaded',function(){
     if(categoria!=='task'){
       if(!email || !/.+@.+\..+/.test(email)){ ccToast('Email cliente obbligatoria'); if(emEl) emEl.focus(); return; }
       if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
+    }
+    /* La nota descrive l'intervento (tagliando, pastiglie, spia motore...):
+       finisce in fattura e nello storico, quindi non e' piu' facoltativa. */
+    var notaEl=document.getElementById('cc-nota');
+    var notaVal=((notaEl&&notaEl.value)||'').trim();
+    if(!notaVal){
+      ccToast('Scrivi il tipo di intervento nella nota');
+      if(notaEl){ notaEl.focus(); notaEl.style.borderColor='#dc2626'; setTimeout(function(){ notaEl.style.borderColor=''; }, 2500); }
+      return;
     }
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
@@ -10485,6 +10499,29 @@ document.addEventListener('DOMContentLoaded',function(){
   /* ccToggle era usata in un onclick HTML (scope globale) ma restava chiusa qui dentro:
      il pulsante \u00abFatto\u00bb del riquadro rosso non funzionava. */
   window.ccToggle = ccToggle;
+  /* Servono al modulo Fattura tagliando, che vive fuori da questa IIFE. */
+  /* Interventi ricorrenti: un tocco e finiscono nella nota. */
+  var CC_INTERVENTI = ['Tagliando','Pastiglie freni','Dischi e pastiglie','Spia motore accesa',
+                       'Cambio olio','Revisione','Gomme','Batteria','Frizione','Distribuzione','Climatizzatore','Diagnosi'];
+  function ccNotaSugg(){
+    var box=document.getElementById('cc-nota-sugg'); if(!box) return;
+    box.innerHTML=CC_INTERVENTI.map(function(t){
+      return '<button type="button" onclick="ccNotaAdd(\''+t.replace(/'/g,"\\'")+'\')" style="padding:3px 8px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:10px;cursor:pointer;color:#475569;">'+t+'</button>';
+    }).join('');
+  }
+  window.ccNotaAdd = function(t){
+    var el=document.getElementById('cc-nota'); if(!el) return;
+    var v=(el.value||'').trim();
+    el.value = v ? (v+', '+t) : t;
+    el.style.borderColor='';
+    el.focus();
+  };
+  window.ccNotaSugg = ccNotaSugg;
+  window.ccLoad = ccLoad;
+  window.ccSave = ccSave;
+  window.ccSync = ccSync;
+  window.ccUtente = ccUtente;
+  window.ccDueTs = ccDueTs;
   /* Quante mansioni ha ancora da eseguire l'utente collegato:
      serve alla campanella per restare accesa finche' non sono finite. */
   window.eaTaskMie = function(){
@@ -13976,6 +14013,11 @@ function tgApri(id){
   _tgId=id;
   var f=c.fatturaTag||{};
   _tgRighe = (f.righe && f.righe.length) ? JSON.parse(JSON.stringify(f.righe)) : tgModelloVoci();
+  /* La nota dell'appuntamento dice che intervento e': la prima riga la eredita,
+     cosi' in fattura non compare un generico 'MANUTENZIONE'. */
+  if(!(f.righe && f.righe.length) && c.nota && _tgRighe[0] && !_tgRighe[0].cod){
+    _tgRighe[0].desc = String(c.nota).toUpperCase().slice(0,60);
+  }
   var m=document.getElementById('tg-modal');
   if(!m){
     m=document.createElement('div'); m.id='tg-modal';
