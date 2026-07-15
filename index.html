@@ -9748,7 +9748,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div class="cc-addbox">'
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
-  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault()"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
   +       '<div class="cc-field"><label>Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" onchange="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"></div><datalist id="cc-clienti-list"></datalist>'
@@ -9758,11 +9758,12 @@ document.addEventListener('DOMContentLoaded',function(){
   +         '<div class="cc-field"><label>Telefono cliente *</label><input type="tel" id="cc-tel" placeholder="333 1234567"></div>'
   +       '</div>'
   +       '<div class="cc-field" style="display:none"><select id="cc-dip"></select></div>'
+  +       '<div class="cc-field"><label>Data</label><input type="date" id="cc-data"></div>'
   +       '<div class="cc-field"><label>Ora</label><input type="time" id="cc-ora"></div>'
   +       '<div class="cc-field"><label>Durata</label><select id="cc-durata"><option value="45">45 min (visione/preventivo)</option><option value="90">1h 30 (intervento/manutenzione)</option><option value="30">30 min</option><option value="60">1 ora</option><option value="120">2 ore</option></select></div>'
   +       '<div class="cc-field" style="display:none"><label>Ricordamelo</label><div class="cc-inputmic"><input type="datetime-local" id="cc-ricorda"></div><div class="cc-hint" id="cc-hint-ricorda"></div></div>'
   +       '<div class="cc-hint" style="margin:-2px 0 12px;color:#0891b2;font-weight:600;">🔔 Il cliente riceverà un promemoria automatico il giorno prima (email obbligatoria).</div>'
-  +       '<div class="cc-field"><label>Tipo di intervento *</label>'
+  +       '<div class="cc-field" id="cc-nota-wrap"><label>Tipo di intervento *</label>'
   +         '<textarea id="cc-nota" list="cc-interventi-list" placeholder="Es. tagliando, pastiglie freni, spia motore accesa…"></textarea>'
   +         '<div style="font-size:10px;color:#94a3b8;margin-top:3px;">Obbligatorio: \u00e8 quello che finisce sulla fattura e nello storico del veicolo.</div>'
   +         '<div id="cc-nota-sugg" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;"></div>'
@@ -9952,6 +9953,9 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccApri(ds, noScroll){
     ccGiornoSel = ds; ccRenderCal();
     var p = document.getElementById('cc-daypanel'); p.style.display = 'block';
+    /* La data e' modificabile: se hai cliccato il giorno sbagliato la correggi qui,
+       senza chiudere e ricominciare. */
+    try{ var _dEl=document.getElementById('cc-data'); if(_dEl) _dEl.value=ccGiornoSel||''; }catch(e){}
     try{ if(typeof ccPopolaSuggerimenti==='function') ccPopolaSuggerimenti(); }catch(e){}
     var parts = ds.split('-');
     document.getElementById('cc-daydate').textContent = parseInt(parts[2])+' '+MESI[parseInt(parts[1])-1]+' '+parts[0];
@@ -10149,6 +10153,7 @@ document.addEventListener('DOMContentLoaded',function(){
         if(g('cc-email')) g('cc-email').value=c.email||'';
         if(g('cc-tel')) g('cc-tel').value=c.tel||'';
         if(g('cc-ora')) g('cc-ora').value=c.ora||'';
+        if(g('cc-data')) g('cc-data').value=c.data||'';
         if(g('cc-veicolo')) g('cc-veicolo').value=c.veicolo||'';
         if(g('cc-nota')) g('cc-nota').value=c.nota||'';
         if(g('cc-tipo')) g('cc-tipo').value=c.tipo||'intervento';
@@ -10168,10 +10173,12 @@ document.addEventListener('DOMContentLoaded',function(){
       if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
     }
     /* La nota descrive l'intervento (tagliando, pastiglie, spia motore...):
-       finisce in fattura e nello storico, quindi non e' piu' facoltativa. */
+       finisce in fattura e nello storico. Obbligatoria solo sugli interventi:
+       su un appuntamento di vendita non ha senso. */
     var notaEl=document.getElementById('cc-nota');
     var notaVal=((notaEl&&notaEl.value)||'').trim();
-    if(!notaVal){
+    var _tipoOra=(document.getElementById('cc-tipo')||{}).value||'intervento';
+    if(!notaVal && categoria!=='task' && _tipoOra!=='vendita'){
       ccToast('Scrivi il tipo di intervento nella nota');
       if(notaEl){ notaEl.focus(); notaEl.style.borderColor='#dc2626'; setTimeout(function(){ notaEl.style.borderColor=''; }, 2500); }
       return;
@@ -10179,12 +10186,17 @@ document.addEventListener('DOMContentLoaded',function(){
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
     var u = ccUtente();
+    /* La data la decide il campo, non il giorno cliccato: cosi' si corregge
+       senza chiudere e riaprire sul giorno giusto. */
+    var _ccDataScelta=((document.getElementById('cc-data')||{}).value||'').trim() || ccGiornoSel;
+    if(!_ccDataScelta){ ccToast('Scegli la data'); return; }
     var tipo=(document.getElementById('cc-tipo')||{}).value||'intervento';
     var ricorda='';
-    try{ if(ccGiornoSel){ var pp=ccGiornoSel.split('-'); var dprev=new Date(parseInt(pp[0]),parseInt(pp[1])-1,parseInt(pp[2])-1,18,0,0); var z=function(n){return String(n).padStart(2,'0');}; ricorda=dprev.getFullYear()+'-'+z(dprev.getMonth()+1)+'-'+z(dprev.getDate())+'T18:00'; } }catch(e){}
+    /* il promemoria segue la data scelta, non il giorno cliccato */
+    try{ if(_ccDataScelta){ var pp=_ccDataScelta.split('-'); var dprev=new Date(parseInt(pp[0]),parseInt(pp[1])-1,parseInt(pp[2])-1,18,0,0); var z=function(n){return String(n).padStart(2,'0');}; ricorda=dprev.getFullYear()+'-'+z(dprev.getMonth()+1)+'-'+z(dprev.getDate())+'T18:00'; } }catch(e){}
     var c = {
       id: 'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
-      data: ccGiornoSel, titolo: titolo, tipo:tipo, categoria:categoria, email:email, tel:tel,
+      data: _ccDataScelta, titolo: titolo, tipo:tipo, categoria:categoria, email:email, tel:tel,
       dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
       ora: document.getElementById('cc-ora').value.trim(),
       veicolo: ((document.getElementById('cc-veicolo')||{}).value||'').trim(), durata: parseInt(((document.getElementById('cc-durata')||{}).value)||'0',10)||0,
@@ -10198,12 +10210,24 @@ document.addEventListener('DOMContentLoaded',function(){
     ccPermessoNotifiche();
     if(categoria!=='task' && email && typeof eaInviaMessaggio==='function'){ try{
       var _acData=c.data||'', _acOra=c.ora||'';
+      /* Marca e modello dal magazzino: nel campo veicolo spesso c'e' solo la targa.
+         Al cliente si scrive l'auto, non 'intervento'. */
+      var _acVeic='';
+      try{
+        if(c.veicolo){
+          if(typeof tgVeicoloDa==='function'){ var _vv=tgVeicoloDa(c.veicolo); _acVeic=String(_vv.modello||'').trim(); }
+          if(!_acVeic) _acVeic=String(c.veicolo).trim();
+        }
+      }catch(e){ _acVeic=String(c.veicolo||'').trim(); }
+      var _acPer = _acVeic ? (' per il veicolo <b>'+_acVeic+'</b>') : '';
+      var _acPerT = _acVeic ? (' per il veicolo '+_acVeic) : '';
       var _acHtml='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.5;">'
         +'<p>Gentile '+(titolo||'cliente')+',</p>'
-        +'<p>le confermiamo l\u2019appuntamento'+(tipo?(' per <b>'+tipo+'</b>'):'')+(_acData?(' del <b>'+_acData+'</b>'):'')+(_acOra?(' alle <b>'+_acOra+'</b>'):'')+'.</p>'
-        +(c.nota?('<p><b>Note:</b> '+c.nota+'</p>'):'')
+        +'<p>le confermiamo l\u2019appuntamento'+_acPer+(_acData?(' del <b>'+_acData+'</b>'):'')+(_acOra?(' alle <b>'+_acOra+'</b>'):'')+'.</p>'
+        /* Le note sono lavoro interno (tagliando, pastiglie, spia motore):
+           al cliente non servono e possono confonderlo o allarmarlo. */
         +'<p>A presto,<br>Europa Auto Srl</p></div>';
-      var _acText='Gentile '+(titolo||'cliente')+',\nle confermiamo l\u2019appuntamento'+(tipo?(' per '+tipo):'')+(_acData?(' del '+_acData):'')+(_acOra?(' alle '+_acOra):'')+'.'+(c.nota?('\nNote: '+c.nota):'')+'\n\nA presto,\nEuropa Auto Srl';
+      var _acText='Gentile '+(titolo||'cliente')+',\nle confermiamo l\u2019appuntamento'+_acPerT+(_acData?(' del '+_acData):'')+(_acOra?(' alle '+_acOra):'')+'.'+'\n\nA presto,\nEuropa Auto Srl';
       eaInviaMessaggio({ to:email, subject:'Conferma appuntamento \u2014 Europa Auto', html:(typeof eaMailWrap==='function'?eaMailWrap(_acHtml):_acHtml), text:_acText });
     }catch(e){} }
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
@@ -10342,7 +10366,7 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||''}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
       }
     });
     if (cambiato) ccSave(list);
@@ -10499,7 +10523,24 @@ document.addEventListener('DOMContentLoaded',function(){
   /* ccToggle era usata in un onclick HTML (scope globale) ma restava chiusa qui dentro:
      il pulsante \u00abFatto\u00bb del riquadro rosso non funzionava. */
   window.ccToggle = ccToggle;
+  /* Chiamate da onclick nell'HTML, che gira nello scope globale:
+     senza queste righe i pulsanti Modifica, Elimina e Chiudi non facevano nulla. */
+  window.ccModificaEvento = ccModificaEvento;
+  window.ccEliminaEvento  = ccEliminaEvento;
+  window.ccChiudiEvento   = ccChiudiEvento;
   /* Servono al modulo Fattura tagliando, che vive fuori da questa IIFE. */
+  /* Su un appuntamento di VENDITA non c'e' nessun intervento da descrivere:
+     il campo sparisce e smette di essere obbligatorio. */
+  function ccTipoUI(){
+    try{
+      var t=(document.getElementById('cc-tipo')||{}).value||'intervento';
+      var box=document.getElementById('cc-nota-wrap');
+      if(box) box.style.display=(t==='vendita')?'none':'';
+      var vb=document.getElementById('cc-veicolo-wrap');
+      if(vb) vb.style.display='';
+    }catch(e){}
+  }
+  window.ccTipoUI = ccTipoUI;
   /* Interventi ricorrenti: un tocco e finiscono nella nota. */
   var CC_INTERVENTI = ['Tagliando','Pastiglie freni','Dischi e pastiglie','Spia motore accesa',
                        'Cambio olio','Revisione','Gomme','Batteria','Frizione','Distribuzione','Climatizzatore','Diagnosi'];
@@ -12985,16 +13026,234 @@ function cvProgrammaMailCliente(cv){
     cv.mailProg = { to:cv.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:_h };
   }catch(e){}
 }
+/* ===================== MAIL PREVENTIVO AL CLIENTE =====================
+   Non e' una copia del contratto: e' una mail che deve far venire voglia
+   di vedere l'auto. Percio':
+     - niente <style> e niente flex: Gmail li cancella. Solo tabelle e stili
+       inline, che e' l'unica cosa che regge in tutti i client di posta.
+     - una sola informazione forte (la rata, se c'e'; altrimenti il prezzo)
+     - una sola azione da fare: scrivere su WhatsApp
+     - nessuna clausola contrattuale: quelle stanno sul documento firmato.   */
+
+var EAM_W = 600;
+
+function eamEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function eamEu(n){
+  var v=parseFloat(n); if(isNaN(v)) return '';
+  return v.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' \u20ac';
+}
+function eamEuTondo(n){
+  var v=parseFloat(n); if(isNaN(v)) return '';
+  return Math.round(v).toLocaleString('it-IT')+' \u20ac';
+}
+
+/* Foto e anno stanno in magazzino, non nello snapshot del preventivo */
+function eamAuto(p){
+  var a=(p&&p.autoSnapshot)||{};
+  var out={ nome:a.modello||p.autoDesc||'la tua prossima auto', km:a.km, alim:a.alimentazione,
+            cambio:a.cambio, colore:a.colore, targa:a.targa, anno:'', foto:'' };
+  try{
+    var mz=(p.autoId && typeof mzById==='function') ? mzById(p.autoId) : null;
+    if(mz){
+      out.anno=mz.anno||'';
+      if(!out.km) out.km=mz.km;
+      var f=(mz.foto||[])[0];
+      if(f && f.url) out.foto=f.url;
+    }
+  }catch(e){}
+  return out;
+}
+
+/* La rata: il numero che fa decidere. Sta sul pagamento a finanziamento. */
+function eamRata(p){
+  try{
+    var pg=(p.pagamenti||[]).filter(function(x){
+      return (x.tipo==='Finanziamento') || /finanziamento/i.test(x.metodo||'');
+    })[0];
+    if(!pg) return null;
+    var rata=parseFloat(pg.importoRata), rate=parseInt(pg.rate,10);
+    if(!(rata>0) || !(rate>0)) return null;
+    /* TAN e TAEG li scrive il simulatore nella nota del pagamento */
+    var tan='', taeg='';
+    try{
+      var n=String(pg.note||'');
+      var mt=n.match(/TAN\s*([\d.,]+)\s*%/i);  if(mt) tan=mt[1];
+      var mg=n.match(/TAEG\s*([\d.,]+)\s*%/i); if(mg) taeg=mg[1];
+    }catch(e){}
+    return { rata:rata, rate:rate, promo:/promo/i.test(pg.metodo||''), tan:tan, taeg:taeg };
+  }catch(e){ return null; }
+}
+
+function eamBtn(testo, url, colore){
+  return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">'
+    + '<tr><td align="center" bgcolor="'+colore+'" style="border-radius:8px;">'
+    + '<a href="'+url+'" style="display:inline-block;padding:15px 34px;font-family:Arial,Helvetica,sans-serif;'
+    + 'font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:8px;">'+testo+'</a>'
+    + '</td></tr></table>';
+}
+
 function cvMailPreventivoHtml(p){
-  var doc=''; try{ doc=(typeof cvBuildHTML==='function')?cvBuildHTML(p,'preventivo'):''; }catch(e){}
-  if(!doc){ var cl=p.cliente||{}; doc='<p>Gentile '+cvEsc(((cl.nome||'')+' '+(cl.cognome||'')).trim()||'Cliente')+',</p><p>di seguito il suo preventivo.</p>'; }
-  var foot='<div style="max-width:820px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;border-top:2px solid #1a4fa0;padding:16px 22px;background:#f8fafc;font-size:12px;color:#64748b;line-height:1.9;">'
-    +'<b style="color:#334155;font-size:13px;">Contatti Europa Auto</b><br>'
-    +'\uD83D\uDCDE <a href="tel:0362285390" style="color:#1a4fa0;text-decoration:none;font-weight:700;">0362 285390</a> \u00b7 <a href="tel:029181820" style="color:#1a4fa0;text-decoration:none;font-weight:700;">02 9181820</a>'
-    +' \u00b7 \uD83D\uDCAC <a href="https://wa.me/39029181820" style="color:#25D366;text-decoration:none;font-weight:700;">WhatsApp</a><br>'
-    +'\uD83D\uDCCD Via Nigra 4, 20037 Paderno Dugnano (MI)'
-    +'<div style="margin-top:10px;color:#94a3b8;font-size:11px;">Questa \u00e8 una email generata automaticamente: si prega di non rispondere a questo indirizzo.</div></div>';
-  return '<div style="background:#eef2f7;padding:18px 8px;">'+doc+foot+'</div>';
+  var cl=(p&&p.cliente)||{};
+  var nome=String(cl.nome||'').trim() || String(cl.cognome||'').trim() || 'Gentile Cliente';
+  var a=eamAuto(p);
+  var t=(typeof cvCalcola==='function')?cvCalcola(p):{};
+  var tot=(t.totaleScontato!=null?t.totaleScontato:t.totaleVendita)||0;
+  var fin=eamRata(p);
+  var F='font-family:Arial,Helvetica,sans-serif;';
+
+  /* --- specifiche: una riga sola, leggibile, niente tabelle di dati --- */
+  var spec=[];
+  if(a.anno) spec.push(a.anno);
+  if(a.km!=null && a.km!=='') spec.push(Number(a.km).toLocaleString('it-IT')+' km');
+  if(a.alim) spec.push(a.alim);
+  if(a.cambio) spec.push(a.cambio);
+  if(a.colore) spec.push(a.colore);
+
+  /* --- cosa e' compreso: dà valore al prezzo --- */
+  var incluso=[];
+  try{
+    if(t.passaggio>0) incluso.push('Passaggio di propriet\u00e0 e messa su strada');
+    if(p.garanziaImporto>0 || p.garanziaMesi) incluso.push('Garanzia'+(p.garanziaMesi?(' '+p.garanziaMesi+' mesi'):''));
+    /* La valutazione della permuta NON va in mail: e' un numero che si tratta
+       di persona, scriverlo qui lo trasforma in una trattativa gia' chiusa. */
+  }catch(e){}
+  /* le coperture della polizza: si leggono dai Parametri, cosi' restano allineate
+     a quelle che finiscono sul contratto */
+  var polMesi=(p.assicOn && p.assicMesi) ? p.assicMesi : '';
+  var polVoci=[];
+  if(p.assicOn){
+    var txt='';
+    try{ txt=p.assicDettaglio || ((typeof parLoad==='function' && parLoad().assicurazione) || '') || (typeof CV_ASSIC_DEF!=='undefined'?CV_ASSIC_DEF:''); }catch(e){}
+    polVoci=String(txt||'').split(/\n+/)
+      .map(function(x){ return x.replace(/^[\u2022\-\*\s]+/,'').trim(); })
+      .filter(Boolean)
+      /* la voce sulle franchigie esce dall'elenco: viene detta sotto, in modo
+         piu' comprensibile di una riga tecnica di polizza */
+      .filter(function(x){ return !/franchigi/i.test(x); });
+  }
+
+  var h='';
+  h+='<div style="background:#eef2f7;padding:0;margin:0;">';
+  h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f7;">'
+    +'<tr><td align="center" style="padding:18px 10px;">';
+  h+='<table role="presentation" width="'+EAM_W+'" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:'+EAM_W+'px;background:#ffffff;border-radius:12px;overflow:hidden;">';
+
+  /* intestazione */
+  h+='<tr><td bgcolor="#1a4fa0" style="padding:16px 24px;'+F+'color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:1px;">EUROPA AUTO</td></tr>';
+
+  /* apertura */
+  h+='<tr><td style="padding:26px 24px 8px;'+F+'">'
+    +'<div style="font-size:17px;color:#0f172a;">Ciao '+eamEsc(nome)+',</div>'
+    +'<div style="font-size:17px;color:#0f172a;margin-top:4px;">ecco la tua <b>'+eamEsc(a.nome)+'</b>.</div>'
+    +'</td></tr>';
+
+  /* foto: e' quello che vende */
+  if(a.foto){
+    h+='<tr><td style="padding:16px 24px 0;">'
+      +'<img src="'+eamEsc(a.foto)+'" width="552" alt="'+eamEsc(a.nome)+'" style="width:100%;max-width:552px;height:auto;display:block;border-radius:10px;border:0;">'
+      +'</td></tr>';
+  }
+
+  /* nome auto + specifiche */
+  h+='<tr><td style="padding:18px 24px 0;'+F+'">'
+    +'<div style="font-size:22px;font-weight:bold;color:#0f172a;line-height:1.25;">'+eamEsc(a.nome)+'</div>'
+    + (spec.length ? '<div style="font-size:14px;color:#64748b;margin-top:5px;">'+eamEsc(spec.join('  \u00b7  '))+'</div>' : '')
+    +'</td></tr>';
+
+  /* IL numero: la rata se c'e', altrimenti il prezzo */
+  if(fin){
+    h+='<tr><td style="padding:20px 24px 0;">'
+      +'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0fdf4;border-radius:10px;">'
+      +'<tr><td align="center" style="padding:20px;'+F+'">'
+      +'<div style="font-size:13px;color:#166534;text-transform:uppercase;letter-spacing:1px;">La tua rata</div>'
+      +'<div style="font-size:40px;font-weight:bold;color:#16a34a;line-height:1.1;margin:6px 0;">'+eamEu(fin.rata)+'</div>'
+      +'<div style="font-size:15px;color:#166534;">al mese per '+fin.rate+' mesi</div>'
+      /* TAN, TAEG e l'avviso sulla variabilita' della rata non compaiono qui:
+         scelta del titolare. La nota sulla rata indicativa resta in fondo alla
+         mail, e i tassi restano sul preventivo e sul contratto stampati. */
+      +'</td></tr></table></td></tr>';
+    h+='<tr><td style="padding:14px 24px 0;'+F+'font-size:15px;color:#334155;">'
+      +'Prezzo chiavi in mano <b style="color:#0f172a;">'+eamEuTondo(tot)+'</b>'
+      + (fin.promo ? '<div style="font-size:12px;color:#64748b;margin-top:3px;">Prezzo riservato con finanziamento.</div>' : '')
+      +'</td></tr>';
+  } else {
+    h+='<tr><td style="padding:20px 24px 0;">'
+      +'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eff6ff;border-radius:10px;">'
+      +'<tr><td align="center" style="padding:20px;'+F+'">'
+      +'<div style="font-size:13px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;">Prezzo chiavi in mano</div>'
+      +'<div style="font-size:38px;font-weight:bold;color:#1a4fa0;line-height:1.1;margin:6px 0;">'+eamEuTondo(tot)+'</div>'
+      +'</td></tr></table></td></tr>';
+  }
+
+  /* cosa e' compreso */
+  if(incluso.length){
+    var li='';
+    incluso.forEach(function(x){
+      li+='<tr><td width="20" valign="top" style="'+F+'font-size:15px;color:#16a34a;padding:3px 0;">\u2713</td>'
+        +'<td style="'+F+'font-size:14px;color:#334155;padding:3px 0;">'+eamEsc(x)+'</td></tr>';
+    });
+    h+='<tr><td style="padding:18px 24px 0;">'
+      +'<div style="'+F+'font-size:13px;font-weight:bold;color:#0f172a;margin-bottom:6px;">Nel prezzo &egrave; compreso</div>'
+      +'<table role="presentation" cellpadding="0" cellspacing="0" border="0">'+li+'</table>'
+      +'</td></tr>';
+  }
+
+  /* --- la polizza in dettaglio: e' la garanzia forte, va mostrata tutta --- */
+  if(polVoci.length){
+    var pl='';
+    polVoci.forEach(function(x){
+      pl+='<tr>'
+        +'<td width="22" valign="top" style="'+F+'font-size:14px;color:#0891b2;padding:4px 0;">\u2713</td>'
+        +'<td style="'+F+'font-size:14px;color:#0f172a;padding:4px 0;line-height:1.45;">'+eamEsc(x)+'</td></tr>';
+    });
+    h+='<tr><td style="padding:20px 24px 0;">'
+      +'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ecfeff;border-radius:10px;">'
+      +'<tr><td style="padding:18px 20px;'+F+'">'
+      +'<div style="font-size:12px;color:#0891b2;text-transform:uppercase;letter-spacing:1px;font-weight:bold;">\uD83D\uDEE1\uFE0F Polizza inclusa'+(polMesi?(' \u00b7 '+eamEsc(polMesi)+' mesi'):'')+'</div>'
+      +'<div style="font-size:15px;font-weight:bold;color:#0f172a;margin:6px 0 10px;">La tua auto \u00e8 protetta, senza pensieri</div>'
+      +'<table role="presentation" cellpadding="0" cellspacing="0" border="0">'+pl+'</table>'
+      /* La franchigia azzerata e' l'argomento piu' forte: va vista, non letta in una nota */
+      +'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;background:#ffffff;border:2px solid #0891b2;border-radius:10px;">'
+      +'<tr><td align="center" style="padding:16px 14px;'+F+'">'
+      +'<div style="font-size:26px;line-height:1;">\uD83D\uDD27</div>'
+      +'<div style="font-size:19px;font-weight:bold;color:#0e7490;line-height:1.3;margin:8px 0 4px;">Ripari da noi e azzeriamo<br>la maggior parte delle franchigie</div>'
+      +'<div style="font-size:13px;color:#64748b;">Carrozzeria interna: porti l\u2019auto qui e non anticipi nulla.</div>'
+      +'</td></tr></table>'
+      +'<div style="font-size:12px;color:#0e7490;margin-top:12px;padding-top:10px;border-top:1px solid #a5f3fc;line-height:1.6;">'
+      +'<b>Siamo convenzionati</b> con le principali compagnie: la polizza te la attiviamo noi. Nessuna pratica da fare.'
+      +'</div>'
+      +'</td></tr></table></td></tr>';
+  }
+
+  /* una sola azione */
+  var msg=encodeURIComponent('Ciao, ho ricevuto il preventivo per la '+a.nome+(a.targa?(' ('+a.targa+')'):'')+' e vorrei saperne di piu\u2019.');
+  h+='<tr><td style="padding:26px 24px 6px;">'+eamBtn('\uD83D\uDCAC Scrivici su WhatsApp','https://wa.me/39029181820?text='+msg,'#25D366')+'</td></tr>';
+  h+='<tr><td align="center" style="padding:10px 24px 0;'+F+'font-size:14px;color:#64748b;">'
+    +'oppure chiamaci allo <a href="tel:029181820" style="color:#1a4fa0;text-decoration:none;font-weight:bold;">02 9181820</a>'
+    +'</td></tr>';
+  h+='<tr><td align="center" style="padding:16px 24px 4px;'+F+'font-size:13px;color:#94a3b8;">'
+    +'Vieni a vederla in concessionaria: Via Nigra 4, Paderno Dugnano (MI)</td></tr>';
+
+  /* nota di validita': una riga, non un muro */
+  h+='<tr><td style="padding:18px 24px 0;">'
+    +'<div style="'+F+'font-size:11px;color:#94a3b8;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:12px;">'
+    +'Preventivo valido salvo disponibilit\u00e0 del veicolo.'
+    + (fin ? ' L\u2019importo della rata \u00e8 indicativo e viene definito dalla finanziaria all\u2019approvazione della pratica.' : '')
+    +' Il dettaglio completo e le condizioni ti verranno consegnati al momento della proposta d\u2019acquisto.'
+    +'</div></td></tr>';
+
+  /* piede */
+  h+='<tr><td bgcolor="#f8fafc" style="padding:16px 24px;'+F+'font-size:11px;color:#94a3b8;line-height:1.7;border-top:1px solid #e2e8f0;">'
+    +'<b style="color:#334155;font-size:12px;">Europa Auto S.r.l.</b><br>'
+    +'Via Nigra 4, 20037 Paderno Dugnano (MI) \u00b7 P.IVA 06440210968<br>'
+    +'<a href="tel:0362285390" style="color:#1a4fa0;text-decoration:none;">0362 285390</a> \u00b7 '
+    +'<a href="tel:029181820" style="color:#1a4fa0;text-decoration:none;">02 9181820</a><br>'
+    +'<span style="color:#64748b;font-weight:bold;">Questa email \u00e8 generata automaticamente: non rispondere a questo indirizzo.</span><br>'
+    +'<span style="color:#64748b;">Per qualsiasi cosa scrivici su WhatsApp o chiamaci ai numeri qui sopra.</span>'
+    +'</td></tr>';
+
+  h+='</table></td></tr></table></div>';
+  return h;
 }
 function cvInviaMailCliente(p){
   if(!(p.cliente&&p.cliente.email) || typeof eaInviaMessaggio!=='function') return;
@@ -16262,10 +16521,23 @@ function statRender(){
   if(yr==='tutti'){ var times=contratti.map(function(x){return x.contrattoTs||x.createdAt;}).filter(Boolean); if(times.length){ var minT=Math.min.apply(null,times); monthsInPeriod=Math.max(1,(nowD-minT)/(86400000*30.44)); } else { monthsInPeriod=1; } }
   else if(parseInt(yr,10)===nowD.getFullYear()){ monthsInPeriod=nowD.getMonth()+1; }
   else { monthsInPeriod=12; }
+  /* In italiano il punto separa le migliaia: '1.4' si legge come 1/4 o come 14.
+     I decimali vanno scritti con la virgola. */
+  var statDec=function(n){
+    var v=Math.round((parseFloat(n)||0)*10)/10;
+    return v.toLocaleString('it-IT',{minimumFractionDigits:1, maximumFractionDigits:1});
+  };
   var venditeMese=venduti/Math.max(monthsInPeriod,0.5);
-  var rotGiorni=venditeMese>0?Math.round(stock/venditeMese*30.44):0;
+  /* La rotazione ha senso solo con abbastanza storico: su 2-3 vendite il numero
+     e' rumore, e dare un giudizio ('Scarso') su dati incompleti porta a decisioni
+     sbagliate. Sotto la soglia si dice che i dati non bastano. */
+  var STAT_MIN_VENDITE = 6;
+  var STAT_MIN_MESI = 3;
+  var statPochiDati = (venduti < STAT_MIN_VENDITE) || (monthsInPeriod < STAT_MIN_MESI);
+  var rotGiorni=(!statPochiDati && venditeMese>0)?Math.round(stock/venditeMese*30.44):0;
   var rotMesi=venditeMese>0?(Math.round(stock/venditeMese*10)/10):0;
   var rotRating = !rotGiorni ? ['\u2014','#94a3b8'] : (rotGiorni<60 ? ['Eccellente','#16a34a'] : (rotGiorni<=70 ? ['Ottimale','#0d9488'] : (rotGiorni<=90 ? ['Sufficiente','#d97706'] : ['Scarso','#dc2626'])));
+  if(statPochiDati) rotRating = ['dati insufficienti','#94a3b8'];
   var mesi=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
   var perMese=[0,0,0,0,0,0,0,0,0,0,0,0];
   recs.forEach(function(x){ if(x.isContratto){ var d=new Date(x.contrattoTs||x.createdAt||Date.now()); perMese[d.getMonth()]++; } });
@@ -16285,10 +16557,18 @@ function statRender(){
     +kpi('% polizze',pctPol+'%','#0891b2')
     +kpi('Con permuta',conPermuta)
     +kpi('Parco auto (disponibili)',stock,'#0f172a')
-    +kpi('Vendite / mese',(Math.round(venditeMese*10)/10),'#1a4fa0')
-    +kpi('Rotazione parco',rotGiorni?(rotGiorni+' gg'):'\u2014',rotRating[1])
+    +kpi('Vendite al mese (media)', statDec(venditeMese),'#1a4fa0')
+    +kpi('Rotazione parco', rotGiorni?(rotGiorni+' gg'):'\u2014', rotRating[1])
     +'</div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+(rotGiorni?('\ud83d\udd01 Con lo stock attuale di <b>'+stock+'</b> veicoli e un ritmo medio di <b>'+(Math.round(venditeMese*10)/10)+'</b> vendite al mese, il parco si rinnova in circa <b>'+rotGiorni+' giorni</b> (\u2248 '+rotMesi+' mesi). Giudizio: <b style="color:'+rotRating[1]+';">'+rotRating[0]+'</b>.<br><span style="color:#94a3b8;">Riferimento: &lt; 60 gg = eccellente \u00b7 60\u201370 = ottimale \u00b7 70\u201390 = sufficiente \u00b7 &gt; 90 = scarso (i costi rischiano di superare i ricavi).</span>'):'Rotazione non calcolabile: servono vendite nel periodo selezionato e veicoli in magazzino.')+'</div>';
+  if(statPochiDati){
+    h+='<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12px;color:#92400e;line-height:1.6;">'
+      +'\u26a0\ufe0f <b>Dati ancora incompleti.</b> Con '+venduti+' vendit'+(venduti===1?'a':'e')+' registrate su '+statDec(monthsInPeriod)+' mesi, la media mensile e la rotazione del parco non sono affidabili: '
+      +'servono almeno '+STAT_MIN_VENDITE+' vendite e '+STAT_MIN_MESI+' mesi di storico. '
+      +'Finch\u00e9 non hai caricato tutte le auto e tutte le vendite, non usare questi numeri per decidere.'
+      +'</div>';
+  } else {
+  h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">'+(rotGiorni?('\ud83d\udd01 Con lo stock attuale di <b>'+stock+'</b> veicoli e un ritmo medio di <b>'+statDec(venditeMese)+'</b> vendite al mese, il parco si rinnova in circa <b>'+rotGiorni+' giorni</b> (\u2248 '+rotMesi+' mesi). Giudizio: <b style="color:'+rotRating[1]+';">'+rotRating[0]+'</b>.<br><span style="color:#94a3b8;">Riferimento: &lt; 60 gg = eccellente \u00b7 60\u201370 = ottimale \u00b7 70\u201390 = sufficiente \u00b7 &gt; 90 = scarso (i costi rischiano di superare i ricavi).</span>'):'Rotazione non calcolabile: servono vendite nel periodo selezionato e veicoli in magazzino.')+'</div>';
+  }
   var maxM=1; for(var k=0;k<12;k++){ if(perMese[k]>maxM) maxM=perMese[k]; }
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;"><div style="font-weight:800;color:#334155;margin-bottom:10px;">Auto vendute per mese</div><div style="display:flex;align-items:flex-end;gap:6px;height:150px;">';
   for(var m=0;m<12;m++){ var hgt=Math.round(perMese[m]/maxM*110); h+='<div style="flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;"><div style="font-size:10px;color:#64748b;">'+perMese[m]+'</div><div style="background:#1a4fa0;border-radius:4px 4px 0 0;height:'+hgt+'px;margin-top:4px;"></div><div style="font-size:10px;color:#94a3b8;margin-top:3px;">'+mesi[m]+'</div></div>'; }
