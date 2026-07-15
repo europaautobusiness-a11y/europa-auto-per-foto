@@ -10105,6 +10105,15 @@ document.addEventListener('DOMContentLoaded',function(){
     var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?'\ud83e\udd1d Appuntamento vendita':'\ud83d\udcc5 Appuntamento'));
     var rows='<div style="font-size:13px;color:#475569;margin-bottom:8px;">'+tipoLbl+' \u00b7 '+ccEsc(quando)+'</div>';
     if(c.veicolo) rows+='<div style="font-size:13px;margin:5px 0;"><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</div>';
+    /* Fattura tagliando: solo sugli interventi su auto */
+    if((c.tipo||'')==='intervento'){
+      var _ft=c.fatturaTag||{};
+      rows+='<button onclick="tgApri(\''+c.id+'\')" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid '
+        +(_ft.numero?'#16a34a':'#1a4fa0')+';background:'+(_ft.numero?'#f0fdf4':'#eff6ff')+';color:'+(_ft.numero?'#166534':'#1a4fa0')
+        +';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
+        +(_ft.numero?('\uD83D\uDDA8 Fattura n. '+_ft.numero+'/'+_ft.anno+' \u2014 scarica o annulla'):'\uD83D\uDD27 Genera fattura tagliando')
+        +'</button>';
+    }
     if(c.email) rows+='<div style="font-size:13px;margin:5px 0;"><b>Email:</b> '+ccEsc(c.email)+'</div>';
     if(c.tel) rows+='<div style="font-size:13px;margin:5px 0;"><b>Telefono:</b> '+ccEsc(c.tel)+'</div>';
     if(c.nota) rows+='<div style="font-size:13px;margin:5px 0;"><b>Note:</b> '+ccEsc(c.nota)+'</div>';
@@ -13850,6 +13859,389 @@ function cvVendAutoAvanza(){
 }
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
+
+/* ===================== FATTURA TAGLIANDO (dal Calendario) =====================
+   Si genera dagli appuntamenti di tipo "Intervento su auto".
+   Layout ricalcato sulla fattura di officina che usi come modello.
+   Le voci sono sempre le stesse: stanno in un modello modificabile
+   (Parametri -> tagliandoVoci) e per ogni fattura si cambiano solo gli importi. */
+
+var TG_VOCI_DEF = [
+  { cod:'',    desc:'MANUTENZIONE',                        qta:1.50, um:'H.',  prezzo:0 },
+  { cod:'',    desc:'OLIO MOTORE',                         qta:5.60, um:'',    prezzo:0 },
+  { cod:'',    desc:'FILTRO OLIO',                         qta:1.00, um:'',    prezzo:0 },
+  { cod:'',    desc:'GUARNIZIONE',                         qta:1.00, um:'',    prezzo:0 },
+  { cod:'',    desc:'FILTRO ARIA',                         qta:1.00, um:'',    prezzo:0 },
+  { cod:'',    desc:'FILTRO ABITACOLO',                    qta:1.00, um:'',    prezzo:0 },
+  { cod:'PF0', desc:'Materiale di Consumo e Smalt. Rifiuti', qta:1.00, um:'PZ', prezzo:0 }
+];
+var TG_IVA_DEF = 22;
+
+var _tgId = null, _tgRighe = null;
+
+function tgNum(x){ var n=parseFloat(String(x==null?0:x).replace(',','.')); return isNaN(n)?0:n; }
+function tgEu(n){ return (Math.round(tgNum(n)*100)/100).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function tgEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function tgAnno(){ return (typeof cvFattAnno==='function')?cvFattAnno():new Date().getFullYear(); }
+
+/* Il modello delle voci: da Parametri se personalizzato, altrimenti quello di serie */
+function tgModelloVoci(){
+  try{
+    var p=(typeof parLoad==='function')?(parLoad()||{}):{};
+    if(p.tagliandoVoci && p.tagliandoVoci.length) return JSON.parse(JSON.stringify(p.tagliandoVoci));
+  }catch(e){}
+  return JSON.parse(JSON.stringify(TG_VOCI_DEF));
+}
+
+/* Ricava i dati del veicolo dal magazzino partendo dal testo dell'appuntamento */
+/* Riconosce una targa italiana dentro a un testo libero: AA123BB, anche con spazi.
+   Copre anche i formati vecchi tipo MI 12345A. */
+function tgTargaDaTesto(t){
+  var s=String(t||'').toUpperCase();
+  var m=s.match(/\b([A-Z]{2}\s?\d{3}\s?[A-Z]{2})\b/) || s.match(/\b([A-Z]{2}\s?\d{5,6}[A-Z]?)\b/);
+  if(!m) return null;
+  /* restituisco sia la targa pulita sia il testo esatto trovato:
+     serve per toglierla dal modello anche quando e' scritta con gli spazi */
+  return { targa:m[1].replace(/\s/g,''), grezza:m[1] };
+}
+function tgVeicoloDa(testo){
+  var out={ targa:'', telaio:'', modello:'', marca:'', dataImm:'', km:'' };
+  try{
+    var t=String(testo||'').toUpperCase();
+    var lista=(typeof mzLoad==='function')?mzLoad():[];
+    var norm=function(x){ return String(x||'').toUpperCase().replace(/\s/g,''); };
+    var trovata=null;
+    lista.forEach(function(a){
+      if(trovata) return;
+      var tg=norm(a.targa);
+      if(tg && t.replace(/\s/g,'').indexOf(tg)>=0) trovata=a;
+    });
+    if(!trovata){
+      lista.forEach(function(a){
+        if(trovata) return;
+        var m=norm((a.marca||'')+(a.modello||''));
+        if(m && t.replace(/\s/g,'').indexOf(m)>=0) trovata=a;
+      });
+    }
+    if(trovata){
+      out.targa=trovata.targa||''; out.telaio=trovata.telaio||'';
+      out.modello=((trovata.marca?trovata.marca+' ':'')+(trovata.modello||'')).trim();
+      out.marca=trovata.marca||''; out.dataImm=trovata.dataImm||''; out.km=trovata.km||'';
+    } else {
+      /* Auto NON in magazzino (tipico: la macchina del cliente).
+         Riconosco la targa dentro al testo e la metto al posto giusto,
+         il resto diventa il modello. Tutti i campi restano comunque editabili. */
+      var tg=tgTargaDaTesto(testo);
+      if(tg){
+        out.targa=tg.targa;
+        out.modello=String(testo||'').toUpperCase().split(tg.grezza).join(' ')
+          .replace(/[\-\u2013\u2014\u00b7|,]/g,' ').replace(/\s+/g,' ').trim();
+      } else {
+        out.modello=String(testo||'');
+      }
+      out.fuoriMagazzino=true;
+    }
+  }catch(e){}
+  return out;
+}
+
+function tgNumeroProssimo(){
+  var y=tgAnno(), max=0, base=0;
+  try{ if(typeof parLoad==='function') base=parseInt((parLoad()['fatturaBaseTagliandi']||0),10)||0; }catch(e){}
+  try{
+    (typeof ccLoad==='function'?ccLoad():[]).forEach(function(c){
+      if(c && c.fatturaTag && c.fatturaTag.numero && c.fatturaTag.anno===y && tgNum(c.fatturaTag.numero)>max) max=tgNum(c.fatturaTag.numero);
+    });
+  }catch(e){}
+  return Math.max(max, base)+1;
+}
+function tgNumeroUsato(num, escludiId){
+  var y=tgAnno(), usato=false;
+  try{
+    (typeof ccLoad==='function'?ccLoad():[]).forEach(function(c){
+      if(!c || c.id===escludiId) return;
+      if(c.fatturaTag && c.fatturaTag.numero && c.fatturaTag.anno===y && tgNum(c.fatturaTag.numero)===tgNum(num)) usato=true;
+    });
+  }catch(e){}
+  return usato;
+}
+
+function tgById(id){
+  try{ return (typeof ccLoad==='function'?ccLoad():[]).filter(function(c){ return c.id===id; })[0]; }catch(e){ return null; }
+}
+
+function tgApri(id){
+  var c=tgById(id);
+  if(!c){ alert('Appuntamento non trovato.'); return; }
+  _tgId=id;
+  var f=c.fatturaTag||{};
+  _tgRighe = (f.righe && f.righe.length) ? JSON.parse(JSON.stringify(f.righe)) : tgModelloVoci();
+  var m=document.getElementById('tg-modal');
+  if(!m){
+    m=document.createElement('div'); m.id='tg-modal';
+    m.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:100070;overflow:auto;padding:12px;';
+    document.body.appendChild(m);
+  }
+  m.style.display='block';
+  tgRender();
+}
+function tgChiudiModal(){ var m=document.getElementById('tg-modal'); if(m) m.style.display='none'; _tgId=null; }
+
+function tgTotali(){
+  var imp=0;
+  (_tgRighe||[]).forEach(function(r){ imp += tgNum(r.qta)*tgNum(r.prezzo)*(1-tgNum(r.sconto)/100); });
+  imp=Math.round(imp*100)/100;
+  var c=tgById(_tgId)||{}; var f=c.fatturaTag||{};
+  var ivaPct=(f.ivaPct!=null)?tgNum(f.ivaPct):TG_IVA_DEF;
+  var iva=Math.round(imp*ivaPct/100*100)/100;
+  return { imponibile:imp, ivaPct:ivaPct, iva:iva, totale:Math.round((imp+iva)*100)/100 };
+}
+
+function tgSetRiga(i, campo, val){
+  if(!_tgRighe || !_tgRighe[i]) return;
+  _tgRighe[i][campo] = (campo==='cod'||campo==='desc'||campo==='um') ? val : tgNum(val);
+  tgSalvaBozza();
+  tgAggiornaTotali();
+}
+function tgAddRiga(){ _tgRighe.push({cod:'',desc:'',qta:1,um:'',prezzo:0}); tgSalvaBozza(); tgRender(); }
+function tgDelRiga(i){ _tgRighe.splice(i,1); tgSalvaBozza(); tgRender(); }
+
+function tgSalvaBozza(){
+  try{
+    var list=ccLoad(), i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
+    var f=list[i].fatturaTag||{};
+    ['nome','indirizzo','cf','piva','km','targa','telaio','modello','dataImm','pagamento'].forEach(function(k){
+      var el=document.getElementById('tg_'+k); if(el) f[k]=el.value.trim();
+    });
+    var iv=document.getElementById('tg_ivaPct'); if(iv) f.ivaPct=tgNum(iv.value);
+    var nu=document.getElementById('tg_num'); if(nu && nu.value!=='') f.numeroScelto=parseInt(nu.value,10)||'';
+    f.righe=_tgRighe;
+    list[i].fatturaTag=f; ccSave(list);
+  }catch(e){}
+}
+function tgAggiornaTotali(){
+  var t=tgTotali();
+  var e1=document.getElementById('tg-tot-imp'); if(e1) e1.textContent='\u20ac '+tgEu(t.imponibile);
+  var e2=document.getElementById('tg-tot-iva'); if(e2) e2.textContent='\u20ac '+tgEu(t.iva);
+  var e3=document.getElementById('tg-tot-doc'); if(e3) e3.textContent='\u20ac '+tgEu(t.totale);
+  (_tgRighe||[]).forEach(function(r,i){
+    var el=document.getElementById('tg-imp-'+i);
+    if(el) el.textContent=tgEu(tgNum(r.qta)*tgNum(r.prezzo)*(1-tgNum(r.sconto)/100));
+  });
+}
+
+function tgRender(){
+  var m=document.getElementById('tg-modal'); if(!m||!_tgId) return;
+  var c=tgById(_tgId); if(!c) return;
+  var f=c.fatturaTag||{};
+  var v=tgVeicoloDa(c.veicolo||'');
+  var g=function(k, fb){ return (f[k]!=null && f[k]!=='') ? f[k] : (fb||''); };
+  var lbl='display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;';
+  var inp='width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var t=tgTotali();
+
+  var h='<div style="max-width:820px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
+  h+='<div style="background:#1a4fa0;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+    +'<span style="font-weight:800;">\uD83D\uDD27 Fattura tagliando</span>'
+    +'<button onclick="tgChiudiModal()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    +'</div>';
+  h+='<div style="padding:14px;max-height:74vh;overflow:auto;">';
+
+  if(f.numero){
+    h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;">'
+      +'<div style="font-size:13px;color:#166534;font-weight:700;margin-bottom:8px;">\u2705 Fattura n. '+f.numero+'/'+f.anno+' emessa il '+((f.data||'').split('-').reverse().join('/'))+'</div>'
+      +'<div style="display:flex;gap:8px;">'
+      +'<button onclick="tgStampa(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Scarica di nuovo</button>'
+      +'<button onclick="tgAnnulla(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #dc2626;background:#fff;color:#991b1b;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u274c Annulla fattura</button>'
+      +'</div></div>';
+  } else {
+    var prox=tgNumeroProssimo();
+    var scelto=(f.numeroScelto!=null && f.numeroScelto!=='')?f.numeroScelto:prox;
+    var dup=tgNumeroUsato(scelto,_tgId);
+    h+='<div style="background:#f8fafc;border:1px solid '+(dup?'#fecaca':'#e2e8f0')+';border-radius:8px;padding:10px;margin-bottom:12px;display:flex;gap:8px;align-items:center;">'
+      +'<label style="'+lbl+'margin:0;">N. FATTURA</label>'
+      +'<input id="tg_num" type="number" min="1" value="'+tgEsc(scelto)+'" onchange="tgSalvaBozza();tgRender()" style="'+inp+'width:100px;font-weight:800;">'
+      +'<span style="font-weight:800;color:#64748b;">/ '+tgAnno()+'</span>'
+      + (dup?'<span style="color:#991b1b;font-size:11px;font-weight:700;">\u26a0\ufe0f gi\u00e0 usato</span>':'<span style="font-size:11px;color:#64748b;">serie tagliandi</span>')
+      +'</div>';
+  }
+
+  /* Cliente */
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">SPETTABILE</div>';
+  h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
+  h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Nome / ragione sociale</label><input id="tg_nome" style="'+inp+'" value="'+tgEsc(g('nome', c.titolo))+'" oninput="tgSalvaBozza()"></div>';
+  h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Indirizzo</label><input id="tg_indirizzo" style="'+inp+'" value="'+tgEsc(g('indirizzo'))+'" placeholder="via, CAP, citt\u00e0" oninput="tgSalvaBozza()"></div>';
+  h+='<div style="display:flex;gap:8px;">'
+    +'<div style="flex:1;"><label style="'+lbl+'">Codice fiscale <span style="color:#dc2626;">*</span></label><input id="tg_cf" style="'+inp+'" value="'+tgEsc(g('cf'))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1;"><label style="'+lbl+'">P.IVA</label><input id="tg_piva" style="'+inp+'" value="'+tgEsc(g('piva'))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1;"><label style="'+lbl+'">Pagamento</label><input id="tg_pagamento" style="'+inp+'" value="'+tgEsc(g('pagamento','Bonifico bancario'))+'" oninput="tgSalvaBozza()"></div>'
+    +'</div></div>';
+
+  /* Veicolo */
+  var _daMag = !v.fuoriMagazzino && (v.telaio || v.targa);
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">VEICOLO '
+    + (_daMag ? '<span style="font-weight:400;color:#16a34a;">\u2713 trovato in magazzino, correggi se serve</span>'
+              : '<span style="font-weight:400;color:#b45309;">\u26a0\ufe0f auto non in magazzino \u2014 completa telaio e immatricolazione</span>')
+    + '</div>';
+  h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">'
+    +'<div style="flex:2 1 200px;"><label style="'+lbl+'">Modello</label><input id="tg_modello" style="'+inp+'" value="'+tgEsc(g('modello', v.modello))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Targa</label><input id="tg_targa" style="'+inp+'" value="'+tgEsc(g('targa', v.targa))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:2 1 180px;"><label style="'+lbl+'">Num. telaio</label><input id="tg_telaio" style="'+inp+'" value="'+tgEsc(g('telaio', v.telaio))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Immatricolazione</label><input id="tg_dataImm" style="'+inp+'" value="'+tgEsc(g('dataImm', v.dataImm))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Km percorsi</label><input id="tg_km" type="number" style="'+inp+'" value="'+tgEsc(g('km', v.km))+'" oninput="tgSalvaBozza()"></div>'
+    +'</div>';
+
+  /* Righe */
+  h+='<div style="display:flex;align-items:center;margin-bottom:6px;">'
+    +'<div style="font-weight:800;font-size:12px;color:#1a4fa0;">VOCI \u2014 cambia solo gli importi</div>'
+    +'<button onclick="tgAddRiga()" style="margin-left:auto;padding:5px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">+ riga</button>'
+    +'</div>';
+  h+='<div style="overflow-x:auto;margin-bottom:12px;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+    +'<thead><tr style="background:#f1f5f9;">'
+    +'<th style="padding:5px;text-align:left;width:90px;">COD.</th><th style="padding:5px;text-align:left;">DESCRIZIONE</th>'
+    +'<th style="padding:5px;width:60px;">QTA\'</th><th style="padding:5px;width:44px;">U.M</th>'
+    +'<th style="padding:5px;width:80px;">PREZZO</th><th style="padding:5px;width:56px;">SC.%</th>'
+    +'<th style="padding:5px;width:80px;text-align:right;">IMPORTO</th><th style="width:28px;"></th></tr></thead><tbody>';
+  var ic='width:100%;padding:5px;border:1px solid #e2e8f0;border-radius:4px;font-family:inherit;font-size:12px;box-sizing:border-box;';
+  (_tgRighe||[]).forEach(function(r,i){
+    h+='<tr>'
+      +'<td style="padding:2px;"><input value="'+tgEsc(r.cod||'')+'" oninput="tgSetRiga('+i+',\'cod\',this.value)" style="'+ic+'"></td>'
+      +'<td style="padding:2px;"><input value="'+tgEsc(r.desc||'')+'" oninput="tgSetRiga('+i+',\'desc\',this.value)" style="'+ic+'"></td>'
+      +'<td style="padding:2px;"><input type="number" step="0.01" value="'+tgEsc(r.qta)+'" oninput="tgSetRiga('+i+',\'qta\',this.value)" style="'+ic+'text-align:center;"></td>'
+      +'<td style="padding:2px;"><input value="'+tgEsc(r.um||'')+'" oninput="tgSetRiga('+i+',\'um\',this.value)" style="'+ic+'text-align:center;"></td>'
+      +'<td style="padding:2px;"><input type="number" step="0.01" value="'+tgEsc(r.prezzo)+'" oninput="tgSetRiga('+i+',\'prezzo\',this.value)" style="'+ic+'text-align:right;font-weight:700;"></td>'
+      +'<td style="padding:2px;"><input type="number" step="1" value="'+tgEsc(r.sconto||'')+'" oninput="tgSetRiga('+i+',\'sconto\',this.value)" style="'+ic+'text-align:center;"></td>'
+      +'<td id="tg-imp-'+i+'" style="padding:5px;text-align:right;font-weight:700;">'+tgEu(tgNum(r.qta)*tgNum(r.prezzo)*(1-tgNum(r.sconto)/100))+'</td>'
+      +'<td style="padding:2px;"><button onclick="tgDelRiga('+i+')" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:14px;">\u00d7</button></td>'
+      +'</tr>';
+  });
+  h+='</tbody></table></div>';
+
+  /* Totali */
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>Totale imponibile</span><b id="tg-tot-imp">\u20ac '+tgEu(t.imponibile)+'</b></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;align-items:center;"><span>IVA <input id="tg_ivaPct" type="number" step="0.01" value="'+t.ivaPct+'" oninput="tgSalvaBozza();tgAggiornaTotali()" style="width:60px;padding:3px;border:1px solid #cbd5e1;border-radius:4px;font-family:inherit;">%</span><b id="tg-tot-iva">\u20ac '+tgEu(t.iva)+'</b></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:15px;border-top:2px solid #0f172a;margin-top:4px;"><b>TOTALE DOCUMENTO</b><b id="tg-tot-doc" style="color:#16a34a;">\u20ac '+tgEu(t.totale)+'</b></div>'
+    +'</div>';
+  h+='</div>';
+  h+='<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
+    +'<button onclick="tgChiudiModal()" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    + (f.numero ? '' : '<button onclick="tgGenera()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\uD83E\uDDFE Genera fattura</button>')
+    +'</div></div>';
+  m.innerHTML=h;
+}
+
+function tgGenera(){
+  tgSalvaBozza();
+  var c=tgById(_tgId); if(!c) return;
+  var f=c.fatturaTag||{};
+  if(!f.cf && !f.piva){ alert('Il codice fiscale del cliente \u00e8 obbligatorio in fattura.'); return; }
+  if(!f.nome){ alert('Manca l\u2019intestatario.'); return; }
+  var t=tgTotali();
+  if(!(t.imponibile>0)){ alert('Inserisci almeno un importo.'); return; }
+  var y=tgAnno();
+  var num=(f.numeroScelto!=null && f.numeroScelto!=='')?tgNum(f.numeroScelto):tgNumeroProssimo();
+  if(tgNumeroUsato(num,_tgId)){ alert('Il numero '+num+'/'+y+' \u00e8 gi\u00e0 usato: scegline un altro.'); return; }
+  if(!confirm('Genero la fattura tagliando n. '+num+'/'+y+' intestata a '+f.nome+'?\n\nTotale \u20ac '+tgEu(t.totale))) return;
+  var list=ccLoad(), i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
+  f.numero=num; f.anno=y; f.data=new Date().toISOString().slice(0,10);
+  f.da=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  delete f.numeroScelto;
+  list[i].fatturaTag=f; ccSave(list);
+  try{ ccSync(list[i]); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\uD83E\uDDFE Fattura tagliando n. '+num+'/'+y+' generata', true);
+  tgRender();
+  tgStampa(_tgId);
+}
+
+function tgAnnulla(id){
+  var c=tgById(id); if(!c || !c.fatturaTag || !c.fatturaTag.numero) return;
+  var f=c.fatturaTag, et='n. '+f.numero+'/'+f.anno;
+  if(!confirm('Annullare la fattura tagliando '+et+'?\n\nConferma 1 di 2.')) return;
+  if(!confirm('Annullare la fattura '+et+' intestata a '+(f.nome||'')+'?\n\nIl numero '+f.numero+' torner\u00e0 disponibile.')) return;
+  var list=ccLoad(), i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
+  var st=(list[i].fattureTagAnnullate||[]);
+  st.push({ numero:f.numero, anno:f.anno, data:f.data, annullataIl:new Date().toISOString().slice(0,10) });
+  list[i].fattureTagAnnullate=st;
+  delete f.numero; delete f.anno; delete f.data;
+  list[i].fatturaTag=f; ccSave(list);
+  try{ ccSync(list[i]); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
+  tgRender();
+}
+
+/* ---- Stampa: ricalca il modulo della fattura di officina ---- */
+function tgStampa(id){
+  var c=tgById(id); if(!c || !c.fatturaTag) return;
+  var f=c.fatturaTag, t=tgTotali();
+  var righe=(f.righe||_tgRighe||[]);
+  var E=tgEsc;
+  var rh='';
+  righe.forEach(function(r,i){
+    var imp=tgNum(r.qta)*tgNum(r.prezzo)*(1-tgNum(r.sconto)/100);
+    if(!r.desc && !imp) return;
+    rh+='<tr><td class="c">'+(i+1)+'</td><td>'+E(r.cod||'')+'</td><td>'+E(r.desc||'')+'</td>'
+      + '<td class="r">'+(r.qta?tgEu(r.qta):'')+'</td><td class="c">'+E(r.um||'')+'</td>'
+      + '<td class="r">'+(r.prezzo?tgEu(r.prezzo):'')+'</td>'
+      + '<td class="c">'+(r.sconto?tgEu(r.sconto):'')+'</td>'
+      + '<td class="r">'+tgEu(imp)+'</td><td class="c">'+tgEu(t.ivaPct)+'</td></tr>';
+  });
+  for(var k=righe.length;k<12;k++) rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+
+  var doc='<html><head><meta charset="utf-8"><title>Fattura '+f.numero+'-'+f.anno+'</title><style>'
+  +'@page{size:A4;margin:10mm;} body{font-family:Arial,Helvetica,sans-serif;font-size:9px;color:#000;}'
+  +'table{border-collapse:collapse;width:100%;} td,th{border:1px solid #000;padding:2px 4px;vertical-align:top;}'
+  +'.lab{font-size:6.5px;font-weight:bold;display:block;color:#000;} .big{font-weight:bold;font-size:11px;}'
+  +'.nob td{border:none;} .c{text-align:center;} .r{text-align:right;}'
+  +'.hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;}'
+  +'.az{font-size:13px;font-weight:bold;} .azs{font-size:8px;font-weight:normal;line-height:1.4;}'
+  +'.ft{font-size:6.5px;margin-top:8px;line-height:1.5;border-top:1px solid #999;padding-top:4px;}'
+  +'</style></head><body>'
+  +'<div class="hd"><div><div class="az">EUROPA AUTO S.R.L.</div>'
+  +'<div class="azs">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI)<br>Tel./Fax 029181820<br>amministrazione@europaautosrl.it</div></div>'
+  +'<div style="text-align:left;min-width:300px;">'
+  +'<div style="font-size:16px;margin-bottom:6px;">Fattura</div>'
+  +'<table class="nob" style="width:auto;"><tr><td style="padding-right:22px;"><span class="lab">Data documento</span><span class="big">'+E((f.data||'').split('-').reverse().join('/'))+'</span></td>'
+  +'<td><span class="lab">Documento Nr.</span><span class="big">'+E(f.numero)+'/'+E(f.anno)+'</span></td></tr></table>'
+  +'<div style="margin-top:8px;font-size:8px;">Spettabile</div>'
+  +'<div class="big">'+E(f.nome||'')+'</div><div style="font-size:9px;">'+E(f.indirizzo||'')+'</div>'
+  +'</div></div>'
+  +'<table><tr><td colspan="3"><span class="lab">Num. Telaio</span>'+E(f.telaio||'')+'</td>'
+  +'<td colspan="2"><span class="lab">Modello</span>'+E(f.modello||'')+'</td>'
+  +'<td colspan="2"><span class="lab">Pratica/Anno</span>&nbsp;</td>'
+  +'<td colspan="2"><span class="lab">Num. Ordine</span>'+E(f.numero||'')+'/'+E(f.anno||'')+'</td></tr>'
+  +'<tr><td><span class="lab">Km Percorsi</span>'+E(f.km||'')+'</td>'
+  +'<td><span class="lab">Num. Motore</span>&nbsp;</td>'
+  +'<td><span class="lab">Targa</span>'+E(f.targa||'')+'</td>'
+  +'<td><span class="lab">Immatricolazione</span>'+E(f.dataImm||'')+'</td>'
+  +'<td><span class="lab">Cod. Cliente</span>&nbsp;</td>'
+  +'<td colspan="2"><span class="lab">Codice Fiscale</span>'+E(f.cf||'')+'</td>'
+  +'<td colspan="2"><span class="lab">Partita Iva</span>'+E(f.piva||'')+'</td></tr>'
+  +'<tr><td colspan="4"><span class="lab">Pagamento</span>'+E(f.pagamento||'')+'</td>'
+  +'<td colspan="3"><span class="lab">Banca</span>&nbsp;</td>'
+  +'<td><span class="lab">Abi</span>&nbsp;</td><td><span class="lab">Cab</span>&nbsp;</td></tr></table>'
+  +'<table style="margin-top:3px;"><thead><tr>'
+  +'<th style="width:22px;">PR.</th><th style="width:80px;"></th><th>AUTOVETTURA - RICAMBIO O PRESTAZIONE</th>'
+  +'<th style="width:40px;">QTA\'</th><th style="width:30px;">U.M</th>'
+  +'<th style="width:60px;">PREZZO<br>UNITARIO</th><th style="width:42px;">SCONTO<br>%</th>'
+  +'<th style="width:66px;">IMPORTO</th><th style="width:34px;">IVA</th></tr></thead><tbody>'+rh+'</tbody></table>'
+  +'<table style="margin-top:3px;"><tr>'
+  +'<td style="width:52px;"><span class="lab">Iva</span>'+tgEu(t.ivaPct)+'</td>'
+  +'<td style="width:78px;" class="r"><span class="lab">Imponibile</span>'+tgEu(t.imponibile)+'</td>'
+  +'<td style="width:70px;" class="r"><span class="lab">Imposta</span>'+tgEu(t.iva)+'</td>'
+  +'<td><span class="lab">Descrizione</span>Imposta '+tgEu(t.ivaPct)+'%</td>'
+  +'<td style="width:100px;" class="r"><span class="lab">Totale Imponibile</span><b>\u20ac '+tgEu(t.imponibile)+'</b></td>'
+  +'<td style="width:90px;" class="r"><span class="lab">Totale Imposta</span><b>\u20ac '+tgEu(t.iva)+'</b></td>'
+  +'<td style="width:110px;" class="r"><span class="lab">Totale Documento</span><b style="font-size:11px;">\u20ac '+tgEu(t.totale)+'</b></td></tr></table>'
+  +'<div class="ft">Europa Auto S.r.l. &mdash; Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &nbsp;·&nbsp; Cod. Fisc. / P.IVA 06440210968 &nbsp;·&nbsp; R.E.A. 1892676 &mdash; CCIAA MI'
+  +'<br>Documento generato dal gestionale &mdash; non \u00e8 la fattura elettronica trasmessa allo SdI.</div>'
+  +'</body></html>';
+  var w=window.open('','_blank');
+  if(!w){ alert('Consenti le finestre popup per scaricare la fattura.'); return; }
+  w.document.write(doc); w.document.close();
+  setTimeout(function(){ try{ w.print(); }catch(e){} }, 400);
+}
+
 
 /* ===================== PRESENZE SU SUPABASE =====================
    Finora timbrature e dipendenti vivevano solo nel localStorage di ogni
