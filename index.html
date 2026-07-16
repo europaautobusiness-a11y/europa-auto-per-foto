@@ -419,7 +419,7 @@ html, body{
 <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="Apri/chiudi menu">
   <span></span><span></span><span></span>
 </button>
-<button id="notifBell" onclick="notifApri()" title="Notifiche e automazioni" style="position:fixed;top:12px;right:14px;z-index:9000;width:44px;height:44px;border-radius:12px;border:none;background:#1a4fa0;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);">🔔<span id="notifBellBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc2626;color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 4px;line-height:18px;text-align:center;box-sizing:border-box;">0</span></button>
+<button id="notifBell" onclick="notifApri()" title="Notifiche e automazioni" style="position:fixed;top:12px;right:14px;z-index:100080;width:44px;height:44px;border-radius:12px;border:none;background:#1a4fa0;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);">🔔<span id="notifBellBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc2626;color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 4px;line-height:18px;text-align:center;box-sizing:border-box;">0</span></button>
 
 <div class="app-layout">
 
@@ -10438,7 +10438,7 @@ document.addEventListener('DOMContentLoaded',function(){
      Un task assegnato e non eseguito viene sollecitato ogni 30 min: popup in-app + email
      all'assegnatario, fino a un massimo di 10 volte. Alla 6ª parte anche la mail all'admin.
      Si ferma da solo quando il task viene segnato "fatto" (spunta nel task o nella notifica). */
-  var CC_SOLL_INTERVALLO = 30*60*1000;   // 30 minuti fra un sollecito e il successivo
+  var CC_SOLL_INTERVALLO = 60*60*1000;   // 1 ora fra un sollecito e il successivo
   var CC_SOLL_MAX = 10;                   // dopo 10 solleciti smette
   var CC_SOLL_ESCAL = 6;                  // alla 6a: mail all'admin
   function ccDueTs(c){
@@ -10508,7 +10508,8 @@ document.addEventListener('DOMContentLoaded',function(){
       if (n>CC_SOLL_MAX) return;                          // esauriti i 10 solleciti: basta
       c.solleciti=n; c.sollecitoLastAt=new Date(now).toISOString(); changed.push(c);
       if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoTask', email:c.dipEmail, nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||'', numero:n}); }catch(e){} }
-      try{ if(typeof notifPush==='function') notifPush('\u23f0 Sollecito '+n+'/'+CC_SOLL_MAX+': \u00ab'+(c.titolo||'task')+'\u00bb da fare \u2014 '+(c.dipNome||''), '\u23f0', {tipo:'task_soll', refId:c.id}); }catch(e){}
+      /* Il sollecito va a chi ha la mansione, non a tutti. */
+      try{ if(typeof notifPush==='function') notifPush('\u23f0 Sollecito '+n+'/'+CC_SOLL_MAX+': \u00ab'+(c.titolo||'task')+'\u00bb da fare \u2014 '+(c.dipNome||''), '\u23f0', {tipo:'task_soll', refId:c.id, per:(c.dipEmail||'')}); }catch(e){}
       if (n>=CC_SOLL_ESCAL && !c.escalato){
         c.escalato=true;
         if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoEscalation', email:'europaautobusiness@gmail.com', nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', numero:n}); }catch(e){} }
@@ -10591,6 +10592,26 @@ document.addEventListener('DOMContentLoaded',function(){
   /* Chiamate da onclick nell'HTML, che gira nello scope globale:
      senza queste righe i pulsanti Modifica, Elimina e Chiudi non facevano nulla. */
   window.ccModificaEvento = ccModificaEvento;
+  /* Dalla campanella al calendario, sul giorno della mansione: senza questo
+     leggi il promemoria e poi devi cercartela a mano. */
+  window.ccVaiAlTask = function(id){
+    try{
+      var c=ccLoad().filter(function(x){ return x.id===id; })[0];
+      if(!c){ if(typeof ccToast==='function') ccToast('Mansione non trovata'); return; }
+      if(typeof notifChiudiPanel==='function') notifChiudiPanel();
+      if(typeof sidebarNav==='function') sidebarNav('compiti');
+      setTimeout(function(){
+        try{
+          if(c.data){
+            var pp=String(c.data).split('-');
+            ccVAnno=parseInt(pp[0],10); ccVMese=parseInt(pp[1],10)-1;
+            ccRenderCal();
+            ccApri(c.data);
+          }
+        }catch(e){}
+      }, 260);
+    }catch(e){}
+  };
   window.ccEliminaEvento  = ccEliminaEvento;
   window.ccChiudiEvento   = ccChiudiEvento;
   /* Servono al modulo Fattura tagliando, che vive fuori da questa IIFE. */
@@ -13344,8 +13365,16 @@ function cvCheckMailPreventivi(){
     }
   }catch(e){}
 }
-var WA_RIP_MIN = 30;  // ogni quanti MINUTI ripete il promemoria
+var WA_RIP_MIN = 60;  // ogni quanti MINUTI ripete il promemoria (1 ora)
 var WA_RIP_MAX = 10;  // quante volte al massimo
+/* Dalla campanella al preventivo da mandare su WhatsApp. */
+function cvVaiAlPreventivo(id){
+  try{
+    if(typeof notifChiudiPanel==='function') notifChiudiPanel();
+    if(typeof sidebarNav==='function') sidebarNav('preventivi');
+    setTimeout(function(){ try{ if(typeof cvForm==='function') cvForm(id); }catch(e){} }, 260);
+  }catch(e){}
+}
 /* Segna il messaggio WhatsApp come inviato: ferma i solleciti. */
 function cvWaFatto(id){
   try{
@@ -13393,7 +13422,8 @@ function cvCheckPromemoriaWa(){
           var _txt = (_n===0)
             ? ('Ricorda di inviare il messaggio WhatsApp a '+nome+' \u2014 '+auto)
             : ('Sollecito '+(_n+1)+'/'+WA_RIP_MAX+': messaggio WhatsApp a '+nome+' ancora da inviare \u2014 '+auto);
-          try{ if(typeof notifPush==='function') notifPush(_txt, '\uD83D\uDCAC', {tipo:'wa_prom', refId:p.id}); }catch(e){}
+          /* E' un compito di vendita: non riguarda la contabilita'. */
+          try{ if(typeof notifPush==='function') notifPush(_txt, '\uD83D\uDCAC', {tipo:'wa_prom', refId:p.id, ruoli:['admin','staff','manager']}); }catch(e){}
         }
       }
     });
@@ -14054,6 +14084,10 @@ function parInit(){
   h+=lab('Costo immatricolazione €')+inp('par_immatricolazione',p.immatricolazione,'number');
   h+=lab('Costo minivoltura €')+inp('par_minivoltura',p.minivoltura,'number');
   h+=lab('Costo garanzia 24 mesi €')+inp('par_garanzia24',p.garanzia24,'number');
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Numerazione fatture</div>';
+  h+='<div style="font-size:11px;color:#64748b;margin-bottom:8px;line-height:1.5;">Numero dell\u2019<b>ultima</b> fattura gi\u00e0 emessa quest\u2019anno per ciascuna serie: la prossima partir\u00e0 dal successivo. Lascia 0 se la serie parte da 1.</div>';
+  h+=lab('Ultima fattura carrozzeria')+inp('par_fatturaBaseCarrozzeria',p.fatturaBaseCarrozzeria,'number');
+  h+=lab('Ultima fattura tagliandi')+inp('par_fatturaBaseTagliandi',p.fatturaBaseTagliandi,'number');
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Assicurazione e pagamenti</div>';
   h+=lab('Assicurazione standard')+'<textarea id="par_assicurazione" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:120px;box-sizing:border-box;">'+fnEsc(p.assicurazione)+'</textarea>';
   h+=lab('IBAN')+inp('par_iban',p.iban);
@@ -14077,7 +14111,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni'].forEach(function(k){ p[k]=g(k); });
+  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi'].forEach(function(k){ p[k]=g(k); });
   try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
   var st=document.getElementById('par-stato'); if(st) st.textContent='✅ Parametri salvati'; setTimeout(function(){ if(st)st.textContent=''; },2500);
 }
@@ -16293,13 +16327,34 @@ function notifShowCards(arr){
   if(!arr||!arr.length) return; var stack=notifStack();
   arr.slice(-6).forEach(function(n,i){ var c=notifCard(n); stack.appendChild(c); requestAnimationFrame(function(){ c.style.transform='translateY(0)'; c.style.opacity='1'; }); setTimeout(function(){ if(c.parentNode){ c.style.opacity='0'; c.style.transform='translateY(-12px)'; setTimeout(function(){ if(c.parentNode) c.parentNode.removeChild(c); },220); } }, 9000+i*500); });
 }
+/* ===== A CHI E' DESTINATA UNA NOTIFICA =====
+   Le notifiche stanno in una tabella condivisa: senza filtro le vedono tutti,
+   e Arianna si ritrova i promemoria di vendita di Rudy.
+     n.per   = email del destinatario  -> la vede solo lui (e l'admin)
+     n.ruoli = elenco di ruoli         -> la vedono solo quei ruoli
+   Senza nessuno dei due: la vedono tutti, com'era prima.               */
+function notifPerMe(n){
+  try{
+    if(!n) return false;
+    if(!n.per && !(n.ruoli && n.ruoli.length)) return true;   /* per tutti */
+    var mail=((typeof _currentUserEmail!=='undefined' && _currentUserEmail)||'').toLowerCase();
+    var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'';
+    if(ruolo==='admin') return true;                          /* l'admin vede tutto */
+    if(n.per) return String(n.per).toLowerCase()===mail;
+    return n.ruoli.indexOf(ruolo)>=0;
+  }catch(e){ return true; }
+}
+function notifMie(){
+  try{ return notifLoad().filter(notifPerMe); }catch(e){ return []; }
+}
 function notifPush(testo, icon, extra){
   try{
     var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
     if(extra && typeof extra==='object'){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra,k)) n[k]=extra[k]; } }
     var list=notifLoad(); list.push(n); notifSave(list);
     if(typeof supaUpsert==='function'){ try{ supaUpsert('notifiche', n); }catch(e){} }
-    notifShowCards([n]); notifSetLastSeen(n.ts); if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
+    if(notifPerMe(n)) notifShowCards([n]);
+    notifSetLastSeen(n.ts); if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
   }catch(e){}
 }
 function notifAvvia(){
@@ -16324,7 +16379,7 @@ function notifAvvia(){
 }
 function notifSync(){
   try{
-    var apply=function(){ var last=notifLastSeen(); var unseen=notifLoad().filter(function(n){ return n && n.ts>last; }).sort(function(a,b){return a.ts-b.ts;}); if(!window._notifToasted) window._notifToasted={}; var daToast=unseen.filter(function(n){ return n.id && !window._notifToasted[n.id]; }); if(daToast.length){ notifShowCards(daToast); daToast.forEach(function(n){ window._notifToasted[n.id]=1; }); } if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); };
+    var apply=function(){ var last=notifLastSeen(); var unseen=notifMie().filter(function(n){ return n && n.ts>last; }).sort(function(a,b){return a.ts-b.ts;}); if(!window._notifToasted) window._notifToasted={}; var daToast=unseen.filter(function(n){ return n.id && !window._notifToasted[n.id]; }); if(daToast.length){ notifShowCards(daToast); daToast.forEach(function(n){ window._notifToasted[n.id]=1; }); } if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); };
     if(typeof supaLoadList==='function'){ supaLoadList('notifiche', notifLoad, notifSave, apply); } else { apply(); }
   }catch(e){}
 }
@@ -16333,9 +16388,17 @@ function notifSync(){
    resta acceso finche' non le smarchi. */
 function notifBadgeUpdate(){
   try{
+    /* La campanella sta sopra tutte le finestre (z-index 100080) per restare
+       raggiungibile anche dentro un preventivo. Ma NON deve comparire sul login:
+       finche' la schermata di accesso e' visibile, resta nascosta. */
+    var bell=document.getElementById('notifBell');
+    var ws=document.getElementById('welcome-screen');
+    var dentro = !ws || ws.style.display==='none';
+    if(bell) bell.style.display = dentro ? '' : 'none';
+    if(!dentro){ var bb=document.getElementById('notifBellBadge'); if(bb) bb.style.display='none'; return; }
     var b=document.getElementById('notifBellBadge'); if(!b) return;
     var last=notifLastSeen();
-    var nuove=notifLoad().filter(function(x){ return x && x.ts>last; }).length;
+    var nuove=notifMie().filter(function(x){ return x && x.ts>last; }).length;
     var task=0; try{ if(typeof window.eaTaskDaFare==='function') task=window.eaTaskDaFare(); }catch(e){}
     var n=nuove+task;
     if(n>0){
@@ -16347,6 +16410,13 @@ function notifBadgeUpdate(){
 }
 function notifAutomazioniAttive(){
   var out=[]; var now=Date.now();
+  /* Sono automazioni di VENDITA (promemoria WhatsApp, mail preventivo):
+     alla contabilita' non servono e le riempiono il pannello di roba altrui.
+     Non si ripetono comunque: e' un elenco calcolato dal vivo, non notifiche. */
+  try{
+    var _r=(typeof getCurrentRole==='function')?getCurrentRole():'';
+    if(_r==='contabilita') return out;
+  }catch(e){}
   try{
     var cvs=(typeof cvLoad==='function')?cvLoad():[];
     cvs.forEach(function(p){ if(!p||p.isContratto) return; if(!(p.cliente&&p.cliente.telefono)) return; var eta=now-(p.createdAt||now); var nome=(((p.cliente.cognome||'')+' '+(p.cliente.nome||'')).trim())||'cliente';
@@ -16360,7 +16430,7 @@ function notifAutomazioniAttive(){
 function notifChiudiPanel(){ var m=document.getElementById('notif-panel'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function notifApri(){
   var m=document.getElementById('notif-panel'); if(!m){ m=document.createElement('div'); m.id='notif-panel'; m.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:100001;padding:14px;overflow:auto;'; document.body.appendChild(m); m.addEventListener('click',function(e){ if(e.target===m) notifChiudiPanel(); }); }
-  var notifs=(typeof notifLoad==='function')?notifLoad().slice().sort(function(a,b){return b.ts-a.ts;}).slice(0,40):[];
+  var notifs=(typeof notifMie==='function')?notifMie().slice().sort(function(a,b){return b.ts-a.ts;}).slice(0,40):[];
   var auto=notifAutomazioniAttive();
   var fmt=function(ts){ var d=new Date(ts); var z=function(x){return String(x).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+' '+z(d.getHours())+':'+z(d.getMinutes()); };
   var esc=function(s){ return String(s==null?'':s).replace(/</g,'&lt;'); };
@@ -16399,7 +16469,14 @@ function notifApri(){
     try{ if(n.tipo==='wa_prom' && n.refId && typeof cvWaInSospeso==='function' && cvWaInSospeso(n.refId)){
       _btn='<button onclick="cvWaFatto(\''+n.refId+'\')" style="flex:0 0 auto;align-self:center;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 9px;font-family:inherit;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;">\u2705 Fatto</button>';
     } }catch(e){}
-    return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span><div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div>'+_btn+'</div>'; }).join('');
+          /* Se la notifica punta a qualcosa, la riga ci porta: leggere un sollecito
+         e poi doverlo cercare a mano non ha senso. */
+      var _vai='';
+      if(n.refId && n.tipo==='task_soll') _vai='ccVaiAlTask';
+      else if(n.refId && n.tipo==='wa_prom') _vai='cvVaiAlPreventivo';
+      var _op = _vai ? (' onclick="'+_vai+'(\'' + n.refId + '\')" style="flex:1;min-width:0;cursor:pointer;"')
+                     : ' style="flex:1;min-width:0;"';
+      return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span>'+_op+'><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+(_vai?' <span style=\"color:#1a4fa0;font-weight:800;\">\\u203a</span>':'')+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div>'+_btn+'</div>'; }).join('');
   h+='</div></div>';
   m.innerHTML=h; m.style.display='block';
   if(typeof notifSetLastSeen==='function') notifSetLastSeen(Date.now());
