@@ -2049,7 +2049,9 @@ async function syncFotoFromDrive(targa, statusEl) {
         reader.onload = () => resolve(reader.result);
         reader.readAsDataURL(blob);
       });
-      photos.push({ data: base64, name: f.name, driveId: f.id });
+      /* Il campo si chiama driveFileId: saveFoto cerca quello. Scrivendo 'driveId'
+         l.ID andava perso e il base64 restava in localStorage, riempiendo la quota. */
+      photos.push({ data: base64, name: f.name, driveFileId: f.id, driveId: f.id });
     }
 
     // Salva nel localStorage
@@ -2653,6 +2655,59 @@ let _lbPhotos = [];
 let _lbIndex = 0;
 
 function getFotoKey(targa){ return FOTO_PREFIX + targa.toUpperCase().trim(); }
+
+/* ===== Foto Drive visibili al cliente =====
+   Le foto restano su Drive: non le duplichiamo sul Worker (50 MB per auto).
+   Si rende la cartella leggibile a chi ha il link, poi Google serve da solo
+   una copia ridimensionata via lh3.googleusercontent.com: noi non carichiamo
+   niente e il cliente scarica ~80 KB invece di 1,8 MB.                        */
+var FOTO_PUB_KEY='ea_foto_pubbliche_v1';
+function fotoPubblicheLoad(){ try{ return JSON.parse(localStorage.getItem(FOTO_PUB_KEY)||'{}'); }catch(e){ return {}; } }
+function fotoPubblicheSet(targa){
+  try{ var m=fotoPubblicheLoad(); m[String(targa||'').toUpperCase()]=Date.now(); localStorage.setItem(FOTO_PUB_KEY, JSON.stringify(m)); }catch(e){}
+}
+function fotoGiaPubbliche(targa){
+  try{ return !!fotoPubblicheLoad()[String(targa||'').toUpperCase()]; }catch(e){ return false; }
+}
+/* URL pubblico della foto, servito ridimensionato dai server di Google */
+function fotoUrlPubblico(driveFileId, larghezza){
+  if(!driveFileId) return '';
+  return 'https://lh3.googleusercontent.com/d/' + driveFileId + '=w' + (larghezza||600);
+}
+/* Prima foto utile di una targa (quella che finisce in mail) */
+function fotoPrimaDrive(targa){
+  try{
+    var arr=(typeof loadFoto==='function')?loadFoto(targa):[];
+    for(var i=0;i<arr.length;i++){
+      var id=arr[i] && (arr[i].driveFileId || arr[i].driveId);
+      if(id) return id;
+    }
+  }catch(e){}
+  return '';
+}
+/* Rende la cartella della targa leggibile a chiunque abbia il link.
+   Va fatta una volta sola per auto: il risultato viene ricordato. */
+async function fotoRendiPubbliche(targa){
+  try{
+    if(!targa) return false;
+    if(fotoGiaPubbliche(targa)) return true;
+    if(typeof isDriveConnected!=='function' || !isDriveConnected()) return false;
+    var token=_driveAccessToken;
+    var rootId=await getOrCreateRootFolder(token);
+    var q="name='"+String(targa).toUpperCase()+"' and mimeType='application/vnd.google-apps.folder' and '"+rootId+"' in parents and trashed=false";
+    var r=await fetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent(q)+'&fields=files(id)',
+                      { headers:{ Authorization:'Bearer '+token } });
+    var d=await r.json();
+    var cart=(d.files||[])[0];
+    if(!cart) return false;
+    var pr=await fetch('https://www.googleapis.com/drive/v3/files/'+cart.id+'/permissions',
+      { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+        body: JSON.stringify({ role:'reader', type:'anyone' }) });
+    if(!pr.ok){ var e=await pr.text(); console.log('foto pubbliche:', e); return false; }
+    fotoPubblicheSet(targa);
+    return true;
+  }catch(e){ console.log('foto pubbliche:', e && e.message); return false; }
+}
 
 function loadFoto(targa){
   try{ return JSON.parse(localStorage.getItem(getFotoKey(targa))||'[]'); }catch(e){ return []; }
@@ -9844,6 +9899,11 @@ document.addEventListener('DOMContentLoaded',function(){
     var d = new Date(s); if (!isNaN(d.getTime())) { var z=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
     return s;
   }
+  /* Ogni volta che l'elenco mansioni cambia, la campanella si riallinea subito:
+     senza questo bisognava aspettare fino a 60 secondi il giro del timer. */
+  function ccBadgeSubito(){
+    try{ if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); }catch(e){}
+  }
   function ccFetchSheet(){
     if (typeof GS_URL === 'undefined' || !GS_URL) return;
     var cb = 'ccCb_' + Date.now();
@@ -9871,6 +9931,8 @@ document.addEventListener('DOMContentLoaded',function(){
       var merged = Object.keys(byId).map(function(k){ return byId[k]; });
       ccSave(merged);
       ccRenderCal(); if (ccGiornoSel) ccRenderList(); ccUpdateBadge(); ccRenderRiepilogo();
+      /* mansioni appena arrivate: la campanella si riallinea ora, non fra 60 secondi */
+      ccBadgeSubito();
     };
     s.src = GS_URL + '?sheet=' + CC_SHEET + '&callback=' + cb;
     s.onerror = function(){ if (s.parentNode) s.parentNode.removeChild(s); };
@@ -10239,7 +10301,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccToggle(id){
     var u = ccUtente(); var list = ccLoad();
     list.forEach(function(c){ if (c.id===id){ c.fatto=!c.fatto; c.fattoDa=c.fatto?u.nome:''; ccSync(c); } });
-    ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo();
+    ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccBadgeSubito();
   }
   function ccElimina(id){
     if (!confirm('Eliminare questo compito?')) return;
@@ -10520,6 +10582,9 @@ document.addEventListener('DOMContentLoaded',function(){
   window.ccRender = ccRender;        // usato dal wrapper di sidebarNav
   window.ccUpdateBadge = ccUpdateBadge;
   window.ccRefresh = ccFetchSheet;   // usato da "Aggiorna Tutto"
+  /* Serve all'avvio: le mansioni vanno scaricate anche se non apri il Calendario,
+     altrimenti la campanella conta su un elenco vuoto e resta spenta. */
+  window.ccFetch = ccFetchSheet;
   /* ccToggle era usata in un onclick HTML (scope globale) ma restava chiusa qui dentro:
      il pulsante \u00abFatto\u00bb del riquadro rosso non funzionava. */
   window.ccToggle = ccToggle;
@@ -10592,7 +10657,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var u=ccUtente(), list=ccLoad(), trovato=false;
       list.forEach(function(c){ if(c.id===id && !c.fatto){ c.fatto=true; c.fattoDa=(u&&u.nome)||''; ccSync(c); trovato=true; } });
       if(!trovato){ ccToast('Task gi\u00e0 segnato come fatto'); return; }
-      ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo();
+      ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccBadgeSubito();
       try{ ccPromemoriaTimbrature(); }catch(e){}
       ccToast('\u2705 Task segnato come fatto');
       var m=document.getElementById('notif-panel');
@@ -13012,6 +13077,12 @@ function cvEmailCaparraCliente(cv, importo){
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
+  /* La mail parte fra un'ora: la cartella foto va resa leggibile adesso,
+     mentre Drive e' connesso. Se fallisce, la mail parte senza foto. */
+  try{
+    var _tg=(cv.autoSnapshot&&cv.autoSnapshot.targa)||cv.nuovaTarga||'';
+    if(_tg && typeof fotoRendiPubbliche==='function') fotoRendiPubbliche(_tg);
+  }catch(e){}
   try{
     var _h=''; try{ _h=cvMailPreventivoHtml(cv); }catch(e){}
     cv.mailProg = { to:cv.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:_h };
@@ -13050,6 +13121,13 @@ function eamAuto(p){
       if(!out.km) out.km=mz.km;
       var f=(mz.foto||[])[0];
       if(f && f.url) out.foto=f.url;
+    }
+    /* Le foto buone sono quelle del report, su Drive: 27 scatti d'ispezione
+       valgono piu' di una foto qualsiasi. Hanno la precedenza. */
+    var tg=out.targa || (mz && mz.targa) || '';
+    if(tg && typeof fotoPrimaDrive==='function'){
+      var did=fotoPrimaDrive(tg);
+      if(did) out.foto=fotoUrlPubblico(did, 600);
     }
   }catch(e){}
   return out;
@@ -15818,6 +15896,8 @@ function eaBadgeBoot(){
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
   try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
+  /* le mansioni del calendario: senza queste la campanella parte a zero */
+  try{ if(typeof window.ccFetch==='function') window.ccFetch(); }catch(e){}
   eaBadgeRefreshAll();
 }
 try{
