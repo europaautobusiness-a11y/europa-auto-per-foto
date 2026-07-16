@@ -9629,6 +9629,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
+  if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   if(view==='provv'){pLoadFromGS();pCalcola();}
@@ -10722,14 +10723,18 @@ var SIN_ICONS={ attesa_apertura:'📝', aperto:'📂', lavorazione:'🔧', concl
 var SIN_NEXT={ attesa_apertura:'aperto', aperto:'lavorazione', lavorazione:'concluso', concluso:'saldo', saldo:'liquidato', integrazione:'liquidato' };
 
 function sinTombstones(){ try{ return JSON.parse(localStorage.getItem(SINISTRI_DEL_KEY)||'[]'); }catch(e){ return []; } }
-function sinAddTombstone(id){ if(!id) return; var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} } }
+function sinAddTombstone(id){ if(!id) return;
+  /* via anche da Supabase, altrimenti alla prossima sync torna indietro */
+  try{ if(typeof supaDelete==='function') supaDelete('sinistri_app', id); }catch(e){}
+  var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} } }
 function sinLoad(){ try{ var t=sinTombstones(); return (JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]')).filter(function(s){ return s && t.indexOf(s.id)<0; }); }catch(e){ return []; } }
 function sinSave(list){ try{ localStorage.setItem(SINISTRI_KEY, JSON.stringify(list)); }catch(e){} }
 function sinById(id){ return sinLoad().filter(function(s){return s.id===id;})[0]; }
 function sinEsc(v){ return (v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // Invia un sinistro al foglio
-function sinPush(s){ if(typeof GS_URL!=='undefined' && GS_URL && s && s.id){ try{ gsJsonp({action:'upsert', sheet:SINISTRI_SHEET, record:s}); }catch(e){} } }
+function sinPush(s){ try{ if(s && s.id){ s.updatedAt=Date.now(); if(typeof sinSupaUpsert==='function') sinSupaUpsert(s); } }catch(e){}
+  if(typeof GS_URL!=='undefined' && GS_URL && s && s.id){ try{ gsJsonp({action:'upsert', sheet:SINISTRI_SHEET, record:s}); }catch(e){} } }
 
 // Rilegge i sinistri dal foglio e li unisce (rispettando la lista nera)
 function sinLoadDaSheets(){
@@ -14259,6 +14264,74 @@ function cvVendAutoAvanza(){
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
+/* ===================== SINISTRI SU SUPABASE =====================
+   NB: la tabella si chiama 'sinistri_app' e non 'sinistri' perche' su questo
+   progetto Supabase esiste gia' una tabella 'sinistri' con uno schema diverso
+   (niente id text, niente data jsonb). Non la tocchiamo.
+   I sinistri contengono le FATTURE CARROZZERIA emesse: finora vivevano nel
+   localStorage di ogni dispositivo, sincronizzati solo via Google Sheets.
+
+   Regola della migrazione (concordata): prima si legge tutto dal remoto,
+   poi si carica il locale che manca di la'. Mai il contrario.
+
+   Due cose che vanno rispettate o si fanno danni:
+   1) i TOMBSTONE: un sinistro cancellato non deve tornare dal remoto
+   2) chi vince in caso di conflitto: il piu' recente, per updatedAt          */
+
+function sinTs(s){ return +((s && (s.updatedAt || s.createdAt)) || 0); }
+
+function sinSupaUpsert(s){
+  try{
+    if(!s || !s.id) return;
+    if(!s.updatedAt) s.updatedAt = Date.now();
+    if(typeof supaUpsert==='function') supaUpsert('sinistri_app', s);
+  }catch(e){}
+}
+
+var _sinSyncFatta = false;
+function sinSupaLoad(done){
+  var sb = (typeof sbClient==='function') ? sbClient() : null;
+  if(!sb){ if(done) done(); return; }
+  try{
+    sb.from('sinistri_app').select('id,data').then(function(res){
+      if(!res || res.error){
+        if(res && res.error) console.log('sinistri_app load:', res.error.message);
+        if(done) done(); return;
+      }
+      var tomb = (typeof sinTombstones==='function') ? sinTombstones() : [];
+      var remoti = (res.data||[]).map(function(r){
+        var d = r && r.data;
+        if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        return d;
+      }).filter(function(d){ return d && d.id; });
+
+      /* i cancellati non tornano indietro, e spariscono anche dal remoto */
+      var daCancellare = remoti.filter(function(d){ return tomb.indexOf(d.id)>=0; });
+      remoti = remoti.filter(function(d){ return tomb.indexOf(d.id)<0; });
+      daCancellare.forEach(function(d){ try{ if(typeof supaDelete==='function') supaDelete('sinistri_app', d.id); }catch(e){} });
+
+      var locali = (typeof sinLoad==='function') ? sinLoad() : [];
+      var byId = {}, daSpingere = [];
+      remoti.forEach(function(r){ byId[r.id] = r; });
+      locali.forEach(function(l){
+        if(!l || !l.id) return;
+        var ex = byId[l.id];
+        if(!ex){ byId[l.id] = l; daSpingere.push(l); return; }   /* di qui ma non di la' */
+        if(sinTs(l) > sinTs(ex)){ byId[l.id] = l; daSpingere.push(l); }
+      });
+
+      var finale = Object.keys(byId).map(function(k){ return byId[k]; });
+      if(typeof sinSave==='function') sinSave(finale);
+      daSpingere.forEach(function(x){ sinSupaUpsert(x); });
+
+      _sinSyncFatta = true;
+      try{ if(typeof sinRender==='function') sinRender(); }catch(e){}
+      if(done) done(remoti.length, daSpingere.length);
+    }).catch(function(e){ console.log('sinistri_app load:', e && e.message); if(done) done(); });
+  }catch(e){ if(done) done(); }
+}
+
+
 /* ===================== FATTURA TAGLIANDO (dal Calendario) =====================
    Si genera dagli appuntamenti di tipo "Intervento su auto".
    Layout ricalcato sulla fattura di officina che usi come modello.
@@ -14648,6 +14721,9 @@ function tgStampa(id){
 
 
 /* ===================== PRESENZE SU SUPABASE =====================
+   NB: la tabella si chiama 'presenze_app'. Su questo progetto esisteva gia'
+   una 'presenze' con schema relazionale (dipendente, entrata, pausa...):
+   scrivendoci {id,data} ogni salvataggio falliva in silenzio.
    Finora timbrature e dipendenti vivevano solo nel localStorage di ogni
    dispositivo: pezzi diversi su telefoni diversi, nessuna copia unica.
    Qui vengono portati sulla tabella 'presenze' e 'dipendenti'.
@@ -14704,7 +14780,7 @@ function presenzeSupaUpsert(entry){
     if(!entry || !entry.dipendente || !entry.data) return;
     entry.id = presenzeId(entry.dipendente, entry.data);
     entry.updatedAt = Date.now();
-    if(typeof supaUpsert==='function') supaUpsert('presenze', entry);
+    if(typeof supaUpsert==='function') supaUpsert('presenze_app', entry);
   }catch(e){}
 }
 
@@ -14713,9 +14789,9 @@ function presenzeSupaLoad(done){
   var sb = (typeof sbClient==='function') ? sbClient() : null;
   if(!sb){ if(done) done(); return; }
   try{
-    sb.from('presenze').select('id,data').then(function(res){
+    sb.from('presenze_app').select('id,data').then(function(res){
       if(!res || res.error){
-        if(res && res.error) console.log('presenze load:', res.error.message);
+        if(res && res.error) console.log('presenze_app load:', res.error.message);
         if(done) done(); return;
       }
       var remoti = (res.data||[]).map(function(r){
@@ -14743,12 +14819,12 @@ function presenzeSupaLoad(done){
       finale.sort(function(a,b){ return String(b.data).localeCompare(String(a.data)); });
       if(typeof presenzeSaveReg==='function') presenzeSaveReg(finale);
 
-      daSpingere.forEach(function(r){ try{ if(typeof supaUpsert==='function') supaUpsert('presenze', r); }catch(e){} });
+      daSpingere.forEach(function(r){ try{ if(typeof supaUpsert==='function') supaUpsert('presenze_app', r); }catch(e){} });
       _presenzeSyncFatta = true;
       try{ if(typeof presenzeRenderTabella==='function') presenzeRenderTabella(); }catch(e){}
       try{ if(typeof dipRenderMese==='function') dipRenderMese(); }catch(e){}
       if(done) done(nR.list.length, daSpingere.length);
-    }).catch(function(e){ console.log('presenze load:', e && e.message); if(done) done(); });
+    }).catch(function(e){ console.log('presenze_app load:', e && e.message); if(done) done(); });
   }catch(e){ if(done) done(); }
 }
 
@@ -15929,6 +16005,7 @@ function eaBadgeBoot(){
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
+  try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){}
   try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
   /* le mansioni del calendario: senza queste la campanella parte a zero */
   try{ if(typeof window.ccFetch==='function') window.ccFetch(); }catch(e){}
