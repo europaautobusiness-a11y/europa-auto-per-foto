@@ -4573,7 +4573,8 @@ async function manualSync(btn){
     renderReady('');
     renderArchive('');
     updateCounts();
-    // Carica anche provvigioni da Sheets
+    // Carica anche provvigioni: prima dal cloud, poi da Sheets
+    try { pSupaLoad(); } catch(e) {}
     try { pLoadFromGS(); } catch(e) {}
     // Carica presenze da Sheets
     try { presenzeLoadDaSheets(); } catch(e) {}
@@ -5726,6 +5727,71 @@ function pLoadReg() {
 }
 function pSaveReg(r) { localStorage.setItem('ea_provv3', JSON.stringify(r)); }
 
+/* ---- provvigioni sul cloud ----
+   Fino a ieri l'unica copia vera stava su Google Sheets e in locale
+   restava solo il mese corrente. Ora ogni riga va anche su Supabase. */
+function pSupaUpsert(entry){
+  try{ if(entry && entry.id!=null && typeof supaUpsert==='function') supaUpsert('provvigioni', entry); }catch(e){}
+}
+function pSupaDelete(id){
+  try{ if(id!=null && typeof supaDelete==='function') supaDelete('provvigioni', id); }catch(e){}
+}
+/* Primo passaggio: quello che arriva da Sheets e sul cloud non c'e'
+   ancora, viene copiato su. Serve a portare su lo storico senza che tu
+   debba fare niente a mano. */
+function pSupaMigra(rows){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb || !rows || !rows.length) return;
+  try{
+    sb.from('provvigioni').select('id').then(function(res){
+      if(!res || res.error) return;   /* l'errore lo segnala gia' pSupaLoad */
+      var esiste={}; (res.data||[]).forEach(function(r){ if(r&&r.id!=null) esiste[String(r.id)]=1; });
+      var nuovi=[];
+      rows.forEach(function(r){ if(r && r.id!=null && !esiste[String(r.id)]) nuovi.push(r); });
+      if(!nuovi.length) return;
+      nuovi.forEach(function(r){ pSupaUpsert(r); });
+      if(typeof tcToastNew==='function') tcToastNew('\u2601\ufe0f '+nuovi.length+' provvigioni copiate sul cloud', true);
+    }, function(){});
+  }catch(e){}
+}
+function pSupaLoad(){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb) return;
+  try{
+    sb.from('provvigioni').select('id,data').then(function(res){
+      if(!res || res.error){
+        if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni', res.error.message);
+        return;
+      }
+      var byId={};
+      (res.data||[]).forEach(function(r){
+        var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        if(d && d.id!=null) byId[String(d.id)]=d;
+      });
+      /* quello che c'e' solo qui sul telefono torna su: nessuna riga si perde */
+      var locals=(_pRegCache && _pRegCache.length) ? _pRegCache : pLoadReg();
+      var ts=function(r){ return +((r && r.updatedAt) || 0); };
+      locals.forEach(function(r){
+        if(!r || r.id==null) return;
+        var k=String(r.id), ex=byId[k];
+        if(!ex){ byId[k]=r; pSupaUpsert(r); return; }
+        if(ts(r) > ts(ex)){ byId[k]=r; pSupaUpsert(r); }
+      });
+      _pRegCache = Object.keys(byId).map(function(k){ return byId[k]; });
+      pSaveReg(_pRegCache);
+      try{
+        var v=document.getElementById('view-provv');
+        if(v && v.classList.contains('active')){
+          pRenderReg(); pAggStats();
+          try{ pRenderFonteChart(); }catch(e){}
+          try{ pRenderStorico(); }catch(e){}
+          try{ pRenderFinStats(); }catch(e){}
+        }
+      }catch(e){}
+    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni', (err&&err.message)||err); });
+  }catch(e){}
+}
+
 // Carica da Google Sheets e aggiorna locale
 function pForzaAggiornamento(btn) {
   // Svuota cache locale e ricarica da Sheets
@@ -5796,6 +5862,7 @@ function pLoadFromGS() {
     try { pRenderFonteChart(); } catch(e) {}
     try { pRenderFinStats(); } catch(e) {}
     try { pRenderStorico(); } catch(e) {}
+    try { pSupaMigra(data); } catch(e) {}
   };
 
   // Fallback: se GS_URL non è configurato o script fallisce
@@ -5919,8 +5986,10 @@ function pSalva() {
   else { entry.compass = res.compass; entry.dbAvvera = res.dbAvvera; entry.bestProvv = res.bestProvv; }
 
   if(existingEntry){const idx=reg.findIndex(x=>x.id===entry.id);if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
+  entry.updatedAt = Date.now();
   _pEditingId=null;
   pSaveReg(reg);
+  pSupaUpsert(entry);
   pRenderReg();
   pAggStats();
   const banner=document.getElementById('pEditingBanner');if(banner)banner.style.display='none';
@@ -6043,12 +6112,14 @@ function pModifica(id){
 function pElimina(id) {
   if (!confirm('Eliminare questa vendita?')) return;
   pSaveReg(pLoadReg().filter(r => r.id !== id));
+  try{ _pRegCache = _pRegCache.filter(function(r){ return String(r.id) !== String(id); }); }catch(e){}
+  pSupaDelete(id);
   pGsDelete(id);
   pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
 }
 
 function pClearAll() {
-  if (!confirm('Svuotare tutto il registro locale? Lo storico su Google Sheets rimane intatto.')) return;
+  if (!confirm('Svuotare tutto il registro locale? Lo storico sul cloud e su Google Sheets rimane intatto.')) return;
   localStorage.removeItem('ea_provv3');
   pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
 }
@@ -6058,7 +6129,7 @@ function pNuovoMese() {
   const [y,m] = meseCorrente.split('-');
   const mesiNomi = ['','Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
                     'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-  if (!confirm('Avviare nuovo mese ' + mesiNomi[parseInt(m)] + ' ' + y + '?\n\nIl registro locale viene azzerato. Lo storico rimane su Google Sheets.')) return;
+  if (!confirm('Avviare nuovo mese ' + mesiNomi[parseInt(m)] + ' ' + y + '?\n\nIl registro locale viene azzerato. Lo storico rimane sul cloud e su Google Sheets.')) return;
   // Svuota il locale e segna il mese di partenza
   localStorage.removeItem('ea_provv3');
   localStorage.setItem('ea_provv_mese_start', meseCorrente); // non caricare mesi precedenti
@@ -9632,7 +9703,7 @@ function sidebarNav(view,btn){
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
-  if(view==='provv'){pLoadFromGS();pCalcola();}
+  if(view==='provv'){pSupaLoad();pLoadFromGS();pCalcola();}
   if(view==='foto'){
     // Carica automaticamente da Drive se connesso
     if(isDriveConnected()) {
@@ -9664,7 +9735,7 @@ function sidebarNav(view,btn){
   if(view==='fornitori'){ fnInit(); }
   if(view==='preventivi'){ if(typeof cvSupaLoad==='function') cvSupaLoad(); else if(typeof cvRender==='function') cvRender(); }
   if(view==='vendite'){ if(typeof cvVendInit==='function') cvVendInit(); }
-  if(view==='parametri'){ parInit(); }
+  if(view==='parametri'){ parInit(); parSupaLoad(); }
   if(view==='statistiche'){ statInit(); }
   if(view==='clienti'){ if(typeof clInit==='function') clInit(); }
   if(view==='whatsapp'){ if(typeof waInit==='function') waInit(); }
@@ -12615,6 +12686,36 @@ var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
 function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){} }
+/* --- anagrafiche sul cloud: prima vivevano solo dentro al browser --- */
+function clSupaList(){
+  var o=clStore(), out=[];
+  Object.keys(o).forEach(function(k){
+    var e=o[k]; if(!e||typeof e!=='object') return;
+    e.id=k; out.push(e);
+  });
+  return out;
+}
+function clSupaSaveList(arr){
+  var o={};
+  (arr||[]).forEach(function(e){ if(e&&e.id) o[e.id]=e; });
+  clStoreSave(o);
+}
+function clSupaUpsert(key){
+  try{
+    var e=clStore()[key]; if(!e) return;
+    e.id=key;
+    if(typeof supaUpsert==='function') supaUpsert('clienti', e);
+  }catch(e2){}
+}
+function clSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  supaLoadList('clienti', clSupaList, clSupaSaveList, function(){
+    try{
+      var v=document.getElementById('view-clienti');
+      if(v && v.classList.contains('active') && typeof clRender==='function') clRender();
+    }catch(e){}
+  });
+}
 function clKeyOf(cl){ cl=cl||{}; var n=((cl.cognome||'')+'|'+(cl.nome||'')).toLowerCase().trim(); var r=(cl.ragSociale||'').toLowerCase().trim(); var e=(cl.email||'').toLowerCase().trim(); var t=(cl.telefono||'').replace(/\D/g,''); var c=e||t; if(n!=='|') return c?('nc:'+n+'#'+c):('n:'+n); if(r) return c?('rc:'+r+'#'+c):('r:'+r); if(e) return 'e:'+e; if(t) return 't:'+t; return ''; }
 function clIndirizziBase(b){ b=b||{}; if(b.business && b.sedeLegale) return [{via:b.sedeLegale,civico:'',cap:'',citta:'',prov:'',dal:''}]; if(b.via||b.citta) return [{via:b.via||'',civico:b.civico||'',cap:b.cap||'',citta:b.citta||'',prov:b.prov||'',dal:''}]; return []; }
 function clAppuntamenti(c){
@@ -12646,7 +12747,7 @@ function clMerge(entry, o){
     preventivi:entry.preventivi||[], contratti:entry.contratti||[] };
 }
 function clFind(key){ var all=clAggrega(); for(var i=0;i<all.length;i++){ if(all[i].key===key) return all[i]; } return null; }
-function clInit(){ _clSel=null; clRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
+function clInit(){ _clSel=null; clRender(); clSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
 function clSetFiltro(k,v){ _clFiltri[k]=v; clRender(); }
 function clApri(keyEnc){ _clSel=decodeURIComponent(keyEnc); clRender(); }
 function clChiudiDettaglio(){ _clSel=null; clRender(); }
@@ -12719,6 +12820,7 @@ function clSalvaAnagrafica(keyEnc){
   e.business=ck('cl_business'); e.ragSociale=g('cl_ragSociale'); e.piva=g('cl_piva'); e.sdi=g('cl_sdi');
   e.nome=g('cl_nome'); e.cognome=g('cl_cognome'); e.telefono=g('cl_telefono'); e.email=g('cl_email'); e.cf=g('cl_cf');
   e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
+  clSupaUpsert(key);
   if(typeof tcToastNew==='function') tcToastNew('\ud83d\udcbe Anagrafica salvata',true);
   clRender();
 }
@@ -12737,6 +12839,7 @@ function clAddIndSalva(keyEnc){
   var cur=clFind(key); var inds=(cur&&cur.indirizzi)?cur.indirizzi.slice():[];
   inds.push({via:g('cli_via'), civico:g('cli_civico'), cap:g('cli_cap'), citta:g('cli_citta'), prov:g('cli_prov').toUpperCase(), dal:new Date().toLocaleDateString('it-IT')});
   var ov=clStore(); var e=ov[key]||{}; e.indirizzi=inds; e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
+  clSupaUpsert(key);
   if(typeof tcToastNew==='function') tcToastNew('\ud83d\udccd Nuovo indirizzo aggiunto (il precedente resta in storico)',true);
   clRender();
 }
@@ -12746,6 +12849,7 @@ function clNuovo(){
   if(!nome && !cognome){ alert('Inserisci almeno nome o cognome.'); return; }
   var key='m:'+Date.now();
   var ov=clStore(); ov[key]={nome:nome,cognome:cognome,manual:true,updatedAt:Date.now()}; clStoreSave(ov);
+  clSupaUpsert(key);
   _clSel=key; clRender();
 }
 function clVaiCv(id, isContr){
@@ -14050,6 +14154,29 @@ var PARAM_CONDIZIONI_DEF = "CONDIZIONI PROPOSTA D’ACQUISTO\n1. Il presente con
 var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT\u00c0 prevista dall'articolo 128, comma c del D.LGS. 206/2005 (Codice del Consumo) e condizioni di garanzia.\n\nVeicolo in condizioni d'uso pregresso, coerente con lo stato della manutenzione ordinaria dichiarata; saranno quindi necessari solo marginali interventi di manutenzione straordinaria, durante il periodo di Garanzia, nell'arco della percorrenza prevista, purch\u00e9 il veicolo sia correttamente usato e non vi sia negligenza o imperizia da parte del conducente.\nL'auto \u00e8 un bene complesso composto di sottosistemi con ciclo di vita definito dalla qualit\u00e0 intrinseca della costruzione e del processo di produzione, e influenzato dalla condotta di guida e dalla qualit\u00e0 della manutenzione ordinaria. La Garanzia Legale di Conformit\u00e0 garantisce quindi la conformit\u00e0 del veicolo, rispondente alla valutazione dello stato di utilizzo pregresso, ai cicli di vita delle parti meccaniche, compresi i dispositivi elettrici ed elettronici utilizzati per il controllo delle parti meccaniche, definiti dalla Norma UNC DOC A01, emanata da Unione Nazionale Consumatori.\nLa Garanzia Legale di Conformit\u00e0 \u00e8 applicabile a partire dalla data di consegna del veicolo oggetto della compravendita, esclusivamente mediante riparazioni delle parti difettose, con espressa esclusione di ogni altro rimedio. Copre i costi strettamente necessari ad eliminare la causa dell'evento anomalo, mediante riparazione o sostituzione delle unit\u00e0 difettose, col criterio di ripristinare la conformit\u00e0 del veicolo alle condizioni coerenti con la percorrenza e l'anzianit\u00e0 al momento della vendita. Condizione essenziale \u00e8 l'esecuzione della manutenzione ordinaria secondo le prescrizioni del costruttore e degli interventi di ripristino da parte di Officine qualificate. \u00c8 applicabile esclusivamente previa autorizzazione.\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se qui diversamente riportato.\n\nQUOTA 'MAGGIOR VALORE'\nQualora si dovesse ristabilire l'intero ciclo di vita di riferimento, mediante la sostituzione dell'intero sottosistema con un altro nuovo, o 'al nuovo', ne risulterebbe un maggior valore del veicolo rispetto a quello dell'acquisto. In questo caso l'acquirente dovr\u00e0 corrispondere una quota parte del costo della riparazione, corrispondente alla porzione di maggiore percorrenza acquisita. La riparazione sar\u00e0 soggetta a specifica garanzia legale per 24 mesi dalla data di riconsegna del veicolo, a carico della parte che fattura il corrispettivo a carico dell'Acquirente.\n\nGARANZIA SULLE RIPARAZIONI\nLe riparazioni a carico totale o parziale dell'acquirente saranno coperte da Garanzia per ulteriori 24 mesi a carico dell'Officina che ha eseguito il ripristino, dalla riconsegna del veicolo.\n\nESCLUSIONI\nIn nessun caso sar\u00e0 possibile riconoscere il rimborso di quanto pagato per interventi non previamente concordati. I difetti causati da imperizia o negligenza del conducente o da responsabilit\u00e0 di terzi non rientrano nella Garanzia Legale. La sostituzione di parti di consumo (lubrificanti, oli, liquidi, filtri e simili) non \u00e8 compresa nella garanzia, cos\u00ec come cristalli, tappezzeria, parti interne ed estetiche in materiale plastico. I difetti apparenti riportati nella proposta di vendita sono parte integrante della trattativa e non possono essere oggetto di garanzia.\nServizio vettura sostitutiva a pagamento offerto in fase di acquisto, solo in caso di fermo veicolo, previa autorizzazione preventiva di 7 giorni lavorativi e con deposito cauzionale di 500,00\u20ac. Valido per le sole auto scoperte da garanzia della casa madre.\n\nCONDIZIONI CONTRATTUALI\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale. La durata minima del pagamento rateale \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica.\n11. L'importo della rata indicato non include le eventuali spese di incasso, applicabili in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni della societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori: la mancata consegna comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
 var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
+/* parLoad restituisce solo i campi noti: qui serve il grezzo, con dentro
+   updatedAt, per capire quale versione e' la piu' recente. */
+function parRaw(){ try{ return JSON.parse(localStorage.getItem(PARAM_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function parSupaSave(p){
+  try{ p=p||parRaw(); p.id='parametri'; if(typeof supaUpsert==='function') supaUpsert('parametri', p); }catch(e){}
+}
+function parSupaLoad(){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb) return;
+  try{
+    sb.from('parametri').select('id,data').eq('id','parametri').then(function(res){
+      if(!res||res.error){ if(res&&res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('parametri', res.error.message); return; }
+      var row=(res.data||[])[0];
+      var rem=row&&row.data; if(typeof rem==='string'){ try{ rem=JSON.parse(rem); }catch(e){ rem=null; } }
+      var loc=parRaw();
+      var tl=+(loc&&loc.updatedAt||0), tr=+(rem&&rem.updatedAt||0);
+      if(rem && tr>tl){
+        try{ localStorage.setItem(PARAM_KEY, JSON.stringify(rem)); }catch(e){}
+        try{ var v=document.getElementById('view-parametri'); if(v && v.classList.contains('active') && typeof parInit==='function') parInit(); }catch(e){}
+      } else if(tl>0 && tl>tr){ parSupaSave(loc); }
+    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('parametri', (err&&err.message)||err); });
+  }catch(e){}
+}
 (function(){ try{ var raw=localStorage.getItem(PARAM_KEY); if(!raw) return; var o=JSON.parse(raw); var ch=false; if(o && typeof o.condizioni==='string' && o.condizioni.indexOf('2% e il 4%')>=0){ o.condizioni=PARAM_CONDIZIONI_DEF; ch=true; } if(o && typeof o.condizioniFinali==='string' && o.condizioniFinali.indexOf('2% e il 4%')>=0){ o.condizioniFinali=PARAM_CONDIZIONI_FINALI_DEF; ch=true; } if(ch){ localStorage.setItem(PARAM_KEY, JSON.stringify(o)); } }catch(e){} })();
 var EA_BUILD='2026-07-11 · sync-fix';
 function diagSync(){
@@ -14081,6 +14208,9 @@ function diagRicarica(){
   try{ if(typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
   try{ if(typeof mzSupaLoad==='function') mzSupaLoad(); }catch(e){}
   try{ if(typeof crmSupaLoad==='function') crmSupaLoad(); }catch(e){}
+  try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
+  try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
+  try{ if(typeof pSupaLoad==='function') pSupaLoad(); }catch(e){}
   setTimeout(function(){ if(out) out.innerHTML='\u2705 Ricarica avviata. Riapri Preventivi/Fornitori per vedere i dati. Premi di nuovo \u201cVerifica\u201d per ricontrollare i conteggi.'; }, 500);
 }
 function parInit(){
@@ -14127,7 +14257,9 @@ function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
   ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi'].forEach(function(k){ p[k]=g(k); });
+  p.updatedAt=Date.now(); p.id='parametri';
   try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
+  parSupaSave(p);
   var st=document.getElementById('par-stato'); if(st) st.textContent='✅ Parametri salvati'; setTimeout(function(){ if(st)st.textContent=''; },2500);
 }
 function parDemoToggle(el){ try{ localStorage.setItem('ea_demo_off', el.checked?'0':'1'); }catch(e){} try{ var vv=document.getElementById('view-vendite'); if(vv&&vv.classList.contains('active')&&typeof cvVendRender==='function') cvVendRender(); }catch(e){} var st=document.getElementById('par-stato'); if(st){ st.textContent=el.checked?'✅ Modalità demo ATTIVA':'✅ Modalità demo disattivata'; setTimeout(function(){ if(st)st.textContent=''; },2500); } }
@@ -15877,9 +16009,14 @@ function simEl(id){
 }
 /* Ricalcolo durante la digitazione: aspetta un attimo l'ultimo tasto,
    cosi' il motore non rimacina 4.936 formule a ogni cifra. */
-var _simT = null;
-function simCalcSoon(){ if(_simT) clearTimeout(_simT); _simT = setTimeout(function(){ _simT=null; try{ simCalc(); }catch(e){} }, 150); }
-function simCalcNow(){ if(_simT){ clearTimeout(_simT); _simT=null; } try{ simCalc(); }catch(e){} }
+var _simT = null, _simMs = 0;
+function simCalcSoon(){
+  if(_simT) clearTimeout(_simT);
+  try{ var o = simEl('sim-out'); if(o) o.style.opacity = '.45'; }catch(e){}   /* si vede che sta per aggiornarsi */
+  var att = Math.max(150, Math.min(900, Math.round(_simMs || 150)));
+  _simT = setTimeout(function(){ _simT = null; try{ simCalc(); }catch(e){} }, att);
+}
+function simCalcNow(){ if(_simT){ clearTimeout(_simT); _simT = null; } try{ simCalc(); }catch(e){} }
 var _simLibs = false, _simCaricato = false, _simInCorso = false, _simMeta = null;
 
 /* Aggiornamento del file: amministrazione (admin + Arianna). Rudy no. */
@@ -15972,7 +16109,26 @@ function simBuild(buf){
 /* ---- lettura/scrittura celle ---- */
 function simAddr(a){ var c = XLSX.utils.decode_cell(a); return { sheet:_simS, col:c.c, row:c.r }; }
 function simGet(a){ try{ return _simHF.getCellValue(simAddr(a)); }catch(e){ return null; } }
-function simSet(a, v){ try{ _simHF.setCellContents(simAddr(a), [[v]]); }catch(e){} }
+function simSet(a, v){
+  try{
+    var ad = simAddr(a);
+    /* niente scrittura se il valore e' gia' quello: e' una scrittura
+       in meno e quindi un pezzo di ricalcolo in meno */
+    var cur = _simHF.getCellValue(ad);
+    if(cur === v) return;
+    if(cur === null && (v === null || v === undefined || v === '')) return;
+    _simHF.setCellContents(ad, [[v]]);
+  }catch(e){}
+}
+/* Sospende il ricalcolo, esegue tutte le scritture, lo fa ripartire una
+   volta sola. Il finally e' obbligatorio: se qualcosa esplode a meta' e
+   la valutazione resta sospesa, il simulatore non calcola piu' nulla. */
+function simScrivi(fn){
+  var susp = false;
+  try{ if(_simHF && typeof _simHF.suspendEvaluation === 'function'){ _simHF.suspendEvaluation(); susp = true; } }catch(e){}
+  try{ fn(); }
+  finally{ if(susp){ try{ _simHF.resumeEvaluation(); }catch(e){} } }
+}
 function simErr(v){ return !!(v && typeof v==='object' && typeof v.value==='string' && v.value.charAt(0)==='#'); }
 function simTxt(v){ if(simErr(v)) return v.value; if(v===null||v===undefined) return ''; return String(v); }
 function simNum(v){ return (typeof v==='number' && isFinite(v)) ? v : null; }
@@ -16173,27 +16329,31 @@ function simCalc(){
   var g = function(id){ var e=simEl(id); return e?e.value:null; };
   var num = function(id){ var v=parseFloat(g(id)); return isNaN(v)?0:v; };
 
-  /* scrittura input nel foglio */
-  simSet('C6',  g('sim_C6'));
-  simSet('E7',  num('sim_E7')/100);
-  simSet('C10', num('sim_C10'));
-  simSet('C11', num('sim_C11'));
-  simSet('E10', num('sim_E10'));
-  simSet('C12', num('sim_C12'));
-  simSet('E11', parseInt(g('sim_E11'),10)||30);
-  if(simEl('sim_E6')){
-    simSet('E6',  num('sim_E6')/100);
-    simSet('C16', num('sim_C16')/100);
-    simSet('E16', num('sim_E16'));
-  }
-  simSet('C21', g('sim_C21'));
-  var ds = simDataSeriale(g('sim_D21')); if(ds) simSet('D21', ds);
-  simSet('C24', g('sim_C24'));
-  simSet('D24', parseInt(g('sim_D24'),10)||60);
-  simSet('E24', g('sim_E24'));
-  simSet('D26', g('sim_D26'));
-  simSet('D27', g('sim_D27'));
-  simSet('D28', g('sim_D28'));
+  var _t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+  /* scrittura input nel foglio: tutte insieme, un ricalcolo solo */
+  simScrivi(function(){
+    simSet('C6',  g('sim_C6'));
+    simSet('E7',  num('sim_E7')/100);
+    simSet('C10', num('sim_C10'));
+    simSet('C11', num('sim_C11'));
+    simSet('E10', num('sim_E10'));
+    simSet('C12', num('sim_C12'));
+    simSet('E11', parseInt(g('sim_E11'),10)||30);
+    if(simEl('sim_E6')){
+      simSet('E6',  num('sim_E6')/100);
+      simSet('C16', num('sim_C16')/100);
+      simSet('E16', num('sim_E16'));
+    }
+    simSet('C21', g('sim_C21'));
+    var ds = simDataSeriale(g('sim_D21')); if(ds) simSet('D21', ds);
+    simSet('C24', g('sim_C24'));
+    simSet('D24', parseInt(g('sim_D24'),10)||60);
+    simSet('E24', g('sim_E24'));
+    simSet('D26', g('sim_D26'));
+    simSet('D27', g('sim_D27'));
+    simSet('D28', g('sim_D28'));
+  });
 
   /* mostra/nascondi maxirata */
   var mx = simEl('sim-max');
@@ -16253,9 +16413,15 @@ function simCalc(){
   }
   h += '</div>';
 
-  var o = simEl('sim-out'); if(o) o.innerHTML = h;
+  var o = simEl('sim-out'); if(o){ o.innerHTML = h; o.style.opacity = '1'; }
   var pw = simEl('sim-piano');
   if(pw && pw.style.display !== 'none') simPianoRender();
+
+  /* quanto e' costato: serve a regolare l'attesa mentre si digita */
+  try{
+    var _t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+    _simMs = _t1 - _t0;
+  }catch(e){}
 }
 
 /* ---- piano di ammortamento ---- */
@@ -16357,6 +16523,10 @@ function eaBadgeBoot(){
   /* carica i contratti anche se l'utente non apre nessuna sezione:
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  /* i parametri finiscono nei contratti stampati: vanno presi subito,
+     prima che qualcuno stampi con le condizioni o l'IBAN vecchi */
+  try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
+  try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
   try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){}
   /* cerca in Gmail le conferme di firma digitale */
@@ -16717,12 +16887,32 @@ function fnSupaLoad(){
 }
 
 /* ===================== SYNC GENERICO SUPABASE (riusabile per ogni modulo) ===================== */
-function supaUpsert(table, rec){ var sb=sbClient(); if(!sb||!rec||!rec.id) return; try{ sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){ if(res&&res.error) console.log(table+' upsert:',res.error.message); }); }catch(e){} }
+/* Un avviso per tabella per sessione: se il cloud rifiuta la scrittura
+   bisogna saperlo subito, ma senza tempestare di toast a ogni tasto. */
+var _supaErrVisti = {};
+function supaSegnalaErrore(table, msg){
+  try{
+    console.log('Supabase '+table+': '+msg);
+    if(_supaErrVisti[table]) return;
+    _supaErrVisti[table] = 1;
+    if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f '+table+': salvataggio sul cloud NON riuscito \u2014 i dati restano solo su questo dispositivo', false);
+  }catch(e){}
+}
+function supaUpsert(table, rec){
+  var sb=sbClient();
+  if(!sb){ supaSegnalaErrore(table, 'Supabase non raggiungibile'); return; }
+  if(!rec||!rec.id) return;
+  try{
+    sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){
+      if(res&&res.error) supaSegnalaErrore(table, res.error.message);
+    }, function(err){ supaSegnalaErrore(table, (err&&err.message)||err); });
+  }catch(e){ supaSegnalaErrore(table, (e&&e.message)||e); }
+}
 function supaDelete(table, id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from(table).delete().eq('id',String(id)).then(function(){}); }catch(e){} }
 function supaLoadList(table, localLoad, localSave, done){
   var sb=sbClient(); if(!sb){ if(done)done(); return; }
   try{ sb.from(table).select('id,data').then(function(res){
-    if(!res||res.error){ if(res&&res.error) console.log(table+' load:',res.error.message); if(done)done(); return; }
+    if(!res||res.error){ if(res&&res.error) supaSegnalaErrore(table, res.error.message); if(done)done(); return; }
     var byId={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; } });
     var locals=localLoad(),toPush=[];
     var ts=function(r){ return +(r&&(r.updatedAt||r.contrattoTs||r.createdAt)||0); };
