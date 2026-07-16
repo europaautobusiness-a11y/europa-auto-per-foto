@@ -5732,10 +5732,10 @@ function pSaveReg(r) { localStorage.setItem('ea_provv3', JSON.stringify(r)); }
    Fino a ieri l'unica copia vera stava su Google Sheets e in locale
    restava solo il mese corrente. Ora ogni riga va anche su Supabase. */
 function pSupaUpsert(entry){
-  try{ if(entry && entry.id!=null && typeof supaUpsert==='function') supaUpsert('provvigioni', entry); }catch(e){}
+  try{ if(entry && entry.id!=null && typeof supaUpsert==='function') supaUpsert('provvigioni_app', entry); }catch(e){}
 }
 function pSupaDelete(id){
-  try{ if(id!=null && typeof supaDelete==='function') supaDelete('provvigioni', id); }catch(e){}
+  try{ if(id!=null && typeof supaDelete==='function') supaDelete('provvigioni_app', id); }catch(e){}
 }
 /* Primo passaggio: quello che arriva da Sheets e sul cloud non c'e'
    ancora, viene copiato su. Serve a portare su lo storico senza che tu
@@ -5744,7 +5744,7 @@ function pSupaMigra(rows){
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb || !rows || !rows.length) return;
   try{
-    sb.from('provvigioni').select('id').then(function(res){
+    sb.from('provvigioni_app').select('id').then(function(res){
       if(!res || res.error) return;   /* l'errore lo segnala gia' pSupaLoad */
       var esiste={}; (res.data||[]).forEach(function(r){ if(r&&r.id!=null) esiste[String(r.id)]=1; });
       var nuovi=[];
@@ -5759,9 +5759,9 @@ function pSupaLoad(){
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb) return;
   try{
-    sb.from('provvigioni').select('id,data').then(function(res){
+    sb.from('provvigioni_app').select('id,data').then(function(res){
       if(!res || res.error){
-        if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni', res.error.message);
+        if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni_app', res.error.message);
         return;
       }
       var byId={};
@@ -5789,7 +5789,7 @@ function pSupaLoad(){
           try{ pRenderFinStats(); }catch(e){}
         }
       }catch(e){}
-    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni', (err&&err.message)||err); });
+    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni_app', (err&&err.message)||err); });
   }catch(e){}
 }
 
@@ -7017,14 +7017,14 @@ function salvaRevisione(targa, dataRev, scadenza, stato, nota) {
     l[i]=rec;
   } else l.push(rec);
   saveRevisioniLocal(l);
-  if (typeof supaUpsert==='function') supaUpsert('revisioni', rec);
+  if (typeof supaUpsert==='function') supaUpsert('revisioni_app', rec);
   if (typeof GS_URL!=='undefined' && GS_URL) { try { gsJsonp({action:'upsert', sheet:REVISIONI_SHEET, record:rec}); } catch(e){} }
 }
 function revSupaLoad(){
   if(typeof supaLoadList!=='function') return;
   /* nessun render da rinfrescare: le revisioni oggi vengono solo scritte,
      nessuna schermata dell'app le rilegge (vedi nota a Davide) */
-  supaLoadList('revisioni', loadRevisioni, saveRevisioniLocal, null);
+  supaLoadList('revisioni_app', loadRevisioni, saveRevisioniLocal, null);
 }
 
 // ── Leggi testo da PDF (pdf.js) ───────────────────────────────
@@ -11478,7 +11478,7 @@ function pmAddTombstone(id){
   if(!id)return;
   var t=pmTombstones();
   if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(PERMUTE_DEL_KEY,JSON.stringify(t));}catch(e){} }
-  if(typeof supaDelete==='function') supaDelete('permute', id);
+  if(typeof supaDelete==='function') supaDelete('permute_app', id);
 }
 function pmLoad(){ try{ var t=pmTombstones(); return (JSON.parse(localStorage.getItem(PERMUTE_KEY)||'[]')).filter(function(p){return p && t.indexOf(p.id)<0;}); }catch(e){ return []; } }
 function pmSave(list){ try{ localStorage.setItem(PERMUTE_KEY, JSON.stringify(list)); }catch(e){} }
@@ -11486,11 +11486,11 @@ function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; 
 
 function pmPush(p){
   if(typeof GS_URL!=='undefined' && GS_URL && p && p.id){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:p}); }catch(e){} }
-  if(p && p.id && typeof supaUpsert==='function') supaUpsert('permute', p);
+  if(p && p.id && typeof supaUpsert==='function') supaUpsert('permute_app', p);
 }
 function pmSupaLoad(){
   if(typeof supaLoadList!=='function') return;
-  supaLoadList('permute', pmLoad, function(arr){
+  supaLoadList('permute_app', pmLoad, function(arr){
     var t=pmTombstones();
     pmSave(arr.filter(function(x){ return x && t.indexOf(x.id)<0; }));   /* i cancellati restano cancellati */
   }, function(){
@@ -12266,6 +12266,59 @@ function mzRender(){
 }
 
 /* ===================== RICERCA GLOBALE VEICOLI ===================== */
+/* ---- libretti dei veicoli: indice per la barra di ricerca ---- */
+var _gsLib = null;   /* null = non ancora caricato, {} = caricato */
+function gsLibCarica(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb)cb(); return; }
+  try{
+    sb.from('documenti').select('entita_id,categoria,nome_file,storage_path,created_at')
+      .eq('entita_tipo','auto').in('categoria',['libretto','libretto_nuovo'])
+      .order('created_at',{ascending:false})
+      .then(function(r){
+        if(!r || r.error){ if(cb)cb(); return; }
+        var m={};
+        (r.data||[]).forEach(function(d){
+          if(!d || !d.entita_id) return;
+          if(!m[d.entita_id]) m[d.entita_id]={ path:d.storage_path, nome:d.nome_file };  /* il piu' recente */
+        });
+        _gsLib=m;
+        if(cb)cb();
+      }, function(){ if(cb)cb(); });
+  }catch(e){ if(cb)cb(); }
+}
+/* Apre il libretto di un veicolo. Se non e' nell'indice lo cerca al volo:
+   l'indice puo' essere vecchio di qualche minuto. */
+function gsLibApri(ev, autoId){
+  try{ if(ev){ ev.stopPropagation(); ev.preventDefault(); } }catch(e){}
+  var hit=_gsLib && _gsLib[autoId];
+  if(hit && hit.path){ if(typeof docApri==='function') docApri(hit.path); return; }
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ alert('Archivio non disponibile: ricarica la pagina.'); return; }
+  sb.from('documenti').select('storage_path,nome_file,created_at')
+    .eq('entita_tipo','auto').eq('entita_id',String(autoId))
+    .in('categoria',['libretto','libretto_nuovo'])
+    .order('created_at',{ascending:false})
+    .then(function(r){
+      var d=(r && r.data && r.data[0]) || null;
+      if(!d){ if(typeof tcToastNew==='function') tcToastNew('Nessun libretto caricato su questo veicolo', false); else alert('Nessun libretto caricato su questo veicolo.'); return; }
+      if(!_gsLib) _gsLib={};
+      _gsLib[autoId]={ path:d.storage_path, nome:d.nome_file };
+      if(typeof docApri==='function') docApri(d.storage_path);
+    }, function(){ alert('Impossibile cercare il libretto.'); });
+}
+/* il tastino verde nei risultati: solo se il libretto c'e', o se
+   l'indice non e' ancora stato caricato */
+function gsLibBtn(autoId){
+  if(!autoId) return '';
+  var c=_gsLib && _gsLib[autoId];
+  if(_gsLib && !c) return '';
+  var t=c?'Apri il libretto':'Cerca il libretto';
+  return '<button type="button" title="'+t+'" onclick="gsLibApri(event,\''+autoId+'\')" '
+    +'style="flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:5px 9px;border-radius:7px;border:1px solid '+(c?'#bbf7d0':'#e2e8f0')+';'
+    +'background:'+(c?'#f0fdf4':'#f8fafc')+';color:'+(c?'#166534':'#64748b')+';font-family:inherit;font-weight:800;font-size:10px;cursor:pointer;white-space:nowrap;">'
+    +'\uD83D\uDCD8 Libretto</button>';
+}
 function gsearchStato(a){
   if(a.stato==='venduta') return ['Venduta','#991b1b','#fecaca'];
   if(a.impegnata) return ['Opzionata','#92400e','#fde68a'];
@@ -12325,6 +12378,7 @@ function gsearchRun(){
       return '<div onclick="gsearchApriCv(\''+c.id+'\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;background:#fff;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'#fff\'">'
         +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(nome)+'</div>'
         +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(auto)+'</div></div>'
+        +gsLibBtn(c.autoId)
         +'<span style="flex:0 0 auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+badge[1]+';color:'+badge[2]+';white-space:nowrap;">'+badge[0]+'</span>'
         +'</div>';
     }).join('');
@@ -12344,6 +12398,7 @@ function gsearchRun(){
         +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(titolo)+'</div>'
         +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(sub)+'</div></div>'
         +(prezzo?('<div style="font-size:12px;font-weight:700;color:#0f172a;flex:0 0 auto;">'+prezzo+'</div>'):'')
+        +gsLibBtn(a.id)
         +'<span style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+st[2]+';color:'+st[1]+';">'+mzEsc(st[0])+'</span>'
         +'</div>';
     }).join('');
@@ -12764,7 +12819,11 @@ var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
 function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){} }
-/* --- anagrafiche sul cloud: prima vivevano solo dentro al browser --- */
+/* --- anagrafiche sul cloud: prima vivevano solo dentro al browser ----
+   NB: la tabella si chiama 'clienti_app' e non 'clienti' perche' su questo
+   progetto Supabase esiste gia' una 'clienti' con un altro schema (niente
+   colonna data jsonb). Stessa storia per provvigioni_app, permute_app e
+   revisioni_app. Le tabelle vecchie non si toccano. */
 function clSupaList(){
   var o=clStore(), out=[];
   Object.keys(o).forEach(function(k){
@@ -12782,12 +12841,12 @@ function clSupaUpsert(key){
   try{
     var e=clStore()[key]; if(!e) return;
     e.id=key;
-    if(typeof supaUpsert==='function') supaUpsert('clienti', e);
+    if(typeof supaUpsert==='function') supaUpsert('clienti_app', e);
   }catch(e2){}
 }
 function clSupaLoad(){
   if(typeof supaLoadList!=='function') return;
-  supaLoadList('clienti', clSupaList, clSupaSaveList, function(){
+  supaLoadList('clienti_app', clSupaList, clSupaSaveList, function(){
     try{
       var v=document.getElementById('view-clienti');
       if(v && v.classList.contains('active') && typeof clRender==='function') clRender();
@@ -13936,11 +13995,28 @@ function cvBuildHTML(c, tipo){
   var _deduc=_pagShow.reduce(function(s,x){return s+cvNum(x.importo);},0);
   var _saldoDov=Math.max(0,(t.totaleScontato||0)-_deduc);
   doc+=row('Saldo dovuto',_saldoDov,'tot');
+  /* Firma in prima pagina: il contratto finale e' lungo e va sottoscritto
+     anche qui, dove ci sono gli importi. */
+  if(isFinale) doc+=cvFirmaHTML();
+  /* La penale compare piu' sotto solo con finanziamento PROMO + polizza.
+     Si guarda adesso perche' decide dove finisce la firma successiva. */
+  var _finPromo=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');});
+  var _finPromoImp=_finPromo.reduce(function(s,p){return s+cvNum(p.importo);},0);
+  var _haPenale=(isFinale && _finPromoImp>0 && !!c.assicOn);
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.5;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo') doc+=cvFirmaHTML(); }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
-  if(tipo==='finale'){ var _finP=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');}); var _finImp=_finP.reduce(function(s,p){return s+cvNum(p.importo);},0); if(_finImp>0 && c.assicOn){ var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; } }
-  if(c.doppiaChiaveConsegnata!=null || c.librettoModalita){ doc+='<div class="cvh">Consegna</div><div class="cvbox"><b>Doppia chiave:</b> '+(c.doppiaChiaveConsegnata?'consegnata al cliente':'NON consegnata')+(c.librettoModalita?('<br><b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente')):'')+'</div>'; }
+  if(_haPenale){ var _finImp=_finPromoImp; { var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh" style="page-break-after:avoid;">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; doc+=cvFirmaHTML(); } }
+  /* La doppia chiave si scrive SOLO se viene consegnata: se non c'e', il
+     cliente non deve leggerlo sul contratto: resta un'informazione interna
+     al gestionale (la trovi nella scheda della vendita). */
+  var _chiaveOk = (c.doppiaChiaveConsegnata===true);
+  if(_chiaveOk || c.librettoModalita){
+    var _cons='';
+    if(_chiaveOk) _cons+='<b>Doppia chiave:</b> consegnata al cliente';
+    if(c.librettoModalita) _cons+=(_cons?'<br>':'')+'<b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente');
+    doc+='<div class="cvh">Consegna</div><div class="cvbox">'+_cons+'</div>';
+  }
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
   if(_cond && !_cvDetailView){ doc+='<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+cvEsc(_cond)+'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
@@ -14100,18 +14176,85 @@ var DOC_CAT={
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']]
 };
 function docCatLabel(tipo,cat){ var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
-function docCatOptions(tipo){ return (DOC_CAT[tipo]||DOC_CAT.auto).map(function(o){return '<option value="'+o[0]+'">'+docEsc(o[1])+'</option>';}).join(''); }
+function docCatOptions(tipo, sel){ return (DOC_CAT[tipo]||DOC_CAT.auto).map(function(o){return '<option value="'+o[0]+'"'+(sel&&String(sel)===o[0]?' selected':'')+'>'+docEsc(o[1])+'</option>';}).join(''); }
 
-// pannello riutilizzabile: lo inserisci in un modulo passando tipo ('auto'|'cliente'|'pratica'), id, e un prefisso unico
-function docPannelloHTML(tipo, id, pfx){
-  return '<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 6px;text-transform:uppercase;">📎 Documenti</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-    +'<select id="'+pfx+'-cat" style="flex:1;min-width:150px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;background:#fff;">'+docCatOptions(tipo)+'</select>'
-    +'<input type="file" id="'+pfx+'-file" multiple style="flex:1;min-width:150px;font-size:12px;">'
-    +'<button type="button" onclick="docCarica(\''+tipo+'\',\''+id+'\',\''+pfx+'\')" style="padding:9px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Carica</button>'
+/* Pannello riutilizzabile.
+     tipo  : 'auto' | 'cliente' | 'pratica' | 'appuntamento'  (decide le categorie)
+     id    : l'entita' a cui si attacca il documento
+     pfx   : prefisso unico degli id HTML
+     cat   : categoria gia' selezionata (facoltativa)
+     nota  : riga di spiegazione sotto il titolo (facoltativa) */
+var _docSel = {};   /* i file scelti, per pannello */
+function docPannelloHTML(tipo, id, pfx, cat, nota){
+  var q=function(v){ return String(v==null?'':v).replace(/'/g,"\\'"); };
+  return '<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin:14px 0 6px;text-transform:uppercase;">\uD83D\uDCCE Documenti</div>'
+    +(nota?('<div style="font-size:11px;color:#64748b;margin:-2px 0 8px;">'+docEsc(nota)+'</div>'):'')
+    +'<select id="'+pfx+'-cat" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;background:#fff;box-sizing:border-box;">'+docCatOptions(tipo, cat)+'</select>'
+    +'<div id="'+pfx+'-drop" onclick="docPick(\''+q(pfx)+'\')"'
+    +'     ondragover="docDragOver(event,\''+q(pfx)+'\')" ondragenter="docDragOver(event,\''+q(pfx)+'\')"'
+    +'     ondragleave="docDragLeave(event,\''+q(pfx)+'\')" ondrop="docDrop(event,\''+q(pfx)+'\')"'
+    +'     style="margin-top:8px;border:2px dashed #cbd5e1;border-radius:10px;padding:18px 12px;text-align:center;cursor:pointer;background:#f8fafc;transition:border-color .15s,background .15s;">'
+    +'  <div style="font-size:24px;line-height:1;margin-bottom:6px;">\uD83D\uDCE4</div>'
+    +'  <div style="font-size:13px;font-weight:700;color:#334155;">Trascina qui il file <span style="color:#94a3b8;font-weight:600;">oppure tocca per sceglierlo</span></div>'
+    +'  <div style="font-size:11px;color:#94a3b8;margin-top:3px;">PDF, JPG o PNG \u00b7 anche pi\u00f9 di uno</div>'
     +'</div>'
+    +'<input type="file" id="'+pfx+'-file" multiple accept="image/*,application/pdf" style="display:none;" onchange="docFileScelti(\''+q(pfx)+'\')">'
+    +'<div id="'+pfx+'-sel" style="margin-top:8px;"></div>'
+    +'<button type="button" id="'+pfx+'-btn" disabled onclick="docCarica(\''+q(tipo)+'\',\''+q(id)+'\',\''+q(pfx)+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:8px;border:none;background:#cbd5e1;color:#fff;font-weight:800;font-family:inherit;font-size:14px;cursor:not-allowed;">Carica</button>'
     +'<div id="'+pfx+'-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>'
     +'<div id="'+pfx+'-list" style="margin-top:8px;"></div>';
+}
+
+function docPick(pfx){ var f=document.getElementById(pfx+'-file'); if(f) f.click(); }
+function _docBordo(pfx, dentro){
+  var d=document.getElementById(pfx+'-drop'); if(!d) return;
+  d.style.borderColor = dentro ? '#1a4fa0' : '#cbd5e1';
+  d.style.background  = dentro ? '#eff6ff' : '#f8fafc';
+}
+/* preventDefault e' obbligatorio su dragover: senza, il browser apre il
+   file in una scheda nuova invece di lasciarlo cadere qui */
+function docDragOver(e, pfx){ e.preventDefault(); e.stopPropagation(); _docBordo(pfx, true); }
+function docDragLeave(e, pfx){ e.preventDefault(); e.stopPropagation(); _docBordo(pfx, false); }
+function docDrop(e, pfx){
+  e.preventDefault(); e.stopPropagation(); _docBordo(pfx, false);
+  var f = e.dataTransfer && e.dataTransfer.files;
+  docAggiungi(pfx, f);
+}
+function docFileScelti(pfx){ var i=document.getElementById(pfx+'-file'); docAggiungi(pfx, i && i.files); if(i) i.value=''; }
+function docAggiungi(pfx, files){
+  if(!files || !files.length) return;
+  var cur = _docSel[pfx] || [];
+  Array.prototype.slice.call(files).forEach(function(f){
+    /* niente doppioni: stesso nome e stessa dimensione = stesso file */
+    var gia = cur.some(function(x){ return x.name===f.name && x.size===f.size; });
+    if(!gia) cur.push(f);
+  });
+  _docSel[pfx] = cur;
+  docSelRender(pfx);
+}
+function docSelTogli(pfx, i){ if(_docSel[pfx]){ _docSel[pfx].splice(i,1); docSelRender(pfx); } }
+function docKb(b){ if(b>=1048576) return (b/1048576).toFixed(1).replace('.',',')+' MB'; return Math.max(1,Math.round(b/1024))+' KB'; }
+function docSelRender(pfx){
+  var c=document.getElementById(pfx+'-sel'), b=document.getElementById(pfx+'-btn');
+  var l=_docSel[pfx]||[];
+  if(c){
+    c.innerHTML = l.map(function(f,i){
+      var img = /^image\//.test(f.type||'');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:#fff;">'
+        +'<span style="font-size:15px;">'+(img?'\uD83D\uDDBC':'\uD83D\uDCC4')+'</span>'
+        +'<div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(f.name)+'</div>'
+        +'<div style="font-size:10px;color:#94a3b8;">'+docKb(f.size)+'</div></div>'
+        +'<button type="button" onclick="event.stopPropagation();docSelTogli(\''+pfx+'\','+i+')" title="Togli" style="border:none;background:#fef2f2;color:#dc2626;border-radius:6px;width:28px;height:28px;font-size:13px;cursor:pointer;line-height:1;">\u2715</button>'
+        +'</div>';
+    }).join('');
+  }
+  if(b){
+    var attivo = l.length>0;
+    b.disabled = !attivo;
+    b.style.background = attivo ? '#16a34a' : '#cbd5e1';
+    b.style.cursor = attivo ? 'pointer' : 'not-allowed';
+    b.textContent = attivo ? ('Carica '+l.length+(l.length>1?' file':' file')) : 'Carica';
+  }
 }
 
 function docCarica(tipo, id, pfx){
@@ -14119,12 +14262,20 @@ function docCarica(tipo, id, pfx){
   if(!sb){ if(st)st.textContent='⚠️ Archivio non disponibile: ricarica la pagina.'; return; }
   var cat=(document.getElementById(pfx+'-cat')||{}).value||'altro';
   var fi=document.getElementById(pfx+'-file');
-  if(!fi||!fi.files||!fi.files.length){ if(st)st.textContent='Scegli almeno un file.'; return; }
+  var files=(_docSel[pfx]||[]).slice();
+  if(!files.length && fi && fi.files && fi.files.length) files=Array.prototype.slice.call(fi.files);
+  if(!files.length){ if(st)st.textContent='Scegli o trascina almeno un file.'; return; }
   if(st)st.textContent='Caricamento in corso…';
-  var files=Array.prototype.slice.call(fi.files);
   var i=0;
   var next=function(){
-    if(i>=files.length){ fi.value=''; if(st)st.textContent='✅ Caricato'; docListaRender(tipo,id,pfx); return; }
+    if(i>=files.length){
+      if(fi) fi.value='';
+      _docSel[pfx]=[]; try{ docSelRender(pfx); }catch(e){}
+      if(st)st.textContent='✅ Caricato';
+      /* se e' un libretto, l'indice della barra di ricerca va rinfrescato */
+      try{ if(tipo==='auto' && /libretto/.test(cat) && typeof gsLibCarica==='function') gsLibCarica(); }catch(e){}
+      docListaRender(tipo,id,pfx); return;
+    }
     var file=files[i++];
     var safe=(file.name||'file').replace(/[^\w.\-]/g,'_');
     var path=tipo+'/'+id+'/'+Date.now()+'_'+safe;
@@ -14275,14 +14426,14 @@ function diagSync(){
     ['preventivi',  'Preventivi e contratti', function(){ return cvLoad().length; }],
     ['magazzino',   'Magazzino',              function(){ return mzLoad().length; }],
     ['fornitori',   'Fornitori',              function(){ return fnLoad().length; }],
-    ['clienti',     'Anagrafiche clienti',    function(){ return Object.keys(clStore()).length; }],
+    ['clienti_app', 'Anagrafiche clienti',    function(){ return Object.keys(clStore()).length; }],
     ['crm',         'CRM',                    function(){ return Object.keys(crmLoad()).length; }],
-    ['provvigioni', 'Provvigioni',            function(){ return (typeof _pRegCache!=='undefined' && _pRegCache.length)?_pRegCache.length:pLoadReg().length; }],
+    ['provvigioni_app','Provvigioni',         function(){ return (typeof _pRegCache!=='undefined' && _pRegCache.length)?_pRegCache.length:pLoadReg().length; }],
     ['parametri',   'Parametri',              function(){ return localStorage.getItem(PARAM_KEY)?1:0; }],
-    ['permute',     'Permute e perizie',      function(){ return pmLoad().length; }],
+    ['permute_app', 'Permute e perizie',      function(){ return pmLoad().length; }],
     ['richieste',   'Richieste ferie',        function(){ return riLoad().length; }],
     ['ferie',       'Permessi da Gmail',      function(){ return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]').length; }],
-    ['revisioni',   'Revisioni',              function(){ return loadRevisioni().length; }],
+    ['revisioni_app','Revisioni',             function(){ return loadRevisioni().length; }],
     ['sinistri_app','Sinistri e carrozzeria', function(){ return sinLoad().length; }],
     ['compiti_app', 'Calendario e mansioni',  function(){ return JSON.parse(localStorage.getItem('ea_compiti_v1')||'[]').length; }],
     ['presenze_app','Presenze',               function(){ return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]').length; }],
@@ -14396,6 +14547,8 @@ function parInit(){
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Diagnostica sincronizzazione</div>';
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;">';
   h+='<button onclick="diagSync()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\udd0e Verifica sincronizzazione</button>';
+  h+='<button onclick="cvFirmaCercaOra()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #7c3aed;background:#fff;color:#7c3aed;font-weight:700;font-family:inherit;cursor:pointer;">\uD83D\uDD8A Cerca le firme adesso</button>';
+  h+='<button onclick="cvFirmaDiagnosi()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #b45309;background:#fff;color:#b45309;font-weight:700;font-family:inherit;cursor:pointer;">\u2753 Perch\u00e9 non trova la firma?</button>';
   h+='<button onclick="diagRicarica()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\udd04 Ricarica dati dal cloud</button>';
   h+='</div>';
   h+='<div id="diag-out" style="margin-top:10px;font-size:13px;color:#334155;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px;min-height:20px;">Premi \u201cVerifica sincronizzazione\u201d per controllare.</div>';
@@ -14690,7 +14843,18 @@ function cvFirmaPraticaDa(testo){
 }
 
 /* Il mittente delle conferme di firma. Se cambia, si cambia qui. */
-var CV_FIRMA_MITTENTE = 'deutschebank.digitale@db.com';
+/* Da chi puo' arrivare la conferma di firma. Se domani cambia la
+   finanziaria, o si aggiunge una casella, basta aggiungerla qui. */
+var CV_FIRMA_MITTENTI = ['deutschebank.digitale@db.com', 'vendita@europaautosrl.it'];
+var CV_FIRMA_MITTENTE = CV_FIRMA_MITTENTI[0];   /* compatibilita' */
+/* from: prende le mail spedite da quegli indirizzi; la stessa stringa
+   cercata come testo prende gli inoltri, dove il mittente originale
+   finisce nel corpo del messaggio. */
+function cvFirmaQuery(){
+  var p=[];
+  CV_FIRMA_MITTENTI.forEach(function(m){ p.push('from:'+m); p.push('"'+m+'"'); });
+  return '('+p.join(' OR ')+') has:attachment filename:pdf newer_than:30d';
+}
 var CV_FIRMA_VISTE = 'ea_firma_mail_viste_v1';
 var CV_FIRMA_MAXPAG = 14;   /* la Richiesta di Finanziamento sta entro qui */
 function cvFirmaViste(){ try{ return JSON.parse(localStorage.getItem(CV_FIRMA_VISTE)||'[]'); }catch(e){ return []; } }
@@ -14724,6 +14888,127 @@ async function cvFirmaScansiona(b64, telai){
   }catch(e){ console.log('firma pdf:', e && e.message); return null; }
 }
 
+async function cvFirmaDiagnosi(){
+  var out=document.getElementById('diag-out');
+  var scrivi=function(h){ if(out) out.innerHTML=h; };
+  var R=[];
+  var ok=function(t){ R.push('\u2705 '+t); }, ko=function(t){ R.push('\u274c <b>'+t+'</b>'); }, info=function(t){ R.push('<span style="color:#64748b;">'+t+'</span>'); };
+  var mostra=function(){ scrivi('<div style="font-weight:800;margin-bottom:6px;">\uD83D\uDD8A Firma digitale \u2014 diagnosi</div>'+R.join('<br>')); };
+  scrivi('Controllo in corso\u2026');
+  try{
+    /* 1 - Gmail collegato? */
+    if(typeof isDriveConnected!=='function' || !isDriveConnected()){
+      ko('Google non e\u2019 collegato su questo dispositivo: senza accesso a Gmail la firma non puo\u2019 essere cercata. Collega Google e riprova.');
+      mostra(); return;
+    }
+    ok('Google collegato');
+
+    /* 2 - contratti in attesa di firma */
+    var attesa=[];
+    cvLoad().forEach(function(cv){
+      if(!cv.isContratto) return;
+      var fin=(typeof cvHaFinanziamento==='function') && cvHaFinanziamento(cv);
+      var conf=!!(cv.firmaDigitale && cv.firmaDigitale.confermata);
+      if(!fin || conf) return;
+      var a=cv.autoSnapshot||{};
+      attesa.push({ id:cv.id,
+        chi:(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(senza nome)',
+        tel:cvFirmaNorm(a.telaio||''), tg:cvFirmaNorm(cv.nuovaTarga||a.targa||'') });
+    });
+    if(!attesa.length){
+      ko('Nessun contratto in attesa di firma.');
+      info('Il contratto entra in questa ricerca solo se: \u00e8 un CONTRATTO (non un preventivo), ha un pagamento a finanziamento, e la firma non risulta gi\u00e0 confermata.');
+      mostra(); return;
+    }
+    ok(attesa.length+' contratti in attesa di firma:');
+    attesa.forEach(function(x){
+      var cerca=[];
+      if(x.tel.length>=11) cerca.push('telaio '+x.tel);
+      if(x.tg.length>=6)  cerca.push('targa '+x.tg);
+      info('&nbsp;&nbsp;\u2022 '+x.chi+' \u2192 cerco: '+(cerca.length?cerca.join(' o '):'<b style="color:#dc2626;">niente! telaio e targa mancano o sono troppo corti</b>'));
+    });
+
+    /* 3 - la ricerca in Gmail */
+    var q=cvFirmaQuery();
+    info('Ricerca in Gmail: <code style="font-size:11px;background:#f1f5f9;padding:1px 4px;border-radius:3px;">'+docEsc(q)+'</code>');
+    var lr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='+encodeURIComponent(q)+'&maxResults=50',
+      { headers:{ Authorization:'Bearer '+_driveAccessToken } });
+    var ld=await lr.json();
+    var msgs=ld.messages||[];
+    if(!msgs.length){
+      ko('Nessuna mail trovata con quella ricerca.');
+      info('Vuol dire che negli ultimi 30 giorni non e\u2019 arrivata nessuna mail CON ALLEGATO PDF da: '+CV_FIRMA_MITTENTI.join(' o ')+'.');
+      info('Se la conferma arriva da un altro indirizzo, dimmelo e lo aggiungo.');
+      mostra(); return;
+    }
+    ok(msgs.length+' mail trovate. Guardo le prime 5, dalla piu\u2019 recente:');
+    mostra();
+
+    /* 4 - dentro le mail */
+    var lista=[];
+    cvLoad().forEach(function(cv){
+      if(!cv.isContratto || !cvHaFinanziamento(cv)) return;
+      if(cv.firmaDigitale && cv.firmaDigitale.confermata) return;
+      var a=cv.autoSnapshot||{};
+      var tel=cvFirmaNorm(a.telaio||''), tg=cvFirmaNorm(cv.nuovaTarga||a.targa||'');
+      if(tel.length>=11) lista.push({id:cv.id, tel:tel, come:'telaio'});
+      if(tg.length>=6)   lista.push({id:cv.id, tel:tg,  come:'targa'});
+    });
+    var viste=cvFirmaViste();
+    for(var i=0;i<Math.min(5,msgs.length);i++){
+      var mr=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgs[i].id+'?format=full',
+        { headers:{ Authorization:'Bearer '+_driveAccessToken } });
+      var md=await mr.json();
+      var hh={}; ((md.payload&&md.payload.headers)||[]).forEach(function(x){ hh[(x.name||'').toLowerCase()]=x.value; });
+      var quando=md.internalDate?new Date(+md.internalDate).toLocaleString('it-IT'):'';
+      R.push('<div style="margin-top:8px;padding:7px 9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;">'
+        +'<b>'+docEsc((hh.subject||'(senza oggetto)').slice(0,70))+'</b><br>'
+        +'<span style="font-size:11px;color:#64748b;">da '+docEsc(hh.from||'?')+' \u00b7 '+quando+'</span>');
+      if(viste.indexOf(msgs[i].id)>=0) R.push('<span style="font-size:11px;color:#94a3b8;">gi\u00e0 esaminata in passato</span>');
+      var parts=[];
+      (function racc(pp){ if(!pp) return; if(pp.parts) pp.parts.forEach(racc); if(pp.filename && /\.pdf$/i.test(pp.filename) && pp.body && pp.body.attachmentId) parts.push(pp); })(md.payload);
+      if(!parts.length){ R.push('\u274c nessun PDF allegato'); R.push('</div>'); mostra(); continue; }
+      R.push('\uD83D\uDCCE '+parts.length+' PDF: '+parts.map(function(p){return docEsc(p.filename);}).join(', '));
+      mostra();
+      parts.sort(function(a,b){ return (b.body.size||0)-(a.body.size||0); });
+      var trovato=null, leggibile=false;
+      for(var k=0;k<parts.length && !trovato;k++){
+        try{
+          var ar=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgs[i].id+'/attachments/'+parts[k].body.attachmentId,
+            { headers:{ Authorization:'Bearer '+_driveAccessToken } });
+          var ad=await ar.json();
+          var b64=(ad.data||'').replace(/-/g,'+').replace(/_/g,'/');
+          if(!b64) continue;
+          var r=await cvFirmaScansiona(b64, lista);
+          if(r){ leggibile=true; if(r.id) trovato=r; }
+        }catch(e){ R.push('\u274c errore leggendo '+docEsc(parts[k].filename)+': '+docEsc(e&&e.message)); }
+      }
+      if(trovato){
+        var cvT=cvLoad().filter(function(x){return x.id===trovato.id;})[0];
+        R.push('\u2705 <b style="color:#166534;">ABBINATA</b> al contratto di '+docEsc(((cvT&&cvT.cliente&&cvT.cliente.cognome)||'')+' '+((cvT&&cvT.cliente&&cvT.cliente.nome)||''))+' (per '+trovato.come+')');
+      } else if(leggibile){
+        R.push('\u26a0\ufe0f PDF letto, ma dentro non c\u2019\u00e8 nessuno dei telai/targhe cercati');
+      } else {
+        R.push('\u26a0\ufe0f PDF non leggibile come testo (probabilmente \u00e8 una scansione: il telaio \u00e8 un\u2019immagine, non testo)');
+      }
+      R.push('</div>'); mostra();
+    }
+    R.push('<div style="margin-top:9px;padding-top:7px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;">'
+      +'Questa \u00e8 solo una diagnosi: non ha confermato nessuna firma e non ha segnato niente come gi\u00e0 visto.<br>'
+      +'Per confermare davvero usa \u201cCerca le firme adesso\u201d.</div>');
+    mostra();
+  }catch(e){ R.push('\u274c Errore: '+docEsc((e&&e.message)||e)); mostra(); }
+}
+function cvFirmaCercaOra(){
+  var out=document.getElementById('diag-out');
+  if(out) out.innerHTML='Cerco le conferme di firma in Gmail\u2026';
+  if(typeof cvFirmaCercaGmail!=='function'){ if(out) out.innerHTML='Funzione non disponibile.'; return; }
+  Promise.resolve(cvFirmaCercaGmail()).then(function(n){
+    if(out) out.innerHTML = n ? ('\u2705 '+n+' firme confermate. Apri Vendite per vederle.')
+                              : '\u2139\ufe0f Nessuna firma nuova da confermare. Usa \u201cPerch\u00e9 non trova la firma?\u201d per capire il motivo.';
+  }, function(e){ if(out) out.innerHTML='\u274c Errore: '+((e&&e.message)||e); });
+}
+
 async function cvFirmaCercaGmail(){
   try{
     if(typeof isDriveConnected!=='function' || !isDriveConnected()) return 0;
@@ -14749,9 +15034,11 @@ async function cvFirmaCercaGmail(){
     /* Mittente della banca: restringe molto la ricerca e toglie i falsi positivi.
        'from:' vale anche sulle mail inoltrate dalla webmail vendita@, perche'
        l'inoltro conserva il mittente originale nel corpo dell'header. */
-    var q = '(from:' + CV_FIRMA_MITTENTE + ' OR ' + CV_FIRMA_MITTENTE + ') has:attachment filename:pdf newer_than:30d';
+    var q = cvFirmaQuery();
+    /* 50 e non 20: da vendita@ passano anche mail che con le firme non
+       c'entrano, e la conferma verrebbe spinta fuori dall'elenco. */
     var lr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='
-      + encodeURIComponent(q) + '&maxResults=20', { headers:{ Authorization:'Bearer '+token } });
+      + encodeURIComponent(q) + '&maxResults=50', { headers:{ Authorization:'Bearer '+token } });
     var ld = await lr.json();
     var messages = (ld.messages||[]).filter(function(m){ return viste.indexOf(m.id)<0; });
     if(!messages.length) return 0;
@@ -16704,6 +16991,8 @@ function eaBadgeBoot(){
      prima che qualcuno stampi con le condizioni o l'IBAN vecchi */
   try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
   try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
+  /* indice dei libretti: serve alla barra di ricerca in alto */
+  try{ if(typeof gsLibCarica==='function') gsLibCarica(); }catch(e){}
   try{ if(typeof riSupaLoad==='function') riSupaLoad(); }catch(e){}
   try{ if(typeof permSupaLoad==='function') permSupaLoad(); }catch(e){}
   try{ if(typeof revSupaLoad==='function') revSupaLoad(); }catch(e){}
@@ -16712,8 +17001,17 @@ function eaBadgeBoot(){
   try{ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
   try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){}
-  /* cerca in Gmail le conferme di firma digitale */
-  try{ setTimeout(function(){ if(typeof cvFirmaCercaGmail==='function') cvFirmaCercaGmail(); }, 6000); }catch(e){}
+  /* cerca in Gmail le conferme di firma digitale: una volta all'avvio e
+     poi ogni 5 minuti, altrimenti la conferma arrivata a meta' giornata
+     resta li' finche' non ricarichi la pagina */
+  try{
+    setTimeout(function(){ if(typeof cvFirmaCercaGmail==='function') cvFirmaCercaGmail(); }, 6000);
+    if(!window._firmaTimer){
+      window._firmaTimer = setInterval(function(){
+        try{ if(typeof cvFirmaCercaGmail==='function') cvFirmaCercaGmail(); }catch(e){}
+      }, 300000);
+    }
+  }catch(e){}
   try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
   /* le mansioni del calendario: senza queste la campanella parte a zero */
   try{ if(typeof ccSupaLoad==='function') ccSupaLoad(); }catch(e){}
@@ -16945,18 +17243,23 @@ function cvVendImmatricola(id){
 }
 function cvVendImmatModal(id, cv){
   var m=cvModModal();
-  var docHtml=(typeof docPannelloHTML==='function')?docPannelloHTML('pratica', cv.id, 'immatdoc'):'';
+  /* il libretto e' un documento del VEICOLO: si allega all'auto del
+     contratto, cosi' lo ritrovi nella sua scheda in Magazzino.
+     Se il contratto non ha un'auto collegata si ripiega sulla pratica. */
+  var _dTipo='auto', _dId=cv.autoId, _dCat='libretto', _dNota='Finisce nella scheda del veicolo, in Magazzino.';
+  if(!_dId){ _dTipo='pratica'; _dId=cv.id; _dCat='libretto_nuovo'; _dNota='Nessun veicolo collegato: resta allegato alla pratica.'; }
+  var docHtml=(typeof docPannelloHTML==='function')?docPannelloHTML(_dTipo, _dId, 'immatdoc', _dCat, _dNota):'';
   m.innerHTML='<div style="max-width:480px;margin:6vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
     +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;">🚗 Immatricolazione — auto estera</span><button onclick="cvModChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>'
     +'<div style="padding:18px;max-height:76vh;overflow:auto;">'
     +'<label style="display:block;font-size:12px;font-weight:700;color:#334155;margin-bottom:4px;">Nuova targa italiana *</label>'
     +'<input id="immat-targa" value="'+cvEsc(cv.nuovaTarga||'')+'" placeholder="es. GA123BC" oninput="this.value=this.value.toUpperCase()" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:15px;font-weight:700;letter-spacing:.05em;box-sizing:border-box;">'
-    +'<div style="font-size:12px;color:#64748b;margin:14px 0 4px;font-weight:700;">📎 Allega il NUOVO libretto (carta di circolazione intestata)</div>'
+    +'<div style="font-size:12px;color:#334155;margin:16px 0 0;font-weight:700;">Allega il NUOVO libretto (carta di circolazione intestata)</div>'
     +docHtml
     +'<div style="display:flex;gap:8px;margin-top:18px;"><button type="button" onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvVendImmatConfermaEstera(\''+id+'\')" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">✅ Conferma immatricolazione</button></div>'
     +'</div></div>';
   m.style.display='block';
-  try{ if(typeof docListaRender==='function') docListaRender('pratica', cv.id, 'immatdoc'); }catch(e){}
+  try{ if(typeof docListaRender==='function') docListaRender(_dTipo, _dId, 'immatdoc'); }catch(e){}
 }
 function cvVendImmatConfermaEstera(id){
   var t=document.getElementById('immat-targa'); var nt=(t&&t.value||'').toUpperCase().trim();
