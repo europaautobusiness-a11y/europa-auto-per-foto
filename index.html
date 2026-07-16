@@ -10716,6 +10716,14 @@ document.addEventListener('DOMContentLoaded',function(){
     try{ if(typeof ccSupaLoad==='function') ccSupaLoad(); }catch(e){}
   }
   window.ccRender = ccRender;        // usato dal wrapper di sidebarNav
+  /* Ridisegna e basta: niente fetch, niente ccApri (che riporterebbe la
+     vista a oggi mentre stai guardando un altro giorno). La usa il
+     caricamento dal cloud, che chiamando ccRender innescava un ciclo. */
+  window.ccRedraw = function(){
+    try{ ccRenderCal(); }catch(e){}
+    try{ ccUpdateBadge(); }catch(e){}
+    try{ ccRenderRiepilogo(); }catch(e){}
+  };
   window.ccUpdateBadge = ccUpdateBadge;
   window.ccRefresh = ccFetchSheet;   // usato da "Aggiorna Tutto"
   /* Serve all'avvio: le mansioni vanno scaricate anche se non apri il Calendario,
@@ -14278,6 +14286,7 @@ function diagSync(){
     ['sinistri_app','Sinistri e carrozzeria', function(){ return sinLoad().length; }],
     ['compiti_app', 'Calendario e mansioni',  function(){ return JSON.parse(localStorage.getItem('ea_compiti_v1')||'[]').length; }],
     ['presenze_app','Presenze',               function(){ return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]').length; }],
+    ['dipendenti',  'Dipendenti',             function(){ return loadDipendenti().length; }],
     ['utenti',      'Utenti e permessi',      function(){ return JSON.parse(localStorage.getItem('ea_utenti_app')||'[]').length; }],
     ['notifiche',   'Notifiche',              function(){ return notifLoad().length; }],
     ['config',      'Template e sedi',        function(){ return null; }]
@@ -14828,13 +14837,17 @@ function ccSupaUpsert(c){
   }catch(e){}
 }
 
+var _ccSupaBusy = false;
 function ccSupaLoad(done){
   var sb = (typeof sbClient==='function') ? sbClient() : null;
   if(!sb || typeof window.ccLoad!=='function'){ if(done) done(); return; }
+  if(_ccSupaBusy){ if(done) done(); return; }   /* un caricamento alla volta */
+  _ccSupaBusy = true;
   try{
     sb.from('compiti_app').select('id,data').then(function(res){
       if(!res || res.error){
-        if(res && res.error) console.log('compiti_app load:', res.error.message);
+        _ccSupaBusy = false;
+        if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('compiti_app', res.error.message);
         if(done) done(); return;
       }
       var tomb = ccTombstones();
@@ -14862,11 +14875,14 @@ function ccSupaLoad(done){
       window.ccSave(finale);
       daSpingere.forEach(function(x){ ccSupaUpsert(x); });
 
-      try{ if(typeof window.ccRender==='function' && document.getElementById('cc-list')) window.ccRender(); }catch(e){}
+      /* ccRedraw, non ccRender: ccRender rilancerebbe questo stesso
+         caricamento e si andrebbe in ciclo infinito. */
+      try{ if(typeof window.ccRedraw==='function' && document.getElementById('cc-list')) window.ccRedraw(); }catch(e){}
       try{ if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); }catch(e){}
+      _ccSupaBusy = false;
       if(done) done(remoti.length, daSpingere.length);
-    }).catch(function(e){ console.log('compiti_app load:', e && e.message); if(done) done(); });
-  }catch(e){ if(done) done(); }
+    }).catch(function(e){ _ccSupaBusy = false; console.log('compiti_app load:', e && e.message); if(done) done(); });
+  }catch(e){ _ccSupaBusy = false; if(done) done(); }
 }
 
 
