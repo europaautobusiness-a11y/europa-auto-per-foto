@@ -9881,9 +9881,16 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   /* ===================== Storage + sync ===================== */
-  function ccLoad(){ try{ return JSON.parse(localStorage.getItem(CC_KEY)||'[]'); }catch(e){ return []; } }
+  function ccLoad(){
+    try{
+      var t=(typeof ccTombstones==='function')?ccTombstones():[];
+      return JSON.parse(localStorage.getItem(CC_KEY)||'[]').filter(function(c){ return c && t.indexOf(c.id)<0; });
+    }catch(e){ return []; }
+  }
   function ccSave(l){ try{ localStorage.setItem(CC_KEY, JSON.stringify(l)); }catch(e){} }
   function ccSync(c){
+    /* prima su Supabase: e' la copia buona. Sheets resta finche' non lo togliamo. */
+    try{ if(c && c.id){ c.updatedAt=Date.now(); if(typeof ccSupaUpsert==='function') ccSupaUpsert(c); } }catch(e){}
     if (typeof gsJsonp !== 'function') return;
     gsJsonp({ action:'upsert', sheet:CC_SHEET, record:{
       id:c.id, data:c.data, titolo:c.titolo, dipendente:c.dipNome, dipEmail:c.dipEmail,
@@ -10308,6 +10315,8 @@ document.addEventListener('DOMContentLoaded',function(){
     if (!confirm('Eliminare questo compito?')) return;
     var list = ccLoad().filter(function(c){ return c.id!==id; });
     ccSave(list);
+    /* la lapide impedisce che torni dal remoto alla prossima sincronizzazione */
+    try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
     if (typeof gsDelete === 'function') gsDelete(CC_SHEET, id);
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast('Compito eliminato');
   }
@@ -10579,7 +10588,8 @@ document.addEventListener('DOMContentLoaded',function(){
     ccRenderCal();
     ccApri(ymd(now.getFullYear(), now.getMonth(), now.getDate()), true);
     ccUpdateBadge(); ccRenderRiepilogo();
-    ccFetchSheet(); // sincronizza dal cloud
+    ccFetchSheet(); // sincronizza dal foglio (legacy)
+    try{ if(typeof ccSupaLoad==='function') ccSupaLoad(); }catch(e){}
   }
   window.ccRender = ccRender;        // usato dal wrapper di sidebarNav
   window.ccUpdateBadge = ccUpdateBadge;
@@ -14264,6 +14274,330 @@ function cvVendAutoAvanza(){
 function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
+/* ===================== FIRMA DIGITALE DEL CONTRATTO =====================
+   Sulle vendite con finanziamento serve sapere se il cliente ha firmato
+   digitalmente. Due strade, che convivono:
+
+   1) MANUALE: un pulsante sulla scheda vendita, senza entrare nel dettaglio.
+
+   2) AUTOMATICA: la conferma di firma arriva per mail con un oggetto tipo
+      "Contratto - 004894292301 - DANIELA FIORELLINO".
+      Il gestionale ha gia' l'accesso a Gmail in lettura (lo usa per i
+      permessi): cerca quelle mail e abbina al contratto per COGNOME+NOME.
+      L'abbinamento e' su nome e cognome, non sul numero pratica: quel numero
+      non ce l'abbiamo. Percio' e' un SUGGERIMENTO, non una certezza —
+      due clienti omonimi esistono. La conferma resta un gesto tuo.        */
+
+
+function cvHaFinanziamento(cv){
+  try{
+    return (cv.pagamenti||[]).some(function(p){
+      return (p.tipo==='Finanziamento') || /finanziamento/i.test(p.metodo||'');
+    });
+  }catch(e){ return false; }
+}
+
+/* Il pulsante sulla scheda vendita */
+function cvFirmaBottone(cv){
+  try{
+    if(!cv || !cv.isContratto) return '';
+    if(!cvHaFinanziamento(cv)) return '';
+    var f = cv.firmaDigitale || null;
+    if(f && f.confermata){
+      return '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;'
+        + 'font-size:12px;color:#166534;font-weight:700;">\u2705 Firma digitale confermata'
+        + (f.data?(' \u00b7 '+String(f.data).split('-').reverse().join('/')):'')
+        + (f.auto?' <span style="font-weight:400;">(rilevata da Gmail)</span>':'')
+        + '</div>';
+    }
+    var sug = (cv.firmaSuggerita) ? true : false;
+    return '<button onclick="event.stopPropagation(); cvFirmaConferma(\'' + cv.id + '\')" '
+      + 'style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid '
+      + (sug?'#16a34a':'#d97706') + ';background:' + (sug?'#f0fdf4':'#fffbeb') + ';color:'
+      + (sug?'#166534':'#92400e') + ';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
+      + (sug ? '\u2709\ufe0f Trovata la mail di firma \u2014 conferma' : '\u270d\ufe0f Conferma firma digitale')
+      + '</button>';
+  }catch(e){ return ''; }
+}
+
+function cvFirmaConferma(id, auto){
+  try{
+    var list = cvLoad(), i = list.findIndex(function(x){ return x.id===id; });
+    if(i<0){ alert('Contratto non trovato.'); return; }
+    var cv = list[i];
+    var cli = (((cv.cliente&&cv.cliente.cognome)||'') + ' ' + ((cv.cliente&&cv.cliente.nome)||'')).trim();
+    if(!auto){
+      if(!confirm('Confermi che ' + cli + ' ha firmato digitalmente il contratto?\n\nParte una mail ad amministrazione.')) return;
+    }
+    cv.firmaDigitale = {
+      confermata: true,
+      data: new Date().toISOString().slice(0,10),
+      ts: Date.now(),
+      da: ((typeof _currentUserEmail!=='undefined' && _currentUserEmail) || ''),
+      auto: !!auto
+    };
+    delete cv.firmaSuggerita;
+    cv.updatedAt = Date.now();
+    cvSave(list);
+    try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+    cvFirmaMail(cv);
+    try{ if(typeof notifPush==='function') notifPush('\u270d\ufe0f Firma digitale confermata \u2014 ' + cli, '\u270d\ufe0f'); }catch(e){}
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Firma confermata, mail inviata', true);
+    try{ cvVendRender(); }catch(e){}
+  }catch(e){ alert('Errore: ' + (e && e.message || e)); }
+}
+
+function cvFirmaMail(cv){
+  try{
+    var cli = (((cv.cliente&&cv.cliente.cognome)||'') + ' ' + ((cv.cliente&&cv.cliente.nome)||'')).trim();
+    var auto = (typeof cvAutoLabel==='function') ? cvAutoLabel(cv) : '';
+    var t = (typeof cvCalcola==='function') ? cvCalcola(cv) : {};
+    var tot = (t.totaleScontato!=null ? t.totaleScontato : t.totaleVendita) || 0;
+    var fin = (cv.pagamenti||[]).filter(function(p){ return /finanziamento/i.test(p.metodo||'') || p.tipo==='Finanziamento'; })[0];
+    var F = 'font-family:Arial,Helvetica,sans-serif;';
+    var riga = function(a,b){ return '<tr><td style="'+F+'font-size:13px;color:#64748b;padding:4px 12px 4px 0;">'+a+'</td>'
+      + '<td style="'+F+'font-size:13px;color:#0f172a;font-weight:bold;padding:4px 0;">'+b+'</td></tr>'; };
+    var h = '<div style="'+F+'max-width:560px;">'
+      + '<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-size:16px;font-weight:bold;">Firma digitale confermata</div>'
+      + '<div style="padding:18px;border:1px solid #e2e8f0;border-top:none;">'
+      + '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+      + riga('Cliente', cli)
+      + riga('Veicolo', auto || '\u2014')
+      + riga('Totale contratto', (typeof cvEuro==='function')?cvEuro(tot):tot)
+      + (fin ? riga('Finanziamento', ((typeof cvEuro==='function')?cvEuro(fin.importo):fin.importo)
+              + (fin.rate?(' \u00b7 '+fin.rate+' rate'):'') + (fin.metodo?(' \u00b7 '+fin.metodo):'')) : '')
+      + riga('Confermata il', new Date().toLocaleDateString('it-IT'))
+      + riga('Da', (cv.firmaDigitale&&cv.firmaDigitale.auto) ? 'rilevamento automatico Gmail' : ((cv.firmaDigitale&&cv.firmaDigitale.da)||''))
+      + '</table>'
+      + '<div style="'+F+'font-size:11px;color:#94a3b8;margin-top:14px;border-top:1px solid #e2e8f0;padding-top:10px;">'
+      + 'Si pu\u00f2 procedere con la pratica di finanziamento.</div>'
+      + '</div></div>';
+    if(typeof eaInviaMessaggio==='function'){
+      eaInviaMessaggio({
+        to: 'amministrazione@europaautosrl.it',
+        subject: 'Firma digitale confermata \u2014 ' + cli,
+        html: (typeof eaMailWrap==='function') ? eaMailWrap(h) : h
+      });
+    }
+  }catch(e){ console.log('mail firma:', e && e.message); }
+}
+
+/* ---- Rilevamento automatico da Gmail ----
+   L'oggetto della mail ha solo nome e cognome: non identificano un contratto.
+   Il PDF allegato ha invece il TELAIO, che e' univoco al mondo e ce l'abbiamo
+   gia' in magazzino. Quindi la conferma puo' essere automatica e certa.
+
+   Due cose imparate provando sul PDF vero:
+   1) il telaio sta a PAGINA 9 di 26, non in prima: leggiTestoPdf si ferma a 2
+      pagine e non lo troverebbe mai.
+   2) nel testo estratto e' INCOLLATO al resto: "JEEPAvengerZAC5JACT4TJM751296,750"
+      Cercare "un codice di 17 caratteri" li' dentro e' un terno al lotto.
+
+   Percio' non estraggo il telaio dal PDF: cerco nel PDF i telai che ho gia'.
+   E' l'unico modo robusto, e si ferma appena trova.                        */
+
+function cvFirmaNorm(s){
+  return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+}
+function cvFirmaPraticaDa(testo){
+  try{
+    var m = String(testo||'').match(/ID\s*Pratica\s*([0-9]{6,14})/i);
+    if(m) return m[1];
+    m = String(testo||'').match(/\b([0-9]{10})\b/);
+    return m ? m[1] : '';
+  }catch(e){ return ''; }
+}
+
+/* Il mittente delle conferme di firma. Se cambia, si cambia qui. */
+var CV_FIRMA_MITTENTE = 'deutschebank.digitale@db.com';
+var CV_FIRMA_VISTE = 'ea_firma_mail_viste_v1';
+var CV_FIRMA_MAXPAG = 14;   /* la Richiesta di Finanziamento sta entro qui */
+function cvFirmaViste(){ try{ return JSON.parse(localStorage.getItem(CV_FIRMA_VISTE)||'[]'); }catch(e){ return []; } }
+function cvFirmaSegnaVista(id){
+  try{ var v=cvFirmaViste(); if(v.indexOf(id)<0){ v.push(id); localStorage.setItem(CV_FIRMA_VISTE, JSON.stringify(v.slice(-300))); } }catch(e){}
+}
+
+/* Legge il PDF pagina per pagina e si ferma appena trova uno dei telai cercati */
+async function cvFirmaScansiona(b64, telai){
+  try{
+    if(typeof caricaPdfJs==='function') await caricaPdfJs();
+    if(typeof pdfjsLib==='undefined') return null;
+    var pure = String(b64||'').replace(/^data:[^;]+;base64,/,'');
+    var bin = atob(pure), bytes = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    var pdf = await pdfjsLib.getDocument({data:bytes}).promise;
+    var max = Math.min(pdf.numPages, CV_FIRMA_MAXPAG);
+    var pratica = '';
+    for(var pg=1; pg<=max; pg++){
+      var page = await pdf.getPage(pg);
+      var ct = await page.getTextContent();
+      var testo = ct.items.map(function(it){ return it.str; }).join(' ');
+      if(!pratica) pratica = cvFirmaPraticaDa(testo);
+      /* nel PDF il telaio e' attaccato al resto: si toglie tutto tranne lettere e cifre */
+      var piatto = cvFirmaNorm(testo);
+      for(var k=0;k<telai.length;k++){
+        if(piatto.indexOf(telai[k].tel) >= 0) return { id: telai[k].id, pratica: pratica, pagina: pg, come: telai[k].come };
+      }
+    }
+    return { id:null, pratica:pratica };
+  }catch(e){ console.log('firma pdf:', e && e.message); return null; }
+}
+
+async function cvFirmaCercaGmail(){
+  try{
+    if(typeof isDriveConnected!=='function' || !isDriveConnected()) return 0;
+    var token = _driveAccessToken;
+
+    /* Cosa cerchiamo nel PDF: il TELAIO, e in alternativa la TARGA.
+       A volte la banca scrive la targa al posto del telaio.
+       Verificato su 52.000 caratteri del contratto vero: una targa di 7
+       caratteri alfanumerici non produce falsi positivi. */
+    var telai = [];
+    cvLoad().forEach(function(cv){
+      if(!cv.isContratto || !cvHaFinanziamento(cv)) return;
+      if(cv.firmaDigitale && cv.firmaDigitale.confermata) return;
+      var a = cv.autoSnapshot || {};
+      var tel = cvFirmaNorm(a.telaio||'');
+      var tg  = cvFirmaNorm(cv.nuovaTarga || a.targa || '');
+      if(tel.length >= 11) telai.push({ id: cv.id, tel: tel, come: 'telaio' });
+      if(tg.length >= 6)   telai.push({ id: cv.id, tel: tg,  come: 'targa'  });
+    });
+    if(!telai.length) return 0;   /* niente da cercare: non si tocca Gmail */
+
+    var viste = cvFirmaViste();
+    /* Mittente della banca: restringe molto la ricerca e toglie i falsi positivi.
+       'from:' vale anche sulle mail inoltrate dalla webmail vendita@, perche'
+       l'inoltro conserva il mittente originale nel corpo dell'header. */
+    var q = '(from:' + CV_FIRMA_MITTENTE + ' OR ' + CV_FIRMA_MITTENTE + ') has:attachment filename:pdf newer_than:30d';
+    var lr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='
+      + encodeURIComponent(q) + '&maxResults=20', { headers:{ Authorization:'Bearer '+token } });
+    var ld = await lr.json();
+    var messages = (ld.messages||[]).filter(function(m){ return viste.indexOf(m.id)<0; });
+    if(!messages.length) return 0;
+
+    var confermati = 0;
+    for(var i=0;i<messages.length;i++){
+      var msgId = messages[i].id;
+      var mr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId+'?format=full',
+        { headers:{ Authorization:'Bearer '+token } });
+      var md = await mr.json();
+
+      var parts = [];
+      (function raccogli(pp){
+        if(!pp) return;
+        if(pp.parts) pp.parts.forEach(raccogli);
+        if(pp.filename && /\.pdf$/i.test(pp.filename) && pp.body && pp.body.attachmentId) parts.push(pp);
+      })(md.payload);
+      /* il piu' grosso per primo: la Richiesta di Finanziamento sta nel contratto lungo */
+      parts.sort(function(a,b){ return (b.body.size||0) - (a.body.size||0); });
+
+      var esito = null;
+      for(var k=0;k<parts.length && (!esito || !esito.id); k++){
+        try{
+          var ar = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msgId
+            + '/attachments/'+parts[k].body.attachmentId, { headers:{ Authorization:'Bearer '+token } });
+          var ad = await ar.json();
+          var b64 = (ad.data||'').replace(/-/g,'+').replace(/_/g,'/');
+          if(!b64) continue;
+          var r = await cvFirmaScansiona(b64, telai);
+          if(r && r.id) esito = r;
+          else if(r && !esito) esito = r;
+        }catch(e){ console.log('firma allegato:', e && e.message); }
+      }
+      cvFirmaSegnaVista(msgId);
+      if(!esito || !esito.id) continue;
+
+      /* telaio trovato: l'abbinamento e' certo, si conferma */
+      var list = cvLoad(), idx = list.findIndex(function(x){ return x.id===esito.id; });
+      if(idx<0) continue;
+      if(esito.pratica){ list[idx].praticaFin = esito.pratica; cvSave(list); }
+      cvFirmaConferma(esito.id, true);
+      confermati++;
+      /* quel telaio non serve piu' */
+      telai = telai.filter(function(t){ return t.id!==esito.id; });   /* via sia il telaio sia la targa */
+      if(!telai.length) break;
+    }
+    if(confermati){ try{ cvVendRender(); }catch(e){} }
+    return confermati;
+  }catch(e){ console.log('firma Gmail:', e && e.message); return 0; }
+}
+
+/* ===================== CALENDARIO SU SUPABASE =====================
+   Il calendario regge mansioni, solleciti e fatture tagliandi, e finora
+   passava solo da Google Sheets.
+
+   NB: la tabella si chiama 'compiti_app'. Su questo progetto esiste gia'
+   una 'compiti' con schema relazionale: scriverci {id,data} fallirebbe.
+
+   Il calendario NON aveva i tombstone: ccElimina toglieva la riga e basta.
+   Senza, alla prima sincronizzazione ogni appuntamento cancellato sarebbe
+   tornato indietro dal remoto. Aggiunti qui.                              */
+
+var CC_DEL_KEY = 'ea_compiti_deleted_v1';
+
+function ccTombstones(){
+  try{ return JSON.parse(localStorage.getItem(CC_DEL_KEY)||'[]'); }catch(e){ return []; }
+}
+function ccAddTombstone(id){
+  if(!id) return;
+  try{
+    var t=ccTombstones();
+    if(t.indexOf(id)<0){ t.push(id); localStorage.setItem(CC_DEL_KEY, JSON.stringify(t.slice(-500))); }
+    if(typeof supaDelete==='function') supaDelete('compiti_app', id);
+  }catch(e){}
+}
+function ccTs(c){ return +((c && (c.updatedAt || c.createdAt)) || 0); }
+
+function ccSupaUpsert(c){
+  try{
+    if(!c || !c.id) return;
+    if(!c.updatedAt) c.updatedAt = Date.now();
+    if(typeof supaUpsert==='function') supaUpsert('compiti_app', c);
+  }catch(e){}
+}
+
+function ccSupaLoad(done){
+  var sb = (typeof sbClient==='function') ? sbClient() : null;
+  if(!sb || typeof window.ccLoad!=='function'){ if(done) done(); return; }
+  try{
+    sb.from('compiti_app').select('id,data').then(function(res){
+      if(!res || res.error){
+        if(res && res.error) console.log('compiti_app load:', res.error.message);
+        if(done) done(); return;
+      }
+      var tomb = ccTombstones();
+      var remoti = (res.data||[]).map(function(r){
+        var d = r && r.data;
+        if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        return d;
+      }).filter(function(d){ return d && d.id; });
+
+      /* i cancellati non tornano, e spariscono anche di la' */
+      remoti.filter(function(d){ return tomb.indexOf(d.id)>=0; })
+            .forEach(function(d){ try{ if(typeof supaDelete==='function') supaDelete('compiti_app', d.id); }catch(e){} });
+      remoti = remoti.filter(function(d){ return tomb.indexOf(d.id)<0; });
+
+      var locali = window.ccLoad().filter(function(c){ return c && c.id && tomb.indexOf(c.id)<0; });
+      var byId = {}, daSpingere = [];
+      remoti.forEach(function(r){ byId[r.id] = r; });
+      locali.forEach(function(l){
+        var ex = byId[l.id];
+        if(!ex){ byId[l.id] = l; daSpingere.push(l); return; }
+        if(ccTs(l) > ccTs(ex)){ byId[l.id] = l; daSpingere.push(l); }
+      });
+
+      var finale = Object.keys(byId).map(function(k){ return byId[k]; });
+      window.ccSave(finale);
+      daSpingere.forEach(function(x){ ccSupaUpsert(x); });
+
+      try{ if(typeof window.ccRender==='function' && document.getElementById('cc-list')) window.ccRender(); }catch(e){}
+      try{ if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); }catch(e){}
+      if(done) done(remoti.length, daSpingere.length);
+    }).catch(function(e){ console.log('compiti_app load:', e && e.message); if(done) done(); });
+  }catch(e){ if(done) done(); }
+}
+
+
 /* ===================== SINISTRI SU SUPABASE =====================
    NB: la tabella si chiama 'sinistri_app' e non 'sinistri' perche' su questo
    progetto Supabase esiste gia' una tabella 'sinistri' con uno schema diverso
@@ -16006,8 +16340,11 @@ function eaBadgeBoot(){
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
   try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){}
+  /* cerca in Gmail le conferme di firma digitale */
+  try{ setTimeout(function(){ if(typeof cvFirmaCercaGmail==='function') cvFirmaCercaGmail(); }, 6000); }catch(e){}
   try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
   /* le mansioni del calendario: senza queste la campanella parte a zero */
+  try{ if(typeof ccSupaLoad==='function') ccSupaLoad(); }catch(e){}
   try{ if(typeof window.ccFetch==='function') window.ccFetch(); }catch(e){}
   eaBadgeRefreshAll();
 }
@@ -16160,7 +16497,7 @@ function cvVendCard(cv){
     :'<div onclick="cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;font-size:12px;color:#64748b;cursor:pointer;text-decoration:underline;">Vedi dettaglio pagamenti</div>';
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div>'
-    +recap
+    +recap+cvFirmaBottone(cv)
     +pagHint
     +azione+stampe+annulla+demoDel+'</div>';
 }
