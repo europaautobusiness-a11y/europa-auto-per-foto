@@ -16733,8 +16733,55 @@ function notifCard(n){
   var d=document.createElement('div');
   d.style.cssText='pointer-events:auto;background:#fff;border:1px solid #e2e8f0;border-left:4px solid #25d366;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.16);padding:11px 12px;display:flex;gap:10px;align-items:flex-start;transform:translateY(-12px);opacity:0;transition:transform .25s,opacity .25s;';
   d.innerHTML='<div style="font-size:20px;flex:0 0 auto;">'+(n.icon||'\u2699\ufe0f')+'</div><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;line-height:1.35;">'+String(n.testo||'').replace(/</g,'&lt;')+'</div><div style="font-size:10px;color:#94a3b8;margin-top:2px;">Gestionale \u00b7 '+ora+(n.autore?(' \u00b7 '+String(n.autore).replace(/</g,'&lt;')):'')+'</div></div>';
-  var x=document.createElement('button'); x.textContent='\u2715'; x.style.cssText='flex:0 0 auto;background:none;border:none;color:#94a3b8;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;'; x.onclick=function(){ d.style.opacity='0'; d.style.transform='translateY(-12px)'; setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); },220); };
+  /* Chiude la card, con la direzione da cui esce */
+  var chiudi=function(verso){
+    d.style.transition='transform .2s,opacity .2s';
+    d.style.opacity='0';
+    d.style.transform = verso ? ('translateX('+(verso*window.innerWidth)+'px)') : 'translateY(-12px)';
+    setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); },220);
+  };
+  var x=document.createElement('button'); x.textContent='\u2715'; x.style.cssText='flex:0 0 auto;background:none;border:none;color:#94a3b8;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;'; x.onclick=function(e){ e.stopPropagation(); chiudi(0); };
   d.appendChild(x);
+
+  /* ===== Scorri per togliere, come le notifiche del telefono =====
+     Vale in tutte e due le direzioni. Oltre 80px la card se ne va,
+     sotto torna al suo posto. Togliere la card NON smarca la mansione:
+     quella resta contata sulla campanella finche' non premi Fatto. */
+  (function(){
+    var x0=null, dx=0, mosso=false;
+    var punto=function(ev){ return ev.touches ? ev.touches[0].clientX : ev.clientX; };
+    var giu=function(ev){
+      if(ev.target===x) return;            /* la \u2715 fa da se' */
+      x0=punto(ev); dx=0; mosso=false;
+      d.style.transition='none';
+    };
+    var muovi=function(ev){
+      if(x0===null) return;
+      dx = punto(ev) - x0;
+      if(Math.abs(dx)>6) mosso=true;
+      if(!mosso) return;
+      d.style.transform='translateX('+dx+'px)';
+      d.style.opacity = String(Math.max(0.25, 1 - Math.abs(dx)/260));
+      if(ev.cancelable) ev.preventDefault();
+    };
+    var su=function(){
+      if(x0===null) return;
+      var scorso=dx; x0=null;
+      if(Math.abs(scorso) > 80){ chiudi(scorso>0 ? 1 : -1); return; }
+      d.style.transition='transform .18s,opacity .18s';
+      d.style.transform='translateX(0)';
+      d.style.opacity='1';
+    };
+    d.addEventListener('touchstart', giu, {passive:true});
+    d.addEventListener('touchmove', muovi, {passive:false});
+    d.addEventListener('touchend', su);
+    d.addEventListener('touchcancel', su);
+    d.addEventListener('mousedown', giu);
+    document.addEventListener('mousemove', muovi);
+    document.addEventListener('mouseup', su);
+  })();
+  d.style.touchAction='pan-y';
+  d.style.userSelect='none';
   return d;
 }
 function notifShowCards(arr){
@@ -16890,7 +16937,7 @@ function notifApri(){
       else if(n.refId && n.tipo==='wa_prom') _vai='cvVaiAlPreventivo';
       var _op = _vai ? (' onclick="'+_vai+'(\'' + n.refId + '\')" style="flex:1;min-width:0;cursor:pointer;"')
                      : ' style="flex:1;min-width:0;"';
-      return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span>'+_op+'><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+(_vai?' <span style=\"color:#1a4fa0;font-weight:800;\">\\u203a</span>':'')+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div>'+_btn+'</div>'; }).join('');
+      return '<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span style="font-size:16px;">'+(n.icon||'\u2699\ufe0f')+'</span><div'+_op+'><div style="font-size:12.5px;font-weight:600;color:#0f172a;line-height:1.35;">'+esc(n.testo)+(_vai?' <span style="color:#1a4fa0;font-weight:800;">\u203a</span>':'')+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px;">'+fmt(n.ts)+(n.autore?(' \u00b7 '+esc(n.autore)):'')+'</div></div>'+_btn+'</div>'; }).join('');
   h+='</div></div>';
   m.innerHTML=h; m.style.display='block';
   if(typeof notifSetLastSeen==='function') notifSetLastSeen(Date.now());
