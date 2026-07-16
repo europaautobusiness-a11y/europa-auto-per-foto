@@ -16109,20 +16109,27 @@ function simBuild(buf){
 /* ---- lettura/scrittura celle ---- */
 function simAddr(a){ var c = XLSX.utils.decode_cell(a); return { sheet:_simS, col:c.c, row:c.r }; }
 function simGet(a){ try{ return _simHF.getCellValue(simAddr(a)); }catch(e){ return null; } }
-function simSet(a, v){
+function simSet(a, v){ try{ _simHF.setCellContents(simAddr(a), [[v]]); }catch(e){} }
+/* C'e' qualcosa da scrivere in questa cella?
+   Si guarda il CONTENUTO, non il risultato: se la cella e' una formula
+   (nel file della finanziaria il TAN arriva dalla tabella prodotti),
+   getCellValue darebbe il numero calcolato e ci farebbe credere che va
+   gia' bene cosi'. La formula resterebbe al suo posto e il foglio
+   calcolerebbe su valori diversi da quelli scritti nel form.
+   Va chiamata FUORI dalla sospensione: a valutazione sospesa
+   HyperFormula rifiuta qualsiasi lettura. */
+function simDaScrivere(a, v){
   try{
-    var ad = simAddr(a);
-    /* niente scrittura se il valore e' gia' quello: e' una scrittura
-       in meno e quindi un pezzo di ricalcolo in meno */
-    var cur = _simHF.getCellValue(ad);
-    if(cur === v) return;
-    if(cur === null && (v === null || v === undefined || v === '')) return;
-    _simHF.setCellContents(ad, [[v]]);
-  }catch(e){}
+    var cur = _simHF.getCellSerialized(simAddr(a));
+    if(cur === v) return false;
+    if((cur === null || cur === undefined) && (v === null || v === undefined || v === '')) return false;
+    return true;
+  }catch(e){ return true; }   /* nel dubbio si scrive: meglio lento che sbagliato */
 }
-/* Sospende il ricalcolo, esegue tutte le scritture, lo fa ripartire una
-   volta sola. Il finally e' obbligatorio: se qualcosa esplode a meta' e
-   la valutazione resta sospesa, il simulatore non calcola piu' nulla. */
+/* Sospende il ricalcolo, esegue le scritture, lo fa ripartire una volta
+   sola. Dentro fn() si puo' SOLO scrivere, mai leggere.
+   Il finally e' obbligatorio: se qualcosa esplode a meta' e la
+   valutazione resta sospesa, il simulatore non calcola piu' niente. */
 function simScrivi(fn){
   var susp = false;
   try{ if(_simHF && typeof _simHF.suspendEvaluation === 'function'){ _simHF.suspendEvaluation(); susp = true; } }catch(e){}
@@ -16331,29 +16338,43 @@ function simCalc(){
 
   var _t0 = (window.performance && performance.now) ? performance.now() : Date.now();
 
-  /* scrittura input nel foglio: tutte insieme, un ricalcolo solo */
-  simScrivi(function(){
-    simSet('C6',  g('sim_C6'));
-    simSet('E7',  num('sim_E7')/100);
-    simSet('C10', num('sim_C10'));
-    simSet('C11', num('sim_C11'));
-    simSet('E10', num('sim_E10'));
-    simSet('C12', num('sim_C12'));
-    simSet('E11', parseInt(g('sim_E11'),10)||30);
-    if(simEl('sim_E6')){
-      simSet('E6',  num('sim_E6')/100);
-      simSet('C16', num('sim_C16')/100);
-      simSet('E16', num('sim_E16'));
-    }
-    simSet('C21', g('sim_C21'));
-    var ds = simDataSeriale(g('sim_D21')); if(ds) simSet('D21', ds);
-    simSet('C24', g('sim_C24'));
-    simSet('D24', parseInt(g('sim_D24'),10)||60);
-    simSet('E24', g('sim_E24'));
-    simSet('D26', g('sim_D26'));
-    simSet('D27', g('sim_D27'));
-    simSet('D28', g('sim_D28'));
-  });
+  /* 1. quello che il form dice, cella per cella */
+  var _vals = [
+    ['C6',  g('sim_C6')],
+    ['E7',  num('sim_E7')/100],
+    ['C10', num('sim_C10')],
+    ['C11', num('sim_C11')],
+    ['E10', num('sim_E10')],
+    ['C12', num('sim_C12')],
+    ['E11', parseInt(g('sim_E11'),10)||30],
+    ['C21', g('sim_C21')],
+    ['C24', g('sim_C24')],
+    ['D24', parseInt(g('sim_D24'),10)||60],
+    ['E24', g('sim_E24')],
+    ['D26', g('sim_D26')],
+    ['D27', g('sim_D27')],
+    ['D28', g('sim_D28')]
+  ];
+  if(simEl('sim_E6')){
+    _vals.push(['E6',  num('sim_E6')/100]);
+    _vals.push(['C16', num('sim_C16')/100]);
+    _vals.push(['E16', num('sim_E16')]);
+  }
+  var ds = simDataSeriale(g('sim_D21')); if(ds) _vals.push(['D21', ds]);
+
+  /* 2. si tiene solo cio' che e' davvero cambiato (lettura: qui la
+        valutazione e' ancora attiva, quindi si puo' leggere) */
+  var _scr = [];
+  for(var _i=0; _i<_vals.length; _i++){
+    if(simDaScrivere(_vals[_i][0], _vals[_i][1])) _scr.push(_vals[_i]);
+  }
+
+  /* 3. sospendi -> scrivi -> riprendi: un ricalcolo solo, e solo se serve */
+  if(_scr.length){
+    simScrivi(function(){
+      for(var k=0; k<_scr.length; k++) simSet(_scr[k][0], _scr[k][1]);
+    });
+  }
 
   /* mostra/nascondi maxirata */
   var mx = simEl('sim-max');
