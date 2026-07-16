@@ -5166,6 +5166,7 @@ function saveTemplate(){
     savedAt: new Date().toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'}),
   };
   localStorage.setItem(TPL_KEY, JSON.stringify(tpl));
+  if(typeof cfgSupaSave==='function') cfgSupaSave('tpl_perizia', tpl);
   updateTemplateBar();
   const btn = document.querySelector('.tpl-btn-save');
   const orig = btn.textContent;
@@ -6823,7 +6824,28 @@ function loadPermessi() {
     return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]');
   } catch(e){ return []; }
 }
-function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); updatePermessiBadge(); }
+var _permInviati = {};
+function permSupaSync(list){
+  try{
+    (list||[]).forEach(function(p){
+      if(!p || !p.id) return;
+      var j; try{ j=JSON.stringify(p); }catch(e){ return; }
+      if(_permInviati[p.id] === j) return;      /* identico all'ultimo inviato */
+      _permInviati[p.id] = j;
+      if(typeof supaUpsert==='function') supaUpsert('ferie', p);
+    });
+  }catch(e){}
+}
+function permSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  supaLoadList('ferie', function(){ try{ return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]'); }catch(e){ return []; } },
+    function(arr){ try{ localStorage.setItem(PERMESSI_KEY, JSON.stringify(arr)); }catch(e){} },
+    function(){
+      try{ if(typeof updatePermessiBadge==='function') updatePermessiBadge(); }catch(e){}
+      try{ var v=document.getElementById('view-permessi'); if(v && v.classList.contains('active') && typeof renderPermessi==='function') renderPermessi(); }catch(e){}
+    });
+}
+function savePermessi(l) { localStorage.setItem(PERMESSI_KEY, JSON.stringify(l)); permSupaSync(l); updatePermessiBadge(); }
 function getPermessiEmail() { return localStorage.getItem(PERMESSI_EMAIL_KEY)||'no.reply.europaauto@gmail.com'; }
 function setPermessiEmail(v){ localStorage.setItem(PERMESSI_EMAIL_KEY, v); }
 function getPermessiBody()  { return localStorage.getItem(PERMESSI_BODY_KEY)||PERMESSI_BODY_DEFAULT; }
@@ -6995,7 +7017,14 @@ function salvaRevisione(targa, dataRev, scadenza, stato, nota) {
     l[i]=rec;
   } else l.push(rec);
   saveRevisioniLocal(l);
+  if (typeof supaUpsert==='function') supaUpsert('revisioni', rec);
   if (typeof GS_URL!=='undefined' && GS_URL) { try { gsJsonp({action:'upsert', sheet:REVISIONI_SHEET, record:rec}); } catch(e){} }
+}
+function revSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  /* nessun render da rinfrescare: le revisioni oggi vengono solo scritte,
+     nessuna schermata dell'app le rilegge (vedi nota a Davide) */
+  supaLoadList('revisioni', loadRevisioni, saveRevisioniLocal, null);
 }
 
 // ── Leggi testo da PDF (pdf.js) ───────────────────────────────
@@ -8147,7 +8176,12 @@ function tcMostraIP(){
 var RICHIESTE_KEY='ea_richieste_v1';
 var RICHIESTE_DEL_KEY='ea_richieste_del_v1';
 function riTombstones(){ try{ return JSON.parse(localStorage.getItem(RICHIESTE_DEL_KEY)||'[]'); }catch(e){ return []; } }
-function riAddTombstone(id){ if(!id) return; var t=riTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(RICHIESTE_DEL_KEY,JSON.stringify(t));}catch(e){} } }
+function riAddTombstone(id){
+  if(!id) return;
+  var t=riTombstones();
+  if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(RICHIESTE_DEL_KEY,JSON.stringify(t));}catch(e){} }
+  if(typeof supaDelete==='function') supaDelete('richieste', id);
+}
 var RICHIESTE_SHEET='Richieste';
 
 function riLoad(){ try{ var t=riTombstones(); return (JSON.parse(localStorage.getItem(RICHIESTE_KEY)||'[]')).filter(function(r){ return r && t.indexOf(r.id)<0; }); }catch(e){ return []; } }
@@ -8163,7 +8197,18 @@ function riEliminaDef(id){
   try{ if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro(); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('🗑 Voce eliminata',true);
 }
-function riPush(r){ if(typeof GS_URL!=='undefined' && GS_URL && r){ try{ gsJsonp({action:'upsert', sheet:RICHIESTE_SHEET, record:r}); }catch(e){} } }
+function riSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  supaLoadList('richieste', riLoad, function(arr){
+    var t=riTombstones();
+    riSaveLocal(arr.filter(function(x){ return x && t.indexOf(x.id)<0; }));
+  }, function(){
+    try{ if(typeof riRenderAdmin==='function') riRenderAdmin(); }catch(e){}
+    try{ if(typeof riAggiornaBadge==='function') riAggiornaBadge(); }catch(e){}
+  });
+}
+function riPush(r){ if(r && r.id && typeof supaUpsert==='function') supaUpsert('richieste', r);
+  if(typeof GS_URL!=='undefined' && GS_URL && r){ try{ gsJsonp({action:'upsert', sheet:RICHIESTE_SHEET, record:r}); }catch(e){} } }
 function riPending(){ return riLoad().filter(function(r){return r.stato==='in_attesa';}); }
 function riAggiornaBadge(){ var b=document.getElementById('tc-richieste-badge'); if(!b) return; var n=riPending().length; b.textContent=n; b.style.display=n>0?'inline-block':'none'; }
 function riData(d){ try{ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }catch(e){ return d; } }
@@ -8384,6 +8429,7 @@ function riDedup(){
   });
   if(dropIds.length){
     riSaveLocal(keep);
+    if(typeof supaDelete==='function'){ dropIds.forEach(function(id){ try{ supaDelete('richieste', id); }catch(e){} }); }
     if(typeof GS_URL!=='undefined'&&GS_URL){ dropIds.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
   }
   return keep;
@@ -8506,8 +8552,15 @@ function loadSediPin() {
   ];
 }
 function saveSediPinLocal(list) { try { localStorage.setItem(SEDI_KEY, JSON.stringify(list)); } catch(e){} }
+function sediSupaLoad(){
+  if(typeof cfgSupaLoad!=='function') return;
+  cfgSupaLoad('sedi', function(body){
+    if(body && body.length) saveSediPinLocal(body);
+  }, loadSediPin);
+}
 function saveSediPin(list) {
   saveSediPinLocal(list);
+  if(typeof cfgSupaSave==='function') cfgSupaSave('sedi', list);
   if (typeof GS_URL!=='undefined' && GS_URL) {
     list.forEach(function(s){ try { gsJsonp({action:'upsert', sheet:SEDI_SHEET, record:{id:s.id, nome:s.nome, pin:s.pin}}); } catch(e){} });
   }
@@ -11413,12 +11466,29 @@ function pmOggi(){ var d=new Date(); return String(d.getDate()).padStart(2,'0')+
 function pmFmtDataOra(ts){ try{ var d=new Date(ts); if(isNaN(d.getTime())) return ''; var z=function(n){return String(n).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear()+' alle ore '+z(d.getHours())+':'+z(d.getMinutes()); }catch(e){ return ''; } }
 function pmDMY(s){ if(!s) return ''; s=String(s); var m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(m) return m[3]+'/'+m[2]+'/'+m[1]; var mm=s.match(/^(\d{4})-(\d{2})$/); if(mm) return mm[2]+'/'+mm[1]; return s; }
 function pmTombstones(){ try{ return JSON.parse(localStorage.getItem(PERMUTE_DEL_KEY)||'[]'); }catch(e){ return []; } }
-function pmAddTombstone(id){ if(!id)return; var t=pmTombstones(); if(t.indexOf(id)<0){t.push(id); try{localStorage.setItem(PERMUTE_DEL_KEY,JSON.stringify(t));}catch(e){}} }
+function pmAddTombstone(id){
+  if(!id)return;
+  var t=pmTombstones();
+  if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(PERMUTE_DEL_KEY,JSON.stringify(t));}catch(e){} }
+  if(typeof supaDelete==='function') supaDelete('permute', id);
+}
 function pmLoad(){ try{ var t=pmTombstones(); return (JSON.parse(localStorage.getItem(PERMUTE_KEY)||'[]')).filter(function(p){return p && t.indexOf(p.id)<0;}); }catch(e){ return []; } }
 function pmSave(list){ try{ localStorage.setItem(PERMUTE_KEY, JSON.stringify(list)); }catch(e){} }
 function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; }
 
-function pmPush(p){ if(typeof GS_URL!=='undefined' && GS_URL && p && p.id){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:p}); }catch(e){} } }
+function pmPush(p){
+  if(typeof GS_URL!=='undefined' && GS_URL && p && p.id){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:p}); }catch(e){} }
+  if(p && p.id && typeof supaUpsert==='function') supaUpsert('permute', p);
+}
+function pmSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  supaLoadList('permute', pmLoad, function(arr){
+    var t=pmTombstones();
+    pmSave(arr.filter(function(x){ return x && t.indexOf(x.id)<0; }));   /* i cancellati restano cancellati */
+  }, function(){
+    try{ var v=document.getElementById('view-permute'); if(v && v.classList.contains('active') && typeof pmRender==='function') pmRender(); }catch(e){}
+  });
+}
 function pmLoadDaSheets(onDone){
   if(typeof GS_URL==='undefined' || !GS_URL){ if(onDone)onDone(false,'no-sync'); return; }
   var cb='pmCb_'+Date.now(); var s=document.createElement('script');
@@ -11461,7 +11531,7 @@ function pmDedup(){
     }
   }catch(e){}
 }
-function pmInit(){ pmDedup(); pmRender(); pmLoadDaSheets(); }
+function pmInit(){ pmDedup(); pmRender(); pmSupaLoad(); pmLoadDaSheets(); }
 
 function pmRender(){
   var wrap=document.getElementById('pm-lista'); if(!wrap) return;
@@ -12870,7 +12940,14 @@ var WA_MSG_DEF={
 function waEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function waMsgStore(){ try{ return JSON.parse(localStorage.getItem(WA_MSG_KEY)||'{}'); }catch(e){ return {}; } }
 function waMsgGet(tab){ var o=waMsgStore(); return (o[tab]!=null?o[tab]:WA_MSG_DEF[tab])||''; }
-function waMsgSet(tab,v){ var o=waMsgStore(); o[tab]=v; try{ localStorage.setItem(WA_MSG_KEY, JSON.stringify(o)); }catch(e){} }
+function waMsgSet(tab,v){ var o=waMsgStore(); o[tab]=v; try{ localStorage.setItem(WA_MSG_KEY, JSON.stringify(o)); }catch(e){} if(typeof cfgSupaSave==='function') cfgSupaSave('wa_msg', o); }
+function waMsgSupaLoad(){
+  if(typeof cfgSupaLoad!=='function') return;
+  cfgSupaLoad('wa_msg', function(body){
+    try{ localStorage.setItem(WA_MSG_KEY, JSON.stringify(body)); }catch(e){}
+    try{ var v=document.getElementById('view-whatsapp'); if(v && v.classList.contains('active') && typeof waRender==='function') waRender(); }catch(e){}
+  }, waMsgStore);
+}
 function waNumero(tel){ var d=String(tel||'').replace(/\D/g,''); if(!d) return ''; if(d.slice(0,4)==='0039') d=d.slice(2); if(d.slice(0,2)==='39' && d.length>=12) return d; if(d.charAt(0)==='3') return '39'+d; return d; }
 function waFill(tmpl,d){ return String(tmpl||'').replace(/\{nome\}/g,d.nome||'').replace(/\{data\}/g,d.data||'').replace(/\{ora\}/g,d.ora||'').replace(/\{auto\}/g,d.auto||'').replace(/\{scadenza\}/g,d.scadenza||''); }
 function waValido(tel){ return /^39\d{9,10}$/.test(waNumero(tel)); }
@@ -14178,27 +14255,86 @@ function parSupaLoad(){
   }catch(e){}
 }
 (function(){ try{ var raw=localStorage.getItem(PARAM_KEY); if(!raw) return; var o=JSON.parse(raw); var ch=false; if(o && typeof o.condizioni==='string' && o.condizioni.indexOf('2% e il 4%')>=0){ o.condizioni=PARAM_CONDIZIONI_DEF; ch=true; } if(o && typeof o.condizioniFinali==='string' && o.condizioniFinali.indexOf('2% e il 4%')>=0){ o.condizioniFinali=PARAM_CONDIZIONI_FINALI_DEF; ch=true; } if(ch){ localStorage.setItem(PARAM_KEY, JSON.stringify(o)); } }catch(e){} })();
-var EA_BUILD='2026-07-11 · sync-fix';
+var EA_BUILD='2026-07-16 · cloud-completo';
 function diagSync(){
   var out=document.getElementById('diag-out'); if(!out) return;
   out.style.color='#334155'; out.innerHTML='Verifica in corso\u2026';
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb){ out.innerHTML='\u274c Libreria Supabase non caricata (connessione assente o script bloccato). Ricarica la pagina.'; return; }
-  var tabelle=['preventivi','fornitori','magazzino','crm'];
-  var localCount={ preventivi:function(){try{return cvLoad().length;}catch(e){return '-';}}, fornitori:function(){try{return fnLoad().length;}catch(e){return '-';}}, magazzino:function(){try{return mzLoad().length;}catch(e){return '-';}}, crm:function(){try{return Object.keys(crmLoad()).length;}catch(e){return '-';}} };
-  var righe=['<b>Versione app:</b> '+EA_BUILD]; var idx=0;
-  function fine(){ out.innerHTML=righe.join('<br>'); }
+
+  /* nome tabella \u00b7 etichetta leggibile \u00b7 come si contano le righe su questo dispositivo */
+  var TAB=[
+    ['preventivi',  'Preventivi e contratti', function(){ return cvLoad().length; }],
+    ['magazzino',   'Magazzino',              function(){ return mzLoad().length; }],
+    ['fornitori',   'Fornitori',              function(){ return fnLoad().length; }],
+    ['clienti',     'Anagrafiche clienti',    function(){ return Object.keys(clStore()).length; }],
+    ['crm',         'CRM',                    function(){ return Object.keys(crmLoad()).length; }],
+    ['provvigioni', 'Provvigioni',            function(){ return (typeof _pRegCache!=='undefined' && _pRegCache.length)?_pRegCache.length:pLoadReg().length; }],
+    ['parametri',   'Parametri',              function(){ return localStorage.getItem(PARAM_KEY)?1:0; }],
+    ['permute',     'Permute e perizie',      function(){ return pmLoad().length; }],
+    ['richieste',   'Richieste ferie',        function(){ return riLoad().length; }],
+    ['ferie',       'Permessi da Gmail',      function(){ return JSON.parse(localStorage.getItem(PERMESSI_KEY)||'[]').length; }],
+    ['revisioni',   'Revisioni',              function(){ return loadRevisioni().length; }],
+    ['sinistri_app','Sinistri e carrozzeria', function(){ return sinLoad().length; }],
+    ['compiti_app', 'Calendario e mansioni',  function(){ return JSON.parse(localStorage.getItem('ea_compiti_v1')||'[]').length; }],
+    ['presenze_app','Presenze',               function(){ return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]').length; }],
+    ['utenti',      'Utenti e permessi',      function(){ return JSON.parse(localStorage.getItem('ea_utenti_app')||'[]').length; }],
+    ['notifiche',   'Notifiche',              function(){ return notifLoad().length; }],
+    ['config',      'Template e sedi',        function(){ return null; }]
+  ];
+
+  var righe=[], idx=0, nOk=0, nKo=0, daSalire=0;
+
+  function fine(){
+    var testa;
+    if(nKo===0 && daSalire===0){
+      testa='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;margin-bottom:9px;font-weight:800;color:#166534;">'
+        +'\u2705 Tutto sul cloud \u2014 '+nOk+' tabelle su '+TAB.length+' leggono e scrivono.</div>';
+    } else if(nKo>0){
+      testa='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin-bottom:9px;font-weight:800;color:#991b1b;">'
+        +'\u26d4 '+nKo+' tabelle su '+TAB.length+' non funzionano: quelle sezioni restano solo su questo dispositivo.</div>';
+    } else {
+      testa='<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-bottom:9px;font-weight:800;color:#92400e;">'
+        +'\u26a0\ufe0f Leggono e scrivono tutte, ma '+daSalire+' sezioni hanno righe non ancora salite. Aprile una volta e ricontrolla.</div>';
+    }
+    out.innerHTML = testa + righe.join('<br>')
+      + '<div style="margin-top:11px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;line-height:1.6;">'
+      + '<b>cloud</b> = righe su Supabase \u00b7 <b>qui</b> = righe su questo dispositivo.<br>'
+      + 'Se \u201cqui\u201d \u00e8 pi\u00f9 alto di \u201ccloud\u201d apri quella sezione: le righe mancanti salgono da sole al caricamento.<br>'
+      + 'Fuori da Supabase resta solo il foglio Presenze/timbrature.<br>'
+      + 'Versione app: '+EA_BUILD
+      + '</div>';
+  }
+
+  function riga(nome, cloud, loc){
+    var extra='';
+    if(typeof loc==='number' && loc>cloud){ daSalire++; extra=' <span style="color:#b45309;font-weight:700;">\u2192 '+(loc-cloud)+' non ancora sul cloud, apri la sezione</span>'; }
+    return '\u2705 <b>'+nome+'</b>: cloud '+cloud+' \u00b7 qui '+(loc===null?'\u2014':loc)+extra;
+  }
+
   function prossima(){
-    if(idx>=tabelle.length){ fine(); return; }
-    var t=tabelle[idx++]; var loc=localCount[t]?localCount[t]():'-';
+    if(idx>=TAB.length){ fine(); return; }
+    var t=TAB[idx][0], nome=TAB[idx][1], fn=TAB[idx][2];
+    idx++;
+    var loc=null; try{ loc=fn(); }catch(e){ loc=null; }
+
     sb.from(t).select('id').then(function(res){
-      if(res&&res.error){ righe.push('\u274c <b>'+t+'</b>: lettura fallita \u2014 '+res.error.message); prossima(); return; }
-      var n=(res.data||[]).length; var probe='__diag__'+Date.now();
+      if(res&&res.error){
+        nKo++;
+        var manca=/does not exist|schema cache|relation/i.test(res.error.message||'');
+        righe.push('\u274c <b>'+nome+'</b> ('+t+'): '+res.error.message+(manca?' <b>\u2192 la tabella non c\u2019\u00e8: incolla lo script SQL</b>':''));
+        prossima(); return;
+      }
+      var n=(res.data||[]).length;
+      /* prova di scrittura vera: una riga finta, subito cancellata */
+      var probe='__diag__'+Date.now();
       sb.from(t).upsert({ id:probe, data:{ id:probe, _diag:true } }).then(function(w){
-        if(w&&w.error){ righe.push('\u274c <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u2014 SCRITTURA BLOCCATA: '+w.error.message); prossima(); return; }
-        sb.from(t).delete().eq('id',probe).then(function(){ righe.push('\u2705 <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u00b7 scrittura OK'); prossima(); }, function(){ righe.push('\u2705 <b>'+t+'</b>: cloud '+n+' \u00b7 locale '+loc+' \u00b7 scrittura OK'); prossima(); });
-      }, function(err){ righe.push('\u274c <b>'+t+'</b>: errore rete in scrittura \u2014 '+((err&&err.message)||err)); prossima(); });
-    }, function(err){ righe.push('\u274c <b>'+t+'</b>: errore rete in lettura \u2014 '+((err&&err.message)||err)); prossima(); });
+        if(w&&w.error){ nKo++; righe.push('\u274c <b>'+nome+'</b>: cloud '+n+' \u00b7 qui '+(loc===null?'\u2014':loc)+' \u2014 SCRITTURA BLOCCATA: '+w.error.message); prossima(); return; }
+        nOk++;
+        sb.from(t).delete().eq('id',probe).then(function(){ righe.push(riga(nome,n,loc)); prossima(); },
+                                               function(){ righe.push(riga(nome,n,loc)); prossima(); });
+      }, function(err){ nKo++; righe.push('\u274c <b>'+nome+'</b>: errore rete in scrittura \u2014 '+((err&&err.message)||err)); prossima(); });
+    }, function(err){ nKo++; righe.push('\u274c <b>'+nome+'</b>: errore rete in lettura \u2014 '+((err&&err.message)||err)); prossima(); });
   }
   prossima();
 }
@@ -14211,6 +14347,10 @@ function diagRicarica(){
   try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
   try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
   try{ if(typeof pSupaLoad==='function') pSupaLoad(); }catch(e){}
+  try{ if(typeof riSupaLoad==='function') riSupaLoad(); }catch(e){}
+  try{ if(typeof permSupaLoad==='function') permSupaLoad(); }catch(e){}
+  try{ if(typeof revSupaLoad==='function') revSupaLoad(); }catch(e){}
+  try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
   setTimeout(function(){ if(out) out.innerHTML='\u2705 Ricarica avviata. Riapri Preventivi/Fornitori per vedere i dati. Premi di nuovo \u201cVerifica\u201d per ricontrollare i conteggi.'; }, 500);
 }
 function parInit(){
@@ -16548,6 +16688,12 @@ function eaBadgeBoot(){
      prima che qualcuno stampi con le condizioni o l'IBAN vecchi */
   try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
   try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
+  try{ if(typeof riSupaLoad==='function') riSupaLoad(); }catch(e){}
+  try{ if(typeof permSupaLoad==='function') permSupaLoad(); }catch(e){}
+  try{ if(typeof revSupaLoad==='function') revSupaLoad(); }catch(e){}
+  try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
+  try{ if(typeof sediSupaLoad==='function') sediSupaLoad(); }catch(e){}
+  try{ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }catch(e){}
   try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){}
   try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){}
   /* cerca in Gmail le conferme di firma digitale */
@@ -16908,6 +17054,38 @@ function fnSupaLoad(){
 }
 
 /* ===================== SYNC GENERICO SUPABASE (riusabile per ogni modulo) ===================== */
+/* ---- configurazioni sul cloud (tabella 'config') ----
+   Template WhatsApp, template perizia, sedi e PIN: roba piccola che
+   pero' finora viveva solo dentro al browser di chi l'aveva scritta. */
+function cfgTsLocale(id){ try{ return +(localStorage.getItem('ea_cfg_ts_'+id)||0); }catch(e){ return 0; } }
+function cfgTsSet(id, ts){ try{ localStorage.setItem('ea_cfg_ts_'+id, String(ts||Date.now())); }catch(e){} }
+function cfgSupaSave(id, body){
+  try{
+    var ts = Date.now();
+    cfgTsSet(id, ts);
+    if(typeof supaUpsert==='function') supaUpsert('config', { id:id, updatedAt:ts, body:body });
+  }catch(e){}
+}
+/* applica(body) viene chiamata SOLO se il cloud ha una versione piu'
+   recente di quella locale. Se e' il locale a essere avanti, sale lui. */
+function cfgSupaLoad(id, applica, salvaLocale){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb) return;
+  try{
+    sb.from('config').select('id,data').eq('id',id).then(function(res){
+      if(!res || res.error){
+        if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('config', res.error.message);
+        return;
+      }
+      var row=(res.data||[])[0];
+      var d=row&&row.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+      var tl=cfgTsLocale(id), tr=+((d&&d.updatedAt)||0);
+      if(d && d.body!=null && tr>tl){ try{ applica(d.body); cfgTsSet(id, tr); }catch(e){} }
+      else if(tl>0 && tl>tr && typeof salvaLocale==='function'){ try{ cfgSupaSave(id, salvaLocale()); }catch(e){} }
+    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('config', (err&&err.message)||err); });
+  }catch(e){}
+}
+
 /* Un avviso per tabella per sessione: se il cloud rifiuta la scrittura
    bisogna saperlo subito, ma senza tempestare di toast a ogni tasto. */
 var _supaErrVisti = {};
