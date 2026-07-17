@@ -458,6 +458,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Vendite</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-vendite" onclick="cvVendGo('in_attesa_pagamento');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#129534;</span><span class="si-label"> In attesa pagamento</span><span class="si-badge" id="vb-pag" style="display:none;">0</span></button>
+    <button class="sidebar-item" onclick="cvVendGo('in_attesa_firma');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128394;</span><span class="si-label"> In attesa firma digitale</span><span class="si-badge" id="vb-firma" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('in_attesa_immatricolazione');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128203;</span><span class="si-label"> In att. immatricolazione</span><span class="si-badge" id="vb-imm" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('da_consegnare');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Da consegnare</span><span class="si-badge" id="vb-cons" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('consegnato');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Consegnate</span></button>
@@ -3407,6 +3408,36 @@ function isDriveConnected() {
 
 // Login Google e ottieni access token
 
+/* Rinnova SOLO il token, senza popup e senza gli effetti collaterali di
+   connectGoogleDriveSilent (niente sync foto/permessi/provvigioni).
+   Restituisce una promessa: true se alla fine il token e' buono. */
+function driveRinnovaToken(){
+  return new Promise(function(res){
+    try{
+      if(typeof isDriveConnected==='function' && isDriveConnected()) return res(true);
+      if(typeof google==='undefined' || !google.accounts || !google.accounts.oauth2) return res(false);
+      var chiuso=false;
+      var fine=function(v){ if(!chiuso){ chiuso=true; res(v); } };
+      var c=google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_CLIENT_ID,
+        scope: GDRIVE_SCOPES,
+        prompt: '',                 /* mai un popup: o va da solo o niente */
+        callback: function(r){
+          if(r && !r.error && r.access_token){
+            _driveAccessToken = r.access_token;
+            _driveTokenExpiry = Date.now() + (r.expires_in - 60) * 1000;
+            try{ updateDriveConnectBar(true); }catch(e){}
+            console.log('Token Google rinnovato');
+            fine(true);
+          } else fine(false);
+        }
+      });
+      c.requestAccessToken({ prompt: '' });
+      setTimeout(function(){ fine(typeof isDriveConnected==='function' && !!isDriveConnected()); }, 8000);
+    }catch(e){ res(false); }
+  });
+}
+
 // Connessione Google Drive senza popup (silent)
 function connectGoogleDriveSilent() {
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
@@ -3736,6 +3767,18 @@ async function welcomeLogin() {
 // ══════════════════════════════════════════════════════════════
 // SISTEMA LOGIN CUSTOM
 // ══════════════════════════════════════════════════════════════
+
+/* Le caselle che fanno contabilita'. Da qui dipendono: il ruolo
+   'contabilita', le fatture, la conferma dei pagamenti, i prezzi
+   d'acquisto, il file Excel della finanziaria e il pulsante Contabilita'.
+   Se un domani cambia la persona o l'indirizzo, si tocca solo questa riga. */
+var EA_CONTABILITA = ['ariannapresta80@gmail.com', 'contabilitaeuropaauto@gmail.com'];
+function eaIsContabilita(email){
+  try{
+    var e = String((email!=null ? email : ((typeof _currentUserEmail!=='undefined' && _currentUserEmail) || '')) || '').toLowerCase().trim();
+    return !!e && EA_CONTABILITA.indexOf(e) >= 0;
+  }catch(_e){ return false; }
+}
 
 var UTENTI_APP_DEFAULT = [
   { email:'europaautobusiness@gmail.com', password:'', nome:'Davide', ruolo:'admin' },
@@ -7734,7 +7777,7 @@ function setCurrentUser(email) {
     _currentUserRole = 'admin';                 // Davide — amministratore
   } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
     _currentUserRole = 'staff';                 // Rudy — vede tutto tranne la parte admin
-  } else if (_currentUserEmail === 'ariannapresta80@gmail.com') {
+  } else if (eaIsContabilita(_currentUserEmail)) {
     _currentUserRole = 'contabilita';           // Arianna — contabilità (conferma pagamenti)
   } else if (_u) {
     _currentUserRole = _u.ruolo;                // Credenziali Utenti: ha la precedenza
@@ -7844,7 +7887,7 @@ function _tuttiUtenti(){
 function applyRoleUI() {
   var role = getCurrentRole();
   try{ var _rg=document.getElementById('mz-tab-reg'); if(_rg) _rg.style.display=(role==='admin')?'':'none'; }catch(e){}
-  try{ var _bc=document.getElementById('btnContabApp'); if(_bc){ var _em=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); _bc.style.display=(role==='admin'||_em==='ariannapresta80@gmail.com')?'block':'none'; } }catch(e){}
+  try{ var _bc=document.getElementById('btnContabApp'); if(_bc){ var _em=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); _bc.style.display=(role==='admin'||eaIsContabilita(_em))?'block':'none'; } }catch(e){}
   var ROLE_VIEWS = {
     'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
     'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi'],
@@ -10427,7 +10470,7 @@ document.addEventListener('DOMContentLoaded',function(){
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
-    try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo, '\u2705'); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
+    try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo+(c.dipNome?(' \u2014 '+c.dipNome):''), '\u2705', (c.dipEmail?{tipo:'task_new', refId:c.id, per:c.dipEmail}:null)); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
     document.getElementById('cc-titolo').focus();
   }
   function ccToggle(id){
@@ -10574,7 +10617,7 @@ document.addEventListener('DOMContentLoaded',function(){
      Si ferma da solo quando il task viene segnato "fatto" (spunta nel task o nella notifica). */
   var CC_SOLL_INTERVALLO = 60*60*1000;   // 1 ora fra un sollecito e il successivo
   var CC_SOLL_MAX = 10;                   // dopo 10 solleciti smette
-  var CC_SOLL_ESCAL = 6;                  // alla 6a: mail all'admin
+  var CC_SOLL_ESCAL = 10;                 // al 10° (l'ultimo) la mail arriva all'admin e si smette
   function ccDueTs(c){
     if (c.ricorda){ var t=new Date(c.ricorda).getTime(); if(!isNaN(t)) return t; }
     if (c.data){ var s=String(c.data)+(c.ora?('T'+c.ora):'T09:00'); var t2=new Date(s).getTime(); if(!isNaN(t2)) return t2; }
@@ -10641,13 +10684,49 @@ document.addEventListener('DOMContentLoaded',function(){
       var n=(c.solleciti||0)+1;
       if (n>CC_SOLL_MAX) return;                          // esauriti i 10 solleciti: basta
       c.solleciti=n; c.sollecitoLastAt=new Date(now).toISOString(); changed.push(c);
-      if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoTask', email:c.dipEmail, nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', nota:c.nota||'', numero:n}); }catch(e){} }
+      /* Mail di sollecito: da Resend, non da Apps Script (che con no-cors
+         non dice mai se e' partita). */
+      try{
+        if(typeof eaInviaMessaggio==='function' && c.dipEmail){
+          var _sH='<p>Ciao '+ccEsc(c.dipNome||'')+',</p>'
+            +'<p>hai una mansione ancora da fare:</p>'
+            +'<p style="font-size:16px;font-weight:700;">'+ccEsc(c.titolo||'')+'</p>'
+            +'<p>'+(c.data?('Prevista per il '+ccEsc(String(c.data).split('-').reverse().join('/'))):'')
+            +(c.ora?(' alle '+ccEsc(c.ora)):'')+'</p>'
+            +(c.nota?('<p><i>'+ccEsc(c.nota)+'</i></p>'):'')
+            +'<p style="color:#64748b;font-size:13px;">Sollecito '+n+' di '+CC_SOLL_MAX+'. Segnala come fatta nel gestionale per non riceverne altri.</p>';
+          eaInviaMessaggio({
+            to: c.dipEmail,
+            subject: '\u23f0 Sollecito '+n+'/'+CC_SOLL_MAX+': '+(c.titolo||'mansione da fare'),
+            html: (typeof eaMailWrap==='function'?eaMailWrap(_sH):_sH)
+          }).then(function(r){ if(r && r.error) console.log('sollecito mail:', r.error); },
+                  function(e){ console.log('sollecito mail:', e && e.message); });
+        }
+      }catch(e){}
       /* Il sollecito va a chi ha la mansione, non a tutti. */
       try{ if(typeof notifPush==='function') notifPush('\u23f0 Sollecito '+n+'/'+CC_SOLL_MAX+': \u00ab'+(c.titolo||'task')+'\u00bb da fare \u2014 '+(c.dipNome||''), '\u23f0', {tipo:'task_soll', refId:c.id, per:(c.dipEmail||'')}); }catch(e){}
       if (n>=CC_SOLL_ESCAL && !c.escalato){
         c.escalato=true;
-        if (typeof gsPost==='function'){ try{ gsPost({action:'sollecitoEscalation', email:'europaautobusiness@gmail.com', nome:c.dipNome||'', titolo:c.titolo||'', data:c.data||'', ora:c.ora||'', numero:n}); }catch(e){} }
-        try{ if(typeof notifPush==='function') notifPush('\u26a0\ufe0f '+(c.dipNome||'Assegnatario')+' non ha eseguito \u00ab'+(c.titolo||'task')+'\u00bb dopo '+n+' solleciti. Serve un tuo intervento.', '\u26a0\ufe0f'); }catch(e){}
+        /* Dieci solleciti non sono bastati: si smette di insistere e la
+           mail arriva all'amministratore. Anche questa da Resend. */
+        try{
+          if(typeof eaInviaMessaggio==='function'){
+            var _eH='<p>La mansione qui sotto non \u00e8 stata eseguita dopo '+n+' solleciti.</p>'
+              +'<p style="font-size:16px;font-weight:700;">'+ccEsc(c.titolo||'')+'</p>'
+              +'<p><b>Assegnata a:</b> '+ccEsc(c.dipNome||c.dipEmail||'?')+'<br>'
+              +(c.data?('<b>Prevista per:</b> '+ccEsc(String(c.data).split('-').reverse().join('/'))):'')
+              +(c.ora?(' alle '+ccEsc(c.ora)):'')+'</p>'
+              +(c.nota?('<p><i>'+ccEsc(c.nota)+'</i></p>'):'')
+              +'<p style="color:#991b1b;font-weight:700;">I solleciti automatici si fermano qui.</p>';
+            eaInviaMessaggio({
+              to: 'europaautobusiness@gmail.com',
+              subject: '\u26a0\ufe0f Mansione non eseguita dopo '+n+' solleciti \u2014 '+(c.dipNome||''),
+              html: (typeof eaMailWrap==='function'?eaMailWrap(_eH):_eH)
+            }).then(function(r){ if(r && r.error) console.log('escalation mail:', r.error); },
+                    function(e){ console.log('escalation mail:', e && e.message); });
+          }
+        }catch(e){}
+        try{ if(typeof notifPush==='function') notifPush('\u26a0\ufe0f '+(c.dipNome||'Assegnatario')+' non ha eseguito \u00ab'+(c.titolo||'task')+'\u00bb dopo '+n+' solleciti. Serve un tuo intervento.', '\u26a0\ufe0f', {tipo:'task_esc', refId:c.id, ruoli:['admin']}); }catch(e){}
       }
     });
     if (changed.length){ ccSave(list); changed.forEach(function(c){ try{ ccSync(c); }catch(e){} }); }
@@ -10790,6 +10869,10 @@ document.addEventListener('DOMContentLoaded',function(){
   window.ccLoad = ccLoad;
   window.ccSave = ccSave;
   window.ccSync = ccSync;
+  /* Esposta per poter far partire il controllo a mano (e per collaudarlo):
+     restava chiusa qui dentro, raggiungibile solo dal timer interno. */
+  window.ccSolleciti = ccSolleciti;
+  window.ccIsOpen = ccIsOpen;
   window.ccUtente = ccUtente;
   window.ccDueTs = ccDueTs;
   /* Quante mansioni ha ancora da eseguire l'utente collegato:
@@ -12111,7 +12194,7 @@ function mzFornChange(){
   if(haP){ if(typeof mzProvVenditore==='function') mzProvVenditore('azienda'); if(el) el.checked=true; }
   else if(haCf){ if(typeof mzProvVenditore==='function') mzProvVenditore('privato'); if(el) el.checked=false; }
 }
-function mzPuoPrezzoAcq(){ try{ var e=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); return (typeof isAdmin==='function'&&isAdmin()) || e==='ariannapresta80@gmail.com'; }catch(_e){ return false; } }
+function mzPuoPrezzoAcq(){ try{ return (typeof isAdmin==='function'&&isAdmin()) || eaIsContabilita(); }catch(_e){ return false; } }
 function mzById(id){ return mzLoad().filter(function(a){return a.id===id;})[0]||null; }
 function mzStatoInfo(s){ for(var i=0;i<MZ_STATI.length;i++){ if(MZ_STATI[i][0]===s) return MZ_STATI[i]; } return MZ_STATI[0]; }
 function mzEuro(n){ n=parseFloat(n); if(isNaN(n)) return '—'; return '€ '+n.toLocaleString('it-IT'); }
@@ -12661,7 +12744,8 @@ function mzSalva(){
   if(idx>=0) list[idx]=a; else list.push(a);
   mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a); mzChiudi(); mzRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Auto salvata',true);
-  if(_isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
+  /* Notifica del veicolo nuovo tolta su richiesta: restano permuta e perizia. */
+  if(false && _isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
 }
 function mzElimina(id){
   if(!confirm('Eliminare questa auto dal magazzino?')) return;
@@ -14674,10 +14758,19 @@ function regStampa(){
 
 
 /* ===================== VENDITE / CONTRATTI (pipeline) ===================== */
-var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
+var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_firma','In attesa firma digitale'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
+/* Manca la firma del finanziamento? Solo i contratti finanziati possono
+   mancarla: gli altri non hanno niente da firmare. */
+function cvFirmaMancante(cv){
+  try{
+    if(!cv || !cv.isContratto) return false;
+    if(typeof cvHaFinanziamento!=='function' || !cvHaFinanziamento(cv)) return false;
+    return !(cv.firmaDigitale && cv.firmaDigitale.confermata);
+  }catch(e){ return false; }
+}
 var _cvVendStato='in_attesa_pagamento';
 function cvVendData(ts){ if(!ts) return ''; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
-function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || e.indexOf('ariannapresta')>=0 || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
+function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || eaIsContabilita(e) || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
 function cvVendGo(stato){ _cvVendStato=stato||'in_attesa_pagamento'; sidebarNav('vendite'); }
 function cvVendAvanzaStato(cv){
@@ -14692,7 +14785,9 @@ function cvVendAvanzaStato(cv){
   var caparraConf = cap.length ? cap.every(function(x){return x.confermato;}) : pags.some(function(x){return x.confermato;});
   var nuovo;
   if(cv.immatricolatoTs){ nuovo = saldata ? 'da_consegnare' : 'in_attesa_pagamento'; }
-  else { nuovo = caparraConf ? 'in_attesa_immatricolazione' : 'in_attesa_pagamento'; }
+  else if(!caparraConf){ nuovo = 'in_attesa_pagamento'; }
+  else if(cvFirmaMancante(cv)){ nuovo = 'in_attesa_firma'; }   /* caparra incassata, manca la firma */
+  else { nuovo = 'in_attesa_immatricolazione'; }
   if(nuovo!==st){ cv.statoVendita=nuovo; return true; }
   return false;
 }
@@ -14705,7 +14800,7 @@ function cvVendAutoAvanza(){
     return changed.length>0;
   }catch(e){ return false; }
 }
-function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
+function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_firma:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-firma',cnt.in_attesa_firma); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
 /* ===================== FIRMA DIGITALE DEL CONTRATTO =====================
@@ -14738,19 +14833,29 @@ function cvFirmaBottone(cv){
     if(!cvHaFinanziamento(cv)) return '';
     var f = cv.firmaDigitale || null;
     if(f && f.confermata){
-      return '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;'
-        + 'font-size:12px;color:#166534;font-weight:700;">\u2705 Firma digitale confermata'
-        + (f.data?(' \u00b7 '+String(f.data).split('-').reverse().join('/')):'')
-        + (f.auto?' <span style="font-weight:400;">(rilevata da Gmail)</span>':'')
-        + '</div>';
+      /* Firmato: basta un segno. Il resto (data, come e' arrivata) sta nel
+         suggerimento del mouse e nel dettaglio, non sulla scheda. */
+      var _q=(f.data?('Firma del '+String(f.data).split('-').reverse().join('/')):'Firma confermata')
+            + (f.auto?' \u00b7 rilevata da Gmail':'');
+      return '<div style="margin-top:6px;"><span title="'+_q+'" '
+        + 'style="display:inline-block;padding:3px 9px;border-radius:20px;background:#f0fdf4;border:1px solid #bbf7d0;'
+        + 'font-size:11px;color:#166534;font-weight:800;">\uD83D\uDD8A OK</span></div>';
     }
     var sug = (cv.firmaSuggerita) ? true : false;
-    return '<button onclick="event.stopPropagation(); cvFirmaConferma(\'' + cv.id + '\')" '
-      + 'style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid '
-      + (sug?'#16a34a':'#d97706') + ';background:' + (sug?'#f0fdf4':'#fffbeb') + ';color:'
-      + (sug?'#166534':'#92400e') + ';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
-      + (sug ? '\u2709\ufe0f Trovata la mail di firma \u2014 conferma' : '\u270d\ufe0f Conferma firma digitale')
-      + '</button>';
+    /* Manca la firma: riquadro rosso, e' quello che tiene ferma l'auto.
+       Verde solo se la mail e' gia' arrivata e manca un tocco. */
+    return '<div style="display:flex;gap:6px;margin-top:8px;">'
+      + '<button onclick="event.stopPropagation(); cvFirmaConferma(\'' + cv.id + '\')" '
+      + 'style="flex:1;padding:9px 10px;border-radius:8px;border:1px solid '
+      + (sug?'#16a34a':'#fecaca') + ';background:' + (sug?'#f0fdf4':'#fef2f2') + ';color:'
+      + (sug?'#166534':'#991b1b') + ';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
+      + (sug ? '\u2709\ufe0f Firma arrivata \u2014 conferma' : '\uD83D\uDD8A Firma finanziamento da fare')
+      + '</button>'
+      + (cvFirmaCasellaAbilitata()
+          ? ('<button onclick="event.stopPropagation(); cvFirmaCercaOra()" title="Cerca subito in Gmail le conferme di firma" '
+             + 'style="flex:0 0 auto;padding:10px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDD04 Gmail</button>')
+          : '')   /* dalla casella di Rudy o Arianna non c'e' niente da cercare */
+      + '</div>';
   }catch(e){ return ''; }
 }
 
@@ -14843,6 +14948,13 @@ function cvFirmaPraticaDa(testo){
 }
 
 /* Il mittente delle conferme di firma. Se cambia, si cambia qui. */
+/* Le caselle su cui ha senso cercare: quelle a cui vendita@ inoltra
+   davvero le conferme. Chi entra con un altro account non fa nessuna
+   ricerca e la sua posta non viene aperta. */
+var CV_FIRMA_CASELLE = ['europaautobusiness@gmail.com'];
+function cvFirmaCasellaAbilitata(){
+  try{ return CV_FIRMA_CASELLE.indexOf((_currentUserEmail||'').toLowerCase().trim()) >= 0; }catch(e){ return false; }
+}
 /* Da chi puo' arrivare la conferma di firma. Se domani cambia la
    finanziaria, o si aggiunge una casella, basta aggiungerla qui. */
 var CV_FIRMA_MITTENTI = ['deutschebank.digitale@db.com', 'vendita@europaautosrl.it'];
@@ -14857,9 +14969,35 @@ function cvFirmaQuery(){
 }
 var CV_FIRMA_VISTE = 'ea_firma_mail_viste_v1';
 var CV_FIRMA_MAXPAG = 14;   /* la Richiesta di Finanziamento sta entro qui */
-function cvFirmaViste(){ try{ return JSON.parse(localStorage.getItem(CV_FIRMA_VISTE)||'[]'); }catch(e){ return []; } }
-function cvFirmaSegnaVista(id){
-  try{ var v=cvFirmaViste(); if(v.indexOf(id)<0){ v.push(id); localStorage.setItem(CV_FIRMA_VISTE, JSON.stringify(v.slice(-300))); } }catch(e){}
+/* Elenco delle mail gia' esaminate: { idMail: impronta dei telai cercati }.
+   Il formato vecchio era un semplice elenco di id e viene convertito con
+   impronta vuota, cosi' le mail viste col codice di prima tornano in gioco. */
+function cvFirmaVisteMap(){
+  try{
+    var v=JSON.parse(localStorage.getItem(CV_FIRMA_VISTE)||'{}');
+    if(Array.isArray(v)){ var m={}; v.forEach(function(id){ m[id]=''; }); return m; }
+    return v||{};
+  }catch(e){ return {}; }
+}
+function cvFirmaViste(){ return Object.keys(cvFirmaVisteMap()); }   /* compatibilita' */
+function cvFirmaSegnaVista(id, impronta){
+  try{
+    var m=cvFirmaVisteMap();
+    m[id]=impronta||'';
+    var k=Object.keys(m);
+    if(k.length>300){ var r={}; k.slice(-300).forEach(function(x){ r[x]=m[x]; }); m=r; }
+    localStorage.setItem(CV_FIRMA_VISTE, JSON.stringify(m));
+  }catch(e){}
+}
+/* impronta della lista di telai/targhe in attesa: cambia quando cambia
+   l'elenco dei contratti da firmare */
+function cvFirmaImpronta(lista){
+  try{
+    var s=(lista||[]).map(function(x){ return x.tel; }).sort().join('|');
+    var h=5381;
+    for(var i=0;i<s.length;i++){ h=((h*33) ^ s.charCodeAt(i)) >>> 0; }
+    return String(h);
+  }catch(e){ return ''; }
 }
 
 /* Legge il PDF pagina per pagina e si ferma appena trova uno dei telai cercati */
@@ -14888,20 +15026,58 @@ async function cvFirmaScansiona(b64, telai){
   }catch(e){ console.log('firma pdf:', e && e.message); return null; }
 }
 
+/* Finestra del resoconto: serve perche' i tasti ora stanno anche in Vendite,
+   dove il riquadro della diagnostica dei Parametri non esiste. */
+function cvFirmaBox(){
+  var m=document.getElementById('firma-diag');
+  if(!m){
+    m=document.createElement('div');
+    m.id='firma-diag';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100060;overflow:auto;padding:12px;';
+    m.innerHTML='<div style="max-width:560px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+      +'<div style="background:#1a4fa0;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+      +'<span style="font-weight:800;">\uD83D\uDD8A Firma digitale</span>'
+      +'<button onclick="document.getElementById(\'firma-diag\').style.display=\'none\'" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+      +'</div>'
+      +'<div style="padding:14px;display:flex;gap:8px;border-bottom:1px solid #e2e8f0;">'
+      +'<button onclick="cvFirmaCercaOra()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #7c3aed;background:#fff;color:#7c3aed;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDD04 Cerca adesso</button>'
+      +'<button onclick="cvFirmaDiagnosi()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #b45309;background:#fff;color:#b45309;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u2753 Perch\u00e9 non la trova?</button>'
+      +'</div>'
+      +'<div id="firma-diag-out" style="padding:14px;font-size:13px;color:#334155;line-height:1.7;max-height:64vh;overflow:auto;"></div></div>';
+    document.body.appendChild(m);
+  }
+  m.style.display='block';
+  return document.getElementById('firma-diag-out');
+}
 async function cvFirmaDiagnosi(){
-  var out=document.getElementById('diag-out');
+  var out=cvFirmaBox();
   var scrivi=function(h){ if(out) out.innerHTML=h; };
   var R=[];
   var ok=function(t){ R.push('\u2705 '+t); }, ko=function(t){ R.push('\u274c <b>'+t+'</b>'); }, info=function(t){ R.push('<span style="color:#64748b;">'+t+'</span>'); };
   var mostra=function(){ scrivi('<div style="font-weight:800;margin-bottom:6px;">\uD83D\uDD8A Firma digitale \u2014 diagnosi</div>'+R.join('<br>')); };
   scrivi('Controllo in corso\u2026');
   try{
+    /* 0 - la casella e' quella giusta? */
+    var _me='';
+    try{ _me=(_currentUserEmail||''); }catch(e){}
+    if(!cvFirmaCasellaAbilitata()){
+      R.push('\u2139\ufe0f Sei entrato con <b>'+docEsc(_me||'(sconosciuto)')+'</b>.');
+      R.push('Le conferme di firma vengono cercate <b>solo</b> nella casella di '+docEsc(CV_FIRMA_CASELLE.join(', '))+', l\u2019unica a cui vendita@europaautosrl.it inoltra le mail della banca.');
+      info('Da questo account non viene fatta nessuna ricerca e la tua posta non viene aperta. Non c\u2019\u00e8 niente di rotto: le firme si confermano da sole quando Davide ha il gestionale aperto.');
+      mostra(); return;
+    }
+
     /* 1 - Gmail collegato? */
     if(typeof isDriveConnected!=='function' || !isDriveConnected()){
       ko('Google non e\u2019 collegato su questo dispositivo: senza accesso a Gmail la firma non puo\u2019 essere cercata. Collega Google e riprova.');
       mostra(); return;
     }
-    ok('Google collegato');
+    /* Su quale casella si sta cercando: 'users/me' e' la posta dell'account
+       con cui si e' entrati, non una casella aziendale condivisa. */
+    var _cas='';
+    try{ _cas=_currentUserEmail||''; }catch(e){}
+    ok('Google collegato' + (_cas?(' \u2014 sto guardando la posta di <b>'+docEsc(_cas)+'</b>'):''));
+    info('Le conferme vengono cercate nella casella di chi \u00e8 entrato adesso. Se le mail della banca non arrivano qui, non verranno trovate: vanno inoltrate a questo indirizzo.');
 
     /* 2 - contratti in attesa di firma */
     var attesa=[];
@@ -15000,18 +15176,46 @@ async function cvFirmaDiagnosi(){
   }catch(e){ R.push('\u274c Errore: '+docEsc((e&&e.message)||e)); mostra(); }
 }
 function cvFirmaCercaOra(){
-  var out=document.getElementById('diag-out');
+  var out=cvFirmaBox();
   if(out) out.innerHTML='Cerco le conferme di firma in Gmail\u2026';
   if(typeof cvFirmaCercaGmail!=='function'){ if(out) out.innerHTML='Funzione non disponibile.'; return; }
   Promise.resolve(cvFirmaCercaGmail()).then(function(n){
-    if(out) out.innerHTML = n ? ('\u2705 '+n+' firme confermate. Apri Vendite per vederle.')
-                              : '\u2139\ufe0f Nessuna firma nuova da confermare. Usa \u201cPerch\u00e9 non trova la firma?\u201d per capire il motivo.';
+    if(out) out.innerHTML = n ? ('\u2705 <b>'+n+' firme confermate.</b> Le trovi gi\u00e0 aggiornate in Vendite.')
+                              : '\u2139\ufe0f Nessuna firma nuova da confermare.<br><span style="font-size:12px;color:#64748b;">Se ne aspettavi una, premi \u201cPerch\u00e9 non la trova?\u201d qui sopra.</span>';
+    try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
   }, function(e){ if(out) out.innerHTML='\u274c Errore: '+((e&&e.message)||e); });
 }
 
+var _firmaAvvisoOff = false;
 async function cvFirmaCercaGmail(){
   try{
-    if(typeof isDriveConnected!=='function' || !isDriveConnected()) return 0;
+    /* Le conferme arrivano solo nella casella di Davide: da qualunque
+       altro account questa ricerca non ha senso e non viene fatta. */
+    if(!cvFirmaCasellaAbilitata()) return 0;
+
+    /* C'e' qualcosa da cercare? Se no si esce senza nemmeno svegliare Google. */
+    var _daFirmare = cvLoad().filter(function(cv){
+      return cv.isContratto && cvHaFinanziamento(cv) && !(cv.firmaDigitale && cv.firmaDigitale.confermata);
+    }).length;
+    if(!_daFirmare) return 0;
+
+    /* Il token dura un'ora: se e' scaduto si rinnova da solo, senza popup.
+       Senza questo, con la pagina aperta la ricerca smetteva di funzionare
+       dopo 60 minuti senza dire niente a nessuno. */
+    if(typeof isDriveConnected!=='function') return 0;
+    if(!isDriveConnected()){
+      var ok = (typeof driveRinnovaToken==='function') ? await driveRinnovaToken() : false;
+      if(!ok){
+        /* Non ci si riesce: va detto, una volta sola, altrimenti resta li'
+           ad aspettare una firma che non arrivera' mai. */
+        if(!_firmaAvvisoOff){
+          _firmaAvvisoOff = true;
+          try{ if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f Google scollegato: le firme digitali non vengono piu\u2019 cercate. Ricollega Google.', false); }catch(e){}
+        }
+        return 0;
+      }
+      _firmaAvvisoOff = false;
+    }
     var token = _driveAccessToken;
 
     /* Cosa cerchiamo nel PDF: il TELAIO, e in alternativa la TARGA.
@@ -15030,7 +15234,8 @@ async function cvFirmaCercaGmail(){
     });
     if(!telai.length) return 0;   /* niente da cercare: non si tocca Gmail */
 
-    var viste = cvFirmaViste();
+    var _impronta = cvFirmaImpronta(telai);
+    var visteMap = cvFirmaVisteMap();
     /* Mittente della banca: restringe molto la ricerca e toglie i falsi positivi.
        'from:' vale anche sulle mail inoltrate dalla webmail vendita@, perche'
        l'inoltro conserva il mittente originale nel corpo dell'header. */
@@ -15040,7 +15245,9 @@ async function cvFirmaCercaGmail(){
     var lr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='
       + encodeURIComponent(q) + '&maxResults=50', { headers:{ Authorization:'Bearer '+token } });
     var ld = await lr.json();
-    var messages = (ld.messages||[]).filter(function(m){ return viste.indexOf(m.id)<0; });
+    /* si riguarda una mail se non l'abbiamo mai vista OPPURE se da allora
+       l'elenco dei contratti in attesa e' cambiato */
+    var messages = (ld.messages||[]).filter(function(m){ return visteMap[m.id] !== _impronta; });
     if(!messages.length) return 0;
 
     var confermati = 0;
@@ -15072,7 +15279,7 @@ async function cvFirmaCercaGmail(){
           else if(r && !esito) esito = r;
         }catch(e){ console.log('firma allegato:', e && e.message); }
       }
-      cvFirmaSegnaVista(msgId);
+      cvFirmaSegnaVista(msgId, _impronta);
       if(!esito || !esito.id) continue;
 
       /* telaio trovato: l'abbinamento e' certo, si conferma */
@@ -16465,8 +16672,7 @@ var _simLibs = false, _simCaricato = false, _simInCorso = false, _simMeta = null
 /* Aggiornamento del file: amministrazione (admin + Arianna). Rudy no. */
 function simPuoCaricare(){
   try{
-    var e = (typeof _currentUserEmail !== 'undefined' ? String(_currentUserEmail||'').toLowerCase() : '');
-    return (typeof isAdmin === 'function' && isAdmin()) || e === 'ariannapresta80@gmail.com';
+    return (typeof isAdmin === 'function' && isAdmin()) || eaIsContabilita();
   }catch(e){ return false; }
 }
 /* Provvigioni: SOLO admin. */
@@ -17027,7 +17233,7 @@ function cvVendEstera(cv){ if(cv.autoSnapshot && cv.autoSnapshot.estera) return 
 
 /* ===== FATTURA: genera una volta, blocca, annulla per rigenerare ===== */
 function cvFattAnno(){ return new Date().getFullYear(); }
-function cvPuoFatturare(){ try{ var e=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); return (typeof isAdmin==='function'&&isAdmin()) || e==='ariannapresta80@gmail.com'; }catch(_e){ return false; } }
+function cvPuoFatturare(){ try{ return (typeof isAdmin==='function'&&isAdmin()) || eaIsContabilita(); }catch(_e){ return false; } }
 function cvFatturaSerie(c){ var a=(c&&c.autoSnapshot)||{}; return (a.estera===true||a.ivaEsposta===true)?'esposta':'margine'; }
 function cvFatturaNextNum(serie){
   var y=cvFattAnno(), max=0, base=0;
@@ -17159,7 +17365,7 @@ function cvVendCard(cv){
     +(finTot?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;di cui finanziamento</span><span>'+cvEuro(finTot)+'</span></div>'):'')
     +(permVal?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;permuta'+((cv.permuta&&cv.permuta.modello)?(' ('+cvEsc(cv.permuta.modello)+')'):'')+'</span><span>'+cvEuro(permVal)+'</span></div>'):'')
     +'</div>';
-  var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
+  var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_firma:['#fee2e2','#991b1b','In attesa firma digitale'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
   var sb=STL[st]||['#f1f5f9','#334155',st];
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
   var pagHint=(daConf>0)
@@ -17178,7 +17384,7 @@ function cvConfLabel(){
   var nome=((typeof _currentUserName!=='undefined'&&_currentUserName)||'');
   var ruolo;
   if(r==='admin'||e==='europaautobusiness@gmail.com') ruolo='Amministrazione';
-  else if(r==='contabilita'||e.indexOf('ariannapresta')>=0) ruolo='Contabilità';
+  else if(r==='contabilita'||eaIsContabilita(e)) ruolo='Contabilità';
   else ruolo='Staff';
   return ruolo+(nome?(' \u2013 '+nome):'');
 }
@@ -17222,7 +17428,11 @@ function cvVendConfermaPag(id, ri){
   cvVendRender();
   try{ var _mm=document.getElementById('cv-mod-modal'); if(_mm && _mm.style.display==='block' && typeof cvVendDettagli==='function') cvVendDettagli(id); }catch(e){}
   var msg='✓ Pagamento confermato';
-  if(dopo!==prima){ if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione'; else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare'; }
+  if(dopo!==prima){
+    if(dopo==='in_attesa_firma') msg='✓ Caparra confermata → in attesa firma digitale';
+    else if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione';
+    else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare';
+  }
   if(typeof tcToastNew==='function') tcToastNew(msg,true);
   try{ if(typeof notifPush==='function'){
     var _cli=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
@@ -17521,12 +17731,41 @@ function notifShowCards(arr){
      n.per   = email del destinatario  -> la vede solo lui (e l'admin)
      n.ruoli = elenco di ruoli         -> la vedono solo quei ruoli
    Senza nessuno dei due: la vedono tutti, com'era prima.               */
+/* --- Chi riceve cosa nella campanella ---
+   Sta qui e non nei ruoli perche' si decide cosa ARRIVA, non cosa si
+   PUO' FARE: i permessi restano quelli che sono. */
+
+/* Silenzio totale: caselle usate solo per timbrare. Nessuna notifica,
+   nemmeno le proprie mansioni. */
+var NOTIF_MUTE = ['ariannapresta80@gmail.com'];
+
+/* Solo quello che porta il proprio nome: le proprie mansioni e i propri
+   solleciti, niente traffico delle vendite (firme, pagamenti, preventivi). */
+var NOTIF_SOLO_MIRATE = ['contabilitaeuropaauto@gmail.com'];
+function notifMuta(mail){
+  try{ return NOTIF_MUTE.indexOf(String(mail||'').toLowerCase().trim()) >= 0; }catch(e){ return false; }
+}
+function notifSoloMirate(mail){
+  try{ return NOTIF_SOLO_MIRATE.indexOf(String(mail||'').toLowerCase().trim()) >= 0; }catch(e){ return false; }
+}
 function notifPerMe(n){
   try{
     if(!n) return false;
-    if(!n.per && !(n.ruoli && n.ruoli.length)) return true;   /* per tutti */
     var mail=((typeof _currentUserEmail!=='undefined' && _currentUserEmail)||'').toLowerCase();
     var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'';
+    var generica = !n.per && !(n.ruoli && n.ruoli.length);
+
+    if(notifMuta(mail)) return false;                         /* casella da timbratura: silenzio */
+
+    if(notifSoloMirate(mail)){
+      /* Solo quello che porta il suo nome. Non basta filtrare per ruolo:
+         Arianna e' admin per via delle fatture, quindi le notifiche
+         indirizzate agli admin (promemoria WhatsApp, escalation dei
+         solleciti) le arriverebbero comunque. */
+      return !!n.per && String(n.per).toLowerCase()===mail;
+    }
+
+    if(generica) return true;                                 /* per tutti */
     if(ruolo==='admin') return true;                          /* l'admin vede tutto */
     if(n.per) return String(n.per).toLowerCase()===mail;
     return n.ruoli.indexOf(ruolo)>=0;
