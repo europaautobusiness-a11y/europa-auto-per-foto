@@ -623,20 +623,15 @@ html, body{
       <div class="card-hd">🚗 Prova su Strada</div>
       <div class="card-bd">
         <div class="subj-grid" id="roadGrid"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="tab-content" id="tab-road">
-    <div class="card">
-      <div class="card-hd">🚗 Prova su Strada</div>
-      <div class="card-bd">
+        <!-- campo e disclaimer spostati qui dal tab-road, che nessun
+             pulsante apriva: le note uscivano sempre vuote in perizia -->
         <div class="disc-box"><strong>⚠ Disclaimer</strong>Le valutazioni seguenti riflettono l'opinione soggettiva dell'ispettore al momento della verifica. Il documento ha valore puramente informativo e non costituisce garanzia contrattuale.</div>
-        <div class="subj-grid" id="roadGrid"></div>
         <div class="fg" style="margin-top:12px;"><label>Note prova su strada</label><textarea id="noteStrada" placeholder="Feedback generale sulla prova su strada..."></textarea></div>
       </div>
     </div>
   </div>
+
+  <!-- tab-road eliminato: era irraggiungibile, il suo contenuto vivo ora sta in tab-strada -->
 
   <div class="tab-content" id="tab-dealer">
     <div class="card">
@@ -10873,6 +10868,11 @@ document.addEventListener('DOMContentLoaded',function(){
      restava chiusa qui dentro, raggiungibile solo dal timer interno. */
   window.ccSolleciti = ccSolleciti;
   window.ccIsOpen = ccIsOpen;
+  /* Queste due sono chiamate dagli attributi onchange/oninput dei campi,
+     che vivono nello scope globale: senza l'esposizione esplodevano con
+     ReferenceError a ogni tocco. */
+  window.ccDurataDefault = ccDurataDefault;
+  window.ccClienteSel = ccClienteSel;
   window.ccUtente = ccUtente;
   window.ccDueTs = ccDueTs;
   /* Quante mansioni ha ancora da eseguire l'utente collegato:
@@ -13551,6 +13551,7 @@ function cvMailPreventivoHtml(p){
   try{
     if(t.passaggio>0) incluso.push('Passaggio di propriet\u00e0 e messa su strada');
     if(p.garanziaImporto>0 || p.garanziaMesi) incluso.push('Garanzia'+(p.garanziaMesi?(' '+p.garanziaMesi+' mesi'):''));
+    incluso.push('Tagliando');
     /* La valutazione della permuta NON va in mail: e' un numero che si tratta
        di persona, scriverlo qui lo trasforma in una trattativa gia' chiusa. */
   }catch(e){}
@@ -13581,7 +13582,7 @@ function cvMailPreventivoHtml(p){
   /* apertura */
   h+='<tr><td style="padding:26px 24px 8px;'+F+'">'
     +'<div style="font-size:17px;color:#0f172a;">Ciao '+eamEsc(nome)+',</div>'
-    +'<div style="font-size:17px;color:#0f172a;margin-top:4px;">ecco la tua <b>'+eamEsc(a.nome)+'</b>.</div>'
+    +'<div style="font-size:17px;color:#0f172a;margin-top:4px;">ecco il tuo preventivo.</div>'
     +'</td></tr>';
 
   /* foto: e' quello che vende */
@@ -13700,16 +13701,60 @@ function cvInviaMailCliente(p){
 function cvCheckMailPreventivi(){
   try{
     if(typeof cvLoad!=='function') return;
-    var list=cvLoad(), now=Date.now(), changed=[];
-    list.forEach(function(p){
-      if(!p || p.isContratto || p.emailInviata || !p.mailDaInviareAt) return;
-      if(now < p.mailDaInviareAt) return;
-      if(p.cliente && p.cliente.email){ try{ cvInviaMailCliente(p); }catch(e){} p.emailInviata=true; p.emailInviataTs=now; try{ if(typeof notifPush==='function') notifPush('Email preventivo inviata automaticamente a '+(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim(), '\ud83d\udce7'); }catch(e){} }
-      p.mailDaInviareAt=null; changed.push(p);
+    var list=cvLoad(), now=Date.now();
+    var candidati=list.filter(function(p){
+      return p && !p.isContratto && !p.emailInviata && p.mailDaInviareAt && now>=p.mailDaInviareAt;
     });
-    if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(p){ supaUpsert('preventivi', p); });
-      var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender();
-    }
+    if(!candidati.length) return;
+    var sb=(typeof sbClient==='function')?sbClient():null;
+
+    var invia=function(p){
+      if(p.cliente && p.cliente.email){
+        try{ cvInviaMailCliente(p); }catch(e){}
+        try{ if(typeof notifPush==='function') notifPush('Email preventivo inviata a '+((p.cliente.nome||'')+' '+(p.cliente.cognome||'')).trim(), '\u2709\ufe0f'); }catch(e){}
+      }
+    };
+    var marca=function(p){
+      p.emailInviata=true; p.emailInviataTs=Date.now(); p.mailDaInviareAt=null;
+      try{
+        p.emailInviataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+      }catch(e){}
+      cvSave(cvLoad().map(function(x){ return x.id===p.id ? p : x; }));
+      try{ var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); }catch(e){}
+    };
+
+    candidati.forEach(function(p){
+      if(!sb){
+        /* niente cloud: si procede alla vecchia maniera, meglio una mail
+           (forse doppia) che nessuna */
+        marca(p); try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', p); }catch(e){}
+        invia(p);
+        return;
+      }
+      /* a. qualcun altro ha gia' provveduto? si rilegge dal cloud */
+      sb.from('preventivi').select('data').eq('id', String(p.id)).then(function(res){
+        var rem=(res && res.data && res.data[0] && res.data[0].data) || null;
+        if(typeof rem==='string'){ try{ rem=JSON.parse(rem); }catch(e){ rem=null; } }
+        if(rem && (rem.emailInviata || !rem.mailDaInviareAt)){
+          /* gia' inviata (o annullata) da un altro dispositivo: si allinea
+             la copia locale e non si spedisce niente */
+          p.emailInviata=rem.emailInviata||true; p.emailInviataTs=rem.emailInviataTs||Date.now(); p.mailDaInviareAt=null;
+          cvSave(cvLoad().map(function(x){ return x.id===p.id ? p : x; }));
+          return;
+        }
+        /* b. si prenota: PRIMA il segno sul cloud, POI la spedizione.
+           Chi arriva un attimo dopo trova emailInviata=true e si ferma. */
+        marca(p);
+        sb.from('preventivi').upsert({ id:String(p.id), data:p }).then(function(w){
+          if(w && w.error){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore('preventivi', w.error.message); }
+          invia(p);
+        }, function(){ invia(p); });   /* rete caduta a meta': si invia comunque */
+      }, function(){
+        /* il cloud non risponde: vecchia maniera */
+        marca(p); try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', p); }catch(e){}
+        invia(p);
+      });
+    });
   }catch(e){}
 }
 var WA_RIP_MIN = 60;  // ogni quanti MINUTI ripete il promemoria (1 ora)
@@ -13932,8 +13977,18 @@ function cvValidaPermuta(){
   if(!_cv || !_cv.permutaOn) return true;
   var pm=_cv.permuta||{};
   var req=[['modello','Modello'],['alimentazione','Alimentazione'],['cambio','Tipologia cambio'],['colore','Colore'],['prezzoAcq','Prezzo di acquisto'],['cilindrata','Cilindrata'],['potenza','Potenza (kW)'],['dataImm','Data immatricolazione'],['targa','Targa'],['km','Km']];
-  var manc=req.filter(function(r){ var v=pm[r[0]]; return v==null||String(v).trim()===''; }).map(function(r){return r[1];});
-  if(manc.length){ alert('Permuta: compila TUTTI i dati obbligatori.\nMancano: '+manc.join(', ')); return false; }
+  var manc=req.filter(function(r){ var v=pm[r[0]]; return v==null||String(v).trim()===''; });
+  /* bordo rosso sui campi vuoti, normale sugli altri */
+  try{
+    req.forEach(function(r){
+      var el=document.getElementById('cv_pm_'+r[0]); if(!el) return;
+      var vuoto=manc.some(function(m){ return m[0]===r[0]; });
+      el.style.borderColor = vuoto ? '#dc2626' : '#cbd5e1';
+      el.style.background  = vuoto ? '#fef2f2' : '#fff';
+    });
+    if(manc.length){ var box=document.getElementById('cv-permuta-box'); if(box && box.scrollIntoView) box.scrollIntoView({behavior:'smooth', block:'center'}); }
+  }catch(e){}
+  if(manc.length){ alert('Permuta: compila TUTTI i dati obbligatori.\nMancano: '+manc.map(function(r){return r[1];}).join(', ')); return false; }
   return true;
 }
 function cvCreaPeriziaDaPermuta(cv){
@@ -13978,7 +14033,13 @@ function cvSalva(){
 var _cvDeleted={};
 function cvElimina(id){ if(!confirm('Eliminare definitivamente questo preventivo?')) return; _cvDeleted[id]=true; cvSave(cvLoad().filter(function(x){return x.id!==id;})); supaDelete('preventivi', id); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
 
-function cvStampa(tipo){ cvSync(); cvStampaDoc(_cv, tipo); }
+function cvStampa(tipo){
+  cvSync();
+  if(!cvValidaPermuta()) return;   /* niente stampa con la permuta vuota */
+  if(!cvValidaAssic()) return;
+  if(!cvValidaPromo()) return;
+  cvStampaDoc(_cv, tipo);
+}
 function cvStampaESalva(){
   cvSync();
   if(!cvValidaAssic()) return;
@@ -14832,15 +14893,7 @@ function cvFirmaBottone(cv){
     if(!cv || !cv.isContratto) return '';
     if(!cvHaFinanziamento(cv)) return '';
     var f = cv.firmaDigitale || null;
-    if(f && f.confermata){
-      /* Firmato: basta un segno. Il resto (data, come e' arrivata) sta nel
-         suggerimento del mouse e nel dettaglio, non sulla scheda. */
-      var _q=(f.data?('Firma del '+String(f.data).split('-').reverse().join('/')):'Firma confermata')
-            + (f.auto?' \u00b7 rilevata da Gmail':'');
-      return '<div style="margin-top:6px;"><span title="'+_q+'" '
-        + 'style="display:inline-block;padding:3px 9px;border-radius:20px;background:#f0fdf4;border:1px solid #bbf7d0;'
-        + 'font-size:11px;color:#166534;font-weight:800;">\uD83D\uDD8A OK</span></div>';
-    }
+    if(f && f.confermata) return '';   /* fatta: lo dice l'etichetta in alto */
     var sug = (cv.firmaSuggerita) ? true : false;
     /* Manca la firma: riquadro rosso, e' quello che tiene ferma l'auto.
        Verde solo se la mail e' gia' arrivata e manca un tocco. */
@@ -14868,6 +14921,9 @@ function cvFirmaConferma(id, auto){
     if(!auto){
       if(!confirm('Confermi che ' + cli + ' ha firmato digitalmente il contratto?\n\nParte una mail ad amministrazione.')) return;
     }
+    /* La firma sblocca la pratica: lo stato avanza ADESSO, non alla
+       prossima apertura di Vendite. Senza questo, la scheda restava
+       ferma nel riquadro vecchio anche a firma fatta. */
     cv.firmaDigitale = {
       confermata: true,
       data: new Date().toISOString().slice(0,10),
@@ -14877,6 +14933,7 @@ function cvFirmaConferma(id, auto){
     };
     delete cv.firmaSuggerita;
     cv.updatedAt = Date.now();
+    try{ if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(cv); }catch(e){}
     cvSave(list);
     try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
     cvFirmaMail(cv);
@@ -17193,6 +17250,10 @@ function eaBadgeBoot(){
   /* carica i contratti anche se l'utente non apre nessuna sezione:
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  /* dopo qualche secondo, quando il cloud ha risposto: un giro di
+     avanzamento stati, cosi' le pratiche mosse da un altro dispositivo
+     (caparra confermata, firma arrivata) si sistemano da sole */
+  try{ setTimeout(function(){ try{ if(typeof cvVendAutoAvanza==='function') cvVendAutoAvanza(); if(typeof cvVendBadge==='function') cvVendBadge(); }catch(e){} }, 5000); }catch(e){}
   /* i parametri finiscono nei contratti stampati: vanno presi subito,
      prima che qualcuno stampi con le condizioni o l'IBAN vecchi */
   try{ if(typeof parSupaLoad==='function') parSupaLoad(); }catch(e){}
@@ -17367,12 +17428,21 @@ function cvVendCard(cv){
     +'</div>';
   var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_firma:['#fee2e2','#991b1b','In attesa firma digitale'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
   var sb=STL[st]||['#f1f5f9','#334155',st];
+  /* Etichetta della firma del finanziamento, accanto allo stato:
+     rossa finche' manca, verde quando c'e'. Niente per le auto senza
+     finanziamento: non hanno nulla da firmare. */
+  var firmaTag='';
+  if(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv)){
+    var _fOk=!!(cv.firmaDigitale && cv.firmaDigitale.confermata);
+    var _fTit=_fOk?((cv.firmaDigitale.data?('Firma del '+String(cv.firmaDigitale.data).split('-').reverse().join('/')):'Firma confermata')+(cv.firmaDigitale.auto?' \u00b7 rilevata da Gmail':'')):'Firma del finanziamento ancora da fare';
+    firmaTag='<span title="'+_fTit+'" style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_fOk?'#dcfce7':'#fee2e2')+';color:'+(_fOk?'#166534':'#991b1b')+';white-space:nowrap;">\uD83D\uDD8A firm. dig.'+(_fOk?' OK':'')+'</span>';
+  }
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
   var pagHint=(daConf>0)
-    ?'<div onclick="cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12px;color:#9a3412;font-weight:700;cursor:pointer;">\u23f3 '+daConf+' pagament'+(daConf===1?'o':'i')+' da confermare \u2014 tocca per aprire e confermare</div>'
+    ?'<div onclick="cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12px;color:#9a3412;font-weight:700;cursor:pointer;">\u23f3 '+daConf+' pagament'+(daConf===1?'o':'i')+' da confermare</div>'
     :'<div onclick="cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;font-size:12px;color:#64748b;cursor:pointer;text-decoration:underline;">Vedi dettaglio pagamenti</div>';
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div></div>'
     +recap+cvFirmaBottone(cv)
     +pagHint
     +azione+stampe+annulla+demoDel+'</div>';
