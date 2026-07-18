@@ -9772,7 +9772,32 @@ function apriCalCat(cat, btn){
   try{ if(typeof sidebarNav==='function') sidebarNav('compiti', btn); }catch(e){}
   setTimeout(function(){ try{ if(typeof ccSetCatFiltro==='function') ccSetCatFiltro(cat); }catch(e){} }, 130);
 }
+/* Le sezioni che l'utente corrente puo' aprire: personalizzazioni dalla
+   matrice permessi se presenti, altrimenti i default del ruolo.
+   L'admin vede tutto. */
+function eaSezioniMie(){
+  try{
+    var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'dipendente';
+    if(ruolo==='admin') return null;   /* null = nessun limite */
+    var mail=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+    var perm=(typeof loadPermessiSezioni==='function')?loadPermessiSezioni():{};
+    if(mail && Object.prototype.hasOwnProperty.call(perm, mail)) return perm[mail]||[];
+    return SEZIONI_DEFAULT_RUOLO[ruolo] || SEZIONI_DEFAULT_RUOLO['dipendente'] || [];
+  }catch(e){ return null; }
+}
+/* Sezioni che esistono ma non stanno nella matrice permessi (viste di
+   servizio raggiungibili da tutti): non vanno bloccate. */
+var EA_SEZIONI_LIBERE=['impostazioni'];
 function sidebarNav(view,btn){
+  /* la porta, non solo il bottone: le sezioni vietate non si aprono
+     nemmeno chiamando questa funzione a mano */
+  try{
+    var mie=eaSezioniMie();
+    if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && mie.indexOf(view)<0){
+      if(typeof tcToastNew==='function') tcToastNew('Sezione riservata: chiedi all\u2019amministratore.', false);
+      return;
+    }
+  }catch(e){}
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
   if(!_navBack){ if(_navCurrent && _navCurrent!==view) _navHistory.push(_navCurrent); } _navBack=false; _navCurrent=view; if(typeof eaBackShow==='function') eaBackShow();
   // Usa solo classList — il CSS usa .view.active{display:block !important}
@@ -14156,10 +14181,12 @@ function cvBuildHTML(c, tipo){
      cliente non deve leggerlo sul contratto: resta un'informazione interna
      al gestionale (la trovi nella scheda della vendita). */
   var _chiaveOk = (c.doppiaChiaveConsegnata===true);
-  if(_chiaveOk || c.librettoModalita){
+  var _cort = (c.pacchettoCortesia && c.pacchettoCortesia.acquistato);
+  if(_chiaveOk || c.librettoModalita || _cort){
     var _cons='';
     if(_chiaveOk) _cons+='<b>Doppia chiave:</b> consegnata al cliente';
     if(c.librettoModalita) _cons+=(_cons?'<br>':'')+'<b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente');
+    if(_cort) _cons+=(_cons?'<br>':'')+'<b>Pacchetto Auto di Cortesia (\u20ac 60):</b> vettura sostitutiva gratuita per l\u2019intera durata della riparazione in caso di fermo tecnico del veicolo, alla prima disponibilit\u00e0.';
     doc+='<div class="cvh">Consegna</div><div class="cvbox">'+_cons+'</div>';
   }
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
@@ -14533,7 +14560,7 @@ var PARAM_KEY='ea_parametri_v1';
 var PARAM_ASSIC_DEF='• Furto Incendio parziale, totale.\n• Valore a NUOVO fino a 36 mesi\n• Ricorso terzi da incendio\n• Atti Vandalici e sociopolitici\n• Eventi naturali\n• Cristalli\n• Urto con animale selvatico\n• Soccorso stradale\n• Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300€';
 var PARAM_CONDIZIONI_DEF = "CONDIZIONI PROPOSTA D’ACQUISTO\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna stessa, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi, prendendosi carico delle modifiche eventuali e delle spese da esse derivanti.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta dallo stesso; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale derivante da tale promozione. La durata minima del pagamento rateale per il mantenimento di tale promozione \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica. In caso di rinuncia al piano di finanziamento sottoscritto, il costo del veicolo non potr\u00e0 essere rispettato dalla parte venditrice.\n11. L'importo della rata indicato non include le eventuali spese di incasso, le quali potranno essere applicate in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni previste dalla societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori sopra riportati: la mancata consegna di uno o pi\u00f9 accessori comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso. L'acquirente riconosce di rispondere civilmente presso il foro del venditore in caso di mancate comunicazioni dei difetti del veicolo ceduto in permuta.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
 var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT\u00c0 prevista dall'articolo 128, comma c del D.LGS. 206/2005 (Codice del Consumo) e condizioni di garanzia.\n\nVeicolo in condizioni d'uso pregresso, coerente con lo stato della manutenzione ordinaria dichiarata; saranno quindi necessari solo marginali interventi di manutenzione straordinaria, durante il periodo di Garanzia, nell'arco della percorrenza prevista, purch\u00e9 il veicolo sia correttamente usato e non vi sia negligenza o imperizia da parte del conducente.\nL'auto \u00e8 un bene complesso composto di sottosistemi con ciclo di vita definito dalla qualit\u00e0 intrinseca della costruzione e del processo di produzione, e influenzato dalla condotta di guida e dalla qualit\u00e0 della manutenzione ordinaria. La Garanzia Legale di Conformit\u00e0 garantisce quindi la conformit\u00e0 del veicolo, rispondente alla valutazione dello stato di utilizzo pregresso, ai cicli di vita delle parti meccaniche, compresi i dispositivi elettrici ed elettronici utilizzati per il controllo delle parti meccaniche, definiti dalla Norma UNC DOC A01, emanata da Unione Nazionale Consumatori.\nLa Garanzia Legale di Conformit\u00e0 \u00e8 applicabile a partire dalla data di consegna del veicolo oggetto della compravendita, esclusivamente mediante riparazioni delle parti difettose, con espressa esclusione di ogni altro rimedio. Copre i costi strettamente necessari ad eliminare la causa dell'evento anomalo, mediante riparazione o sostituzione delle unit\u00e0 difettose, col criterio di ripristinare la conformit\u00e0 del veicolo alle condizioni coerenti con la percorrenza e l'anzianit\u00e0 al momento della vendita. Condizione essenziale \u00e8 l'esecuzione della manutenzione ordinaria secondo le prescrizioni del costruttore e degli interventi di ripristino da parte di Officine qualificate. \u00c8 applicabile esclusivamente previa autorizzazione.\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se qui diversamente riportato.\n\nQUOTA 'MAGGIOR VALORE'\nQualora si dovesse ristabilire l'intero ciclo di vita di riferimento, mediante la sostituzione dell'intero sottosistema con un altro nuovo, o 'al nuovo', ne risulterebbe un maggior valore del veicolo rispetto a quello dell'acquisto. In questo caso l'acquirente dovr\u00e0 corrispondere una quota parte del costo della riparazione, corrispondente alla porzione di maggiore percorrenza acquisita. La riparazione sar\u00e0 soggetta a specifica garanzia legale per 24 mesi dalla data di riconsegna del veicolo, a carico della parte che fattura il corrispettivo a carico dell'Acquirente.\n\nGARANZIA SULLE RIPARAZIONI\nLe riparazioni a carico totale o parziale dell'acquirente saranno coperte da Garanzia per ulteriori 24 mesi a carico dell'Officina che ha eseguito il ripristino, dalla riconsegna del veicolo.\n\nESCLUSIONI\nIn nessun caso sar\u00e0 possibile riconoscere il rimborso di quanto pagato per interventi non previamente concordati. I difetti causati da imperizia o negligenza del conducente o da responsabilit\u00e0 di terzi non rientrano nella Garanzia Legale. La sostituzione di parti di consumo (lubrificanti, oli, liquidi, filtri e simili) non \u00e8 compresa nella garanzia, cos\u00ec come cristalli, tappezzeria, parti interne ed estetiche in materiale plastico. I difetti apparenti riportati nella proposta di vendita sono parte integrante della trattativa e non possono essere oggetto di garanzia.\nServizio vettura sostitutiva a pagamento offerto in fase di acquisto, solo in caso di fermo veicolo, previa autorizzazione preventiva di 7 giorni lavorativi e con deposito cauzionale di 500,00\u20ac. Valido per le sole auto scoperte da garanzia della casa madre.\n\nCONDIZIONI CONTRATTUALI\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale. La durata minima del pagamento rateale \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica.\n11. L'importo della rata indicato non include le eventuali spese di incasso, applicabili in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni della societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori: la mancata consegna comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
-var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
+var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:'', iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
 /* parLoad restituisce solo i campi noti: qui serve il grezzo, con dentro
    updatedAt, per capire quale versione e' la piu' recente. */
@@ -14677,6 +14704,7 @@ function parInit(){
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Numerazione fatture</div>';
   h+='<div style="font-size:11px;color:#64748b;margin-bottom:8px;line-height:1.5;">Numero dell\u2019<b>ultima</b> fattura gi\u00e0 emessa quest\u2019anno per ciascuna serie: la prossima partir\u00e0 dal successivo. Lascia 0 se la serie parte da 1.</div>';
   h+=lab('Ultima fattura carrozzeria')+inp('par_fatturaBaseCarrozzeria',p.fatturaBaseCarrozzeria,'number');
+  h+=lab('Link recensioni Google (per la richiesta recensione ai clienti)')+inp('par_linkRecensioni',p.linkRecensioni||'');
   h+=lab('Ultima fattura tagliandi')+inp('par_fatturaBaseTagliandi',p.fatturaBaseTagliandi,'number');
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Assicurazione e pagamenti</div>';
   h+=lab('Assicurazione standard')+'<textarea id="par_assicurazione" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:120px;box-sizing:border-box;">'+fnEsc(p.assicurazione)+'</textarea>';
@@ -14703,7 +14731,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi'].forEach(function(k){ p[k]=g(k); });
+  ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
   try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
   parSupaSave(p);
@@ -17395,6 +17423,20 @@ function cvVendCard(cv){
     return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
       +'<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'
+      +(function(){
+        var r=cv.recensione||null;
+        var quando=r&&r.richiestaTs?new Date(r.richiestaTs).toLocaleDateString('it-IT'):'';
+        var can=r&&r.canale?(r.canale==='whatsapp'?'WhatsApp':'mail'):'';
+        return '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #e2e8f0;">'
+          +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+          +'<span style="font-size:12px;font-weight:800;color:#0f172a;">\u2b50 Recensione</span>'
+          +(quando?('<span style="font-size:11px;color:#16a34a;font-weight:700;">richiesta il '+quando+' via '+can+'</span>'):'<span style="font-size:11px;color:#94a3b8;">non ancora richiesta</span>')
+          +'</div>'
+          +'<div style="display:flex;gap:6px;margin-top:7px;">'
+          +'<button onclick="event.stopPropagation();cvRecMail(\''+cv.id+'\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u2709\ufe0f Mail</button>'
+          +'<button onclick="event.stopPropagation();cvRecWa(\''+cv.id+'\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid #86efac;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDCAC WhatsApp</button>'
+          +'</div></div>';
+      })()
       +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
@@ -17560,12 +17602,57 @@ function cvVendImmatConferma(id, nt){
   if(typeof tcToastNew==='function') tcToastNew(msg,true);
 }
 
+/* ---- richiesta recensione (dai consegnati) ---- */
+function cvRecTesto(cv){
+  var nome=(cv.cliente&&cv.cliente.nome)||'';
+  var auto=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'auto';
+  var link=''; try{ link=(parLoad().linkRecensioni||'').trim(); }catch(e){}
+  var t='Ciao '+(nome||'')+'! Siamo felici che tu abbia scelto Europa Auto per la tua '+auto+'. '
+    +'Se ti sei trovato bene, ci lasceresti una recensione a 5 stelle? \u2b50 '
+    +'In cambio ti riserviamo il 20% di sconto sulla prossima manutenzione!'
+    +(link?('\n\nLascia qui la tua recensione: '+link):'');
+  return { testo:t, link:link, nome:nome, auto:auto };
+}
+function cvRecSegna(id, canale){
+  var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
+  list[i].recensione={ richiestaTs:Date.now(), canale:canale };
+  list[i].updatedAt=Date.now();
+  cvSave(list);
+  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', list[i]); }catch(e){}
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+}
+function cvRecWa(id){
+  var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
+  var tel=(cv.cliente&&cv.cliente.telefono)||'';
+  if(typeof waValido==='function' && !waValido(tel)){ alert('Il cliente non ha un numero di cellulare valido per WhatsApp.'); return; }
+  waOpen(tel, cvRecTesto(cv).testo);
+  cvRecSegna(id, 'whatsapp');
+}
+function cvRecMail(id){
+  var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
+  var em=(cv.cliente&&cv.cliente.email)||'';
+  if(!/.+@.+\..+/.test(em)){ alert('Il cliente non ha un\u2019email valida.'); return; }
+  var r=cvRecTesto(cv);
+  var h='<p>Ciao '+docEsc(r.nome||'')+',</p>'
+    +'<p>siamo felici che tu abbia scelto <b>Europa Auto</b> per la tua '+docEsc(r.auto)+'!</p>'
+    +'<p style="font-size:17px;"><b>Recensione a 5 stelle? \u2b50</b><br>'
+    +'In cambio ti riserviamo il <b>20% di sconto sulla prossima manutenzione</b>.</p>'
+    +(r.link?('<p style="text-align:center;margin:22px 0;"><a href="'+docEsc(r.link)+'" style="background:#16a34a;color:#fff;padding:13px 26px;border-radius:9px;text-decoration:none;font-weight:800;font-size:15px;">Lascia la recensione</a></p>'):'<p>Ci trovi su Google cercando <b>Europa Auto Paderno Dugnano</b>.</p>')
+    +'<p style="color:#64748b;font-size:13px;">Alla prossima manutenzione ricordaci la recensione: lo sconto \u00e8 gi\u00e0 tuo.</p>';
+  eaInviaMessaggio({ to:em, subject:'\u2b50 Una recensione = 20% di sconto sulla manutenzione', html:(typeof eaMailWrap==='function'?eaMailWrap(h):h) })
+    .then(function(res){
+      if(res && res.error){ alert('Invio non riuscito: '+res.error); return; }
+      if(typeof tcToastNew==='function') tcToastNew('\u2709\ufe0f Richiesta recensione inviata via mail', true);
+      cvRecSegna(id, 'email');
+    }, function(e){ alert('Invio non riuscito: '+((e&&e.message)||e)); });
+}
+
 function cvVendConsegna(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
   var tuttiConf = pags.length>0 && pags.every(function(p){return p.confermato;});
   if(!tuttiConf){ alert('Non puoi segnare come CONSEGNATO: il saldo non risulta ancora confermato.\n\nConferma tutti i pagamenti (caparra e saldo/finanziamento) prima di procedere alla consegna.'); return; }
-  _cvCons={doppiaChiave:null, libretto:null, id:id};
+  _cvCons={doppiaChiave:null, libretto:null, cortesia:null, id:id};
   var m=cvModModal();
   m.innerHTML='<div style="max-width:460px;margin:8vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
     +'<div style="background:#16a34a;color:#fff;padding:14px 18px;font-weight:800;">Consegna veicolo</div>'
@@ -17574,19 +17661,40 @@ function cvVendConsegna(id){
     +'<div style="display:flex;gap:8px;margin-bottom:16px;"><button type="button" id="cvk-si" onclick="cvConsKey(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">S\u00EC</button><button type="button" id="cvk-no" onclick="cvConsKey(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">No</button></div>'
     +'<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:8px;">Il libretto va spedito o ritirato fisicamente?</div>'
     +'<div style="display:flex;gap:8px;margin-bottom:18px;"><button type="button" id="cvl-sped" onclick="cvConsLib(\'spedito\')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Spedito</button><button type="button" id="cvl-rit" onclick="cvConsLib(\'ritirato\')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Ritirato</button></div>'
+    /* ── l'ultima proposta, quella che conta: il pacchetto cortesia ── */
+    +'<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:2px solid #1a4fa0;border-radius:12px;padding:14px;margin-bottom:16px;">'
+    +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">\u2b50 Da proporre al cliente</div>'
+    +'<div style="font-size:15px;font-weight:800;color:#0f172a;">Pacchetto Auto di Cortesia \u2014 60 \u20ac</div>'
+    +'<div style="font-size:13px;color:#334155;margin-top:5px;line-height:1.5;">In caso di guasto che ferma l\u2019auto, <b>vettura sostitutiva gratuita per tutta la durata della riparazione</b>. Una volta sola, vale per sempre.</div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Consegna del mezzo sostitutivo alla prima disponibilit\u00e0.</div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px;">'
+    +'<button type="button" id="cvc-si" onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistato \u2014 60 \u20ac</button>'
+    +'<button type="button" id="cvc-no" onclick="cvConsCortesia(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#64748b;">Non lo vuole</button>'
+    +'</div></div>'
     +'<div style="display:flex;gap:8px;"><button type="button" onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvVendConsegnaFinale()" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">\u2705 Conferma consegna</button></div>'
     +'</div></div>';
   m.style.display='block';
 }
-var _cvCons={doppiaChiave:null, libretto:null, id:null};
+var _cvCons={doppiaChiave:null, libretto:null, cortesia:null, id:null};
 function cvConsKey(v){ _cvCons.doppiaChiave=v; var si=document.getElementById('cvk-si'), no=document.getElementById('cvk-no'); if(si){ si.style.border=v?'2px solid #16a34a':'2px solid #cbd5e1'; si.style.background=v?'#f0fdf4':'#fff'; si.style.color=v?'#15803d':'#334155'; } if(no){ no.style.border=(v===false)?'2px solid #dc2626':'2px solid #cbd5e1'; no.style.background=(v===false)?'#fef2f2':'#fff'; no.style.color=(v===false)?'#dc2626':'#334155'; } }
+function cvConsCortesia(v){
+  _cvCons.cortesia=v;
+  var si=document.getElementById('cvc-si'), no=document.getElementById('cvc-no');
+  if(si) si.style.border = v ? '2px solid #16a34a' : '2px solid #cbd5e1';
+  if(si) si.style.background = v ? '#f0fdf4' : '#fff';
+  if(no) no.style.border = (v===false) ? '2px solid #64748b' : '2px solid #cbd5e1';
+  if(no) no.style.background = (v===false) ? '#f1f5f9' : '#fff';
+}
 function cvConsLib(v){ _cvCons.libretto=v; var sp=document.getElementById('cvl-sped'), ri=document.getElementById('cvl-rit'); if(sp){ sp.style.border=(v==='spedito')?'2px solid #1a4fa0':'2px solid #cbd5e1'; sp.style.background=(v==='spedito')?'#eff6ff':'#fff'; sp.style.color=(v==='spedito')?'#1a4fa0':'#334155'; } if(ri){ ri.style.border=(v==='ritirato')?'2px solid #1a4fa0':'2px solid #cbd5e1'; ri.style.background=(v==='ritirato')?'#eff6ff':'#fff'; ri.style.color=(v==='ritirato')?'#1a4fa0':'#334155'; } }
 function cvVendConsegnaFinale(){
   var id=_cvCons.id; if(!id) return;
   if(_cvCons.doppiaChiave===null){ alert('Indica se stai consegnando la doppia chiave.'); return; }
   if(!_cvCons.libretto){ alert('Indica se il libretto va spedito o ritirato.'); return; }
+  if(_cvCons.cortesia===null){ alert('Hai proposto il Pacchetto Auto di Cortesia? Indica la risposta del cliente.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ cvModChiudi(); return; }
   list[idx].doppiaChiaveConsegnata=_cvCons.doppiaChiave; list[idx].librettoModalita=_cvCons.libretto;
+  if(_cvCons.cortesia){ list[idx].pacchettoCortesia={ acquistato:true, prezzo:60, ts:Date.now() }; }
+  else { list[idx].pacchettoCortesia={ acquistato:false, ts:Date.now() }; }
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
   if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;});
     if(_mi<0){ var _tg=((list[idx].nuovaTarga||(list[idx].autoSnapshot&&list[idx].autoSnapshot.targa)||'')+'').toUpperCase().replace(/\s/g,''); if(_tg) _mi=_ml.findIndex(function(x){return ((x.targa||'')+'').toUpperCase().replace(/\s/g,'')===_tg;}); }
