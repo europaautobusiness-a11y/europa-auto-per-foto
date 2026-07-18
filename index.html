@@ -18611,12 +18611,25 @@ function crmAttivitaHTML(key,rec){ var arr=(rec&&rec.attivita)||[]; var col={rit
       +'</div>';
   });
   h+='</div>'; return h; }
-/* il contatto ha un'attivita' non fatta con scadenza a oggi o passata? */
+/* Il contatto ha un promemoria ARRIVATO? Due fonti:
+   1. un'attivita' CRM non fatta con scadenza a oggi o passata;
+   2. un preventivo aperto da piu' di 48 ore col messaggio WhatsApp non
+      ancora inviato — il follow-up automatico, che e' il promemoria
+      usato davvero tutti i giorni. */
 function crmScaduto(key){
   try{
     var s=crmLoad(); var oggi=crmOggiISO();
     var arr=(s[key] && s[key].attivita)||[];
-    return arr.some(function(a){ return a && !a.fatto && a.scad && a.scad<=oggi; });
+    if(arr.some(function(a){ return a && !a.fatto && a.scad && a.scad<=oggi; })) return true;
+    /* i preventivi di questo contatto: stesso criterio del promemoria WhatsApp */
+    var now=Date.now();
+    return (typeof cvLoad==='function'?cvLoad():[]).some(function(p){
+      if(!p || p.isContratto) return false;
+      if(crmKey(p.cliente||{})!==key) return false;
+      if(p.waFatto) return false;
+      var base=p.createdAt||0;
+      return base && (now-base)>=48*3600000;
+    });
   }catch(e){ return false; }
 }
 function crmDaFareBanner(){ var s=crmLoad(); var oggi=crmOggiISO(); var rit=0,ogg=0;
