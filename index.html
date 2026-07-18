@@ -3213,13 +3213,10 @@ function fotoCountBadge(targa){
 // ══════════════════════════════════════════════════════════════
 let _pollingActive = true;
 
-async function pollFromSheets(){
-  if(!_pollingActive || !GS_URL) return;
+async function pollFromSheets(){   /* il nome resta, la sorgente e' Supabase */
+  if(!_pollingActive) return;
   try{
-    const [remoteReady, remoteSent] = await Promise.all([
-      gsLoad('ReportPronti'),
-      gsLoad('ReportInviati')
-    ]);
+    const [remoteReady, remoteSent] = await repSupaPair();
 
     function mergeById(local, remote){
       const map = {};
@@ -4339,7 +4336,11 @@ var EA_GS_URL_OLD = 'https://script.google.com/macros/s/AKfycbwCfryg_xOM5q3Awtew
     }
   } catch(e){}
 })();
-let GS_URL = localStorage.getItem('ea_gs_url') || EA_GS_URL_NEW;
+/* Sheets SPENTI: tutto vive su Supabase. GS_URL vuoto fa morire in
+   silenzio ogni residuo (scritture doppie, letture JSONP): i guard
+   'if(!GS_URL) return' sono gia' ovunque. Per riaccendere in emergenza:
+   localStorage.setItem('ea_gs_url', URL) e ricaricare. */
+let GS_URL = localStorage.getItem('ea_gs_url') || '';
 let SHEET_URL = localStorage.getItem('ea_sheet_url') || 'https://docs.google.com/spreadsheets/d/1X9UC39V7Wm6p_a_0qfYqBMLPVLIWvGVOrEQh5AOCi3E/edit';
 
 function setGsUrl(url){
@@ -4469,7 +4470,7 @@ async function gsLoad(sheet){
 }
 
 function gsJsonp(payload){
-  // Invia una richiesta JSONP a Google Apps Script
+  if(!GS_URL) return;   /* Sheets spenti: no-op */
   const encoded = encodeURIComponent(JSON.stringify(payload));
   const url = GS_URL + '?payload=' + encoded;
   if(url.length > 7500){ return gsPost(payload); } // troppo grande per GET: uso POST
@@ -4557,15 +4558,49 @@ function updateCounts(){
   }catch(e){ console.warn('updateCounts error:', e); }
 }
 
+/* ---- report su Supabase (tabella report_app) ----
+   Ogni report e' una riga {id, data}; il campo _sheet dice se sta
+   fra i Pronti o gli Inviati. Le funzioni sotto replicano il contratto
+   di gsLoad/gsSave (null in caso di errore), cosi' il codice a valle —
+   merge compreso — resta identico. */
+function repSupaSave(sheet, arr){
+  try{
+    if(typeof supaUpsert!=='function' || !Array.isArray(arr)) return;
+    arr.forEach(function(r){
+      if(!r || !r.id) return;
+      var rec=Object.assign({}, r, { _sheet:sheet, updatedAt:Date.now() });
+      supaUpsert('report_app', rec);
+    });
+  }catch(e){}
+}
+function repSupaPair(){
+  /* Promise di [pronti, inviati]; [null,null] se il cloud non risponde */
+  return new Promise(function(resolve){
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(!sb){ resolve([null,null]); return; }
+    try{
+      sb.from('report_app').select('id,data').then(function(res){
+        if(!res || res.error){ if(res&&res.error&&typeof supaSegnalaErrore==='function') supaSegnalaErrore('report_app', res.error.message); resolve([null,null]); return; }
+        var ready=[], sent=[];
+        (res.data||[]).forEach(function(row){
+          var d=row&&row.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+          if(!d||!d.id) return;
+          if(d._sheet==='sent') sent.push(d); else ready.push(d);
+        });
+        resolve([ready, sent]);
+      }, function(){ resolve([null,null]); });
+    }catch(e){ resolve([null,null]); }
+  });
+}
 function saveReady(d){
   localStorage.setItem(READY_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportPronti', d); // salva anche su Sheets
+  repSupaSave('ready', d);
 }
 function saveSent(d){
   localStorage.setItem(SENT_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportInviati', d); // salva anche su Sheets
+  repSupaSave('sent', d);
 }
 
 // Carica da Sheets e aggiorna localStorage (chiamato all'avvio)
@@ -4573,11 +4608,8 @@ async function manualSync(btn){
   const orig = btn ? btn.textContent : '';
   if(btn){ btn.textContent = '⏳...'; btn.disabled = true; }
   try{
-    // Step 1: scarica da Sheets
-    const [remoteReady, remoteSent] = await Promise.all([
-      gsLoad('ReportPronti'),
-      gsLoad('ReportInviati')
-    ]);
+    // Step 1: scarica dal cloud (report_app)
+    const [remoteReady, remoteSent] = await repSupaPair();
 
     // Step 2: merge intelligente
     // - Sheets è la fonte di verità COMPLETA
@@ -4612,10 +4644,10 @@ async function manualSync(btn){
     var remoteReadyLen = (remoteReady||[]).length;
     var remoteSentLen  = (remoteSent||[]).length;
     if(remoteReady !== null && mergedReady.length > 0 && mergedReady.length >= remoteReadyLen) {
-      gsSave('ReportPronti', mergedReady);
+      repSupaSave('ready', mergedReady);
     }
     if(remoteSent !== null && mergedSent.length > 0 && mergedSent.length >= remoteSentLen) {
-      gsSave('ReportInviati', mergedSent);
+      repSupaSave('sent', mergedSent);
     }
 
     renderReady('');
@@ -4661,17 +4693,17 @@ async function autoSyncOnLoad(){
 // ══════════════════════════════════════════════════════════════
 // GOOGLE SHEETS — sync
 // ══════════════════════════════════════════════════════════════
-async function syncFromSheets(){
+async function syncFromSheets(){   /* il nome resta, la sorgente e' Supabase */
   const st = document.getElementById('gsStatus');
-  if(!GS_URL){ if(st){ st.textContent='⚠ URL non configurato'; st.style.color='#e67e22'; } return; }
+  if(typeof sbClient!=='function' || !sbClient()){ if(st){ st.textContent='⚠ Cloud non configurato'; st.style.color='#e67e22'; } return; }
   if(st){ st.textContent='🔄 Sincronizzazione...'; st.style.color='var(--gray)'; }
   try{
-    const [ready, sent] = await Promise.all([gsLoad('ReportPronti'), gsLoad('ReportInviati')]);
+    const [ready, sent] = await repSupaPair();
     if(ready !== null){ saveReady(ready); }
     if(sent  !== null){ saveSent(sent); }
     renderReady(''); renderArchive('');
-    try{ if(typeof pmLoadDaSheets==='function') pmLoadDaSheets(); }catch(e){}
-    if(st){ st.textContent='🟢 Google Sheets connesso'; st.style.color='#27ae60'; }
+    try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
+    if(st){ st.textContent='🟢 Cloud connesso'; st.style.color='#27ae60'; }
   }catch(e){
     if(st){ st.textContent='🔴 Errore connessione'; st.style.color='#e74c3c'; }
   }
@@ -5134,7 +5166,7 @@ function editReady(id){
 function deleteReady(id){
   if(!confirm('Eliminare questo report dalla lista pronti?')) return;
   saveReady(loadReady().filter(x => x.id!==id));
-  gsDelete('ReportPronti', id);
+  try{ if(typeof supaDelete==='function') supaDelete('report_app', id); }catch(e){}
   renderReady('');
 }
 
@@ -5193,7 +5225,7 @@ function deleteSent(id){
   const rec = recs.find(r => r.id == id);
   if(rec && rec.targa) deleteFotoFromDrive(rec.targa);
   saveSent(loadSent().filter(x => x.id!==id));
-  gsDelete('ReportInviati', id);
+  try{ if(typeof supaDelete==='function') supaDelete('report_app', id); }catch(e){}
   renderArchive('');
 }
 
@@ -5843,32 +5875,15 @@ function pSupaLoad(){
 
 // Carica da Google Sheets e aggiorna locale
 function pForzaAggiornamento(btn) {
-  // Svuota cache locale e ricarica da Sheets
-  if (!GS_URL) { alert('Google Sheets non configurato'); return; }
-  if (btn) { btn.textContent = '⏳ Caricamento...'; btn.disabled = true; }
-  localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
-  // Ricarica da Sheets
-  var cb = 'pForzaCb_' + Date.now();
-  var script = document.createElement('script');
-  window[cb] = function(data) {
-    delete window[cb]; script.remove();
-    if (btn) { btn.textContent = '☁️ Aggiorna da Sheets'; btn.disabled = false; }
-    if (!data || !Array.isArray(data)) { alert('Nessun dato da Sheets'); return; }
-    // Filtra solo il mese corrente
-    var meseAtt = pGetMese();
-    // Salva tutti i dati in cache memoria per pModifica
-    _pRegCache = data;
-    // Salva solo il mese corrente in localStorage
-    var soloPresenteMese = data.filter(function(r){ return r.mese === meseAtt; });
-    localStorage.setItem('ea_provv3', JSON.stringify(soloPresenteMese));
-    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
-    alert('✅ Provvigioni aggiornate: ' + soloPresenteMese.length + ' record per ' + meseAtt);
-  };
-  script.src = GS_URL + '?sheet=Provvigioni&callback=' + cb + '&_t=' + Date.now();
-  document.head.appendChild(script);
+  /* il bottone "aggiorna" delle provvigioni: dal cloud, non piu' dagli Sheets */
+  if(btn){ btn.disabled=true; var _t=btn.textContent; btn.textContent='\u23f3...'; }
+  try{ if(typeof pSupaLoad==='function') pSupaLoad(); }catch(e){}
+  setTimeout(function(){
+    try{ if(typeof pCalcola==='function') pCalcola(); }catch(e){}
+    if(btn){ btn.disabled=false; btn.textContent=_t; }
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Provvigioni aggiornate dal cloud', true);
+  }, 1200);
 }
-
 function pLoadFromGS() {
   if (!GS_URL) { pRenderReg(); pAggStats(); return; }
   var el = document.getElementById('pRegistro');
@@ -8610,7 +8625,7 @@ function saveSediPin(list) {
   saveSediPinLocal(list);
   if(typeof cfgSupaSave==='function') cfgSupaSave('sedi', list);
   if (typeof GS_URL!=='undefined' && GS_URL) {
-    list.forEach(function(s){ try { gsJsonp({action:'upsert', sheet:SEDI_SHEET, record:{id:s.id, nome:s.nome, pin:s.pin}}); } catch(e){} });
+    list.forEach(function(s){ try { if(typeof supaUpsert==='function') supaUpsert('sedi_app', Object.assign({_tipo:'sede'}, {id:s.id, nome:s.nome, pin:s.pin})); } catch(e){} });
   }
 }
 // Trova la sede corrispondente a un PIN
@@ -8636,23 +8651,20 @@ function eaFetchPublicIP(cb){
     .then(function(j){ if(done)return; done=true; clearTimeout(to); cb(j&&j.ip?String(j.ip).trim():null); })
     .catch(function(){ if(done)return; done=true; clearTimeout(to); cb(null); });
 }
-function eaPushIP(rec){ if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsJsonp({action:'upsert', sheet:'SediIP', record:rec}); }catch(e){} } }
-function eaLoadIPDaSheets(){
-  if(typeof GS_URL==='undefined' || !GS_URL) return;
-  var cb='ipCb_'+Date.now();
-  var s=document.createElement('script');
-  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); },10000);
-  window[cb]=function(data){
-    clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s);
-    if(!Array.isArray(data)) return;
-    var lista=data.filter(function(r){return r&&r.ip;}).map(function(r){return {id:r.id||('ip_'+r.ip), nome:r.nome||'', ip:String(r.ip).trim()};});
-    eaSaveIP(lista);
-    if(document.getElementById('tc-reteip-lista')) eaRenderReteIP();
-  };
-  s.src=GS_URL+'?sheet=SediIP&callback='+cb+'&_t='+Date.now();
-  s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
-  document.body.appendChild(s);
+function eaPushIP(rec){ try{ if(rec && rec.id && typeof supaUpsert==='function') supaUpsert('sedi_app', Object.assign({_tipo:'ip'}, rec)); }catch(e){} }
+function eaLoadIPDaSheets(){   /* nome storico, sorgente Supabase (sedi_app, _tipo:'ip') */
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  try{
+    sb.from('sedi_app').select('id,data').then(function(res){
+      if(!res || res.error || !res.data) return;
+      var lista=[];
+      res.data.forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        if(d && d._tipo==='ip' && d.ip) lista.push({ id:d.id||('ip_'+d.ip), nome:d.nome||'', ip:String(d.ip) }); });
+      if(lista.length){ eaSaveIP(lista); if(document.getElementById('tc-reteip-lista')) eaRenderReteIP(); }
+    });
+  }catch(e){}
 }
+
 // Verifica se la rete attuale è una sede autorizzata. cb(ok, messaggio, nomeSede)
 function eaVerificaRete(cb){
   var lista=eaLoadIP();
@@ -8700,7 +8712,7 @@ function eaRimuoviIP(ip){
   if(!confirm('Rimuovere questa rete? Da qui non si potrà più timbrare.')) return;
   var lista=eaLoadIP().filter(function(sx){ return String(sx.ip)!==String(ip); });
   eaSaveIP(lista);
-  if(typeof gsDelete==='function') gsDelete('SediIP','ip_'+ip);
+  try{ if(typeof supaDelete==='function') supaDelete('sedi_app','ip_'+ip); }catch(e){}
   eaRenderReteIP();
 }
 
@@ -8841,7 +8853,7 @@ function tcEliminaSede(id) {
   if(!confirm('Eliminare questa sede? I dipendenti non potranno più timbrare con il suo PIN.')) return;
   var l=loadSediPin().filter(function(s){return s.id!==id;});
   saveSediPinLocal(l);
-  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(SEDI_SHEET, id); }catch(e){} }
+  try{ if(typeof supaDelete==='function') supaDelete('sedi_app', id); }catch(e){}
   tcRenderSediPin();
   tcToastNew('🗑️ Sede eliminata', true);
 }
@@ -9829,7 +9841,7 @@ function sidebarNav(view,btn){
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
-  if(view==='provv'){pSupaLoad();pLoadFromGS();pCalcola();}
+  if(view==='provv'){pSupaLoad();pCalcola();}   /* solo cloud */
   if(view==='foto'){
     // Carica automaticamente da Drive se connesso
     if(isDriveConnected()) {
@@ -10686,7 +10698,17 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof eaInviaMessaggio==='function'){ try{ (function(){
+          var _h='<p>Gentile cliente,</p>'
+            +'<p>le ricordiamo il suo appuntamento presso <b>Europa Auto</b>:</p>'
+            +'<p style="font-size:16px;font-weight:700;">'+ccEsc(c.titolo||'')+'</p>'
+            +'<p>'+(c.data?('\uD83D\uDCC5 '+ccEsc(String(c.data).split('-').reverse().join('/'))):'')
+            +(c.ora?(' \u00b7 \uD83D\uDD52 ore '+ccEsc(c.ora)):'')
+            +(c.veicolo?('<br>\uD83D\uDE97 '+ccEsc(c.veicolo)):'')+'</p>'
+            +'<p style="color:#64748b;font-size:13px;">Se ha bisogno di spostare l\u2019appuntamento ci chiami: trova i recapiti qui sotto.</p>';
+          eaInviaMessaggio({ to:c.email, subject:'\uD83D\uDCC5 Promemoria appuntamento \u2014 Europa Auto', html:(typeof eaMailWrap==='function'?eaMailWrap(_h):_h) });
+        })(); }catch(e){} }
+        if(false && c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
       }
     });
     if (cambiato) ccSave(list);
@@ -10763,7 +10785,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var last=c.sollecitoLastAt?new Date(c.sollecitoLastAt).getTime():0;
       if (last && (now-last)<CC_SOLL_INTERVALLO) return;  // non sono ancora passati 30 min
       var n=(c.solleciti||0)+1;
-      if (n>CC_SOLL_MAX) return;                          // esauriti i 10 solleciti: basta
+      if (n>CC_SOLL_MAX) return;                          // esauriti i solleciti: basta
       c.solleciti=n; c.sollecitoLastAt=new Date(now).toISOString(); changed.push(c);
       /* Mail di sollecito: da Resend, non da Apps Script (che con no-cors
          non dice mai se e' partita). */
@@ -10800,7 +10822,9 @@ document.addEventListener('DOMContentLoaded',function(){
               +(c.nota?('<p><i>'+ccEsc(c.nota)+'</i></p>'):'')
               +'<p style="color:#991b1b;font-weight:700;">I solleciti automatici si fermano qui.</p>';
             eaInviaMessaggio({
-              to: 'europaautobusiness@gmail.com',
+              /* la casella aziendale dell'amministrazione: e' dove Davide
+                 guarda, non il gmail personale */
+              to: 'amministrazione@europaautosrl.it',
               subject: '\u26a0\ufe0f Mansione non eseguita dopo '+n+' solleciti \u2014 '+(c.dipNome||''),
               html: (typeof eaMailWrap==='function'?eaMailWrap(_eH):_eH)
             }).then(function(r){ if(r && r.error) console.log('escalation mail:', r.error); },
@@ -10962,6 +10986,7 @@ document.addEventListener('DOMContentLoaded',function(){
   /* chiamata dal menu (Appuntamenti / Task): senza l'esposizione le due
      voci aprivano la stessa identica vista */
   window.ccSetCatFiltro = ccSetCatFiltro;
+  window.ccControllaPromemoria = ccControllaPromemoria;   /* per collaudo e avvio manuale */
   window.ccUtente = ccUtente;
   window.ccDueTs = ccDueTs;
   /* Quante mansioni ha ancora da eseguire l'utente collegato:
@@ -11071,7 +11096,7 @@ function sinLoadDaSheets(){
   document.body.appendChild(s);
 }
 
-function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); sinLoadDaSheets(); }
+function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); if(typeof sinSupaLoad==='function') sinSupaLoad(); }
 
 function sinRenderTabs(){
   var bar=document.getElementById('sin-tabs'); if(!bar) return;
@@ -11416,6 +11441,32 @@ function sinSalva(id, isNew){
   var idx=list.findIndex(function(x){return x.id===id;});
   if(idx>=0) list[idx]=s; else list.push(s);
   sinSave(list); sinPush(s);
+  /* nuovo sinistro inserito da un collaboratore: l'amministratore lo
+     viene a sapere subito, via mail sulla casella aziendale */
+  if(isNew){
+    try{
+      var _adminIo=(typeof isAdmin==='function' && isAdmin());
+      if(!_adminIo && typeof eaInviaMessaggio==='function'){
+        var _chi=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+        var _chiNome=_chi.split('@')[0].replace(/[._]/g,' ');
+        var _sh='<p>\u00c8 stato inserito un nuovo sinistro:</p>'
+          +'<p style="font-size:16px;font-weight:700;">'+((s.nome||'')+(s.targa?(' \u2014 '+s.targa):''))+'</p>'
+          +'<p>'+(s.modello?('<b>Veicolo:</b> '+s.modello+'<br>'):'')
+          +(s.compagnia?('<b>Compagnia:</b> '+s.compagnia+'<br>'):'')
+          +(s.perito?('<b>Perito:</b> '+s.perito+'<br>'):'')
+          +(s.appuntamento?('<b>Appuntamento:</b> '+s.appuntamento+'<br>'):'')
+          +'<b>Stato:</b> '+(s.stato||'')+'</p>'
+          +(s.note?('<p><i>'+s.note+'</i></p>'):'')
+          +'<p style="color:#64748b;font-size:13px;">Inserito da '+_chiNome+'. Lo trovi nella sezione Sinistri del gestionale.</p>';
+        eaInviaMessaggio({
+          to:'amministrazione@europaautosrl.it',
+          subject:'\uD83D\uDEA8 Nuovo sinistro: '+((s.nome||'')+(s.targa?(' \u2014 '+s.targa):'')),
+          html:(typeof eaMailWrap==='function'?eaMailWrap(_sh):_sh)
+        }).then(function(r){ if(r&&r.error) console.log('mail sinistro:', r.error); },
+                function(e){ console.log('mail sinistro:', e&&e.message); });
+      }
+    }catch(e){}
+  }
   sinChiudi(); _sinTab=s.stato; sinSetTab(s.stato);
   if(typeof tcToastNew==='function') tcToastNew('✅ Sinistro salvato',true);
 }
@@ -11424,7 +11475,7 @@ function sinElimina(id){
   if(!confirm('Eliminare definitivamente questo sinistro?')) return;
   sinAddTombstone(id);
   sinSave(sinLoad().filter(function(x){return x.id!==id;}));
-  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(SINISTRI_SHEET, id); }catch(e){} }
+  try{ if(typeof supaDelete==='function') supaDelete('sinistri_app', id); }catch(e){}
   sinChiudi(); sinRender(); sinRenderTabs();
   if(typeof tcToastNew==='function') tcToastNew('🗑 Sinistro eliminato',true);
 }
@@ -11657,8 +11708,25 @@ function pmSave(list){ try{ localStorage.setItem(PERMUTE_KEY, JSON.stringify(lis
 function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; }
 
 function pmPush(p){
-  if(typeof GS_URL!=='undefined' && GS_URL && p && p.id){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:p}); }catch(e){} }
   if(p && p.id && typeof supaUpsert==='function') supaUpsert('permute_app', p);
+}
+/* come pmSupaLoad, ma con un esito per il bottone Sincronizza */
+function pmSupaCallback(onDone){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(onDone)onDone(false,'no-cloud'); return; }
+  try{
+    sb.from('permute_app').select('id,data').then(function(res){
+      if(!res || res.error){ if(onDone)onDone(false, (res&&res.error&&res.error.message)||'errore'); return; }
+      var byId={};
+      (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id) byId[d.id]=d; });
+      pmLoad().forEach(function(r){ if(r&&r.id&&!byId[r.id]) byId[r.id]=r; });
+      var tomb=pmTombstones();
+      var merged=Object.keys(byId).map(function(k){return byId[k];}).filter(function(r){return tomb.indexOf(r.id)<0;});
+      try{ pmSave(merged); }catch(e){ if(onDone)onDone(false,'memoria'); return; }
+      try{ pmRender(); }catch(e){}
+      if(onDone)onDone(true, merged.length);
+    }, function(){ if(onDone)onDone(false,'rete'); });
+  }catch(e){ if(onDone)onDone(false,'errore'); }
 }
 function pmSupaLoad(){
   if(typeof supaLoadList!=='function') return;
@@ -11690,7 +11758,8 @@ function pmLoadDaSheets(onDone){
 }
 function pmSincronizza(btn){
   if(btn){ btn.disabled=true; btn.textContent='🔄 Sincronizzo…'; }
-  pmLoadDaSheets(function(ok,info){
+  /* dal cloud, non piu' dagli Sheets */
+  pmSupaCallback(function(ok,info){
     if(btn){ btn.disabled=false; btn.textContent = ok ? ('✅ Aggiornato'+(typeof info==='number'?(' ('+info+')'):'')) : ('⚠️ '+(info||'errore')); setTimeout(function(){ btn.textContent='🔄 Sincronizza'; },2600); }
   });
 }
@@ -11706,7 +11775,7 @@ function pmDedup(){
       for(var i=1;i<grp.length;i++){ toRemove.push(grp[i].id); }
     });
     if(toRemove.length){
-      toRemove.forEach(function(id){ pmAddTombstone(id); if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(PERMUTE_SHEET, id); }catch(e){} } });
+      toRemove.forEach(function(id){ pmAddTombstone(id); try{ if(typeof supaDelete==='function') supaDelete('permute_app', id); }catch(e){} });
       pmSave(pmLoad().filter(function(x){ return toRemove.indexOf(x.id)<0; }));
     }
   }catch(e){}
@@ -11932,7 +12001,7 @@ function pmSalva(){
 function pmElimina(id){
   if(!confirm('Eliminare questa perizia?')) return;
   pmAddTombstone(id); pmSave(pmLoad().filter(function(x){return x.id!==id;}));
-  if(typeof GS_URL!=='undefined' && GS_URL){ try{ gsDelete(PERMUTE_SHEET, id); }catch(e){} }
+  try{ if(typeof supaDelete==='function') supaDelete('permute_app', id); }catch(e){}
   pmChiudi(); pmRender();
   if(typeof tcToastNew==='function') tcToastNew('🗑 Perizia eliminata',true);
 }
@@ -12062,19 +12131,20 @@ function pmClientOpen(id){
   var ov=document.createElement('div'); ov.id='pm-client'; ov.style.cssText='position:fixed;inset:0;background:#f1f5f9;z-index:99999;overflow:auto;-webkit-overflow-scrolling:touch;';
   ov.innerHTML='<div style="max-width:680px;margin:0 auto;padding:40px 20px;text-align:center;color:#475569;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">Caricamento della perizia…</div>';
   document.body.appendChild(ov); document.body.style.overflow='hidden';
-  if(typeof GS_URL==='undefined' || !GS_URL){ ov.firstChild.textContent='Link non disponibile.'; return; }
-  var cb='pmCl_'+Date.now(); var s=document.createElement('script');
+  /* la perizia arriva dal cloud: la pagina del cliente usa la stessa
+     tabella permute_app del gestionale, niente piu' Sheets */
+  var _sbCl=(typeof sbClient==='function')?sbClient():null;
+  if(!_sbCl){ ov.firstChild.textContent='Link non disponibile.'; return; }
   var to=setTimeout(function(){ ov.firstChild.textContent='Connessione lenta, riprova ad aprire il link.'; },15000);
-  window[cb]=function(data){
-    clearTimeout(to); try{delete window[cb];}catch(e){}
-    var rec=Array.isArray(data)?data.filter(function(r){return r&&String(r.id)===String(id);})[0]:null;
-    if(!rec){ ov.firstChild.textContent='Perizia non trovata o link non più valido.'; return; }
-    if(rec.linkTs && (Date.now() > (Number(rec.linkTs)+48*3600*1000))){ ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><div style="font-size:52px;">⏱️</div><h1 style="font-size:22px;color:#b91c1c;">Link scaduto</h1><p style="color:#475569;font-size:15px;">Questo link è scaduto (validità 48 ore). Contatta Europa Auto per riceverne uno nuovo.</p></div>'; return; }
+  _sbCl.from('permute_app').select('id,data').eq('id', String(id)).then(function(res){
+    clearTimeout(to);
+    var d=(res && res.data && res.data[0] && res.data[0].data) || null;
+    if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+    var rec=(d && String(d.id)===String(id)) ? d : null;
+    if(!rec){ ov.firstChild.textContent='Perizia non trovata o link non pi\u00f9 valido.'; return; }
+    if(rec.linkTs && (Date.now() > (Number(rec.linkTs)+48*3600*1000))){ ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#475569;"><div style="font-size:44px;">\u23f3</div><div style="font-size:19px;font-weight:800;color:#0f172a;margin-top:10px;">Link scaduto</div><div style="margin-top:8px;font-size:14px;">Questo link di firma \u00e8 rimasto valido 48 ore.<br>Contatta Europa Auto per riceverne uno nuovo.</div></div>'; return; }
     pmClientRender(ov, rec);
-  };
-  s.src=GS_URL+'?sheet='+encodeURIComponent(PERMUTE_SHEET)+'&callback='+cb;
-  s.onerror=function(){ clearTimeout(to); ov.firstChild.textContent='Errore di caricamento.'; };
-  document.body.appendChild(s);
+  }, function(){ clearTimeout(to); ov.firstChild.textContent='Errore di caricamento.'; });
 }
 function pmClientRender(ov, rec){
   var _draft=null; try{ _draft=JSON.parse(localStorage.getItem('ea_pmcl_draft_'+rec.id)||'null'); }catch(e){ _draft=null; }
@@ -12217,10 +12287,27 @@ function pmClientSubmit(){
   rec.firma=pmShrinkDataURL(_pmcl.cv, 320);
   rec.metodoFirma= _pmcl.otpOk ? 'otp' : 'dito';
   rec.email=em; rec.otp=_pmcl.otpOk?em:''; rec.dataFirma=pmOggi(); rec.firmaTs=_pmcl.firmaTs||Date.now(); rec.firmatoDalCliente=true; rec.updatedAt=Date.now();
-  if(typeof GS_URL!=='undefined' && GS_URL){
+  {
     var _phtml=''; try{ _phtml=pmPeriziaFullHTML(rec); }catch(e){}
-    var fireNotif=function(){ try{ gsPost({action:'notificaPermutaPdf', id:rec.id||'', cliente:rec.cliente||'', modello:rec.modello||'', html:_phtml}); }catch(e){} };
-    try{ gsPost({action:'upsert', sheet:PERMUTE_SHEET, record:rec}).then(function(){ setTimeout(fireNotif,600); }, function(){ setTimeout(fireNotif,1800); }); }catch(e){ setTimeout(fireNotif,1800); }
+    var fireNotif=function(){
+      /* da Resend, col dominio aziendale: la perizia completa arriva
+         all'amministrazione appena il cliente firma */
+      try{
+        if(typeof eaInviaMessaggio==='function'){
+          eaInviaMessaggio({
+            to:'amministrazione@europaautosrl.it',
+            subject:'\u270d\ufe0f Perizia firmata \u2014 '+(rec.cliente||'')+(rec.modello?(' \u00b7 '+rec.modello):''),
+            html:_phtml
+          });
+        }
+      }catch(e){}
+    };
+    /* la firma sale su permute_app; la mail parte comunque, anche se la
+       scrittura tarda */
+    try{
+      if(typeof supaUpsert==='function') supaUpsert('permute_app', rec);
+    }catch(e){}
+    setTimeout(fireNotif, 600);
   }
   if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
   pmClientClearDraft();
@@ -13513,23 +13600,24 @@ var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le rispost
 function eaMailEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function eaMailFooter(){ return '<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>'; }
 function cvEmailCaparraCliente(cv, importo){
-  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  if(typeof eaInviaMessaggio!=='function') return;
   var cl=cv.cliente||{}; if(!cl.email || !/.+@.+\..+/.test(cl.email)) return;
   var a=cv.autoSnapshot||{};
   var nome=((cl.nome||'')+(cl.nome&&cl.cognome?' ':'')+(cl.cognome||'')).trim()||cl.ragSociale||'Gentile Cliente';
   var auto=(a.modello||cv.autoDesc||'la sua nuova auto');
   var oggetto='Congratulazioni per il suo acquisto \u2014 caparra ricevuta';
-  var html='<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;">'
-    +'<div style="background:#1a4fa0;color:#fff;padding:18px 20px;border-radius:12px 12px 0 0;font-size:18px;font-weight:800;">Europa Auto Srl</div>'
-    +'<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:20px;font-size:14px;line-height:1.6;">'
-    +'<p style="font-size:16px;margin-top:0;">\ud83c\udf89 <b>Congratulazioni '+eaMailEsc(nome)+'!</b></p>'
+  /* solo il contenuto: intestazione e footer li mette eaMailWrap,
+     identici a tutte le altre mail aziendali */
+  var html='<p style="font-size:16px;margin-top:0;">\ud83c\udf89 <b>Congratulazioni '+eaMailEsc(nome)+'!</b></p>'
     +'<p>Complimenti per il suo fantastico acquisto: <b>'+eaMailEsc(auto)+'</b>.</p>'
     +'<p>Le confermiamo che la <b>caparra'+(importo?(' di '+cvEuro(importo)):'')+'</b> \u00e8 stata correttamente accreditata.</p>'
     +'<p>Da questo momento ci occupiamo della sua pratica e le invieremo <b>aggiornamenti sullo stato</b> passo dopo passo, fino alla consegna.</p>'
-    +'<p>Grazie per aver scelto Europa Auto Srl.</p>'
-    +eaMailFooter()
-    +'</div></div>';
-  try{ gsPost({ action:'emailCliente', email:cl.email, oggetto:oggetto, html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
+    +'<p>Grazie per aver scelto Europa Auto Srl.</p>';
+  try{
+    eaInviaMessaggio({ to:cl.email, subject:oggetto, html:(typeof eaMailWrap==='function'?eaMailWrap(html):html) })
+      .then(function(r){ if(r && r.error) console.log('mail caparra:', r.error); },
+            function(e){ console.log('mail caparra:', e && e.message); });
+  }catch(e){}
 }
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
@@ -13847,7 +13935,7 @@ function cvCheckMailPreventivi(){
   }catch(e){}
 }
 var WA_RIP_MIN = 60;  // ogni quanti MINUTI ripete il promemoria (1 ora)
-var WA_RIP_MAX = 10;  // quante volte al massimo
+var WA_RIP_MAX = 5;   // 5 promemoria per il CRM, poi silenzio (i task si fermano a 2)
 /* Dalla campanella al preventivo da mandare su WhatsApp. */
 function cvVaiAlPreventivo(id){
   try{
@@ -14624,7 +14712,7 @@ var PARAM_KEY='ea_parametri_v1';
 var PARAM_ASSIC_DEF='• Furto Incendio parziale, totale.\n• Valore a NUOVO fino a 36 mesi\n• Ricorso terzi da incendio\n• Atti Vandalici e sociopolitici\n• Eventi naturali\n• Cristalli\n• Urto con animale selvatico\n• Soccorso stradale\n• Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300€';
 var PARAM_CONDIZIONI_DEF = "CONDIZIONI PROPOSTA D’ACQUISTO\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna stessa, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi, prendendosi carico delle modifiche eventuali e delle spese da esse derivanti.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta dallo stesso; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale derivante da tale promozione. La durata minima del pagamento rateale per il mantenimento di tale promozione \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica. In caso di rinuncia al piano di finanziamento sottoscritto, il costo del veicolo non potr\u00e0 essere rispettato dalla parte venditrice.\n11. L'importo della rata indicato non include le eventuali spese di incasso, le quali potranno essere applicate in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni previste dalla societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori sopra riportati: la mancata consegna di uno o pi\u00f9 accessori comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso. L'acquirente riconosce di rispondere civilmente presso il foro del venditore in caso di mancate comunicazioni dei difetti del veicolo ceduto in permuta.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
 var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT\u00c0 prevista dall'articolo 128, comma c del D.LGS. 206/2005 (Codice del Consumo) e condizioni di garanzia.\n\nVeicolo in condizioni d'uso pregresso, coerente con lo stato della manutenzione ordinaria dichiarata; saranno quindi necessari solo marginali interventi di manutenzione straordinaria, durante il periodo di Garanzia, nell'arco della percorrenza prevista, purch\u00e9 il veicolo sia correttamente usato e non vi sia negligenza o imperizia da parte del conducente.\nL'auto \u00e8 un bene complesso composto di sottosistemi con ciclo di vita definito dalla qualit\u00e0 intrinseca della costruzione e del processo di produzione, e influenzato dalla condotta di guida e dalla qualit\u00e0 della manutenzione ordinaria. La Garanzia Legale di Conformit\u00e0 garantisce quindi la conformit\u00e0 del veicolo, rispondente alla valutazione dello stato di utilizzo pregresso, ai cicli di vita delle parti meccaniche, compresi i dispositivi elettrici ed elettronici utilizzati per il controllo delle parti meccaniche, definiti dalla Norma UNC DOC A01, emanata da Unione Nazionale Consumatori.\nLa Garanzia Legale di Conformit\u00e0 \u00e8 applicabile a partire dalla data di consegna del veicolo oggetto della compravendita, esclusivamente mediante riparazioni delle parti difettose, con espressa esclusione di ogni altro rimedio. Copre i costi strettamente necessari ad eliminare la causa dell'evento anomalo, mediante riparazione o sostituzione delle unit\u00e0 difettose, col criterio di ripristinare la conformit\u00e0 del veicolo alle condizioni coerenti con la percorrenza e l'anzianit\u00e0 al momento della vendita. Condizione essenziale \u00e8 l'esecuzione della manutenzione ordinaria secondo le prescrizioni del costruttore e degli interventi di ripristino da parte di Officine qualificate. \u00c8 applicabile esclusivamente previa autorizzazione.\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se qui diversamente riportato.\n\nQUOTA 'MAGGIOR VALORE'\nQualora si dovesse ristabilire l'intero ciclo di vita di riferimento, mediante la sostituzione dell'intero sottosistema con un altro nuovo, o 'al nuovo', ne risulterebbe un maggior valore del veicolo rispetto a quello dell'acquisto. In questo caso l'acquirente dovr\u00e0 corrispondere una quota parte del costo della riparazione, corrispondente alla porzione di maggiore percorrenza acquisita. La riparazione sar\u00e0 soggetta a specifica garanzia legale per 24 mesi dalla data di riconsegna del veicolo, a carico della parte che fattura il corrispettivo a carico dell'Acquirente.\n\nGARANZIA SULLE RIPARAZIONI\nLe riparazioni a carico totale o parziale dell'acquirente saranno coperte da Garanzia per ulteriori 24 mesi a carico dell'Officina che ha eseguito il ripristino, dalla riconsegna del veicolo.\n\nESCLUSIONI\nIn nessun caso sar\u00e0 possibile riconoscere il rimborso di quanto pagato per interventi non previamente concordati. I difetti causati da imperizia o negligenza del conducente o da responsabilit\u00e0 di terzi non rientrano nella Garanzia Legale. La sostituzione di parti di consumo (lubrificanti, oli, liquidi, filtri e simili) non \u00e8 compresa nella garanzia, cos\u00ec come cristalli, tappezzeria, parti interne ed estetiche in materiale plastico. I difetti apparenti riportati nella proposta di vendita sono parte integrante della trattativa e non possono essere oggetto di garanzia.\nServizio vettura sostitutiva a pagamento offerto in fase di acquisto, solo in caso di fermo veicolo, previa autorizzazione preventiva di 7 giorni lavorativi e con deposito cauzionale di 500,00\u20ac. Valido per le sole auto scoperte da garanzia della casa madre.\n\nCONDIZIONI CONTRATTUALI\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale. La durata minima del pagamento rateale \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica.\n11. L'importo della rata indicato non include le eventuali spese di incasso, applicabili in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni della societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori: la mancata consegna comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
-var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:'', iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
+var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:'https://g.page/r/CfP6etGmdA-yEBM/review', iban:'IT88E0344033990000001004900', maxPreparazioni:2 };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
 /* parLoad restituisce solo i campi noti: qui serve il grezzo, con dentro
    updatedAt, per capire quale versione e' la piu' recente. */
@@ -17494,7 +17582,9 @@ function cvVendCard(cv){
         return '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #e2e8f0;">'
           +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
           +'<span style="font-size:12px;font-weight:800;color:#0f172a;">\u2b50 Recensione</span>'
-          +(quando?('<span style="font-size:11px;color:#16a34a;font-weight:700;">richiesta il '+quando+' via '+can+'</span>'):'<span style="font-size:11px;color:#94a3b8;">non ancora richiesta</span>')
+          +(quando?('<span style="font-size:11px;color:#16a34a;font-weight:700;">richiesta il '+quando+' via '+can
+            +((r.scadenzaTs && r.scadenzaTs>Date.now())?(' \u00b7 <span style="color:#d97706;">sconto valido ancora '+Math.max(1,Math.round((r.scadenzaTs-Date.now())/3600000))+' h</span>'):'')
+            +'</span>'):'<span style="font-size:11px;color:#94a3b8;">non ancora richiesta</span>')
           +'</div>'
           +'<div style="display:flex;gap:6px;margin-top:7px;">'
           +'<button onclick="event.stopPropagation();cvRecMail(\''+cv.id+'\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u2709\ufe0f Mail</button>'
@@ -17667,19 +17757,30 @@ function cvVendImmatConferma(id, nt){
 }
 
 /* ---- richiesta recensione (dai consegnati) ---- */
+/* quando scade l'offerta: 48 ore da adesso, scritta per esteso */
+function cvRecScadenza(){
+  var t=Date.now()+48*3600000;
+  var d=new Date(t);
+  var g=['domenica','luned\u00ec','marted\u00ec','mercoled\u00ec','gioved\u00ec','venerd\u00ec','sabato'][d.getDay()];
+  var m=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'][d.getMonth()];
+  var hh=String(d.getHours()); var mm=String(d.getMinutes()).padStart(2,'0');
+  return { ts:t, testo: g+' '+d.getDate()+' '+m+' alle '+hh+':'+mm };
+}
 function cvRecTesto(cv){
   var nome=(cv.cliente&&cv.cliente.nome)||'';
   var auto=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'auto';
   var link=''; try{ link=(parLoad().linkRecensioni||'').trim(); }catch(e){}
+  var sc=cvRecScadenza();
   var t='Ciao '+(nome||'')+'! Siamo felici che tu abbia scelto Europa Auto per la tua '+auto+'. '
-    +'Se ti sei trovato bene, ci lasceresti una recensione a 5 stelle? \u2b50 '
-    +'In cambio ti riserviamo il 20% di sconto sulla prossima manutenzione!'
-    +(link?('\n\nLascia qui la tua recensione: '+link):'');
-  return { testo:t, link:link, nome:nome, auto:auto };
+    +'Ti chiediamo un piccolo aiuto: siamo un\u2019azienda che cresce grazie al passaparola, e una tua recensione a 5 stelle \u2b50 vale tantissimo per noi.'
+    +'\n\nPer ringraziarti: 20% di sconto sull\u2019INTERA fattura della tua prossima manutenzione \u2014 ricambi e manodopera, tutto compreso.'
+    +'\n\n\u23f3 Hai 48 ore: vale fino a '+sc.testo+'.'
+    +(link?('\n\nLascia qui la tua recensione (2 minuti): '+link):'');
+  return { testo:t, link:link, nome:nome, auto:auto, scadenza:sc };
 }
 function cvRecSegna(id, canale){
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
-  list[i].recensione={ richiestaTs:Date.now(), canale:canale };
+  list[i].recensione={ richiestaTs:Date.now(), canale:canale, scadenzaTs:Date.now()+48*3600000, sconto:20, su:'intera fattura' };
   list[i].updatedAt=Date.now();
   cvSave(list);
   try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', list[i]); }catch(e){}
@@ -17699,11 +17800,17 @@ function cvRecMail(id){
   var r=cvRecTesto(cv);
   var h='<p>Ciao '+docEsc(r.nome||'')+',</p>'
     +'<p>siamo felici che tu abbia scelto <b>Europa Auto</b> per la tua '+docEsc(r.auto)+'!</p>'
-    +'<p style="font-size:17px;"><b>Recensione a 5 stelle? \u2b50</b><br>'
-    +'In cambio ti riserviamo il <b>20% di sconto sulla prossima manutenzione</b>.</p>'
-    +(r.link?('<p style="text-align:center;margin:22px 0;"><a href="'+docEsc(r.link)+'" style="background:#16a34a;color:#fff;padding:13px 26px;border-radius:9px;text-decoration:none;font-weight:800;font-size:15px;">Lascia la recensione</a></p>'):'<p>Ci trovi su Google cercando <b>Europa Auto Paderno Dugnano</b>.</p>')
-    +'<p style="color:#64748b;font-size:13px;">Alla prossima manutenzione ricordaci la recensione: lo sconto \u00e8 gi\u00e0 tuo.</p>';
-  eaInviaMessaggio({ to:em, subject:'\u2b50 Una recensione = 20% di sconto sulla manutenzione', html:(typeof eaMailWrap==='function'?eaMailWrap(h):h) })
+    +'<p style="font-size:17px;"><b>Aiutaci a crescere \u2b50</b><br>'
+    +'Siamo un\u2019azienda che vive di passaparola: una tua recensione a 5 stelle \u00e8 il modo migliore per far conoscere il nostro lavoro.</p>'
+    +'<p style="font-size:16px;">Per ringraziarti, alla tua prossima manutenzione ti riserviamo il <b>20% di sconto sull\u2019intera fattura</b>:</p>'
+    +'<div style="font-size:14px;line-height:1.9;margin:6px 0 2px;">\u2713 <b>Ricambi</b> \u2014 sconto pieno<br>\u2713 <b>Manodopera</b> \u2014 sconto pieno<br>\u2713 Nessuna esclusione</div>'
+    +'<div style="background:#fff7ed;border:2px solid #f59e0b;border-radius:10px;padding:12px 14px;margin:14px 0;text-align:center;">'
+    +'<div style="font-size:13px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.06em;">\u23f3 Offerta valida 48 ore</div>'
+    +'<div style="font-size:15px;font-weight:800;color:#0f172a;margin-top:3px;">fino a '+docEsc(r.scadenza.testo)+'</div>'
+    +'</div>'
+    +(r.link?('<p style="text-align:center;margin:22px 0;"><a href="'+docEsc(r.link)+'" style="background:#16a34a;color:#fff;padding:13px 26px;border-radius:9px;text-decoration:none;font-weight:800;font-size:15px;">Lascia la recensione \u2014 2 minuti</a></p>'):'<p>Ci trovi su Google cercando <b>Europa Auto Paderno Dugnano</b>.</p>')
+    +'<p style="color:#64748b;font-size:13px;">Alla prossima manutenzione ricordaci la recensione: il 20% sull\u2019intera fattura \u00e8 gi\u00e0 tuo.</p>';
+  eaInviaMessaggio({ to:em, subject:'\u2b50 Aiutaci a crescere: 20% su ricambi e manodopera \u2014 hai 48 ore', html:(typeof eaMailWrap==='function'?eaMailWrap(h):h) })
     .then(function(res){
       if(res && res.error){ alert('Invio non riuscito: '+res.error); return; }
       if(typeof tcToastNew==='function') tcToastNew('\u2709\ufe0f Richiesta recensione inviata via mail', true);
@@ -17779,14 +17886,23 @@ function cvVendConsegnaFinale(){
 }
 
 function cvVendNotificaMail(cv,p){
-  if(typeof gsJsonp!=='function' || typeof GS_URL==='undefined' || !GS_URL) return;
+  /* da Resend, mittente no-reply@europaautosrl.it (era l'ultima via Apps Script) */
+  if(typeof eaInviaMessaggio!=='function') return;
   var a=cv.autoSnapshot||{};
-  try{ gsJsonp({ action:'notificaPagamento',
-    cliente:(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim(),
-    auto:((typeof cvAutoLabel==='function')?cvAutoLabel(cv):(a.modello||cv.autoDesc||'')),
-    targa:((typeof cvAutoIdent==='function')?cvAutoIdent(cv):(cv.nuovaTarga||a.targa||'')),
-    tipo:p.tipo||'', metodo:p.metodo||'', importo:cvEuro(p.importo),
-    confermatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''), stato:(cv.statoVendita||''), disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
+  try{
+    var _cl=(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim();
+    var _au=((typeof cvAutoLabel==='function')?cvAutoLabel(cv):(a.modello||cv.autoDesc||''));
+    var _tg=((typeof cvAutoIdent==='function')?cvAutoIdent(cv):(cv.nuovaTarga||a.targa||''));
+    var _da=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+    var _h='<p>Pagamento confermato:</p>'
+      +'<p style="font-size:16px;font-weight:700;">'+_cl+(_au?(' \u2014 '+_au):'')+'</p>'
+      +'<p>'+(_tg?('<b>Targa/telaio:</b> '+_tg+'<br>'):'')
+      +'<b>Tipo:</b> '+(p.tipo||'')+' \u00b7 <b>Metodo:</b> '+(p.metodo||'')+'<br>'
+      +'<b>Importo:</b> '+cvEuro(p.importo)+'<br>'
+      +'<b>Stato pratica:</b> '+(cv.statoVendita||'')+'</p>'
+      +'<p style="color:#64748b;font-size:13px;">Confermato da '+_da+'.</p>';
+    eaInviaMessaggio({ to:'amministrazione@europaautosrl.it', subject:'\uD83D\uDCB6 Pagamento confermato \u2014 '+_cl+(p.tipo?(' ('+p.tipo+')'):''), html:(typeof eaMailWrap==='function'?eaMailWrap(_h):_h) });
+  }catch(e){}
 }
 
 
@@ -18020,7 +18136,17 @@ function notifPush(testo, icon, extra){
   try{
     var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
     if(extra && typeof extra==='object'){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra,k)) n[k]=extra[k]; } }
-    var list=notifLoad(); list.push(n); notifSave(list);
+    var list=notifLoad();
+    /* REGOLA GENERALE: una notifica nuova SOSTITUISCE la precedente dello
+       stesso tipo sullo stesso elemento. In campanella resta solo l'ultimo
+       stato di ogni cosa — il "sollecito 7" senza sotto il 6 e il 5.
+       Eventi diversi (tipo diverso o elemento diverso) restano separati. */
+    if(n.tipo && n.refId){
+      var vecchie=list.filter(function(x){ return x && x.tipo===n.tipo && x.refId===n.refId; });
+      list=list.filter(function(x){ return !(x && x.tipo===n.tipo && x.refId===n.refId); });
+      vecchie.forEach(function(x){ try{ if(typeof supaDelete==='function') supaDelete('notifiche', x.id); }catch(e){} });
+    }
+    list.push(n); notifSave(list);
     if(typeof supaUpsert==='function'){ try{ supaUpsert('notifiche', n); }catch(e){} }
     if(notifPerMe(n)) notifShowCards([n]);
     notifSetLastSeen(n.ts); if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
@@ -18252,11 +18378,21 @@ function cvDiffModifica(o,n){
   return out;
 }
 function cvNotificaModifica(cv, modifiche){
-  if(typeof gsJsonp!=='function' || typeof GS_URL==='undefined' || !GS_URL) return;
+  /* da Resend: il contratto e' stato modificato dopo la conferma */
+  if(typeof eaInviaMessaggio!=='function') return;
   var t=cvCalcola(cv); var a=cv.autoSnapshot||{};
-  var mod=(modifiche&&modifiche.length)?modifiche.join(' | '):'(nessuna modifica di dettaglio rilevata)';
-  try{ gsJsonp({ action:'notificaModifica', cliente:(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim(), auto:(a.modello||cv.autoDesc||''), modificatoDa:(cv.modificatoDa||''), saldo:cvEuro(t.saldoDovuto), modifiche:mod }); }catch(e){}
+  var mod=(modifiche&&modifiche.length)?modifiche.join('<br>\u2022 '):'(nessuna modifica di dettaglio rilevata)';
+  try{
+    var _cl=(((cv.cliente&&cv.cliente.nome)||'')+' '+((cv.cliente&&cv.cliente.cognome)||'')).trim();
+    var _h='<p>Un contratto confermato \u00e8 stato <b>modificato</b>:</p>'
+      +'<p style="font-size:16px;font-weight:700;">'+_cl+' \u2014 '+(a.modello||cv.autoDesc||'')+'</p>'
+      +'<p><b>Modifiche:</b><br>\u2022 '+mod+'</p>'
+      +'<p><b>Saldo dovuto ora:</b> '+cvEuro(t.saldoDovuto)+'</p>'
+      +'<p style="color:#64748b;font-size:13px;">Modificato da '+(cv.modificatoDa||'')+'.</p>';
+    eaInviaMessaggio({ to:'amministrazione@europaautosrl.it', subject:'\u270f\ufe0f Contratto modificato \u2014 '+_cl, html:(typeof eaMailWrap==='function'?eaMailWrap(_h):_h) });
+  }catch(e){}
 }
+
 
 function cvVendAnnulla(id){
   if(!confirm('Annullare questo contratto?\n\n\u2022 Il veicolo torna DISPONIBILE in magazzino\n\u2022 Vengono cancellati i pagamenti del contratto\n\u2022 Il PREVENTIVO resta nella lista preventivi\n\nProcedere?')) return;
