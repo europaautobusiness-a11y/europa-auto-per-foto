@@ -14434,7 +14434,7 @@ function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/<
 
 var DOC_CAT={
   auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
-  cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['altro','Altro']],
+  cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['libretto_nuovo','Libretto nuovo intestato'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']]
 };
@@ -18558,11 +18558,102 @@ function crmRenderDashboard(){
 }
 var _crmTab='dashboard';
 function crmTab(t){ _crmTab=t; crmRender(); }
+
+/* ---- Archivio documenti clienti (storico + importati) ---- */
+var _crmArchTimer=null;
+function crmRenderArchivio(){
+  return '<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:16px;">'
+    +'<div style="font-weight:800;font-size:15px;margin-bottom:4px;">\ud83d\udcc1 Archivio documenti clienti</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:10px;">Cerca per cognome o nome: trovi contratti e documenti, compresi quelli importati dal vecchio gestionale.</div>'
+    +'<input id="crmarch-q" oninput="crmArchInput()" placeholder="\ud83d\udd0e Es. Rossi\u2026" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:14px;box-sizing:border-box;">'
+    +'<div id="crmarch-res" style="margin-top:12px;"><div style="font-size:12px;color:#94a3b8;">Digita almeno 2 lettere per cercare.</div></div>'
+    +'</div>';
+}
+function crmArchInput(){ if(_crmArchTimer)clearTimeout(_crmArchTimer); _crmArchTimer=setTimeout(crmArchCerca,350); }
+function crmArchFileHTML(d){
+  var dt=d.created_at?String(d.created_at).slice(0,10).split('-').reverse().join('/'):'';
+  return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:#fff;">'
+    +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div>'
+    +'<div style="font-size:11px;color:#94a3b8;">'+docEsc(docCatLabel('cliente',d.categoria))+(dt?(' \u00b7 '+dt):'')+'</div></div>'
+    +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
+    +'</div>';
+}
+function crmArchCardHTML(titolo, anag, docs){
+  var righe='';
+  if(anag){
+    var contatti=[];
+    if(anag.telefono) contatti.push('<a href="tel:'+docEsc(anag.telefono)+'" style="color:#1a4fa0;font-weight:700;text-decoration:none;">\ud83d\udcde '+docEsc(anag.telefono)+'</a>');
+    if(anag.email) contatti.push('<a href="mailto:'+docEsc(anag.email)+'" style="color:#1a4fa0;font-weight:700;text-decoration:none;">\u2709\ufe0f '+docEsc(anag.email)+'</a>');
+    var ind=[anag.indirizzo,anag.cap,anag.citta,anag.prov].filter(Boolean).join(' ');
+    if(ind) contatti.push('<span style="color:#64748b;">\ud83d\udccd '+docEsc(ind)+'</span>');
+    var fisc=[anag.piva?('P.IVA '+anag.piva):null, anag.cf?('CF '+anag.cf):null].filter(Boolean).join(' \u00b7 ');
+    if(fisc) contatti.push('<span style="color:#64748b;">'+docEsc(fisc)+'</span>');
+    if(contatti.length) righe='<div style="font-size:12px;display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:9px;">'+contatti.join('')+'</div>';
+  }
+  var nDocs=docs.length?('<span style="font-weight:600;color:#94a3b8;font-size:12px;">\u00b7 '+docs.length+' file</span>'):'<span style="font-weight:600;color:#94a3b8;font-size:12px;">\u00b7 nessun documento in archivio</span>';
+  return '<div style="border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;background:#f8fafc;">'
+    +'<div style="font-weight:800;font-size:14px;margin-bottom:6px;">\ud83d\udc64 '+docEsc(titolo)+' '+nDocs+'</div>'
+    +righe + docs.map(crmArchFileHTML).join('') + '</div>';
+}
+function crmArchCerca(){
+  var q=(document.getElementById('crmarch-q')||{}).value||''; q=q.trim();
+  var box=document.getElementById('crmarch-res'); if(!box)return;
+  if(q.length<2){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Digita almeno 2 lettere per cercare.</div>'; return; }
+  var sb=sbClient(); if(!sb){ box.innerHTML='<div style="font-size:12px;color:#dc2626;">Archivio non disponibile.</div>'; return; }
+  box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Cerco\u2026</div>';
+  Promise.all([
+    sb.from('clienti_app').select('id,data').ilike('data->>chiave','%'+q+'%').limit(60),
+    sb.from('documenti').select('*').eq('entita_tipo','cliente').ilike('entita_id','%'+q+'%')
+      .order('entita_id',{ascending:true}).order('created_at',{ascending:false}).limit(400)
+  ]).then(function(rs){
+      var rc=rs[0]||{}, rd=rs[1]||{};
+      var anas=rc.data||[], docs=rd.data||[];
+      if(rc.error && rd.error){ box.innerHTML='<div style="font-size:12px;color:#dc2626;">Errore: '+docEsc(rd.error.message)+'</div>'; return; }
+      var byKey={}; docs.forEach(function(d){ var k=d.entita_id||'\u2014'; (byKey[k]=byKey[k]||[]).push(d); });
+      var usati={}; var h='';
+      anas.forEach(function(c){
+        var a=c.data||{}; var k=a.chiave||''; if(usati['A'+k])return; usati['A'+k]=1; usati[k]=1;
+        var tit=k+(String(a.tipologia||'').toLowerCase()==='azienda'?' \ud83c\udfe2':'');
+        h+=crmArchCardHTML(tit, a, byKey[k]||[]);
+      });
+      Object.keys(byKey).forEach(function(k){ if(!usati[k]) h+=crmArchCardHTML(k, null, byKey[k]); });
+      if(!h){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessun cliente o documento trovato per \u00ab'+docEsc(q)+'\u00bb.</div>'; return; }
+      box.innerHTML=h+(docs.length>=400?'<div style="font-size:12px;color:#94a3b8;">Mostro i primi 400 documenti: restringi la ricerca.</div>':'');
+    });
+}
+function crmArchCercaVecchia(){
+  var q='';
+  var box=null; if(!box)return;
+  var sb=sbClient(); if(!sb){ return; }
+  sb.from('documenti').select('*').eq('entita_tipo','cliente').ilike('entita_id','%'+q+'%')
+    .order('entita_id',{ascending:true}).order('created_at',{ascending:false}).limit(400)
+    .then(function(r){
+      if(r.error){ box.innerHTML='<div style="font-size:12px;color:#dc2626;">Errore: '+docEsc(r.error.message)+'</div>'; return; }
+      var list=r.data||[];
+      if(!list.length){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessun documento trovato per \u00ab'+docEsc(q)+'\u00bb.</div>'; return; }
+      var gruppi={}; var ordine=[];
+      list.forEach(function(d){ var k=d.entita_id||'\u2014'; if(!gruppi[k]){gruppi[k]=[];ordine.push(k);} gruppi[k].push(d); });
+      box.innerHTML=ordine.map(function(k){
+        var docs=gruppi[k];
+        return '<div style="border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;background:#f8fafc;">'
+          +'<div style="font-weight:800;font-size:14px;margin-bottom:8px;">\ud83d\udc64 '+docEsc(k)+' <span style="font-weight:600;color:#94a3b8;font-size:12px;">\u00b7 '+docs.length+' file</span></div>'
+          +docs.map(function(d){
+            var dt=d.created_at?String(d.created_at).slice(0,10).split('-').reverse().join('/'):'';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:#fff;">'
+              +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div>'
+              +'<div style="font-size:11px;color:#94a3b8;">'+docEsc(docCatLabel('cliente',d.categoria))+(dt?(' \u00b7 '+dt):'')+'</div></div>'
+              +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
+              +'</div>';
+          }).join('')
+          +'</div>';
+      }).join('')+(list.length>=400?'<div style="font-size:12px;color:#94a3b8;">Mostro i primi 400 risultati: restringi la ricerca.</div>':'');
+    });
+}
 function crmRender(){
   var wrap=document.getElementById('view-crm'); if(!wrap) return;
-  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['lead','Contatti','\ud83d\udc64'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['lead','Contatti','\ud83d\udc64'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f'],['archivio','Archivio','\ud83d\udcc1']];
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='pipeline' ? crmRenderKanban() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderLead())));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='pipeline' ? crmRenderKanban() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='archivio' ? crmRenderArchivio() : crmRenderLead()))));
   wrap.innerHTML='<div style="max-width:960px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
