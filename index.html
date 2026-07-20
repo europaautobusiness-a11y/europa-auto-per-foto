@@ -13014,6 +13014,7 @@ function pmiExport(cvId){
 
 /* ===================== CLIENTI (anagrafica) ===================== */
 var EA_CLIENTI_KEY='ea_clienti_v1';
+var _clDeleted={};   /* clienti eliminati in sessione: il refresh dal cloud non li resuscita */
 var _clFiltri={rag:'',nome:'',cognome:'',citta:''};
 var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -13034,7 +13035,7 @@ function clSupaList(){
 }
 function clSupaSaveList(arr){
   var o={};
-  (arr||[]).forEach(function(e){ if(e&&e.id) o[e.id]=e; });
+  (arr||[]).forEach(function(e){ if(e&&e.id&&!_clDeleted[e.id]) o[e.id]=e; });
   clStoreSave(o);
 }
 function clSupaUpsert(key){
@@ -13143,11 +13144,17 @@ function clRenderDettaglio(){
   if(!inds.length) h+='<div style="font-size:13px;color:#94a3b8;margin-top:8px;">Nessun indirizzo.</div>';
   else h+=inds.map(function(a,i){ var att=(i===inds.length-1); return '<div style="margin-top:8px;padding:9px 11px;border:1px solid '+(att?'#bfdbfe':'#e2e8f0')+';border-radius:8px;background:'+(att?'#eff6ff':'#f8fafc')+';font-size:13px;">'+(att?'<b>Attuale</b> \u00b7 ':'<span style="color:#94a3b8;">Precedente'+(a.dal?(' (dal '+clEsc(a.dal)+')'):'')+'</span> \u00b7 ')+clEsc((a.via||'')+(a.civico?(' '+a.civico):'')+((a.cap||a.citta)?(', '+(a.cap||'')+' '+(a.citta||'')):'')+(a.prov?(' ('+a.prov+')'):''))+'</div>'; }).join('');
   h+='<div id="cl-addind"></div></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">'+((typeof docPannelloHTML==='function')?docPannelloHTML('cliente', c.key, 'cldoc'):'')+'</div>';
   var docCard=function(titolo, arr, fn){ var s='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;"><div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+titolo+' ('+arr.length+')</div>'; s+= arr.length?arr.map(fn).join(''):'<div style="font-size:13px;color:#94a3b8;">Nessuno.</div>'; return s+'</div>'; };
-  h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
+  h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+(cv.rinunciato?' \u00b7 <span style="color:#b91c1c;font-weight:800;">rinunciato</span>':'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
   h+=docCard('Contratti', c.contratti, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; var st=(cv.statoVendita||'in_attesa_pagamento').replace(/_/g,' '); return '<div onclick="clVaiCv(\''+cv.id+'\',true)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(st)+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
   h+=docCard('Appuntamenti', clAppuntamenti(c), function(a){ var ti=(a.tipo==='vendita'?'\ud83e\udd1d':'\ud83d\udd27'); return '<div style="padding:9px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">'+ti+' '+clEsc(a.titolo||'')+' \u00b7 '+clEsc(a.data||'')+(a.ora?(' '+clEsc(a.ora)):'')+'</div>'; });
+  /* eliminazione cliente: solo admin, doppia conferma dentro clElimina */
+  try{ if(typeof getCurrentRole!=='function' || getCurrentRole()==='admin'){
+    h+='<div style="text-align:right;margin:4px 0 18px;"><button onclick="clElimina(\''+keyEnc+'\')" style="padding:10px 16px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">\ud83d\uddd1 Elimina cliente</button></div>';
+  } }catch(e){}
   h+='</div>'; wrap.innerHTML=h;
+  try{ if(typeof docListaRender==='function') docListaRender('cliente', c.key, 'cldoc'); }catch(e){}
   var b=document.getElementById('cl_business'); if(b){ b.addEventListener('change',function(){ var r=document.getElementById('cl-rag'); if(r) r.style.display=b.checked?'block':'none'; }); }
 }
 function clSalvaAnagrafica(keyEnc){
@@ -13192,6 +13199,45 @@ function clNuovo(){
 function clVaiCv(id, isContr){
   if(isContr){ if(typeof cvVendModifica==='function') cvVendModifica(id); }
   else { if(typeof cvForm==='function') cvForm(id); }
+}
+function clElimina(keyEnc){
+  var key=decodeURIComponent(keyEnc); var c=clFind(key); if(!c) return;
+  var nome=(c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()||'(senza nome)');
+  var nP=(c.preventivi||[]).length, nC=(c.contratti||[]).length;
+  var msg='Eliminare definitivamente il cliente "'+nome+'"?';
+  if(nP||nC){
+    msg+='\n\nVerranno eliminati anche:';
+    if(nC) msg+='\n\u2022 '+nC+' contratt'+(nC===1?'o':'i')+' (le auto tornano disponibili)';
+    if(nP) msg+='\n\u2022 '+nP+' preventiv'+(nP===1?'o':'i');
+    msg+='\n\nNessun promemoria verr\u00e0 pi\u00f9 inviato a questo cliente.';
+  }
+  if(!confirm(msg)) return;
+  if(nC && !confirm('\u26a0\ufe0f Il cliente ha '+nC+' contratt'+(nC===1?'o':'i')+'. L\u0027eliminazione \u00e8 DEFINITIVA e non recuperabile.\n\nConfermi?')) return;
+  /* 1. preventivi e contratti collegati: via dal locale e dal cloud */
+  var ids={}; (c.preventivi||[]).concat(c.contratti||[]).forEach(function(cv){ if(cv&&cv.id) ids[cv.id]=true; });
+  var list=(typeof cvLoad==='function')?cvLoad():[];
+  list.forEach(function(cv){
+    if(!cv || !ids[cv.id]) return;
+    /* se era un contratto, l'auto torna disponibile in magazzino */
+    if(cv.isContratto && cv.autoId && typeof mzLoad==='function'){
+      try{ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;});
+        if(mi>=0){ ml[mi].impegnata=false; ml[mi].impegnataDa=null; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[mi]); }
+      }catch(e){}
+    }
+    if(typeof _cvDeleted!=='undefined' && _cvDeleted) _cvDeleted[cv.id]=true;
+    if(typeof supaDelete==='function') supaDelete('preventivi', cv.id);
+  });
+  if(typeof cvSave==='function') cvSave(list.filter(function(cv){ return !(cv&&ids[cv.id]); }));
+  /* 2. anagrafica (manuale o override) */
+  var ov=clStore(); if(ov[key]){ delete ov[key]; clStoreSave(ov); }
+  _clDeleted[key]=true;
+  if(typeof supaDelete==='function') supaDelete('clienti_app', key);
+  /* 3. dati CRM del contatto (stato, attivita', note): niente promemoria orfani */
+  try{ if(typeof crmLoad==='function'){ var s=crmLoad(); if(s && s[key]){ delete s[key]; crmSave(s); if(typeof supaDelete==='function') supaDelete('crm', key); } } }catch(e){}
+  _clSel=null;
+  if(typeof cvVendBadge==='function') cvVendBadge();
+  if(typeof tcToastNew==='function') tcToastNew('\ud83d\uddd1 Cliente "'+nome+'" eliminato'+(nP+nC?(' con '+(nP+nC)+' document'+((nP+nC)===1?'o':'i')):''),true);
+  clRender();
 }
 
 /* ===================== WHATSAPP (link gratuiti wa.me) ===================== */
@@ -13243,7 +13289,7 @@ function waListaAssicurazioni(){
   return out;
 }
 function waListaPreventivi(){
-  var out=((typeof cvLoad==='function')?cvLoad():[]).filter(function(cv){ return !cv.isContratto && cv.cliente && cv.cliente.telefono; });
+  var out=((typeof cvLoad==='function')?cvLoad():[]).filter(function(cv){ return !cv.isContratto && !cv.rinunciato && cv.cliente && cv.cliente.telefono; });
   out.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
   return out;
 }
@@ -13294,7 +13340,7 @@ function cvRender(){
   if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun preventivo. Premi "➕ Nuovo preventivo".</div>'; return; }
   wrap.innerHTML=list.map(function(c){
     var tot=cvCalcola(c);
-    var badge=c.isContratto?('<span style="font-size:10px;font-weight:800;background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;white-space:nowrap;">'+(c.statoVendita==='consegnato'?'CONSEGNATA':'PROPOSTA D’ACQUISTO')+'</span>'):'';
+    var badge=c.isContratto?('<span style="font-size:10px;font-weight:800;background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;white-space:nowrap;">'+(c.statoVendita==='consegnato'?'CONSEGNATA':'PROPOSTA D’ACQUISTO')+'</span>'):(c.rinunciato?'<span style="font-size:10px;font-weight:800;background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;white-space:nowrap;">RINUNCIATO</span>':'');
     return '<div onclick="cvForm(\''+c.id+'\')" style="background:#fff;border:1px solid '+(c.isContratto?'#ddd6fe':'#e2e8f0')+';border-radius:11px;padding:14px 16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;gap:10px;"><div><div style="font-weight:800;font-size:15px;">'+cvEsc((c.cliente&&(c.cliente.nome||'')+' '+(c.cliente&&c.cliente.cognome||''))||'Cliente')+badge+'</div>'
       +'<div style="font-size:13px;color:#475569;margin-top:2px;">'+cvEsc(c.autoDesc||(c.autoSnapshot&&c.autoSnapshot.modello)||'—')+(cvAutoNum(c)?(' \u00b7 <b style="color:#3730a3;">N\u00b0 '+cvEsc(cvAutoNum(c))+'</b>'):'')+'</div>'
@@ -13819,7 +13865,7 @@ function cvCheckMailPreventivi(){
     if(typeof cvLoad!=='function') return;
     var list=cvLoad(), now=Date.now();
     var candidati=list.filter(function(p){
-      return p && !p.isContratto && !p.emailInviata && p.mailDaInviareAt && now>=p.mailDaInviareAt;
+      return p && !p.isContratto && !p.rinunciato && !p.emailInviata && p.mailDaInviareAt && now>=p.mailDaInviareAt;
     });
     if(!candidati.length) return;
     var sb=(typeof sbClient==='function')?sbClient():null;
@@ -13902,7 +13948,7 @@ function cvWaInSospeso(id){
   try{
     var p=(typeof cvById==='function')?cvById(id):null;
     if(!p) return false;
-    if(p.waFatto || p.isContratto) return false;
+    if(p.waFatto || p.isContratto || p.rinunciato) return false;
     return (parseInt(p.waPromCount||0,10)||0) > 0;
   }catch(e){ return false; }
 }
@@ -13912,7 +13958,7 @@ function cvCheckPromemoriaWa(){
     try{ var _nowD=new Date(); if(typeof window!=='undefined' && typeof window.eaIsOpen==='function'){ if(!window.eaIsOpen(_nowD)) return; } else { var _dy=_nowD.getDay(), _mn=_nowD.getHours()*60+_nowD.getMinutes(); if(_dy===0 || !((_mn>=540&&_mn<720)||(_mn>=870&&_mn<1140))) return; } }catch(e){}
     var list=cvLoad(), now=Date.now(), changed=[];
     list.forEach(function(p){
-      if(!p || p.isContratto) return;
+      if(!p || p.isContratto || p.rinunciato) return;
       if(!p.cliente || !p.cliente.telefono) return;
       var base=p.createdAt||0; if(!base) return;
       var eta=now-base;
@@ -14061,6 +14107,8 @@ function cvTrasformaContrattoFinale(){
     if(_dup){ alert('\u26a0\ufe0f Pagamenti non validi: \u00e8 presente un doppio "'+_dup+'".\n\nOgni tipo (Caparra, Acconto, Saldo, Finanziamento) pu\u00f2 comparire una sola volta. Correggi i pagamenti prima di confermare.'); return; }
   }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
+  /* il cliente ci ha ripensato: lo stato "rinunciato" decade */
+  _cv.rinunciato=false; _cv.rinunciatoTs=null;
   if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
@@ -18115,11 +18163,11 @@ function notifAutomazioniAttive(){
   }catch(e){}
   try{
     var cvs=(typeof cvLoad==='function')?cvLoad():[];
-    cvs.forEach(function(p){ if(!p||p.isContratto) return; if(!(p.cliente&&p.cliente.telefono)) return; var eta=now-(p.createdAt||now); var nome=(((p.cliente.cognome||'')+' '+(p.cliente.nome||'')).trim())||'cliente';
+    cvs.forEach(function(p){ if(!p||p.isContratto||p.rinunciato) return; if(!(p.cliente&&p.cliente.telefono)) return; var eta=now-(p.createdAt||now); var nome=(((p.cliente.cognome||'')+' '+(p.cliente.nome||'')).trim())||'cliente';
       if(!p.waPromemoria48 && eta<48*3600000){ var h=Math.max(0,Math.round((48*3600000-eta)/3600000)); out.push({icon:'\ud83d\udcac',testo:'Promemoria WhatsApp per '+nome+' tra ~'+h+'h'}); }
       else if(!p.waOfferta96 && eta<96*3600000){ var h2=Math.max(0,Math.round((96*3600000-eta)/3600000)); out.push({icon:'\ud83c\udff7\ufe0f',testo:'Offerta 48h per '+nome+' tra ~'+h2+'h (se non confermato)'}); }
     });
-    cvs.forEach(function(p){ if(p&&!p.isContratto&&!p.emailInviata&&p.mailDaInviareAt&&p.mailDaInviareAt>now){ var nome=(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim()||'cliente'; var m=Math.max(0,Math.round((p.mailDaInviareAt-now)/60000)); out.push({icon:'\ud83d\udce7',testo:'Email preventivo a '+nome+' tra ~'+m+' min'}); } });
+    cvs.forEach(function(p){ if(p&&!p.isContratto&&!p.rinunciato&&!p.emailInviata&&p.mailDaInviareAt&&p.mailDaInviareAt>now){ var nome=(((p.cliente&&p.cliente.cognome)||'')+' '+((p.cliente&&p.cliente.nome)||'')).trim()||'cliente'; var m=Math.max(0,Math.round((p.mailDaInviareAt-now)/60000)); out.push({icon:'\ud83d\udce7',testo:'Email preventivo a '+nome+' tra ~'+m+' min'}); } });
   }catch(e){}
   return out.slice(0,20);
 }
@@ -18286,16 +18334,21 @@ function cvNotificaModifica(cv, modifiche){
 }
 
 function cvVendAnnulla(id){
-  if(!confirm('Annullare questo contratto?\n\n\u2022 Il veicolo torna DISPONIBILE in magazzino\n\u2022 Vengono cancellati i pagamenti del contratto\n\u2022 Il PREVENTIVO resta nella lista preventivi\n\nProcedere?')) return;
+  if(!confirm('Annullare questo contratto?\n\nAnnullare = il cliente ha RINUNCIATO all\u0027acquisto.\n\n\u2022 Il veicolo torna DISPONIBILE in magazzino\n\u2022 Vengono cancellati i pagamenti del contratto\n\u2022 Il preventivo resta in archivio come RINUNCIATO\n\u2022 NESSUN promemoria (WhatsApp, email, CRM) verr\u00e0 pi\u00f9 inviato\n\nProcedere?')) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return; var cv=list[idx];
   if(cv.autoId && typeof mzLoad==="function"){ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;}); if(mi>=0){ ml[mi].impegnata=false; ml[mi].impegnataDa=null; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof mzSupaUpsert==="function") mzSupaUpsert(ml[mi]); } }
   cv.isContratto=false; cv.statoVendita=null; cv.pagamenti=[]; cv.contrattoTs=null; cv.consegnatoTs=null; cv.fattura=null; cv.updatedAt=Date.now();
+  /* Cliente rinunciato: si spengono TUTTE le automazioni collegate.
+     mailDaInviareAt=null blocca la mail di follow-up, waFatto=true chiude
+     eventuali solleciti WhatsApp gia' in coda, rinunciato esclude il record
+     da ogni ciclo futuro (cvCheckPromemoriaWa, cvCheckMailPreventivi, CRM). */
+  cv.rinunciato=true; cv.rinunciatoTs=Date.now(); cv.mailDaInviareAt=null; cv.waFatto=true;
   cvSave(list);
   if(typeof supaUpsert==="function") supaUpsert("preventivi", cv);
   if(typeof cvVendRender==="function") cvVendRender();
   if(typeof cvVendBadge==="function") cvVendBadge();
   if(typeof cvRender==="function") cvRender();
-  if(typeof tcToastNew==="function") tcToastNew("Contratto annullato \u2014 auto liberata, preventivo mantenuto",true);
+  if(typeof tcToastNew==="function") tcToastNew("Contratto annullato \u2014 cliente rinunciato, nessun promemoria verr\u00e0 inviato",true);
 }
 
 /* ===================== ELIMINAZIONE DEMO (veicolo consegnato) ===================== */
@@ -18584,7 +18637,8 @@ function crmArchCardHTML(titolo, anag, docs){
     var contatti=[];
     if(anag.telefono) contatti.push('<a href="tel:'+docEsc(anag.telefono)+'" style="color:#1a4fa0;font-weight:700;text-decoration:none;">\ud83d\udcde '+docEsc(anag.telefono)+'</a>');
     if(anag.email) contatti.push('<a href="mailto:'+docEsc(anag.email)+'" style="color:#1a4fa0;font-weight:700;text-decoration:none;">\u2709\ufe0f '+docEsc(anag.email)+'</a>');
-    var ind=[anag.indirizzo,anag.cap,anag.citta,anag.prov].filter(Boolean).join(' ');
+    var _i0=(anag.indirizzi&&anag.indirizzi[0])||{};
+    var ind=[_i0.via,_i0.civico,_i0.cap,_i0.citta,_i0.prov].filter(Boolean).join(' ');
     if(ind) contatti.push('<span style="color:#64748b;">\ud83d\udccd '+docEsc(ind)+'</span>');
     var fisc=[anag.piva?('P.IVA '+anag.piva):null, anag.cf?('CF '+anag.cf):null].filter(Boolean).join(' \u00b7 ');
     if(fisc) contatti.push('<span style="color:#64748b;">'+docEsc(fisc)+'</span>');
@@ -18601,8 +18655,9 @@ function crmArchCerca(){
   if(q.length<2){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Digita almeno 2 lettere per cercare.</div>'; return; }
   var sb=sbClient(); if(!sb){ box.innerHTML='<div style="font-size:12px;color:#dc2626;">Archivio non disponibile.</div>'; return; }
   box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Cerco\u2026</div>';
+  var qs=q.replace(/[,()]/g,' ').trim();
   Promise.all([
-    sb.from('clienti_app').select('id,data').ilike('data->>chiave','%'+q+'%').limit(60),
+    sb.from('clienti_app').select('id,data').or('data->>cognome.ilike.%'+qs+'%,data->>nome.ilike.%'+qs+'%,data->>ragSociale.ilike.%'+qs+'%').limit(60),
     sb.from('documenti').select('*').eq('entita_tipo','cliente').ilike('entita_id','%'+q+'%')
       .order('entita_id',{ascending:true}).order('created_at',{ascending:false}).limit(400)
   ]).then(function(rs){
@@ -18612,11 +18667,16 @@ function crmArchCerca(){
       var byKey={}; docs.forEach(function(d){ var k=d.entita_id||'\u2014'; (byKey[k]=byKey[k]||[]).push(d); });
       var usati={}; var h='';
       anas.forEach(function(c){
-        var a=c.data||{}; var k=a.chiave||''; if(usati['A'+k])return; usati['A'+k]=1; usati[k]=1;
-        var tit=k+(String(a.tipologia||'').toLowerCase()==='azienda'?' \ud83c\udfe2':'');
+        var a=c.data||{}; var k=c.id||''; if(usati['A'+k])return; usati['A'+k]=1; usati[k]=1;
+        var tit=(a.business&&a.ragSociale)?(a.ragSociale+' \ud83c\udfe2'):(((a.cognome||'')+' '+(a.nome||'')).trim()||k);
         h+=crmArchCardHTML(tit, a, byKey[k]||[]);
       });
-      Object.keys(byKey).forEach(function(k){ if(!usati[k]) h+=crmArchCardHTML(k, null, byKey[k]); });
+      Object.keys(byKey).forEach(function(k){ if(usati[k]) return;
+        var tit=k;
+        if(/^nc?:/.test(k)) tit=k.replace(/^nc?:/,'').replace(/#.*$/,'').split('|').reverse().join(' ').toUpperCase().trim()||k;
+        if(/^rc?:/.test(k)) tit=k.replace(/^rc?:/,'').replace(/#.*$/,'').toUpperCase();
+        h+=crmArchCardHTML(tit, null, byKey[k]);
+      });
       if(!h){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessun cliente o documento trovato per \u00ab'+docEsc(q)+'\u00bb.</div>'; return; }
       box.innerHTML=h+(docs.length>=400?'<div style="font-size:12px;color:#94a3b8;">Mostro i primi 400 documenti: restringi la ricerca.</div>':'');
     });
@@ -18742,7 +18802,7 @@ function crmScaduto(key){
     /* i preventivi di questo contatto: stesso criterio del promemoria WhatsApp */
     var now=Date.now();
     return (typeof cvLoad==='function'?cvLoad():[]).some(function(p){
-      if(!p || p.isContratto) return false;
+      if(!p || p.isContratto || p.rinunciato) return false;
       if(crmKey(p.cliente||{})!==key) return false;
       if(p.waFatto) return false;
       var base=p.createdAt||0;
