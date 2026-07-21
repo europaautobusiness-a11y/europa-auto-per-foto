@@ -11435,7 +11435,9 @@ function sinForm(id){
   html+='<div id="sinf-sugg" style="margin:-6px 0 10px;"></div>';
   html+='<div id="sinf-doc" style="margin:0 0 12px;"></div>';
   html+=f('Residenza (per la cessione)','residenza','text','Cesano Maderno (MB), Via …');
+  html+='<div id="sinf-veicsel" style="margin:2px 0 8px;"></div>';
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa','targa','text','GX873JH')+'</div><div style="flex:1.4;">'+f('Modello','modello','text','Ford Puma 1.0')+'</div></div>';
+  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Telaio','telaio','text','')+'</div><div style="flex:1;">'+f('Immatricolazione','immatricolazione','text','gg/mm/aaaa')+'</div></div>';
   html+=f('Compagnia assicurativa','compagnia','text','');
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria','finanziaria','text','')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
   html+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px;font-size:13px;color:#475569;cursor:pointer;"><input type="checkbox" id="sinf-online" '+(s.peritoOnline?'checked':'')+' onchange="sinToggleOnline()" style="width:18px;height:18px;"> 💻 Perito online (senza appuntamento)</label>';
@@ -11459,8 +11461,8 @@ function sinForm(id){
   m.innerHTML=html; m.style.display='block';
   window._sinfClienteKey = s.clienteKey || '';
   var _nEl=document.getElementById('sinf-nome');
-  if(_nEl){ _nEl.addEventListener('input', function(){ window._sinfClienteKey=''; sinClienteSuggerisci(); sinFormDocRender(); }); }
-  if(window._sinfClienteKey){ sinClienteSuggBox('<div style="font-size:12px;color:#16a34a;font-weight:700;padding:4px 2px;">\u2713 Cliente collegato all\'anagrafica</div>'); }
+  if(_nEl){ _nEl.addEventListener('input', function(){ window._sinfClienteKey=''; sinClienteSuggerisci(); sinFormDocRender(); var _vb=document.getElementById('sinf-veicsel'); if(_vb) _vb.innerHTML=''; }); }
+  if(window._sinfClienteKey){ sinClienteSuggBox('<div style="font-size:12px;color:#16a34a;font-weight:700;padding:4px 2px;">\u2713 Cliente collegato all\'anagrafica</div>'); sinVeicoliRender(window._sinfClienteKey); }
   sinFormDocRender();
 }
 
@@ -11506,7 +11508,56 @@ function sinClienteScegli(keyEnc){
     }
     sinClienteSuggBox('<div style="font-size:12px;color:#16a34a;font-weight:700;padding:4px 2px;">\u2713 Collegato: qui sotto i suoi documenti, puoi allegarne subito</div>');
     sinFormDocRender();
+    sinVeicoliRender(key);
   }catch(e){}
+}
+function sinVeicScrivi(v){
+  var setV=function(id,val){ var el=document.getElementById('sinf-'+id); if(el) el.value=val||''; };
+  setV('targa', v.targa); setV('modello', v.modello); setV('telaio', v.telaio); setV('immatricolazione', v.dataImm);
+}
+function sinVeicoliData(key){
+  var out=[];
+  try{
+    if(typeof clFind!=='function') return out;
+    var c=clFind(key); if(!c) return out;
+    var fonti=(c.contratti||[]).concat(c.preventivi||[]);
+    var visti={};
+    fonti.forEach(function(cv){
+      var a=cv.autoSnapshot||{};
+      var targa=a.targa||cv.nuovaTarga||''; var modello=a.modello||cv.autoDesc||cv.veicolo||'';
+      var telaio=a.telaio||''; var dataImm=a.dataImm||'';
+      if(!targa && !modello && !telaio) return;
+      var k=(targa||'')+'|'+(telaio||'')+'|'+(modello||'');
+      if(visti[k]) return; visti[k]=1;
+      out.push({targa:targa, modello:String(modello).trim(), telaio:telaio, dataImm:dataImm, contratto:!!cv.isContratto});
+    });
+  }catch(e){}
+  return out;
+}
+function sinVeicoliRender(key){
+  var box=document.getElementById('sinf-veicsel'); if(!box) return;
+  var vs=sinVeicoliData(key);
+  if(!vs.length){ box.innerHTML=''; return; }
+  if(vs.length===1){ sinVeicScrivi(vs[0]);
+    box.innerHTML='<div style="font-size:12px;color:#16a34a;font-weight:700;padding:3px 2px;">\ud83d\ude97 Veicolo compilato dall\'anagrafica: '+sinEsc(vs[0].targa||vs[0].modello)+'</div>';
+    return;
+  }
+  window._sinVeic=vs;
+  box.innerHTML='<div style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:8px 9px;">'
+    +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;margin-bottom:5px;">QUESTO CLIENTE HA PI\u00d9 VEICOLI \u2014 scegli quello del sinistro:</div>'
+    +vs.map(function(v,i){
+      var et=[v.targa, v.modello].filter(Boolean).join(' \u00b7 ');
+      return '<div onclick="sinVeicScegli('+i+')" style="padding:7px 8px;border:1px solid #dbeafe;border-radius:7px;margin-bottom:4px;background:#fff;cursor:pointer;">'
+        +'<span style="font-weight:800;font-size:13px;">'+sinEsc(et||'veicolo')+'</span>'
+        +(v.telaio?('<span style="font-size:11px;color:#64748b;"> \u2014 telaio '+sinEsc(v.telaio)+'</span>'):'')
+        +(v.contratto?'':' <span style="font-size:10px;color:#b45309;">(da preventivo)</span>')+'</div>';
+    }).join('')+'</div>';
+}
+function sinVeicScegli(i){
+  var vs=window._sinVeic||[]; var v=vs[i]; if(!v) return;
+  sinVeicScrivi(v);
+  var box=document.getElementById('sinf-veicsel');
+  if(box) box.innerHTML='<div style="font-size:12px;color:#16a34a;font-weight:700;padding:3px 2px;">\ud83d\ude97 Veicolo selezionato: '+sinEsc(v.targa||v.modello)+'</div>';
 }
 function sinFormDocRender(){
   var box=document.getElementById('sinf-doc'); if(!box) return;
@@ -11533,6 +11584,7 @@ function sinSalva(id, isNew){
   s.compagnia=g('compagnia'); s.finanziaria=g('finanziaria'); s.perito=g('perito');
   var _on=document.getElementById('sinf-online'); s.peritoOnline=_on?_on.checked:false;
   s.clienteKey=_ck;
+  s.telaio=g('telaio'); s.immatricolazione=g('immatricolazione');
   s.appuntamento=s.peritoOnline?'':g('appuntamento'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
   var idx=list.findIndex(function(x){return x.id===id;});
@@ -12968,10 +13020,20 @@ function mzSalva(){
   /* Notifica del veicolo nuovo tolta su richiesta: restano permuta e perizia. */
   if(false && _isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
 }
+var MZ_DEL_KEY='ea_magazzino_deleted_v1';
+var _mzDeleted={};
+try{ (JSON.parse(localStorage.getItem(MZ_DEL_KEY)||'[]')||[]).forEach(function(i){ _mzDeleted[i]=true; }); }catch(e){}
+function mzSegnaDeleted(id){
+  _mzDeleted[id]=true;
+  try{ localStorage.setItem(MZ_DEL_KEY, JSON.stringify(Object.keys(_mzDeleted).slice(-800))); }catch(e){}
+  try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert({ id:String(id), deleted:true, updatedAt:Date.now() }); }catch(e){}
+}
 function mzElimina(id){
   if(!confirm('Eliminare questa auto dal magazzino?')) return;
+  mzSegnaDeleted(id);
   mzSave(mzLoad().filter(function(a){return a.id!==id;}));
   mzChiudi(); mzRender();
+  if(typeof tcToastNew==='function') tcToastNew('🗑 Auto eliminata dal magazzino',true);
 }
 
 
@@ -14236,6 +14298,20 @@ function cvValidaPermuta(){
   if(manc.length){ alert('Permuta: compila TUTTI i dati obbligatori.\nMancano: '+manc.map(function(r){return r[1];}).join(', ')); return false; }
   return true;
 }
+function cvEliminaPeriziaPermuta(cv){
+  try{
+    if(!cv || typeof pmLoad!=='function') return;
+    var pid = (cv.permuta && cv.permuta.periziaId) || null;
+    var list = pmLoad();
+    var da = list.filter(function(p){ return p && ( (pid && p.id===pid) || p.origineContrattoId===cv.id ); });
+    if(!da.length) return;
+    da.forEach(function(p){ try{ if(typeof pmAddTombstone==='function') pmAddTombstone(p.id); }catch(e){}
+      try{ if(typeof GS_URL!=='undefined' && GS_URL && typeof gsDelete==='function') gsDelete(PERMUTE_SHEET, p.id); }catch(e){} });
+    var ids={}; da.forEach(function(p){ ids[p.id]=1; });
+    pmSave(pmLoad().filter(function(p){ return !ids[p.id]; }));
+    if(typeof pmRender==='function'){ try{ pmRender(); }catch(e){} }
+  }catch(e){}
+}
 function cvCreaPeriziaDaPermuta(cv){
   try{
     if(!cv || !cv.permutaOn || !cv.permuta) return;
@@ -14285,7 +14361,7 @@ function cvSegnaDeleted(id){
      copie locali degli altri dispositivi e il record non "risorge" */
   try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', { id:id, deleted:true, updatedAt:Date.now() }); }catch(e){}
 }
-function cvElimina(id){ if(!confirm('Eliminare definitivamente questo preventivo?')) return; cvSegnaDeleted(id); cvSave(cvLoad().filter(function(x){return x.id!==id;})); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
+function cvElimina(id){ if(!confirm('Eliminare definitivamente questo preventivo?')) return; var _cvp=cvLoad().filter(function(x){return x.id===id;})[0]; if(_cvp) cvEliminaPeriziaPermuta(_cvp); cvSegnaDeleted(id); cvSave(cvLoad().filter(function(x){return x.id!==id;})); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
 
 function cvStampa(tipo){
   cvSync();
@@ -17964,9 +18040,9 @@ function mzSupaLoad(){
   var sb=sbClient(); if(!sb){ if(typeof mzRender==='function') mzRender(); return; }
   try{ sb.from('magazzino').select('id,data').then(function(res){
     if(!res||res.error){ if(res&&res.error) console.log('magazzino load:',res.error.message); if(typeof mzRender==='function') mzRender(); return; }
-    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; onDb[d.id]=true; } });
+    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id && d.deleted!==true && !(_mzDeleted&&_mzDeleted[d.id])){ byId[d.id]=d; onDb[d.id]=true; } });
     var locals=mzLoad(), localOnly=[];
-    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]){ byId[r.id]=r; localOnly.push(r); } });
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]&&!(_mzDeleted&&_mzDeleted[r.id])){ byId[r.id]=r; localOnly.push(r); } });
     mzSave(Object.keys(byId).map(function(k){return byId[k];}));
     localOnly.forEach(function(r){ mzSupaUpsert(r); });
     if(typeof mzRender==='function') mzRender();
@@ -18527,6 +18603,7 @@ function cvVendEliminaConsegnato2(id){
   if(_cvDelConfirm!==id){ _cvDelConfirm=id; if(s2) s2.style.display='block'; if(btn){ btn.textContent='CONFERMA ELIMINAZIONE'; btn.style.background='#991b1b'; } return; }
   _cvDelConfirm=null;
   var list=cvLoad(); var cv=list.filter(function(x){return x.id===id;})[0];
+  if(cv) cvEliminaPeriziaPermuta(cv);
   if(cv && cv.autoId && typeof mzLoad==='function'){ var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;}); if(mi>=0){ ml[mi].stato='disponibile'; ml[mi].impegnata=false; ml[mi].impegnataDa=null; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[mi]); } }
   if(typeof cvSegnaDeleted==='function') cvSegnaDeleted(id); else if(typeof _cvDeleted!=='undefined') _cvDeleted[id]=true;
   cvSave(list.filter(function(x){return x.id!==id;}));
