@@ -4581,12 +4581,42 @@ function updateCounts(){
 function saveReady(d){
   localStorage.setItem(READY_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportPronti', d); // salva anche su Sheets
+  gsSave('ReportPronti', d); // salva anche su Sheets (legacy)
+  repSupaPush('report_pronti_app', d);
 }
 function saveSent(d){
   localStorage.setItem(SENT_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportInviati', d); // salva anche su Sheets
+  gsSave('ReportInviati', d); // salva anche su Sheets (legacy)
+  repSupaPush('report_inviati_app', d);
+}
+
+/* ---- Report pronti/inviati sul cloud (Supabase) ----
+   Stesso schema delle altre tabelle: {id text PK, data jsonb}.
+   Sheets resta come doppione finche' non si dismette Apps Script. */
+function repSupaPush(table, arr){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    var rows=(arr||[]).filter(function(r){return r&&r.id!=null;}).map(function(r){ return { id:String(r.id), data:r }; });
+    if(!rows.length) return;
+    sb.from(table).upsert(rows).then(function(res){
+      if(res&&res.error&&typeof supaSegnalaErrore==='function') supaSegnalaErrore(table, res.error.message);
+    }, function(err){ if(typeof supaSegnalaErrore==='function') supaSegnalaErrore(table, (err&&err.message)||err); });
+  }catch(e){}
+}
+/* Cancellazione con lapide: cosi' gli altri dispositivi non fanno
+   risorgere il report eliminato alla prossima sincronizzazione. */
+function repSupaTomba(table, id){
+  try{ if(typeof supaUpsert==='function') supaUpsert(table, { id:String(id), deleted:true, updatedAt:Date.now() }); }catch(e){}
+}
+function repSupaLoad(){
+  if(typeof supaLoadList!=='function') return;
+  supaLoadList('report_pronti_app', loadReady, function(arr){
+    try{ localStorage.setItem(READY_KEY, JSON.stringify(arr.filter(function(x){return x && x.deleted!==true;}).sort(function(a,b){return (b.id||0)-(a.id||0);}))); }catch(e){}
+  }, function(){ try{ updateCounts(); var v=document.getElementById('view-ready'); if(v && v.classList.contains('active')) renderReady(''); }catch(e){} });
+  supaLoadList('report_inviati_app', loadSent, function(arr){
+    try{ localStorage.setItem(SENT_KEY, JSON.stringify(arr.filter(function(x){return x && x.deleted!==true;}).sort(function(a,b){return (b.id||0)-(a.id||0);}))); }catch(e){}
+  }, function(){ try{ updateCounts(); var v=document.getElementById('view-archive'); if(v && v.classList.contains('active')) renderArchive(''); }catch(e){} });
 }
 
 // Carica da Sheets e aggiorna localStorage (chiamato all'avvio)
@@ -5156,6 +5186,7 @@ function deleteReady(id){
   if(!confirm('Eliminare questo report dalla lista pronti?')) return;
   saveReady(loadReady().filter(x => x.id!==id));
   gsDelete('ReportPronti', id);
+  repSupaTomba('report_pronti_app', id);
   renderReady('');
 }
 
@@ -5215,6 +5246,7 @@ function deleteSent(id){
   if(rec && rec.targa) deleteFotoFromDrive(rec.targa);
   saveSent(loadSent().filter(x => x.id!==id));
   gsDelete('ReportInviati', id);
+  repSupaTomba('report_inviati_app', id);
   renderArchive('');
 }
 
@@ -9848,8 +9880,8 @@ function sidebarNav(view,btn){
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
-  if(view==='ready'){updateCounts();renderReady('');}
-  if(view==='archive'){updateCounts();renderArchive('');}
+  if(view==='ready'){updateCounts();renderReady(''); try{ if(typeof repSupaLoad==='function') repSupaLoad(); }catch(e){}}
+  if(view==='archive'){updateCounts();renderArchive(''); try{ if(typeof repSupaLoad==='function') repSupaLoad(); }catch(e){}}
   if(view==='provv'){pSupaLoad();pLoadFromGS();pCalcola();}
   if(view==='foto'){
     // Carica automaticamente da Drive se connesso
@@ -10821,7 +10853,7 @@ document.addEventListener('DOMContentLoaded',function(){
               +(c.nota?('<p><i>'+ccEsc(c.nota)+'</i></p>'):'')
               +'<p style="color:#991b1b;font-weight:700;">I solleciti automatici si fermano qui.</p>';
             eaInviaMessaggio({
-              to: 'europaautobusiness@gmail.com',
+              to: 'amministrazione@europaautosrl.it',
               subject: '\u26a0\ufe0f Mansione non eseguita dopo '+n+' solleciti \u2014 '+(c.dipNome||''),
               html: (typeof eaMailWrap==='function'?eaMailWrap(_eH):_eH)
             }).then(function(r){ if(r && r.error) console.log('escalation mail:', r.error); },
@@ -12696,12 +12728,25 @@ function gsearchRun(){
     return blob.indexOf(q)>=0;
   });
   cres.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
-  if(!res.length && !cres.length){ box.innerHTML='<div style="padding:14px;font-size:13px;color:#94a3b8;">Nessun risultato per \u201c'+mzEsc(q)+'\u201d</div>'; box.style.display='block'; return; }
+  // ---- ANAGRAFICA CLIENTI ----
+  /* I clienti importati da SICOM non hanno pratiche, quindi la ricerca
+     sulle pratiche non li trova mai: si cerca anche nell'anagrafica. */
+  var ares=[];
+  try{
+    var _st=(typeof clStore==='function')?clStore():{};
+    Object.keys(_st).forEach(function(k){
+      var e=_st[k]; if(!e||typeof e!=='object'||e.deleted===true) return;
+      var blob=((e.cognome||'')+' '+(e.nome||'')+' '+(e.ragSociale||'')+' '+(e.telefono||'')+' '+(e.email||'')).toLowerCase();
+      if(blob.indexOf(q)>=0) ares.push({key:k, cl:e});
+    });
+  }catch(e){}
+  if(!res.length && !cres.length && !ares.length){ box.innerHTML='<div style="padding:14px;font-size:13px;color:#94a3b8;">Nessun risultato per \u201c'+mzEsc(q)+'\u201d</div>'; box.style.display='block'; return; }
   var h='';
   // sezione CLIENTI (anagrafica)
-  if(cres.length && typeof clKeyOf==='function'){
+  if((cres.length||ares.length) && typeof clKeyOf==='function'){
     var _seenCl={}, _clienti=[];
     cres.forEach(function(c){ var cl=c.cliente||{}; var k=clKeyOf(cl); if(!k||_seenCl[k]) return; _seenCl[k]=1; _clienti.push({key:k, cl:cl}); });
+    ares.forEach(function(o){ if(!o.key||_seenCl[o.key]) return; _seenCl[o.key]=1; _clienti.push(o); });
     if(_clienti.length){
       h+='<div style="padding:8px 12px;font-size:11px;font-weight:800;color:#475569;border-bottom:1px solid #f1f5f9;background:#f8fafc;">Clienti ('+_clienti.length+')</div>';
       h+=_clienti.slice(0,10).map(function(o){
@@ -14123,6 +14168,27 @@ function cvCheckPromemoriaWa(){
             : ('Sollecito '+(_n+1)+'/'+WA_RIP_MAX+': messaggio WhatsApp a '+nome+' ancora da inviare \u2014 '+auto);
           /* E' un compito di vendita: non riguarda la contabilita'. */
           try{ if(typeof notifPush==='function') notifPush(_txt, '\uD83D\uDCAC', {tipo:'wa_prom', refId:p.id, ruoli:['admin','staff','manager']}); }catch(e){}
+          /* Decimo e ultimo sollecito: i promemoria si fermano e parte
+             la mail all'amministratore. Una sola volta per preventivo. */
+          if((_n+1)>=WA_RIP_MAX && !p.waEscalMail){
+            p.waEscalMail=true; p.waEscalMailTs=now;
+            try{
+              if(typeof eaInviaMessaggio==='function'){
+                var _wEsc='<p>Il messaggio WhatsApp qui sotto non risulta ancora inviato dopo '+WA_RIP_MAX+' solleciti.</p>'
+                  +'<p style="font-size:16px;font-weight:700;">'+nome+' \u2014 '+auto+'</p>'
+                  +'<p><b>Telefono cliente:</b> '+((p.cliente&&p.cliente.telefono)||'?')+'<br>'
+                  +'<b>Preventivo creato il:</b> '+new Date(base).toLocaleDateString('it-IT')+'</p>'
+                  +'<p style="color:#991b1b;font-weight:700;">I solleciti automatici si fermano qui. Apri il preventivo nel gestionale e invia il messaggio, oppure segnalo come fatto.</p>';
+                eaInviaMessaggio({
+                  to: 'amministrazione@europaautosrl.it',
+                  subject: '\u26a0\ufe0f WhatsApp non inviato dopo '+WA_RIP_MAX+' solleciti \u2014 '+nome,
+                  html: (typeof eaMailWrap==='function'?eaMailWrap(_wEsc):_wEsc)
+                }).then(function(r){ if(r && r.error) console.log('wa escalation mail:', r.error); },
+                        function(e){ console.log('wa escalation mail:', e && e.message); });
+              }
+            }catch(e){}
+            try{ if(typeof notifPush==='function') notifPush('\u26a0\uFE0F WhatsApp a '+nome+' mai inviato dopo '+WA_RIP_MAX+' solleciti \u2014 '+auto+'. Mail inviata all\u2019amministratore.', '\u26A0\uFE0F', {tipo:'wa_esc', refId:p.id, ruoli:['admin']}); }catch(e){}
+          }
         }
       }
     });
@@ -14857,7 +14923,7 @@ function fnSalva(){
   if(typeof fnRender==='function') fnRender();
   if(ret==='auto' && typeof mzFornitoreRefresh==='function'){ mzFornitoreRefresh(f.id); }
 }
-function fnElimina(id){ if(!confirm('Eliminare questo fornitore?')) return; fnSave(fnLoad().filter(function(x){return x.id!==id;})); fnSupaDelete(id); fnChiudi(); fnRender(); }
+function fnElimina(id){ if(!confirm('Eliminare questo fornitore?')) return; fnSave(fnLoad().filter(function(x){return x.id!==id;})); try{ fnSupaUpsert({ id:String(id), deleted:true, updatedAt:Date.now() }); }catch(e){} fnChiudi(); fnRender(); }
 function fnOptions(selId){ return '<option value="">— nessuno —</option>'+fnLoad().sort(function(a,b){return (a.ragione||'').localeCompare(b.ragione||'');}).map(function(f){ return '<option value="'+f.id+'"'+(selId===f.id?' selected':'')+'>'+fnEsc(f.ragione)+'</option>'; }).join(''); }
 
 /* ===================== PARAMETRI ===================== */
@@ -14917,6 +14983,8 @@ function diagSync(){
     ['dipendenti',  'Dipendenti',             function(){ return loadDipendenti().length; }],
     ['utenti',      'Utenti e permessi',      function(){ return JSON.parse(localStorage.getItem('ea_utenti_app')||'[]').length; }],
     ['notifiche',   'Notifiche',              function(){ return notifLoad().length; }],
+    ['report_pronti_app',  'Report pronti',   function(){ return loadReady().length; }],
+    ['report_inviati_app', 'Report inviati',  function(){ return loadSent().length; }],
     ['config',      'Template e sedi',        function(){ return null; }]
   ];
 
@@ -14988,6 +15056,7 @@ function diagRicarica(){
   try{ if(typeof permSupaLoad==='function') permSupaLoad(); }catch(e){}
   try{ if(typeof revSupaLoad==='function') revSupaLoad(); }catch(e){}
   try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
+  try{ if(typeof repSupaLoad==='function') repSupaLoad(); }catch(e){}
   setTimeout(function(){ if(out) out.innerHTML='\u2705 Ricarica avviata. Riapri Preventivi/Fornitori per vedere i dati. Premi di nuovo \u201cVerifica\u201d per ricontrollare i conteggi.'; }, 500);
 }
 function parInit(){
@@ -18040,9 +18109,11 @@ function mzSupaLoad(){
   var sb=sbClient(); if(!sb){ if(typeof mzRender==='function') mzRender(); return; }
   try{ sb.from('magazzino').select('id,data').then(function(res){
     if(!res||res.error){ if(res&&res.error) console.log('magazzino load:',res.error.message); if(typeof mzRender==='function') mzRender(); return; }
-    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id && d.deleted!==true && !(_mzDeleted&&_mzDeleted[d.id])){ byId[d.id]=d; onDb[d.id]=true; } });
+    var byId={}, tombe={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(!d||!d.id) return; if(d.deleted===true){ tombe[d.id]=true; return; } if(!(_mzDeleted&&_mzDeleted[d.id])){ byId[d.id]=d; } });
     var locals=mzLoad(), localOnly=[];
-    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]&&!(_mzDeleted&&_mzDeleted[r.id])){ byId[r.id]=r; localOnly.push(r); } });
+    /* la lapide sul cloud vince sulla copia locale: cosi' un dispositivo
+       rimasto indietro non fa risorgere un'auto eliminata altrove */
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]&&!tombe[r.id]&&!(_mzDeleted&&_mzDeleted[r.id])){ byId[r.id]=r; localOnly.push(r); } });
     mzSave(Object.keys(byId).map(function(k){return byId[k];}));
     localOnly.forEach(function(r){ mzSupaUpsert(r); });
     if(typeof mzRender==='function') mzRender();
@@ -18055,9 +18126,9 @@ function fnSupaLoad(){
   var sb=sbClient(); if(!sb){ if(typeof fnRender==='function') fnRender(); return; }
   try{ sb.from('fornitori').select('id,data').then(function(res){
     if(!res||res.error){ if(res&&res.error) console.log('fornitori load:',res.error.message); if(typeof fnRender==='function') fnRender(); return; }
-    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id){ byId[d.id]=d; onDb[d.id]=true; } });
+    var byId={}, tombe={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(!d||!d.id) return; if(d.deleted===true){ tombe[d.id]=true; return; } byId[d.id]=d; });
     var locals=fnLoad(), localOnly=[];
-    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]){ byId[r.id]=r; localOnly.push(r); } });
+    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]&&!tombe[r.id]){ byId[r.id]=r; localOnly.push(r); } });
     fnSave(Object.keys(byId).map(function(k){return byId[k];}));
     localOnly.forEach(function(r){ fnSupaUpsert(r); });
     if(typeof fnRender==='function') fnRender();
