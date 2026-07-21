@@ -11204,6 +11204,17 @@ function sinAggiornaCampo(id, campo, valore){
     var importo=(campo==='dataRicezioneIntegrazione')?list[idx].importoIntegrazione:list[idx].importoConcordato;
     sinNotificaBonifico(list[idx], tipo, importo);
     if(typeof tcToastNew==='function') tcToastNew('📧 Avviso bonifico inviato alla contabilità',true);
+    /* pagamento ricevuto: proponi la chiusura della pratica */
+    var _st=list[idx].stato;
+    var _chiudibile = (campo==='dataRicezione' && (_st==='saldo'||_st==='concluso')) ||
+                      (campo==='dataRicezioneIntegrazione' && (_st==='integrazione'||_st==='saldo'));
+    if(_chiudibile && confirm('Bonifico ricevuto \u2713\n\nSegnare la pratica come LIQUIDATA?')){
+      list[idx].stato='liquidato'; list[idx].liquidatoAt=Date.now();
+      sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+      _sinTab='liquidato'; if(typeof sinSetTab==='function') sinSetTab('liquidato');
+      if(typeof tcToastNew==='function') tcToastNew('\u2705 Pratica liquidata',true);
+      return;
+    }
   }
   sinRender();
 }
@@ -13014,7 +13025,7 @@ function pmiExport(cvId){
 
 /* ===================== CLIENTI (anagrafica) ===================== */
 var EA_CLIENTI_KEY='ea_clienti_v1';
-var _clFiltri={rag:'',nome:'',cognome:'',citta:''};
+var _clFiltri={q:'',rag:'',nome:'',cognome:'',citta:''};
 var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
@@ -13085,7 +13096,9 @@ function clMerge(entry, o){
 }
 function clFind(key){ var all=clAggrega(); for(var i=0;i<all.length;i++){ if(all[i].key===key) return all[i]; } return null; }
 function clInit(){ _clSel=null; clRender(); clSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
-function clSetFiltro(k,v){ _clFiltri[k]=v; clRender(); }
+function clSetFiltro(k,v){ _clFiltri[k]=v; clRender();
+  if(k==='q'){ var el=document.getElementById('cl-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length, el.value.length); }catch(e){} } }
+}
 function clApri(keyEnc){ _clSel=decodeURIComponent(keyEnc); clRender(); }
 function clChiudiDettaglio(){ _clSel=null; clRender(); }
 function clCittaAuto(){ var c=document.getElementById('cli_citta'); if(!c) return; var hit=eaComuneLookup(c.value); if(!hit) return; var cap=document.getElementById('cli_cap'); if(cap&&!(''+cap.value).trim()) cap.value=hit[0]; var p=document.getElementById('cli_prov'); if(p) p.value=hit[1]; }
@@ -13094,21 +13107,25 @@ function clRender(){
   if(_clSel){ clRenderDettaglio(); return; }
   var list=clAggrega(); var f=_clFiltri; var n=function(s){return String(s||'').toLowerCase();};
   var filt=list.filter(function(c){
-    if(f.rag && n(c.ragSociale).indexOf(n(f.rag))<0) return false;
-    if(f.nome && n(c.nome).indexOf(n(f.nome))<0) return false;
-    if(f.cognome && n(c.cognome).indexOf(n(f.cognome))<0) return false;
-    if(f.citta){ var ci=(c.indirizzi[c.indirizzi.length-1]&&c.indirizzi[c.indirizzi.length-1].citta)||''; if(n(ci).indexOf(n(f.citta))<0) return false; }
+    if(f.q){
+      var ci=(c.indirizzi&&c.indirizzi.length&&c.indirizzi[c.indirizzi.length-1].citta)||'';
+      var hay=n((c.cognome||'')+' '+(c.nome||'')+' '+(c.ragSociale||'')+' '+(c.telefono||'')+' '+(c.email||'')+' '+ci);
+      var terms=n(f.q).split(/\s+/).filter(Boolean);
+      for(var ti=0; ti<terms.length; ti++){ if(hay.indexOf(terms[ti])<0) return false; }
+    }
     return true;
   });
   filt.sort(function(a,b){ return (a.cognome||a.ragSociale||a.nome||'').localeCompare(b.cognome||b.ragSociale||b.nome||''); });
   var h='<div style="max-width:900px;margin:0 auto;">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;"><div style="font-size:20px;font-weight:800;color:#0f172a;">\ud83d\udc65 Clienti e contatti</div><button onclick="clNuovo()" style="padding:11px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">+ Nuovo cliente</button></div>';
   h+='<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;">Include automaticamente i contatti di tutti i preventivi e contratti, oltre ai clienti aggiunti a mano.</div>';
-  var inpF=function(k,ph){ return '<input value="'+clEsc(_clFiltri[k])+'" oninput="clSetFiltro(\''+k+'\',this.value)" placeholder="'+ph+'" style="flex:1;min-width:130px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">'; };
-  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">'+inpF('rag','rag. sociale')+inpF('nome','nome')+inpF('cognome','cognome')+inpF('citta','citt\u00e0')+'</div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'+filt.length+' client'+(filt.length===1?'e':'i')+'</div>';
+  h+='<input id="cl-q" value="'+clEsc(_clFiltri.q)+'" oninput="clSetFiltro(\'q\',this.value)" placeholder="\ud83d\udd0e Cerca per cognome, nome o ragione sociale\u2026" autocomplete="off" style="width:100%;padding:13px 15px;border:1.5px solid #cbd5e1;border-radius:11px;font-family:inherit;font-size:15px;box-sizing:border-box;margin-bottom:8px;">';
+  var _sugg = _clFiltri.q
+    ? (filt.length+' client'+(filt.length===1?'e trovato':'i trovati')+' per \u00ab'+clEsc(_clFiltri.q)+'\u00bb')
+    : (filt.length+' clienti \u00b7 scrivi le prime lettere del cognome, del nome o della ragione sociale');
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">'+_sugg+(filt.length>60?' \u00b7 mostro i primi 60, continua a scrivere per restringere':'')+'</div>';
   if(!filt.length){ h+='<div style="text-align:center;color:#94a3b8;padding:36px;">Nessun cliente.</div>'; }
-  else h+=filt.map(function(c){
+  else h+=filt.slice(0,60).map(function(c){
     var nomeVis=(c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()||'(senza nome)');
     return '<div onclick="clApri(\''+encodeURIComponent(c.key)+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:13px 15px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;">'
       +'<div style="min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+clEsc(nomeVis)+(c.business?' <span style="font-size:10px;font-weight:800;background:#e0e7ff;color:#3730a3;padding:1px 7px;border-radius:9px;vertical-align:middle;">AZIENDA</span>':'')+'</div>'
@@ -18057,8 +18074,57 @@ function notifPerMe(n){
     return n.ruoli.indexOf(ruolo)>=0;
   }catch(e){ return true; }
 }
+function notifValida(n){
+  /* Scarta i promemoria WhatsApp legati a preventivi eliminati, annullati, diventati contratto o gia' gestiti. */
+  try{
+    if(n && n.tipo==='wa_prom'){
+      var list=(typeof cvLoad==='function')?cvLoad():[];
+      var p=null; for(var i=0;i<list.length;i++){ if(list[i]&&list[i].id===n.refId){ p=list[i]; break; } }
+      if(!p) return false;
+      if(p.isContratto || p.annullato || p.waFatto) return false;
+    }
+  }catch(e){}
+  return true;
+}
 function notifMie(){
-  try{ return notifLoad().filter(notifPerMe); }catch(e){ return []; }
+  try{
+    var arr=notifLoad().filter(notifPerMe).filter(notifValida);
+    /* dedupe dei solleciti: per lo stesso preventivo mostra solo il piu' recente */
+    var best={}, out=[];
+    arr.forEach(function(n){
+      if(n.tipo==='wa_prom' && n.refId){
+        var k='wa_prom|'+n.refId;
+        if(!best[k] || (n.ts||0)>(best[k].ts||0)) best[k]=n;
+      } else out.push(n);
+    });
+    for(var k in best) out.push(best[k]);
+    out.sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+    return out;
+  }catch(e){ return []; }
+}
+function notifPulisci(){
+  /* Rimuove definitivamente (anche da Supabase) le notifiche non piu' valide e i solleciti duplicati. */
+  try{
+    var list=notifLoad(); if(!list.length) return;
+    var best={};
+    list.forEach(function(n){ if(n&&n.tipo==='wa_prom'&&n.refId){ var k=n.refId; if(!best[k]||(n.ts||0)>(best[k].ts||0)) best[k]=n; } });
+    var daTogliere=[];
+    var keep=list.filter(function(n){
+      if(!n) return false;
+      if(n.tipo==='wa_prom'){
+        if(!notifValida(n)){ daTogliere.push(n.id); return false; }
+        if(n.refId && best[n.refId] && best[n.refId].id!==n.id){ daTogliere.push(n.id); return false; }
+      }
+      return true;
+    });
+    if(!daTogliere.length) return;
+    notifSave(keep);
+    try{
+      var sb=(typeof sbClient==='function')?sbClient():null;
+      if(sb){ for(var i=0;i<daTogliere.length;i+=100){ sb.from('notifiche').delete().in('id', daTogliere.slice(i,i+100)).then(function(){}); } }
+    }catch(e){}
+    if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
+  }catch(e){}
 }
 function notifPush(testo, icon, extra){
   try{
@@ -18082,7 +18148,8 @@ function notifAvvia(){
       try{ mail=(typeof _currentUserEmail!=='undefined' && _currentUserEmail)?String(_currentUserEmail):''; }catch(e){}
       if(mail){
         try{ notifSync(); }catch(e){}
-        if(!window._notifTimer){ window._notifTimer=setInterval(function(){ try{ notifSync(); }catch(e){} }, 90000); }
+        setTimeout(function(){ try{ notifPulisci(); }catch(e){} }, 6000);
+        if(!window._notifTimer){ window._notifTimer=setInterval(function(){ try{ notifSync(); notifPulisci(); }catch(e){} }, 90000); }
         return;
       }
       if(Date.now()-t0 > 30000){ window._notifAvviato=false; return; }
