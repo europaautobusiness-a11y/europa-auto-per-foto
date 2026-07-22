@@ -15157,6 +15157,23 @@ function regStampa(){
 
 
 /* ===================== VENDITE / CONTRATTI (pipeline) ===================== */
+function cvFinPag(cv){
+  /* il pagamento con metodo finanziamento (quello che porta i dati del simulatore) */
+  var pags=(cv&&cv.pagamenti)||[];
+  for(var i=0;i<pags.length;i++){ if(/finanziament/i.test(pags[i].metodo||'')) return pags[i]; }
+  return null;
+}
+function cvDeliberaMancante(cv){
+  if(!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv))) return false;
+  return !(cv.finDelibera && cv.finDelibera.confermata);
+}
+function cvDatiSimulati(cv){
+  var p=cvFinPag(cv); var f=(p&&p.finDati)||{};
+  return { tan:(f.tan!=null?f.tan:''), taeg:(f.taeg!=null?f.taeg:''),
+           istruttoria:(f.istruttoria||''), polizze:(f.polizzeTotale||''),
+           importoFinanziato:(f.importoFinanziato!=null?f.importoFinanziato:(p?p.importo:'')),
+           rata:(f.rata||(p?p.importoRata:'')||''), durata:(f.durata||(p?p.rate:'')||'') };
+}
 var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_firma','In attesa firma digitale'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
 /* Manca la firma del finanziamento? Solo i contratti finanziati possono
    mancarla: gli altri non hanno niente da firmare. */
@@ -17015,6 +17032,23 @@ function simUsaNelPreventivo(){
     var nota = 'TAN '+(tan!==null?(tan*100).toFixed(2).replace('.',','):'-')+'% \u00b7 TAEG '+(taeg!==null?(taeg*100).toFixed(2).replace('.',','):'-')+'%';
     var vecchia = String(_cv.pagamenti[_simPagIdx].note||'').replace(/TAN [^\u00b7]*\u00b7 TAEG [^%]*%/,'').trim();
     _cv.pagamenti[_simPagIdx].note = (vecchia? (vecchia+' \u2014 ') : '') + nota;
+    /* Dati del finanziamento in forma strutturata: servono al controllo incrociato
+       con la provvigione inserita dal venditore e alle statistiche di marginalita'. */
+    var _pc=function(v){ return (v===null||v===undefined)?null:Math.round(v*10000)/100; };  /* frazione -> % */
+    var _im=function(c){ var n=simNum(simGet(c)); return (n===null||n===undefined)?0:Math.round(n*100)/100; };
+    _cv.pagamenti[_simPagIdx].finDati = {
+      tan: _pc(tan), taeg: _pc(taeg),
+      istruttoria: _im('C12'),
+      polizzaCpi: _im('C21'), polizzaCvt: _im('C24'), polizzaEasyCare: _im('D26'),
+      durata: durata || null,
+      rata: Math.round(rata*100)/100,
+      importoFinanziato: (function(){ var n=simNum(simGet('C6')); return (n===null||n===undefined)?null:Math.round(n*100)/100; })(),
+      aggiornatoTs: Date.now()
+    };
+    _cv.pagamenti[_simPagIdx].finDati.polizzeTotale =
+      (_cv.pagamenti[_simPagIdx].finDati.polizzaCpi||0)
+      + (_cv.pagamenti[_simPagIdx].finDati.polizzaCvt||0)
+      + (_cv.pagamenti[_simPagIdx].finDati.polizzaEasyCare||0);
     simChiudiModal();
     if(typeof cvRenderPag==='function') cvRenderPag();
     if(typeof cvLive==='function') cvLive();
@@ -17684,13 +17718,76 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
   cvVendAutoAvanza();
   if(typeof cvVendBadge==='function') cvVendBadge();
   var all=cvContratti();
-  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+CV_STATI.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
+  var _tabList=CV_STATI.concat([['_delibera','In attesa di delibera']]);
+  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=(s[0]==='_delibera')?all.filter(cvDeliberaMancante).length:all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
   if(!cvPuoConfermarePagamenti()){ tabs+='<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">Solo Amministrazione e Contabilità possono confermare i pagamenti.</div>'; }
-  var list=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
-  var body=list.length?list.map(cvVendCard).join(''):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">Nessun contratto in questo stato.</div>';
+  var list=(_cvVendStato==='_delibera')
+    ? all.filter(cvDeliberaMancante).sort(function(a,b){ return (b.contrattoTs||b.createdAt||0)-(a.contrattoTs||a.createdAt||0); })
+    : all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
+  var body=list.length?list.map(cvVendCard).join(''):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='_delibera'?'Tutte le pratiche finanziate hanno i dati della delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
   wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
 }
 
+function cvDeliberaForm(id){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  var sim=cvDatiSimulati(cv);
+  var d=cv.finDelibera||{};
+  var v=function(k,alt){ return (d[k]!==undefined && d[k]!=='' && d[k]!==null)?d[k]:(alt!==undefined?alt:''); };
+  var oggi=new Date().toISOString().slice(0,10);
+  var m=document.getElementById('cvDeliberaModal');
+  if(!m){ m=document.createElement('div'); m.id='cvDeliberaModal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
+    document.body.appendChild(m); }
+  var inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var lab='display:block;font-size:10px;font-weight:700;color:#64748b;margin:9px 0 3px;text-transform:uppercase;';
+  var hint=function(x){ return (x===''||x===null||x===undefined)?'':('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">simulato: '+x+'</div>'); };
+  var h='<div style="max-width:520px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
+   +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
+   +'<span style="font-weight:800;">Dati della delibera</span>'
+   +'<button onclick="cvDeliberaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
+   +'<div style="padding:16px 18px;max-height:74vh;overflow:auto;">'
+   +'<div style="font-size:12.5px;color:#64748b;margin-bottom:6px;">Inserisci i valori <b>effettivamente deliberati</b> dalla finanziaria. I campi sono precompilati con la simulazione: correggi ci\u00f2 che \u00e8 cambiato.</div>'
+   +'<label style="'+lab+'">Finanziaria</label><input id="dl_finanziaria" style="'+inp+'" value="'+String(v('finanziaria',cv.finanziaria||'')).replace(/"/g,'&quot;')+'">'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">TAN %</label><input id="dl_tan" type="number" step="0.01" style="'+inp+'" value="'+v('tan',sim.tan)+'">'+hint(sim.tan!==''?String(sim.tan).replace('.',',')+'%':'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">TAEG %</label><input id="dl_taeg" type="number" step="0.01" style="'+inp+'" value="'+v('taeg',sim.taeg)+'">'+hint(sim.taeg!==''?String(sim.taeg).replace('.',',')+'%':'')+'</div></div>'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Importo finanziato \u20ac</label><input id="dl_importo" type="number" step="0.01" style="'+inp+'" value="'+v('importoFinanziato',sim.importoFinanziato)+'">'+hint(sim.importoFinanziato!==''?sim.importoFinanziato+' \u20ac':'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac</label><input id="dl_rata" type="number" step="0.01" style="'+inp+'" value="'+v('rata',sim.rata)+'">'+hint(sim.rata!==''?sim.rata+' \u20ac':'')+'</div></div>'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate</label><input id="dl_durata" type="number" style="'+inp+'" value="'+v('durata',sim.durata)+'">'+hint(sim.durata||'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+v('istruttoria',sim.istruttoria)+'">'+hint(sim.istruttoria!==''?sim.istruttoria+' \u20ac':'')+'</div></div>'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Polizze \u20ac</label><input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+v('polizze',sim.polizze)+'">'+hint(sim.polizze!==''?sim.polizze+' \u20ac':'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Data delibera</label><input id="dl_data" type="date" style="'+inp+'" value="'+v('data',oggi)+'"></div></div>'
+   +'<label style="'+lab+'">Numero pratica finanziaria</label><input id="dl_pratica" style="'+inp+'" value="'+String(v('numeroPratica','')).replace(/"/g,'&quot;')+'">'
+   +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(v('note','')).replace(/"/g,'&quot;')+'">'
+   +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
+   +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
+   +'</div></div>';
+  m.innerHTML=h; m.style.display='flex';
+}
+function cvDeliberaChiudi(){ var m=document.getElementById('cvDeliberaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+function cvDeliberaSalva(id){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  var g=function(k){ var el=document.getElementById('dl_'+k); return el?el.value.trim():''; };
+  var n=function(k){ var x=parseFloat(g(k)); return isNaN(x)?null:x; };
+  if(n('tan')===null || n('importo')===null){ alert('Inserisci almeno TAN e importo finanziato deliberati.'); return; }
+  var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
+  list[i].finDelibera={ confermata:true, finanziaria:g('finanziaria'), tan:n('tan'), taeg:n('taeg'),
+    importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
+    polizze:n('polizze'), data:g('data'), numeroPratica:g('pratica'), note:g('note'),
+    inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
+  list[i].updatedAt=Date.now();
+  cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
+  cvDeliberaChiudi();
+  if(typeof cvVendRender==='function') cvVendRender();
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Delibera registrata',true);
+}
+function cvDeliberaAnnulla(id){
+  if(!confirm('Annullare la conferma della delibera? La pratica torner\u00e0 tra quelle in attesa.')) return;
+  var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
+  if(list[i].finDelibera) list[i].finDelibera.confermata=false;
+  list[i].updatedAt=Date.now();
+  cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
+  cvDeliberaChiudi(); if(typeof cvVendRender==='function') cvVendRender();
+}
 function cvApriAuto(autoId){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   if(!autoId){ if(typeof tcToastNew==='function') tcToastNew('Nessuna auto collegata a questa pratica',false); return; }
@@ -17789,6 +17886,14 @@ function cvVendCard(cv){
     var _fTit=_fOk?((cv.firmaDigitale.data?('Firma del '+String(cv.firmaDigitale.data).split('-').reverse().join('/')):'Firma confermata')+(cv.firmaDigitale.auto?' \u00b7 rilevata da Gmail':'')):'Firma del finanziamento ancora da fare';
     firmaTag='<span title="'+_fTit+'" style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_fOk?'#dcfce7':'#fee2e2')+';color:'+(_fOk?'#166534':'#991b1b')+';white-space:nowrap;">\uD83D\uDD8A firm. dig.'+(_fOk?' OK':'')+'</span>';
   }
+  /* Delibera del finanziamento: arancione finche' mancano i dati definitivi. */
+  var delTag='';
+  if(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv)){
+    var _dOk=!!(cv.finDelibera && cv.finDelibera.confermata);
+    var _dTit=_dOk?('Delibera'+(cv.finDelibera.data?(' del '+String(cv.finDelibera.data).split('-').reverse().join('/')):'')+(cv.finDelibera.finanziaria?(' \u00b7 '+cv.finDelibera.finanziaria):'')):'Dati della delibera non ancora inseriti';
+    delTag='<span onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="'+_dTit+'" style="cursor:pointer;flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_dOk?'#dcfce7':'#fff7ed')+';color:'+(_dOk?'#166534':'#b45309')+';border:1px solid '+(_dOk?'#bbf7d0':'#fed7aa')+';">'+(_dOk?'\u2713 Delibera':'\u26a0 Delibera da inserire')+'</span>';
+  }
+  firmaTag=firmaTag+delTag;
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
   var pagHint=(daConf>0)
     ?'<div onclick="cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12px;color:#9a3412;font-weight:700;cursor:pointer;">\u23f3 '+daConf+' pagament'+(daConf===1?'o':'i')+' da confermare</div>'
