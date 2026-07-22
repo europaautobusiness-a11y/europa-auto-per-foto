@@ -468,6 +468,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Vendite</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-vendite" onclick="cvVendGo('in_attesa_pagamento');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#129534;</span><span class="si-label"> In attesa pagamento</span><span class="si-badge" id="vb-pag" style="display:none;">0</span></button>
+    <button class="sidebar-item" onclick="cvVendGo('in_attesa_delibera');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127974;</span><span class="si-label"> In attesa di delibera</span><span class="si-badge" id="vb-del" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('in_attesa_firma');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128394;</span><span class="si-label"> In attesa firma digitale</span><span class="si-badge" id="vb-firma" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('in_attesa_immatricolazione');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128203;</span><span class="si-label"> In att. immatricolazione</span><span class="si-badge" id="vb-imm" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('da_consegnare');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Da consegnare</span><span class="si-badge" id="vb-cons" style="display:none;">0</span></button>
@@ -15174,7 +15175,7 @@ function cvDatiSimulati(cv){
            importoFinanziato:(f.importoFinanziato!=null?f.importoFinanziato:(p?p.importo:'')),
            rata:(f.rata||(p?p.importoRata:'')||''), durata:(f.durata||(p?p.rate:'')||'') };
 }
-var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_firma','In attesa firma digitale'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
+var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_delibera','In attesa di delibera'],['in_attesa_firma','In attesa firma digitale'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
 /* Manca la firma del finanziamento? Solo i contratti finanziati possono
    mancarla: gli altri non hanno niente da firmare. */
 function cvFirmaMancante(cv){
@@ -15200,9 +15201,15 @@ function cvVendAvanzaStato(cv){
   var cap=pags.filter(function(x){return /caparra/i.test(x.tipo||'');});
   var caparraConf = cap.length ? cap.every(function(x){return x.confermato;}) : pags.some(function(x){return x.confermato;});
   var nuovo;
-  if(cv.immatricolatoTs){ nuovo = saldata ? 'da_consegnare' : 'in_attesa_pagamento'; }
-  else if(!caparraConf){ nuovo = 'in_attesa_pagamento'; }
-  else if(cvFirmaMancante(cv)){ nuovo = 'in_attesa_firma'; }   /* caparra incassata, manca la firma */
+  /* Il cliente che finanzia tutto non versa caparra: la pratica parte
+     direttamente dalla delibera, senza passare da "in attesa pagamento". */
+  var finanziata = (typeof cvHaFinanziamento==='function') && cvHaFinanziamento(cv);
+  var senzaCaparra = finanziata && cap.length===0;
+  var deliberaOk = !finanziata || !!(cv.finDelibera && cv.finDelibera.confermata);
+  if(cv.immatricolatoTs){ nuovo = saldata ? 'da_consegnare' : (deliberaOk ? 'in_attesa_pagamento' : 'in_attesa_delibera'); }
+  else if(!caparraConf && !senzaCaparra){ nuovo = 'in_attesa_pagamento'; }
+  else if(!deliberaOk){ nuovo = 'in_attesa_delibera'; }        /* caparra incassata (o non prevista): serve la delibera */
+  else if(cvFirmaMancante(cv)){ nuovo = 'in_attesa_firma'; }   /* delibera fatta, manca la firma */
   else { nuovo = 'in_attesa_immatricolazione'; }
   if(nuovo!==st){ cv.statoVendita=nuovo; return true; }
   return false;
@@ -15216,7 +15223,7 @@ function cvVendAutoAvanza(){
     return changed.length>0;
   }catch(e){ return false; }
 }
-function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_firma:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-firma',cnt.in_attesa_firma); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
+function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_delibera:0,in_attesa_firma:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-del',cnt.in_attesa_delibera); set('vb-firma',cnt.in_attesa_firma); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
 /* ===================== FIRMA DIGITALE DEL CONTRATTO =====================
@@ -17718,13 +17725,41 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
   cvVendAutoAvanza();
   if(typeof cvVendBadge==='function') cvVendBadge();
   var all=cvContratti();
-  var _tabList=CV_STATI.concat([['_delibera','In attesa di delibera']]);
-  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=(s[0]==='_delibera')?all.filter(cvDeliberaMancante).length:all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
+  /* Totali della sezione: da incassare, permute da ritirare e (solo admin) margine. */
+  var _tot=(function(){
+    var lst=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;});
+    var daInc=0, nInc=0, perm=0, nPerm=0, marg=0, nMarg=0, fatt=0;
+    lst.forEach(function(cv){
+      try{
+        var t=(typeof cvCalcola==='function')?cvCalcola(cv):null;
+        if(t){ fatt+=(t.totaleScontato||0);
+          var pags=cvPagIncasso(cv.pagamenti).filter(function(x){return x.confermato;});
+          var inc=pags.reduce(function(s,x){return s+(cvNum(x.importo)||0);},0);
+          var r=(t.totaleScontato||0)-inc; if(r>0.5){ daInc+=r; nInc++; }
+        }
+        if(cv.permutaOn||(cv.permuta&&cv.permuta.valore)){
+          var pv=(cv.permuta&&(parseFloat(cv.permuta.valore)||0))||0;
+          if(!cv.permutaRitirata){ perm+=pv; nPerm++; }
+        }
+        if(typeof stMargine==='function'){ var m=stMargine(cv); if(m!=null){ marg+=m; nMarg++; } }
+      }catch(e){}
+    });
+    return {daInc:daInc,nInc:nInc,perm:perm,nPerm:nPerm,marg:marg,nMarg:nMarg,fatt:fatt,n:lst.length};
+  })();
+  var _euT=function(n){ return Math.round(n||0).toLocaleString('it-IT')+' \u20ac'; };
+  var _isAdm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  var _bx='background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:11px 14px;';
+  var totBar='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px;">'
+    +'<div style="'+_bx+'border-left:4px solid #1a4fa0;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Totale vendite</div><div style="font-size:20px;font-weight:900;">'+_euT(_tot.fatt)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.n+' pratiche</div></div>'
+    +'<div style="'+_bx+'border-left:4px solid #d97706;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Da incassare</div><div style="font-size:20px;font-weight:900;color:'+(_tot.daInc>0?'#b45309':'#0f172a')+';">'+_euT(_tot.daInc)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.nInc+' con saldo aperto</div></div>'
+    +'<div style="'+_bx+'border-left:4px solid #7c3aed;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Permute da ritirare</div><div style="font-size:20px;font-weight:900;">'+_euT(_tot.perm)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.nPerm+' auto attese</div></div>'
+    +(_isAdm?('<div style="'+_bx+'border-left:4px solid #16a34a;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div><div style="font-size:20px;font-weight:900;color:#16a34a;">'+_euT(_tot.marg)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">su '+_tot.nMarg+' auto \u00b7 solo admin</div></div>'):'')
+    +'</div>';
+  var _tabList=CV_STATI;
+  var tabs=totBar+'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
   if(!cvPuoConfermarePagamenti()){ tabs+='<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">Solo Amministrazione e Contabilità possono confermare i pagamenti.</div>'; }
-  var list=(_cvVendStato==='_delibera')
-    ? all.filter(cvDeliberaMancante).sort(function(a,b){ return (b.contrattoTs||b.createdAt||0)-(a.contrattoTs||a.createdAt||0); })
-    : all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
-  var body=list.length?list.map(cvVendCard).join(''):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='_delibera'?'Tutte le pratiche finanziate hanno i dati della delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
+  var list=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
+  var body=list.length?list.map(cvVendCard).join(''):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
   wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
 }
 
@@ -17875,7 +17910,7 @@ function cvVendCard(cv){
     +(finTot?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;di cui finanziamento</span><span>'+cvEuro(finTot)+'</span></div>'):'')
     +(permVal?('<div style="display:flex;justify-content:space-between;padding:2px 0;color:#64748b;"><span>&nbsp;&nbsp;permuta'+((cv.permuta&&cv.permuta.modello)?(' ('+cvEsc(cv.permuta.modello)+')'):'')+'</span><span>'+cvEuro(permVal)+'</span></div>'):'')
     +'</div>';
-  var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_firma:['#fee2e2','#991b1b','In attesa firma digitale'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
+  var STL={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'], in_attesa_delibera:['#ffedd5','#9a3412','In attesa di delibera'], in_attesa_firma:['#fee2e2','#991b1b','In attesa firma digitale'], in_attesa_immatricolazione:['#dbeafe','#1e40af','In att. immatricolazione'], da_consegnare:['#e0e7ff','#3730a3','Da consegnare'], consegnato:['#dcfce7','#166534','Consegnato'] };
   var sb=STL[st]||['#f1f5f9','#334155',st];
   /* Etichetta della firma del finanziamento, accanto allo stato:
      rossa finche' manca, verde quando c'e'. Niente per le auto senza
@@ -18724,6 +18759,174 @@ function cvVendEliminaConsegnato2(id){
 }
 
 /* ===================== STATISTICHE ===================== */
+/* --- Marginalita' (solo admin) -------------------------------------------
+   Margine NETTO per regime IVA:
+     art. 36 ............ (vendita - acquisto) / 1,22   (IVA dentro il margine)
+     IVA esposta ITALIA . (vendita - acquisto) / 1,22   (acquisto inserito ivato)
+     IVA esposta ESTERA . vendita/1,22 - acquisto       (acquisto gia' netto)  */
+var ST_IVA=0.22;
+function stNum(v){ if(v==null||v==='') return null; var s=String(v).replace(/[^\d,.-]/g,'');
+  if(s.indexOf(',')>-1&&s.indexOf('.')>-1){ s=s.replace(/\./g,'').replace(',','.'); } else if(s.indexOf(',')>-1){ s=s.replace(',','.'); }
+  var n=parseFloat(s); return isNaN(n)?null:n; }
+function stEu(n){ return Math.round(n||0).toLocaleString('it-IT')+' \u20ac'; }
+function stPct(n){ return (n||0).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1})+'%'; }
+function stAuto(cv){ try{ return (typeof mzById==='function'&&cv.autoId)?mzById(cv.autoId):null; }catch(e){ return null; } }
+function stCat(cv){
+  var a=stAuto(cv)||{}; var snap=cv.autoSnapshot||{};
+  var ivaEsp=(a.ivaEsposta===true||a.ivaEsposta==='true'||snap.ivaEsposta===true);
+  var estera=(a.estera===true||a.estera==='true'||snap.estera===true);
+  if(!ivaEsp) return 0;              /* regime del margine (art. 36) */
+  return estera?2:1;
+}
+var ST_CAT=[{nome:'Italiana art. 36',col:'#7c3aed'},{nome:'Italiana IVA esposta',col:'#1a4fa0'},{nome:'Estera IVA esposta',col:'#16a34a'}];
+function stMargine(cv){
+  var a=stAuto(cv)||{};
+  var vend=stNum(cv.prezzoVendita); if(vend==null) vend=stNum(a.prezzoVen);
+  var acq=stNum(a.prezzoAcq);
+  if(vend==null||acq==null) return null;          /* senza prezzo d'acquisto niente margine */
+  var c=stCat(cv);
+  var m=(c===2)?(vend/(1+ST_IVA)-acq):((vend-acq)/(1+ST_IVA));
+  return Math.round(m*100)/100;
+}
+function stIvaMargine(cv){
+  if(stCat(cv)!==0) return 0;
+  var a=stAuto(cv)||{}; var vend=stNum(cv.prezzoVendita)||stNum(a.prezzoVen); var acq=stNum(a.prezzoAcq);
+  if(vend==null||acq==null) return 0;
+  var l=vend-acq; return Math.round((l-l/(1+ST_IVA))*100)/100;
+}
+function stProvvDi(cv){
+  /* provvigione registrata da Rudy per questa pratica (abbinata per cliente+modello) */
+  try{
+    var reg=JSON.parse(localStorage.getItem('ea_provv3')||'[]')||[];
+    var cli=((cv.cliente&&((cv.cliente.cognome||'')+' '+(cv.cliente.nome||'')))||'').toLowerCase().trim();
+    var mod=String((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'').toLowerCase();
+    for(var i=0;i<reg.length;i++){
+      var r=reg[i]; var rc=String(r.cliente||'').toLowerCase().trim();
+      if(!rc||!cli) continue;
+      var stessoCli=(rc===cli)||(rc.indexOf(cli)>=0)||(cli.indexOf(rc)>=0);
+      if(stessoCli && (!r.modello || mod.indexOf(String(r.modello).toLowerCase())>=0 || String(r.modello).toLowerCase().indexOf(mod)>=0)) return r;
+    }
+  }catch(e){}
+  return null;
+}
+function statMarginiHTML(){
+  var mese=(document.getElementById('stat-mese')||{}).value;
+  var oggi=new Date(); if(!mese) mese=oggi.getFullYear()+'-'+('0'+(oggi.getMonth()+1)).slice(-2);
+  var mesi=[]; for(var i=0;i<12;i++){ var d=new Date(oggi.getFullYear(), oggi.getMonth()-i, 1);
+    mesi.push([d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2),
+      ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'][d.getMonth()]+' '+d.getFullYear()]); }
+  var inMese=function(cv,m){ var t=cv.consegnatoTs||cv.contrattoTs||cv.createdAt; if(!t) return false;
+    var d=new Date(t); return (d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2))===m; };
+  var tutti=(typeof cvContratti==='function')?cvContratti():[];
+  var V=tutti.filter(function(cv){ return inMese(cv,mese) && stMargine(cv)!=null; });
+  var idxPrec=mesi.map(function(x){return x[0];}).indexOf(mese);
+  var Vprec=(idxPrec>=0&&mesi[idxPrec+1])?tutti.filter(function(cv){ return inMese(cv,mesi[idxPrec+1][0]) && stMargine(cv)!=null; }):[];
+  var somma=function(arr,f){ return arr.reduce(function(s,x){ return s+(f(x)||0); },0); };
+  var marg=somma(V,stMargine), margPrec=somma(Vprec,stMargine);
+  var ivaM=somma(V,stIvaMargine);
+  var provv=somma(V,function(cv){ var r=stProvvDi(cv); return r?(stNum(r.provvigione)||0):0; });
+  var delta=(margPrec>0)?((marg-margPrec)/margPrec*100):null;
+  var senzaAcq=tutti.filter(function(cv){ return inMese(cv,mese) && stMargine(cv)==null; }).length;
+
+  var box='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;';
+  var h='<div style="max-width:1100px;margin:26px auto 0;">';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+    +'<div style="font-weight:900;font-size:17px;">\ud83d\udcb0 Marginalit\u00e0</div>'
+    +'<span style="font-size:10.5px;font-weight:800;background:#111827;color:#fff;border-radius:99px;padding:3px 10px;">solo amministratore</span>'
+    +'<select id="stat-mese" onchange="statRender()" style="margin-left:auto;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;">'
+    +mesi.map(function(m){ return '<option value="'+m[0]+'"'+(m[0]===mese?' selected':'')+'>'+m[1]+'</option>'; }).join('')+'</select></div>';
+
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">'
+    +'<div style="'+box+'border-left:4px solid #16a34a;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(marg)+'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">'+V.length+' auto vendute</div>'
+      +(delta!=null?('<div style="font-size:11.5px;font-weight:800;color:'+(delta>=0?'#16a34a':'#dc2626')+';">'+(delta>=0?'\u25b2':'\u25bc')+' '+stPct(Math.abs(delta))+' sul mese scorso</div>'):'')+'</div>'
+    +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(V.length?marg/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
+    +'<div style="'+box+'border-left:4px solid #7c3aed;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">dal registro provvigioni</div></div>'
+    +'<div style="'+box+'border-left:4px solid #d97706;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(marg+provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>'
+    +'</div>';
+  if(senzaAcq) h+='<div style="margin-top:8px;font-size:12px;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;">\u26a0 '+senzaAcq+' vendite del mese non hanno il prezzo di acquisto in magazzino: escluse dal calcolo.</div>';
+
+  /* per categoria */
+  var agg=[0,1,2].map(function(i){
+    var g=V.filter(function(cv){ return stCat(cv)===i; });
+    var m=somma(g,stMargine);
+    var gf=g.filter(function(cv){ return !!stProvvDi(cv); });
+    var pr=somma(g,function(cv){ var r=stProvvDi(cv); return r?(stNum(r.provvigione)||0):0; });
+    return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,tot:g.length?((m+pr)/g.length):0};
+  });
+  var maxMedia=Math.max.apply(null,agg.map(function(a){return a.media;}).concat([1]));
+  var best=agg.slice().sort(function(a,b){return b.media-a.media;})[0];
+  var bestFin=agg.slice().sort(function(a,b){return b.tot-a.tot;})[0];
+  var th='font-size:10.5px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:left;padding:10px 12px;border-bottom:1px solid #e2e8f0;';
+  var td='padding:11px 12px;border-bottom:1px solid #f1f5f9;';
+  h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Dove guadagni di pi\u00f9</div>'
+   +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr>'
+   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Auto</th><th style="'+th+'text-align:right;">Margine netto</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
+   +agg.map(function(a){ var c=ST_CAT[a.i];
+     return '<tr><td style="'+td+'"><div style="font-weight:800;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:3px;background:'+c.col+';"></span>'+c.nome
+       +((a===best&&a.n)?'<span style="font-size:10px;font-weight:800;background:#ecfdf5;color:#16a34a;border-radius:99px;padding:2px 8px;">miglior media</span>':'')+'</div>'
+       +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:6px;max-width:200px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,a.media)/maxMedia*100)+'%;background:'+c.col+';"></i></div></td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+a.n+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+stEu(a.marg)+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:900;color:'+c.col+';">'+stEu(a.media)+'</td></tr>';
+   }).join('')+'</tbody></table></div>';
+
+  h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Finanziamenti \u2014 quali auto rendono di pi\u00f9</div>'
+   +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr>'
+   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Finanziate</th><th style="'+th+'text-align:right;">Provvigioni</th><th style="'+th+'text-align:right;">Margine+provv. per auto</th></tr></thead><tbody>'
+   +agg.map(function(a){ var c=ST_CAT[a.i];
+     return '<tr><td style="'+td+'"><div style="font-weight:800;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:3px;background:'+c.col+';"></span>'+c.nome
+       +((a===bestFin&&a.n)?'<span style="font-size:10px;font-weight:800;background:#ecfdf5;color:#16a34a;border-radius:99px;padding:2px 8px;">pi\u00f9 redditizia</span>':'')+'</div></td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+a.nf+' / '+a.n+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;color:#7c3aed;">'+stEu(a.provv)+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:900;">'+stEu(a.tot)+'</td></tr>';
+   }).join('')+'</tbody></table></div>';
+
+  h+=statControlloProvvHTML(V);
+  h+='</div>';
+  return h;
+}
+function statControlloProvvHTML(V){
+  var box='background:#fff;border:1px solid #e2e8f0;border-radius:14px;';
+  var out=''; var righe=0;
+  V.forEach(function(cv){
+    if(!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv))) return;
+    var r=stProvvDi(cv); var d=cv.finDelibera;
+    var nome=((cv.cliente&&((cv.cliente.cognome||'')+' '+(cv.cliente.nome||'')))||'').trim();
+    var auto=String((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'');
+    var diff=[]; var stato='ok';
+    if(!d||!d.confermata){ stato='attesa'; }
+    else if(!r){ stato='manca'; }
+    else{
+      var cmp=function(et,a,b,tol){ a=stNum(a); b=stNum(b); if(a==null||b==null) return;
+        if(Math.abs(a-b)>(tol||0.01)) diff.push([et, a, b]); };
+      cmp('TAN', r.tan, d.tan, 0.01);
+      cmp('Commissioni', r.comm, d.istruttoria, 1);
+      cmp('Polizze', (stNum(r.cpi)||0)+(stNum(r.gap)||0), d.polizze, 1);
+      cmp('Importo finanziato', (stNum(r.valore)||0)-(stNum(r.acconto)||0), d.importoFinanziato, 50);
+      if(diff.length) stato='ko';
+    }
+    if(stato==='ok') return;   /* mostro solo cio' che richiede attenzione */
+    righe++;
+    var col=(stato==='ko')?['#fff7ed','#fed7aa','#9a3412']:((stato==='manca')?['#fef2f2','#fecaca','#991b1b']:['#f8fafc','#e2e8f0','#64748b']);
+    var testo = (stato==='ko') ? 'La provvigione non corrisponde alla delibera:'
+      : (stato==='manca' ? 'Delibera registrata ma provvigione non ancora inserita da Rudy.'
+                         : 'In attesa dei dati della delibera: controllo non ancora possibile.');
+    out+='<div style="background:'+col[0]+';border-left:4px solid '+col[1]+';border-bottom:1px solid #f1f5f9;padding:12px 14px;">'
+      +'<div style="font-weight:800;font-size:13.5px;">'+nome+' <span style="font-weight:600;color:#94a3b8;">\u00b7 '+auto+'</span></div>'
+      +'<div style="font-size:12px;color:'+col[2]+';margin-top:3px;">'+testo+'</div>'
+      +diff.map(function(x){ return '<span style="display:inline-block;background:#fff;border:1px solid '+col[1]+';border-radius:7px;padding:3px 8px;font-size:11.5px;font-weight:700;color:'+col[2]+';margin:5px 6px 0 0;">'
+          +x[0]+': <b>'+x[1]+'</b> <span style="color:#94a3b8;font-weight:600;">delibera '+x[2]+'</span></span>'; }).join('')
+      +'</div>';
+  });
+  if(!righe) out='<div style="padding:16px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;">\u2713 Tutte le provvigioni del mese corrispondono ai dati deliberati.</div>';
+  return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Controllo provvigioni</div>'
+    +'<div style="'+box+'overflow:hidden;">'+out+'</div>';
+}
 function statInit(){ statRender(); }
 function statAnni(){ var s={}; cvLoad().forEach(function(x){ var d=new Date(x.createdAt||x.contrattoTs||Date.now()); s[d.getFullYear()]=true; }); var arr=Object.keys(s).sort().reverse(); if(!arr.length) arr=[String(new Date().getFullYear())]; return arr; }
 function statRender(){
@@ -18817,6 +19020,7 @@ function statRender(){
   for(var _mm=0;_mm<12;_mm++){ if(_revMese[_mm]>0) h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;"><span>'+mesi[_mm]+'</span><b>'+cvEuro(_revMese[_mm])+'</b></div>'; }
   h+='</div>';
   h+='</div>';
+  try{ if(typeof getCurrentRole==='function' && getCurrentRole()==='admin') h+=statMarginiHTML(); }catch(e){}
   wrap.innerHTML=h;
 
 }
