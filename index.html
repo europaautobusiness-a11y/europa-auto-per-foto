@@ -11863,7 +11863,37 @@ function pmAddTombstone(id){
   if(typeof supaDelete==='function') supaDelete('permute_app', id);
 }
 function pmLoad(){ try{ var t=pmTombstones(); return (JSON.parse(localStorage.getItem(PERMUTE_KEY)||'[]')).filter(function(p){return p && t.indexOf(p.id)<0;}); }catch(e){ return []; } }
-function pmSave(list){ try{ localStorage.setItem(PERMUTE_KEY, JSON.stringify(list)); }catch(e){} }
+/* ===== GESTIONE MEMORIA LOCALE (quota localStorage) =====
+   Quando lo spazio finisce, si liberano prima le cache foto per targa
+   (le foto originali stanno su Drive e si riscaricano da sole).
+   Solo se non basta si avvisa la persona. */
+function eaLsUsage(){ var t=0; try{ for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i)||''; t+=k.length+((localStorage.getItem(k)||'').length); } }catch(e){} return t; }
+function eaStorageCleanup(aggressivo){
+  var tolti=0;
+  try{
+    var targhe={};
+    try{ (typeof mzLoad==='function'?mzLoad():[]).forEach(function(a){ if(a&&a.targa) targhe[String(a.targa).toUpperCase().replace(/\s+/g,'')]=1; }); }catch(e){}
+    var chiavi=[]; for(var i=0;i<localStorage.length;i++){ chiavi.push(localStorage.key(i)); }
+    chiavi.forEach(function(k){
+      if(!k || k.indexOf('ea_foto_')!==0 || k==='ea_foto_pubbliche_v1') return;
+      var tg=k.replace('ea_foto_','').toUpperCase().replace(/\s+/g,'');
+      if(aggressivo || !targhe[tg]){ try{ localStorage.removeItem(k); tolti++; }catch(e){} }
+    });
+    /* notifiche: tiene solo le ultime 100 quando serve spazio */
+    try{ var nRaw=localStorage.getItem('ea_notifiche_v1'); if(nRaw){ var nArr=JSON.parse(nRaw); if(Array.isArray(nArr)&&nArr.length>100){ localStorage.setItem('ea_notifiche_v1', JSON.stringify(nArr.slice(-100))); } } }catch(e){}
+  }catch(e){}
+  return tolti;
+}
+function eaLsSetSafe(key, val, etichetta){
+  try{ localStorage.setItem(key, val); return true; }catch(e0){}
+  eaStorageCleanup(false);
+  try{ localStorage.setItem(key, val); return true; }catch(e1){}
+  eaStorageCleanup(true);
+  try{ localStorage.setItem(key, val); return true; }catch(e2){}
+  try{ alert('\u26a0\ufe0f Memoria del browser piena: non riesco a salvare '+(etichetta||'i dati')+' su questo dispositivo. I dati sul cloud sono al sicuro. Prova a chiudere e riaprire la pagina; se succede ancora, segnalalo.'); }catch(e3){}
+  return false;
+}
+function pmSave(list){ eaLsSetSafe(PERMUTE_KEY, JSON.stringify(list), 'le permute'); }
 function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; }
 
 function pmPush(p){
@@ -12463,7 +12493,7 @@ var _mzId=null;
 
 function mzEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function mzLoad(){ try{ return JSON.parse(localStorage.getItem(MZ_KEY)||'[]'); }catch(e){ return []; } }
-function mzSave(list){ try{ localStorage.setItem(MZ_KEY, JSON.stringify(list)); }catch(e){ alert('Memoria piena: impossibile salvare.'); } }
+function mzSave(list){ eaLsSetSafe(MZ_KEY, JSON.stringify(list), 'il magazzino'); }
 function mzPropagaContratti(a){
   if(!a || !a.id || typeof cvLoad!=='function' || typeof cvSave!=='function') return;
   var list=cvLoad(); var changed=false;
@@ -13095,7 +13125,7 @@ function cvNum(x){ if(x==null) return 0; if(typeof x==='number') return isNaN(x)
 function cvEuro(n){ return cvNum(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
 function cvEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function cvLoad(){ try{ return JSON.parse(localStorage.getItem(CV_KEY)||'[]'); }catch(e){ return []; } }
-function cvSave(list){ try{ localStorage.setItem(CV_KEY, JSON.stringify(list)); }catch(e){ alert('Memoria piena.'); } }
+function cvSave(list){ eaLsSetSafe(CV_KEY, JSON.stringify(list), 'i preventivi'); }
 function cvById(id){ return cvLoad().filter(function(x){return x.id===id;})[0]||null; }
 function cvOggi(){ var d=new Date(),z=function(n){return String(n).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+String(d.getFullYear()).slice(2); }
 
@@ -13230,7 +13260,7 @@ var _clFiltri={q:'',rag:'',nome:'',cognome:'',citta:''};
 var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
-function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){} }
+function clStoreSave(o){ eaLsSetSafe(EA_CLIENTI_KEY, JSON.stringify(o), "l'anagrafica clienti"); }
 /* --- anagrafiche sul cloud: prima vivevano solo dentro al browser ----
    NB: la tabella si chiama 'clienti_app' e non 'clienti' perche' su questo
    progetto Supabase esiste gia' una 'clienti' con un altro schema (niente
@@ -14873,7 +14903,7 @@ var FORN_KEY='ea_fornitori_v1';
 var _fnId=null, _fnReturn=null;
 function fnEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function fnLoad(){ try{ return JSON.parse(localStorage.getItem(FORN_KEY)||'[]'); }catch(e){ return []; } }
-function fnSave(l){ try{ localStorage.setItem(FORN_KEY, JSON.stringify(l)); }catch(e){ alert('Memoria piena.'); } }
+function fnSave(l){ eaLsSetSafe(FORN_KEY, JSON.stringify(l), 'i fornitori'); }
 function fnById(id){ return fnLoad().filter(function(x){return x.id===id;})[0]||null; }
 function fnInit(){ fnRender(); fnSupaLoad(); }
 function fnRender(){
@@ -15107,7 +15137,7 @@ function parSalva(){
   var p={};
   ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
-  try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
+  if(!eaLsSetSafe(PARAM_KEY, JSON.stringify(p), 'i parametri')) return;
   parSupaSave(p);
   var st=document.getElementById('par-stato'); if(st) st.textContent='✅ Parametri salvati'; setTimeout(function(){ if(st)st.textContent=''; },2500);
 }
@@ -19140,6 +19170,7 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads(); leads.for
 function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].stato=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmSetNote(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].note=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
 function crmSupaUpsert(key,rec){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').upsert({ id:String(key), data:rec }).then(function(res){ if(res&&res.error) console.log('crm upsert:',res.error.message); }); }catch(e){} }
+setTimeout(function(){ try{ eaStorageCleanup(false); }catch(e){} }, 4000);
 function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').select('id,data').then(function(res){ if(!res||res.error) return; var s=crmLoad(); (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){try{d=JSON.parse(d);}catch(e){d=null;}} if(d&&r.id){ s[r.id]=d; } }); crmSave(s); crmRender(); }); }catch(e){} }
 </script>
 
