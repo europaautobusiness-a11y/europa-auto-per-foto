@@ -13568,7 +13568,9 @@ function cvForm(id, fromVend){
   h+='<div id="cv-confronto-box" style="display:'+(_cv.confrontoOn?'block':'none')+';padding-left:8px;">'
     +'<div style="font-size:11px;color:#64748b;margin:2px 0 6px;">Stampa nel contratto il riepilogo del finanziamento e il confronto fra estinzione anticipata, finanziamento a scadenza e acquisto senza finanziamento. Se lasci vuoti i campi, vengono calcolati da soli.</div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_polizzaAnnua',_cv.polizzaAnnua,'polizza annua \u20ac (auto)','number')+'</div>'
-    +'<div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div></div>';
+    +'<div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div>'
+    +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'
+    +'<div style="font-size:11px;color:#64748b;margin-top:3px;">Se lo lasci vuoto viene stimato dal piano teorico. Meglio inserire il valore reale letto sul piano di ammortamento della finanziaria.</div></div>';
   h+=tog('cv_listinoOn',_cv.listinoOn,'Mostra prezzo listino');
   h+='<div id="cv-listino-box" style="display:'+(_cv.listinoOn?'block':'none')+';padding-left:8px;">'+inp('cv_listino',_cv.listino,'prezzo di listino €','number')+'</div>';
   h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_diniOn" '+(_cv.diniOn?'checked':'')+' onchange="cvAggiornaPassaggio()" style="width:20px;height:20px;">Vendita a professionista (Legge Dini) &mdash; trapasso 130&euro; fisso</label>';
@@ -13713,7 +13715,7 @@ function cvSync(){
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
-  _cv.polizzaAnnua=g('cv_polizzaAnnua'); _cv.estinzioneMesi=g('cv_estinzioneMesi'); _cv.confrontoOn=ck('cv_confrontoOn');
+  _cv.polizzaAnnua=g('cv_polizzaAnnua'); _cv.estinzioneMesi=g('cv_estinzioneMesi'); _cv.estinzioneImporto=g('cv_estinzioneImporto'); _cv.confrontoOn=ck('cv_confrontoOn');
   _cv.legge104On=ck('cv_legge104On'); _cv.listinoOn=ck('cv_listinoOn'); _cv.listino=g('cv_listino'); _cv.diniOn=ck('cv_diniOn');
   _cv.permutaOn=ck('cv_permutaOn'); _cv.note=g('cv_note');
   if(document.getElementById('cv_pm_modello')){ _cv.permuta={ modello:g('cv_pm_modello'), alimentazione:g('cv_pm_alim'), cambio:g('cv_pm_cambio'), immat:'Immatricolata', colore:g('cv_pm_colore'), prezzoAcq:g('cv_pm_prezzoAcq'), cilindrata:g('cv_pm_cilindrata'), potenza:g('cv_pm_potenza'), dataImm:g('cv_pm_dataImm'), targa:g('cv_pm_targa'), km:g('cv_pm_km'), doppiaChiave:ck('cv_pm_doppiaChiave'), privaDifetti:ck('cv_pm_privaDifetti'), difetti:g('cv_pm_difetti') }; }
@@ -14526,7 +14528,12 @@ function cvBuildHTML(c, tipo){
       var resid;
       if(tan>0){ var i=tan/100/12, n=mesi-kEst; resid=rata*(1-Math.pow(1+i,-n))/i; }
       else { resid=rata*(mesi-kEst); }
-      resid=Math.round(resid);
+      /* Il piano teorico sovrastima rispetto ai conteggi reali della finanziaria
+         (verificato col referente): riallineo la stima. Se e' stato inserito
+         l'importo letto sul piano di ammortamento, vince quello. */
+      var residManuale=cvNum(c.estinzioneImporto)||0;
+      if(residManuale>0){ resid=Math.round(residManuale); }
+      else { resid=Math.round(resid*(resid>14000?0.96:0.97)); }
       var quotaPag=Math.round(rata*kEst);
       var totEst=quotaPag+acconti+resid;
       var totFin=Math.round(rata*mesi)+acconti;
@@ -14544,27 +14551,19 @@ function cvBuildHTML(c, tipo){
       var polInclusa=cvNum(c.assicImporto)||((fp.finDati&&cvNum(fp.finDati.polizzeTotale))||0);
       /* sconto promo: valido solo col finanziamento, senza si perde */
       var scontoPromo=(!c.legge104On && c.scontoOn)?(cvNum(t.sconto)||0):0;
+      var valPolEst=polAnnua*anni;   /* quanto costerebbe la stessa copertura da soli */
+      var polizzaInclusaHTML = polInclusa
+        ? ('<div style="margin-top:4px;padding:5px 8px;border:1px solid #16a34a;border-radius:5px;background:#f0fdf4;font-size:11px;color:#166534;">'
+            + '<b>&#10003; POLIZZA '+anni+' ANNI INCLUSA</b> nella rata &mdash; furto, incendio, cristalli, atti vandalici, eventi naturali'
+            + (valPolEst?('<br>Stessa copertura stipulata a parte: '+eu(valPolEst)+' &mdash; qui non paghi nulla in pi&ugrave;'):'')
+            + '</div>')
+        : '';
       var s='<div class="cvh" style="page-break-inside:avoid;">Finanziamento</div>';
       s+='<div class="cvrow"><div>Importo finanziato</div><div><b>'+eu(impFin)+'</b></div></div>';
       s+='<div class="cvrow"><div>Rata mensile</div><div><b>'+eu(rata)+'</b></div></div>';
       s+='<div class="cvrow"><div>Durata</div><div><b>'+mesi+' mesi</b></div></div>';
       if(polInclusa) s+='<div class="cvrow"><div>Polizza '+anni+' anni <span class="cvsmall">inclusa nel finanziamento</span></div><div><b>'+eu(polInclusa)+'</b></div></div>';
       s+='<div class="cvh" style="page-break-inside:avoid;">Confronto delle soluzioni</div><div class="cvbox" style="padding:0;">';
-
-      s+='<div class="cvrow"><div><b>Con estinzione anticipata a '+kEst+' mesi</b>'
-        +'<div class="cvsmall">'+kEst+' rate da '+eu(rata)+' = '+eu(quotaPag)
-        +(acconti?(' &middot; acconto '+eu(acconti)):'')
-        +' &middot; estinzione stimata '+eu(resid)
-        +(polInclusa?('<br>Polizza '+anni+' anni gi&agrave; inclusa &mdash; nessun costo aggiuntivo'):'')
-        +(scontoPromo?('<br>Sconto promo mantenuto &minus; '+eu(scontoPromo)):'')
-        +'</div></div><div><b>'+eu(totEst)+'</b></div></div>';
-
-      s+='<div class="cvrow"><div><b>Con finanziamento fino a scadenza</b>'
-        +'<div class="cvsmall">'+mesi+' rate da '+eu(rata)+' = '+eu(rata*mesi)
-        +(acconti?(' &middot; acconto '+eu(acconti)):'')
-        +(polInclusa?('<br>Polizza '+anni+' anni gi&agrave; inclusa &mdash; nessun costo aggiuntivo'):'')
-        +(scontoPromo?('<br>Sconto promo mantenuto &minus; '+eu(scontoPromo)):'')
-        +'</div></div><div><b>'+eu(totFin)+'</b></div></div>';
 
       var totSenzaFin=(t.totaleVendita||0)+polAnnua*anni;
       s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
@@ -14573,10 +14572,27 @@ function cvBuildHTML(c, tipo){
         +(polAnnua?('<br>Polizza da stipulare a parte: '+eu(polAnnua)+' all\'anno x '+anni+' anni = <b>'+eu(polAnnua*anni)+'</b>'):'')
         +'</div></div><div><b>'+eu(totSenzaFin)+'</b></div></div>';
 
+      s+='<div class="cvrow"><div><b>Con finanziamento fino a scadenza</b>'
+        +'<div class="cvsmall">'+mesi+' rate da '+eu(rata)+' = '+eu(rata*mesi)
+        +(acconti?(' &middot; acconto '+eu(acconti)):'')
+        +'</div>'
+        +polizzaInclusaHTML
+        +(scontoPromo?('<div class="cvsmall">Sconto promo mantenuto &minus; '+eu(scontoPromo)+'</div>'):'')
+        +'</div><div><b>'+eu(totFin)+'</b></div></div>';
+
+      s+='<div class="cvrow"><div><b>Con estinzione anticipata a '+kEst+' mesi</b>'
+        +'<div class="cvsmall">'+kEst+' rate da '+eu(rata)+' = '+eu(quotaPag)
+        +(acconti?(' &middot; acconto '+eu(acconti)):'')
+        +' &middot; estinzione stimata '+eu(resid)
+        +'</div>'
+        +polizzaInclusaHTML
+        +(scontoPromo?('<div class="cvsmall">Sconto promo mantenuto &minus; '+eu(scontoPromo)+'</div>'):'')
+        +'</div><div><b>'+eu(totEst)+'</b></div></div>';
+
       s+='</div>';
       var risp=totSenzaFin-totEst;
       if(risp>0) s+='<div class="cvsmall" style="margin-top:5px;"><b>Con la nostra soluzione risparmi fino a '+eu(risp)+'</b> rispetto all\'acquisto senza finanziamento con polizza esterna.</div>';
-      s+='<div class="cvsmall" style="margin-top:3px;">Importi indicativi a fini comparativi: l\'estinzione anticipata &egrave; stimata e va confermata dalla finanziaria.</div>';
+      s+='<div class="cvsmall" style="margin-top:3px;">Salvo conteggio della finanziaria.</div>';
       return s;
     }catch(e){ return ''; }
   })();
