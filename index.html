@@ -11135,6 +11135,7 @@ function sinDocInit(){
   try{
     if(typeof docListaRender!=='function') return;
     sinLoad().forEach(function(s,i){
+      if(s && document.getElementById('sdp_'+s.id+'-list')) docListaRender('sinistro', s.id, 'sdp_'+s.id);
       if(s && s.clienteKey && document.getElementById('sd_'+s.id+'-list')) docListaRender('cliente', s.clienteKey, 'sd_'+s.id);
     });
   }catch(e){}
@@ -11146,6 +11147,7 @@ function sinCard(s){
   html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
   html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+sinEsc(s.nome||'(senza nome)')+'</div>';
   html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div>';
+  if(s.tipoSinistro) html+='<div style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 10px;">'+sinEsc(s.tipoSinistro)+'</div>';
   if(s.preventivoTotale!=null && sinVedePreventivo()){
     html+='<div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;background:'+(s.preventivoConfermato?'#f0fdf4':'#fffbeb')+';border:1px solid '+(s.preventivoConfermato?'#bbf7d0':'#fde68a')+';border-radius:7px;padding:4px 10px;">'
       +'<span style="font-size:11px;font-weight:800;color:'+(s.preventivoConfermato?'#15803d':'#b45309')+';">\ud83e\uddfe Preventivo'+(s.preventivoConfermato?'':' (bozza)')+'</span>'
@@ -11207,10 +11209,15 @@ function sinCard(s){
     html+='<div style="margin-top:8px;font-size:11px;color:#16a34a;font-weight:700;">📤 Documenti e foto inviati il '+sinFmtApp(s.docInviatiAt)+'</div>';
   }
   html+='</div>';
-  if(s.clienteKey && typeof docPannelloHTML==='function'){
+  if(typeof docPannelloHTML==='function'){
     html+='<div style="margin-top:12px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">'
-      +docPannelloHTML('cliente', s.clienteKey, 'sd_'+s.id, null, 'Documenti del cliente collegato in anagrafica (denuncia, libretto\u2026): quelli gi\u00e0 caricati compaiono qui sotto.')
+      +docPannelloHTML('sinistro', s.id, 'sdp_'+s.id, null, 'Documenti della pratica: denuncia, CID, foto danni, perizia\u2026')
       +'</div>';
+    if(s.clienteKey){
+      html+='<div style="margin-top:8px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">'
+        +docPannelloHTML('cliente', s.clienteKey, 'sd_'+s.id, null, 'Documenti del cliente in anagrafica (libretto, documenti\u2026)')
+        +'</div>';
+    }
   }
   return html;
 }
@@ -11439,6 +11446,12 @@ function sinForm(id){
   html+='<div id="sinf-veicsel" style="margin:2px 0 8px;"></div>';
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Targa','targa','text','GX873JH')+'</div><div style="flex:1.4;">'+f('Modello','modello','text','Ford Puma 1.0')+'</div></div>';
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Telaio','telaio','text','')+'</div><div style="flex:1;">'+f('Immatricolazione','immatricolazione','text','gg/mm/aaaa')+'</div></div>';
+  var TIPI_SIN=['Collisione / RCA','Kasko','Furto','Furto parziale','Incendio','Atti vandalici','Grandine','Cristalli','Animale selvatico','Eventi naturali','Altro'];
+  html+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Tipo di sinistro</label>';
+  html+='<select id="sinf-tipoSinistro" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'
+    +'<option value="">\u2014 seleziona \u2014</option>'
+    +TIPI_SIN.map(function(t){ return '<option value="'+sinEsc(t)+'"'+((s.tipoSinistro===t)?' selected':'')+'>'+sinEsc(t)+'</option>'; }).join('')
+    +'</select>';
   html+=f('Compagnia assicurativa','compagnia','text','');
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria','finanziaria','text','')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
   html+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px;font-size:13px;color:#475569;cursor:pointer;"><input type="checkbox" id="sinf-online" '+(s.peritoOnline?'checked':'')+' onchange="sinToggleOnline()" style="width:18px;height:18px;"> 💻 Perito online (senza appuntamento)</label>';
@@ -11461,6 +11474,7 @@ function sinForm(id){
   html+='</div>';
   m.innerHTML=html; m.style.display='block';
   window._sinfClienteKey = s.clienteKey || '';
+  window._sinfId = s.id || '';
   var _nEl=document.getElementById('sinf-nome');
   if(_nEl){ _nEl.addEventListener('input', function(){ window._sinfClienteKey=''; sinClienteSuggerisci(); sinFormDocRender(); var _vb=document.getElementById('sinf-veicsel'); if(_vb) _vb.innerHTML=''; }); }
   if(window._sinfClienteKey){ sinClienteSuggBox('<div style="font-size:12px;color:#16a34a;font-weight:700;padding:4px 2px;">\u2713 Cliente collegato all\'anagrafica</div>'); sinVeicoliRender(window._sinfClienteKey); }
@@ -11562,15 +11576,25 @@ function sinVeicScegli(i){
 }
 function sinFormDocRender(){
   var box=document.getElementById('sinf-doc'); if(!box) return;
+  if(typeof docPannelloHTML!=='function'){ box.innerHTML=''; return; }
   var key=window._sinfClienteKey||'';
-  if(key && typeof docPannelloHTML==='function'){
-    box.innerHTML='<div style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px;">'
-      +docPannelloHTML('cliente', key, 'sinfdoc', null, 'Documenti del cliente: allega denuncia e libretto, o apri quelli gi\u00e0 presenti.')
+  var sid=window._sinfId||'';
+  var h='';
+  if(sid){
+    h+='<div style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px;">'
+      +docPannelloHTML('sinistro', sid, 'sinfdocs', null, 'Documenti di questa pratica: denuncia, CID, foto dei danni, perizia\u2026')
       +'</div>';
-    try{ if(typeof docListaRender==='function') docListaRender('cliente', key, 'sinfdoc'); }catch(e){}
-  } else {
-    box.innerHTML='<div style="font-size:12px;color:#94a3b8;">\ud83d\udcce Collega un cliente esistente dai suggerimenti per allegare subito denuncia e libretto. Per un cliente nuovo potrai allegarli dopo il salvataggio, dalla card della pratica.</div>';
   }
+  if(key){
+    h+='<div style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px;margin-top:8px;">'
+      +docPannelloHTML('cliente', key, 'sinfdoc', null, 'Documenti del cliente (libretto, carta d\'identit\u00e0\u2026): restano legati alla sua scheda.')
+      +'</div>';
+  }
+  box.innerHTML=h;
+  try{
+    if(sid && typeof docListaRender==='function') docListaRender('sinistro', sid, 'sinfdocs');
+    if(key && typeof docListaRender==='function') docListaRender('cliente', key, 'sinfdoc');
+  }catch(e){}
 }
 
 function sinChiudi(){ var m=document.getElementById('sin-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
@@ -11586,6 +11610,7 @@ function sinSalva(id, isNew){
   var _on=document.getElementById('sinf-online'); s.peritoOnline=_on?_on.checked:false;
   s.clienteKey=_ck;
   s.telaio=g('telaio'); s.immatricolazione=g('immatricolazione');
+  var _ts=document.getElementById('sinf-tipoSinistro'); s.tipoSinistro=_ts?_ts.value:'';
   s.appuntamento=s.peritoOnline?'':g('appuntamento'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
   var idx=list.findIndex(function(x){return x.id===id;});
@@ -13538,7 +13563,7 @@ function cvForm(id, fromVend){
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
   h+='<div id="cv-sconto-box" style="display:'+(_cv.scontoOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:2;">'+inp('cv_scontoDesc',_cv.scontoDesc,'descrizione (es. Sconto finanziamento PROMO)')+'</div><div style="flex:1;">'+inp('cv_scontoImporto',_cv.scontoImporto,'importo €','number')+'</div></div></div>';
   h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_assicOn" '+(_cv.assicOn?'checked':'')+' onchange="cvAssicToggle()" style="width:20px;height:20px;">Assicurazione</label>';
-  h+='<div id="cv-assic-box" style="display:'+(_cv.assicOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_assicImporto',((_cv.assicOn&&(_cv.assicImporto===''||_cv.assicImporto==null))?'0':_cv.assicImporto),'importo €','number')+'</div><div style="flex:1;">'+inp('cv_assicMesi',_cv.assicMesi,'mesi','number')+'</div></div><textarea id="cv_assicDett" oninput="cvLive()" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:90px;box-sizing:border-box;">'+cvEsc(_cv.assicDettaglio||CV_ASSIC_DEF)+'</textarea></div>';
+  h+='<div id="cv-assic-box" style="display:'+(_cv.assicOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_assicImporto',((_cv.assicOn&&(_cv.assicImporto===''||_cv.assicImporto==null))?'0':_cv.assicImporto),'importo €','number')+'</div><div style="flex:1;">'+inp('cv_assicMesi',_cv.assicMesi,'mesi','number')+'</div></div><div style="display:flex;gap:10px;margin-top:6px;"><div style="flex:1;">'+inp('cv_polizzaAnnua',_cv.polizzaAnnua,'polizza annua \u20ac (confronto)','number')+'</div><div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div><textarea id="cv_assicDett" oninput="cvLive()" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:90px;box-sizing:border-box;">'+cvEsc(_cv.assicDettaglio||CV_ASSIC_DEF)+'</textarea></div>';
   h+=tog('cv_listinoOn',_cv.listinoOn,'Mostra prezzo listino');
   h+='<div id="cv-listino-box" style="display:'+(_cv.listinoOn?'block':'none')+';padding-left:8px;">'+inp('cv_listino',_cv.listino,'prezzo di listino €','number')+'</div>';
   h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_diniOn" '+(_cv.diniOn?'checked':'')+' onchange="cvAggiornaPassaggio()" style="width:20px;height:20px;">Vendita a professionista (Legge Dini) &mdash; trapasso 130&euro; fisso</label>';
@@ -13683,6 +13708,7 @@ function cvSync(){
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
+  _cv.polizzaAnnua=g('cv_polizzaAnnua'); _cv.estinzioneMesi=g('cv_estinzioneMesi');
   _cv.legge104On=ck('cv_legge104On'); _cv.listinoOn=ck('cv_listinoOn'); _cv.listino=g('cv_listino'); _cv.diniOn=ck('cv_diniOn');
   _cv.permutaOn=ck('cv_permutaOn'); _cv.note=g('cv_note');
   if(document.getElementById('cv_pm_modello')){ _cv.permuta={ modello:g('cv_pm_modello'), alimentazione:g('cv_pm_alim'), cambio:g('cv_pm_cambio'), immat:'Immatricolata', colore:g('cv_pm_colore'), prezzoAcq:g('cv_pm_prezzoAcq'), cilindrata:g('cv_pm_cilindrata'), potenza:g('cv_pm_potenza'), dataImm:g('cv_pm_dataImm'), targa:g('cv_pm_targa'), km:g('cv_pm_km'), doppiaChiave:ck('cv_pm_doppiaChiave'), privaDifetti:ck('cv_pm_privaDifetti'), difetti:g('cv_pm_difetti') }; }
@@ -14474,6 +14500,54 @@ function cvBuildHTML(c, tipo){
   var _deduc=_pagShow.reduce(function(s,x){return s+cvNum(x.importo);},0);
   var _saldoDov=Math.max(0,(t.totaleScontato||0)-_deduc);
   doc+=row('Saldo dovuto',_saldoDov,'tot');
+  /* Riepilogo del finanziamento e confronto fra le tre strade possibili:
+     estinzione anticipata, finanziamento fino a scadenza, acquisto senza finanziamento. */
+  doc+=(function(){
+    try{
+      var fp=(c.pagamenti||[]).filter(function(x){ return /finanziament/i.test(x.metodo||'')||/finanziament/i.test(x.tipo||''); })[0];
+      if(!fp) return '';
+      var impFin=cvNum(fp.importo)||0;
+      var rata=cvNum(fp.importoRata)||((fp.finDati&&cvNum(fp.finDati.rata))||0);
+      var mesi=parseInt(fp.rate,10)||((fp.finDati&&parseInt(fp.finDati.durata,10))||0);
+      if(!(impFin>0&&rata>0&&mesi>0)) return '';
+      var tan=(fp.finDati&&cvNum(fp.finDati.tan))||0;
+      /* versato dal cliente a parte (acconti/caparre, non il finanziamento) */
+      var acconti=_pagShow.filter(function(x){ return x!==fp; }).reduce(function(s,x){ return s+cvNum(x.importo); },0);
+      var kEst=parseInt(c.estinzioneMesi,10)||18;
+      if(kEst>=mesi) kEst=Math.max(1,Math.round(mesi/3));
+      /* debito residuo stimato: valore attuale delle rate mancanti */
+      var resid;
+      if(tan>0){ var i=tan/100/12, n=mesi-kEst; resid=rata*(1-Math.pow(1+i,-n))/i; }
+      else { resid=rata*(mesi-kEst); }
+      resid=Math.round(resid);
+      var quotaPag=Math.round(rata*kEst);
+      var totEst=quotaPag+acconti+resid;
+      var totFin=Math.round(rata*mesi)+acconti;
+      /* senza finanziamento: prezzo pieno (senza sconto promo) + polizza pagata a parte */
+      var anni=Math.max(1,Math.round((parseInt(c.assicMesi,10)||60)/12));
+      var polAnnua=cvNum(c.polizzaAnnua)||0;
+      var totSenza=(t.totaleVendita||0)+polAnnua*anni;
+      var eu=function(n){ return (Math.round(n)).toLocaleString('it-IT')+',00 &euro;'; };
+      var s='<div class="cvh" style="page-break-inside:avoid;">Finanziamento</div>';
+      s+='<div class="cvrow"><div>Importo finanziato</div><div><b>'+eu(impFin)+'</b></div></div>';
+      s+='<div class="cvrow"><div>Rata mensile</div><div><b>'+eu(rata)+'</b></div></div>';
+      s+='<div class="cvrow"><div>Durata</div><div><b>'+mesi+' mesi</b></div></div>';
+      s+='<div class="cvh" style="page-break-inside:avoid;">Confronto delle soluzioni</div><div class="cvbox" style="padding:0;">';
+      s+='<div class="cvrow"><div><b>Con estinzione anticipata a '+kEst+' mesi</b>'
+        +'<div class="cvsmall">'+kEst+' rate da '+eu(rata)+' = '+eu(quotaPag)
+        +(acconti?(' &middot; acconto '+eu(acconti)):'')
+        +' &middot; estinzione stimata '+eu(resid)+'</div></div><div><b>'+eu(totEst)+'</b></div></div>';
+      s+='<div class="cvrow"><div><b>Con finanziamento fino a scadenza</b>'
+        +'<div class="cvsmall">'+mesi+' rate da '+eu(rata)+' = '+eu(rata*mesi)
+        +(acconti?(' &middot; acconto '+eu(acconti)):'')+'</div></div><div><b>'+eu(totFin)+'</b></div></div>';
+      s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
+        +'<div class="cvsmall">prezzo di vendita '+eu(t.totaleVendita||0)
+        +(polAnnua?(' &middot; polizza '+eu(polAnnua)+' x '+anni+' anni = '+eu(polAnnua*anni)):'')+'</div></div>'
+        +'<div><b>'+eu(totSenza)+'</b></div></div>';
+      s+='</div><div class="cvsmall" style="margin-top:4px;">Importi indicativi a fini comparativi: l\'estinzione anticipata &egrave; stimata e va confermata dalla finanziaria.</div>';
+      return s;
+    }catch(e){ return ''; }
+  })();
   /* Firma in prima pagina: il contratto finale e' lungo e va sottoscritto
      anche qui, dove ci sono gli importi. */
   if(isFinale) doc+=cvFirmaHTML();
@@ -14654,7 +14728,8 @@ var DOC_CAT={
   auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['libretto_nuovo','Libretto nuovo intestato'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['altro','Altro']],
-  appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']]
+  appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
+  sinistro:[['denuncia','Denuncia sinistro'],['libretto','Libretto veicolo'],['cid','CID / constatazione amichevole'],['foto_danni','Foto danni'],['perizia','Perizia'],['preventivo','Preventivo riparazione'],['cessione','Atto di cessione'],['fattura','Fattura'],['altro','Altro']]
 };
 function docCatLabel(tipo,cat){ var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
 function docCatOptions(tipo, sel){ return (DOC_CAT[tipo]||DOC_CAT.auto).map(function(o){return '<option value="'+o[0]+'"'+(sel&&String(sel)===o[0]?' selected':'')+'>'+docEsc(o[1])+'</option>';}).join(''); }
@@ -17022,6 +17097,67 @@ function simApplicaPrefill(){
     simCalcNow();
   }catch(e){}
 }
+var _simDelibId=null;
+function simDaDelibera(cvId){
+  try{
+    var cv=(typeof cvById==='function')?cvById(cvId):null; if(!cv){ alert('Vendita non trovata.'); return; }
+    var pag=(typeof cvFinPag==='function')?cvFinPag(cv):null;
+    var imp=pag?((typeof cvNum==='function')?cvNum(pag.importo):parseFloat(pag.importo||0)):0;
+    var _tt=(typeof cvCalcola==='function')?cvCalcola(cv):null;
+    var _tot=_tt?((_tt.totaleScontato!=null?_tt.totaleScontato:_tt.totaleVendita)||0):imp;
+    if(!imp||imp<=0) imp=_tot;
+    if(_tot<imp) _tot=imp;
+    _simDelibId=cvId; _simPagIdx=null;
+    try{ var _sv=document.getElementById('view-simulatore'); if(_sv && _sv.id!=='sim-modal-box') _sv.innerHTML=''; }catch(e){}
+    var m=document.getElementById('sim-modal');
+    if(!m){ m=document.createElement('div'); m.id='sim-modal';
+      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100060;overflow:auto;padding:12px;';
+      document.body.appendChild(m); }
+    m.innerHTML='<div id="sim-modal-win" style="max-width:640px;margin:0 auto;background:#f1f5f9;border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35);">'
+      +'<div id="sim-modal-bar" style="background:#16a34a;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:move;touch-action:none;user-select:none;">'
+      +'<span style="font-size:15px;opacity:.75;">\u2725</span><span style="font-weight:800;">\uD83E\uDDEE Simulatore \u2014 dati deliberati</span>'
+      +'<button onclick="simChiudiDelibera()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button></div>'
+      +'<div style="padding:12px;"><div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:12px;color:#166534;">'
+      +'Imposta i valori <b>effettivamente deliberati</b> (TAN, durata, polizze): al termine premi il pulsante verde e i dati passano nella delibera.</div>'
+      +'<div id="sim-modal-box"></div></div>'
+      +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
+      +'<button onclick="simChiudiDelibera()" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+      +'<button onclick="simUsaNellaDelibera()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u2705 Usa questi dati nella delibera</button>'
+      +'</div></div>';
+    m.style.display='block';
+    if(typeof simRendiTrascinabile==='function') simRendiTrascinabile();
+    _simTargetId='sim-modal-box';
+    var d=cv.finDelibera||{};
+    var sim=(typeof cvDatiSimulati==='function')?cvDatiSimulati(cv):{};
+    _simCaricatoPrefill={ valoreBene:Math.round(_tot*100)/100, anticipo:Math.round((_tot-imp)*100)/100,
+      rate:(d.durata||sim.durata||0) };
+    simInit();
+  }catch(e){ alert('Errore apertura simulatore: '+(e&&e.message||e)); }
+}
+function simChiudiDelibera(){ var id=_simDelibId; _simDelibId=null; simChiudiModal(); if(id && typeof cvDeliberaForm==='function') cvDeliberaForm(id); }
+function simUsaNellaDelibera(){
+  try{
+    if(!_simDelibId){ simChiudiModal(); return; }
+    simCalcNow();
+    var rata=simNum(simGet('I6'));
+    if(rata===null){ alert('La rata non \u00e8 calcolabile con questi dati: correggi gli avvisi in rosso.'); return; }
+    var pc=function(v){ return (v===null||v===undefined)?null:Math.round(v*10000)/100; };
+    var im=function(c){ var n=simNum(simGet(c)); return (n===null||n===undefined)?0:Math.round(n*100)/100; };
+    var cv=(typeof cvById==='function')?cvById(_simDelibId):null;
+    var valore=parseFloat((simEl('sim_C10')||{}).value)||0;
+    var anticipo=parseFloat((simEl('sim_C11')||{}).value)||0;
+    window._delibDaSim={
+      tan:pc(simNum(simGet('I9'))), taeg:pc(simNum(simGet('I10'))),
+      istruttoria:im('C12'), polizze:(im('C21')+im('C24')+im('D26')),
+      rata:Math.round(rata*100)/100,
+      durata:parseInt((simEl('sim_E10')||{}).value,10)||null,
+      importoFinanziato:Math.round((valore-anticipo)*100)/100
+    };
+    var id=_simDelibId; _simDelibId=null;
+    simChiudiModal();
+    if(typeof cvDeliberaForm==='function') cvDeliberaForm(id);
+  }catch(e){ alert('Errore: '+(e&&e.message||e)); }
+}
 function simUsaNelPreventivo(){
   try{
     if(_simPagIdx===null || typeof _cv==='undefined' || !_cv || !_cv.pagamenti[_simPagIdx]){ simChiudiModal(); return; }
@@ -17767,47 +17903,60 @@ function cvDeliberaForm(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
-  var v=function(k,alt){ return (d[k]!==undefined && d[k]!=='' && d[k]!==null)?d[k]:(alt!==undefined?alt:''); };
-  var oggi=new Date().toISOString().slice(0,10);
+  var fromSim=window._delibDaSim||null; window._delibDaSim=null;
+  var val=function(k){
+    if(fromSim && fromSim[k]!==undefined && fromSim[k]!==null) return fromSim[k];
+    if(d[k]!==undefined && d[k]!==null && d[k]!=='') return d[k];
+    return (sim[k]!==undefined && sim[k]!==null)?sim[k]:'';
+  };
   var m=document.getElementById('cvDeliberaModal');
   if(!m){ m=document.createElement('div'); m.id='cvDeliberaModal';
     m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
     document.body.appendChild(m); }
   var inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;';
   var lab='display:block;font-size:10px;font-weight:700;color:#64748b;margin:9px 0 3px;text-transform:uppercase;';
-  var hint=function(x){ return (x===''||x===null||x===undefined)?'':('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">simulato: '+x+'</div>'); };
-  var h='<div style="max-width:520px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
+  var hint=function(x,u){ return (x===''||x===null||x===undefined)?'':('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">simulato: '+x+(u||'')+'</div>'); };
+  var h2='<div style="max-width:520px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
    +'<span style="font-weight:800;">Dati della delibera</span>'
    +'<button onclick="cvDeliberaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
    +'<div style="padding:16px 18px;max-height:74vh;overflow:auto;">'
-   +'<div style="font-size:12.5px;color:#64748b;margin-bottom:6px;">Inserisci i valori <b>effettivamente deliberati</b> dalla finanziaria. I campi sono precompilati con la simulazione: correggi ci\u00f2 che \u00e8 cambiato.</div>'
-   +'<label style="'+lab+'">Finanziaria</label><input id="dl_finanziaria" style="'+inp+'" value="'+String(v('finanziaria',cv.finanziaria||'')).replace(/"/g,'&quot;')+'">'
-   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">TAN %</label><input id="dl_tan" type="number" step="0.01" style="'+inp+'" value="'+v('tan',sim.tan)+'">'+hint(sim.tan!==''?String(sim.tan).replace('.',',')+'%':'')+'</div>'
-   +'<div style="flex:1;"><label style="'+lab+'">TAEG %</label><input id="dl_taeg" type="number" step="0.01" style="'+inp+'" value="'+v('taeg',sim.taeg)+'">'+hint(sim.taeg!==''?String(sim.taeg).replace('.',',')+'%':'')+'</div></div>'
-   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Importo finanziato \u20ac</label><input id="dl_importo" type="number" step="0.01" style="'+inp+'" value="'+v('importoFinanziato',sim.importoFinanziato)+'">'+hint(sim.importoFinanziato!==''?sim.importoFinanziato+' \u20ac':'')+'</div>'
-   +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac</label><input id="dl_rata" type="number" step="0.01" style="'+inp+'" value="'+v('rata',sim.rata)+'">'+hint(sim.rata!==''?sim.rata+' \u20ac':'')+'</div></div>'
-   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate</label><input id="dl_durata" type="number" style="'+inp+'" value="'+v('durata',sim.durata)+'">'+hint(sim.durata||'')+'</div>'
-   +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+v('istruttoria',sim.istruttoria)+'">'+hint(sim.istruttoria!==''?sim.istruttoria+' \u20ac':'')+'</div></div>'
-   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Polizze \u20ac</label><input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+v('polizze',sim.polizze)+'">'+hint(sim.polizze!==''?sim.polizze+' \u20ac':'')+'</div>'
-   +'<div style="flex:1;"><label style="'+lab+'">Data delibera</label><input id="dl_data" type="date" style="'+inp+'" value="'+v('data',oggi)+'"></div></div>'
-   +'<label style="'+lab+'">Numero pratica finanziaria</label><input id="dl_pratica" style="'+inp+'" value="'+String(v('numeroPratica','')).replace(/"/g,'&quot;')+'">'
-   +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(v('note','')).replace(/"/g,'&quot;')+'">'
+   +(fromSim?'<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:700;">\u2713 Valori presi dal simulatore</div>':'')
+   +'<button onclick="simDaDelibera(\''+cv.id+'\')" style="width:100%;padding:11px;border:1px solid #16a34a;border-radius:9px;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;margin-bottom:6px;">\uD83E\uDDEE Calcola col simulatore (TAN, polizze, rata)</button>'
+   +'<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Inserisci i valori <b>effettivamente deliberati</b>. Tutti i campi sono obbligatori.</div>'
+   +'<label style="'+lab+'">Finanziaria *</label><input id="dl_finanziaria" style="'+inp+'" value="'+String(d.finanziaria||cv.finanziaria||'').replace(/"/g,'&quot;')+'" placeholder="es. Compass">'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">TAN % *</label><input id="dl_tan" type="number" step="0.01" style="'+inp+'" value="'+val('tan')+'">'+hint(sim.tan!==''?String(sim.tan).replace('.',','):'','%')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">TAEG % *</label><input id="dl_taeg" type="number" step="0.01" style="'+inp+'" value="'+val('taeg')+'">'+hint(sim.taeg!==''?String(sim.taeg).replace('.',','):'','%')+'</div></div>'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Importo finanziato \u20ac *</label><input id="dl_importo" type="number" step="0.01" style="'+inp+'" value="'+val('importoFinanziato')+'">'+hint(sim.importoFinanziato,' \u20ac')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac *</label><input id="dl_rata" type="number" step="0.01" style="'+inp+'" value="'+val('rata')+'">'+hint(sim.rata,' \u20ac')+'</div></div>'
+   +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate *</label><input id="dl_durata" type="number" style="'+inp+'" value="'+val('durata')+'">'+hint(sim.durata,'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac *</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+val('istruttoria')+'">'+hint(sim.istruttoria,' \u20ac')+'</div></div>'
+   +'<label style="'+lab+'">Polizze \u20ac * <span style="text-transform:none;font-weight:600;color:#94a3b8;">(0 se non presenti)</span></label><input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+val('polizze')+'">'+hint(sim.polizze,' \u20ac')
+   +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
    +'</div></div>';
-  m.innerHTML=h; m.style.display='flex';
+  m.innerHTML=h2; m.style.display='flex';
 }
 function cvDeliberaChiudi(){ var m=document.getElementById('cvDeliberaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvDeliberaSalva(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   var g=function(k){ var el=document.getElementById('dl_'+k); return el?el.value.trim():''; };
   var n=function(k){ var x=parseFloat(g(k)); return isNaN(x)?null:x; };
-  if(n('tan')===null || n('importo')===null){ alert('Inserisci almeno TAN e importo finanziato deliberati.'); return; }
+  var mancanti=[];
+  if(!g('finanziaria')) mancanti.push('Finanziaria');
+  if(n('tan')===null) mancanti.push('TAN');
+  if(n('taeg')===null) mancanti.push('TAEG');
+  if(n('importo')===null) mancanti.push('Importo finanziato');
+  if(n('rata')===null) mancanti.push('Rata');
+  if(n('durata')===null) mancanti.push('Numero rate');
+  if(n('istruttoria')===null) mancanti.push('Commissioni finanziarie');
+  if(n('polizze')===null) mancanti.push('Polizze');
+  if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   list[i].finDelibera={ confermata:true, finanziaria:g('finanziaria'), tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
-    polizze:n('polizze'), data:g('data'), numeroPratica:g('pratica'), note:g('note'),
+    polizze:n('polizze'), note:g('note'), data:new Date().toISOString().slice(0,10),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
   list[i].updatedAt=Date.now();
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
