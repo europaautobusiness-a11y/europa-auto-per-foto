@@ -13075,8 +13075,31 @@ var _cv=null;
 function cvNum(x){ if(x==null) return 0; if(typeof x==='number') return isNaN(x)?0:x; var s=String(x).trim(); if(s==='') return 0; if(s.indexOf(',')>=0){ s=s.replace(/\./g,'').replace(',','.'); } var n=parseFloat(s); return isNaN(n)?0:n; }
 function cvEuro(n){ return cvNum(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
 function cvEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function cvLoad(){ try{ return JSON.parse(localStorage.getItem(CV_KEY)||'[]'); }catch(e){ return []; } }
-function cvSave(list){ try{ localStorage.setItem(CV_KEY, JSON.stringify(list)); }catch(e){ alert('Memoria piena.'); } }
+/* ---- Preventivi/vendite: memoria di lavoro + cache locale ----------------
+   Lo storico importato dal vecchio gestionale (migliaia di documenti) supera
+   lo spazio del browser: in localStorage teniamo solo i documenti "vivi",
+   lo storico resta in memoria e viene riletto da Supabase a ogni avvio.      */
+var _cvMem=null;
+function cvIsStorico(x){ return !!(x && (x.origine==='sicom' || x.origine==='sicom_prev')); }
+function cvLoad(){
+  if(_cvMem) return _cvMem;
+  try{ _cvMem=JSON.parse(localStorage.getItem(CV_KEY)||'[]')||[]; }catch(e){ _cvMem=[]; }
+  return _cvMem;
+}
+function cvSave(list){
+  _cvMem=list||[];
+  var vivi=_cvMem.filter(function(x){ return !cvIsStorico(x); });
+  try{ localStorage.setItem(CV_KEY, JSON.stringify(vivi)); return; }catch(e){}
+  /* se non basta ancora: tengo i piu' recenti, il resto arriva dal cloud */
+  try{
+    var ord=vivi.slice().sort(function(a,b){ return (b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0); });
+    for(var n=800; n>=100; n=Math.floor(n/2)){
+      try{ localStorage.setItem(CV_KEY, JSON.stringify(ord.slice(0,n))); return; }catch(e2){}
+    }
+  }catch(e3){}
+  try{ localStorage.setItem(CV_KEY,'[]'); }catch(e4){}
+}
+
 function cvById(id){ return cvLoad().filter(function(x){return x.id===id;})[0]||null; }
 function cvOggi(){ var d=new Date(),z=function(n){return String(n).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+String(d.getFullYear()).slice(2); }
 
@@ -13564,9 +13587,9 @@ function cvForm(id, fromVend){
   h+='<div id="cv-sconto-box" style="display:'+(_cv.scontoOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:2;">'+inp('cv_scontoDesc',_cv.scontoDesc,'descrizione (es. Sconto finanziamento PROMO)')+'</div><div style="flex:1;">'+inp('cv_scontoImporto',_cv.scontoImporto,'importo €','number')+'</div></div></div>';
   h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_assicOn" '+(_cv.assicOn?'checked':'')+' onchange="cvAssicToggle()" style="width:20px;height:20px;">Assicurazione</label>';
   h+='<div id="cv-assic-box" style="display:'+(_cv.assicOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_assicImporto',((_cv.assicOn&&(_cv.assicImporto===''||_cv.assicImporto==null))?'0':_cv.assicImporto),'importo €','number')+'</div><div style="flex:1;">'+inp('cv_assicMesi',_cv.assicMesi,'mesi','number')+'</div></div><textarea id="cv_assicDett" oninput="cvLive()" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:90px;box-sizing:border-box;">'+cvEsc(_cv.assicDettaglio||CV_ASSIC_DEF)+'</textarea></div>';
-  h+=tog('cv_confrontoOn',_cv.confrontoOn,'Confronto soluzioni nel contratto');
+  h+=tog('cv_confrontoOn',_cv.confrontoOn,'Confronto soluzioni in stampa');
   h+='<div id="cv-confronto-box" style="display:'+(_cv.confrontoOn?'block':'none')+';padding-left:8px;">'
-    +'<div style="font-size:11px;color:#64748b;margin:2px 0 6px;">Stampa nel contratto il riepilogo del finanziamento e il confronto fra estinzione anticipata, finanziamento a scadenza e acquisto senza finanziamento. Se lasci vuoti i campi, vengono calcolati da soli.</div>'
+    +'<div style="font-size:11px;color:#64748b;margin:2px 0 6px;">Stampa il riepilogo del finanziamento e il confronto fra acquisto senza finanziamento, finanziamento a scadenza ed estinzione anticipata. Senza TAN e TAEG. Se lasci vuoti i campi, vengono calcolati da soli.</div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_polizzaAnnua',_cv.polizzaAnnua,'polizza annua \u20ac (auto)','number')+'</div>'
     +'<div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div>'
     +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'
@@ -14512,14 +14535,21 @@ function cvBuildHTML(c, tipo){
      estinzione anticipata, finanziamento fino a scadenza, acquisto senza finanziamento. */
   doc+=(function(){
     try{
-      if(!isFinale || !c.confrontoOn) return '';   /* solo nel contratto, se attivato */
+      if(!c.confrontoOn) return '';   /* stampato quando l'interruttore e' attivo */
       var fp=(c.pagamenti||[]).filter(function(x){ return /finanziament/i.test(x.metodo||'')||/finanziament/i.test(x.tipo||''); })[0];
       if(!fp) return '';
-      var impFin=cvNum(fp.importo)||0;
-      var rata=cvNum(fp.importoRata)||((fp.finDati&&cvNum(fp.finDati.rata))||0);
-      var mesi=parseInt(fp.rate,10)||((fp.finDati&&parseInt(fp.finDati.durata,10))||0);
+      /* i dati migliori sono quelli della delibera; in mancanza uso il
+         pagamento e, come ultima risorsa, i valori del simulatore. */
+      var dl=c.finDelibera||{};
+      var impFin=cvNum(dl.importoFinanziato)||cvNum(fp.importo)||0;
+      var rata=cvNum(dl.rata)||cvNum(fp.importoRata)||((fp.finDati&&cvNum(fp.finDati.rata))||0);
+      var mesi=parseInt(dl.durata,10)||parseInt(fp.rate,10)||((fp.finDati&&parseInt(fp.finDati.durata,10))||0);
+      var tan=cvNum(dl.tan)||((fp.finDati&&cvNum(fp.finDati.tan))||0);
+      /* se manca la rata ma ho importo, durata e TAN, la calcolo */
+      if(!(rata>0) && impFin>0 && mesi>0 && tan>0){
+        var _i=tan/100/12; rata=Math.round(impFin*_i/(1-Math.pow(1+_i,-mesi))*100)/100;
+      }
       if(!(impFin>0&&rata>0&&mesi>0)) return '';
-      var tan=(fp.finDati&&cvNum(fp.finDati.tan))||0;
       /* versato dal cliente a parte (acconti/caparre, non il finanziamento) */
       var acconti=_pagShow.filter(function(x){ return x!==fp; }).reduce(function(s,x){ return s+cvNum(x.importo); },0);
       var kEst=parseInt(c.estinzioneMesi,10)||18;
@@ -14605,7 +14635,10 @@ function cvBuildHTML(c, tipo){
   var _finPromoImp=_finPromo.reduce(function(s,p){return s+cvNum(p.importo);},0);
   var _haPenale=(isFinale && _finPromoImp>0 && !!c.assicOn);
   if(c.assicOn){ doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox">'+cvEsc(c.assicDettaglio||'')+'</div>'; }
-  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(x.note?(' <span class="cvsmall">&middot; '+cvEsc(x.note)+'</span>'):'')+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
+  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
+     var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
+        .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
+     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(x.rate||x.importoRata){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
   if(_haPenale){ var _finImp=_finPromoImp; { var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh" style="page-break-after:avoid;">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; doc+=cvFirmaHTML(); } }
   /* La doppia chiave si scrive SOLO se viene consegnata: se non c'e', il
