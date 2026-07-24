@@ -13444,7 +13444,8 @@ var WA_MSG_DEF={
   appuntamenti:'Gentile {nome}, le ricordiamo l\'appuntamento presso Europa Auto Srl (Via Nigra 4, Paderno Dugnano) il {data} alle {ora}. Per qualsiasi variazione ci contatti. A presto!',
   assicurazioni:'Gentile {nome}, la sua assicurazione auto risulta in scadenza il {scadenza}. La invitiamo a contattarci per il rinnovo. Europa Auto Srl.',
   preventivi:'Gentile {nome}, il preventivo per {auto} \u00e8 ancora valido! Se desidera procedere o ha domande siamo a disposizione. Europa Auto Srl.',
-  offerta_prev:'Gentile {nome}, solo per lei un\'offerta speciale sul {auto}, valida esclusivamente 48 ore! Non lasci sfuggire l\'occasione. La aspettiamo in Europa Auto Srl \u2013 Tel. 029181820.'
+  offerta_prev:'Gentile {nome}, solo per lei un\'offerta speciale sul {auto}, valida esclusivamente 48 ore! Non lasci sfuggire l\'occasione. La aspettiamo in Europa Auto Srl \u2013 Tel. 029181820.',
+  evento_naturale:'Gentile {nome}, ci risulta che nella zona di {zona} si sono verificati eventi atmosferici (es. grandine). Le ricordiamo che la sua polizza attiva con Europa Auto copre gli eventi naturali: se il veicolo ha subito danni ci contatti subito per gestire la pratica. Tel. 029181820.'
 };
 function waEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function waMsgStore(){ try{ return JSON.parse(localStorage.getItem(WA_MSG_KEY)||'{}'); }catch(e){ return {}; } }
@@ -13458,7 +13459,7 @@ function waMsgSupaLoad(){
   }, waMsgStore);
 }
 function waNumero(tel){ var d=String(tel||'').replace(/\D/g,''); if(!d) return ''; if(d.slice(0,4)==='0039') d=d.slice(2); if(d.slice(0,2)==='39' && d.length>=12) return d; if(d.charAt(0)==='3') return '39'+d; return d; }
-function waFill(tmpl,d){ return String(tmpl||'').replace(/\{nome\}/g,d.nome||'').replace(/\{data\}/g,d.data||'').replace(/\{ora\}/g,d.ora||'').replace(/\{auto\}/g,d.auto||'').replace(/\{scadenza\}/g,d.scadenza||''); }
+function waFill(tmpl,d){ return String(tmpl||'').replace(/\{nome\}/g,d.nome||'').replace(/\{data\}/g,d.data||'').replace(/\{ora\}/g,d.ora||'').replace(/\{auto\}/g,d.auto||'').replace(/\{scadenza\}/g,d.scadenza||'').replace(/\{zona\}/g,d.zona||''); }
 function waValido(tel){ return /^39\d{9,10}$/.test(waNumero(tel)); }
 function waOpen(tel,msg){ if(!waValido(tel)){ alert('Numero WhatsApp non valido per questo contatto (serve un cellulare).'); return; } window.open('https://wa.me/'+waNumero(tel)+'?text='+encodeURIComponent(msg||''),'_blank'); }
 function waNome(cl){ cl=cl||{}; if(cl.business && cl.ragSociale) return cl.ragSociale; var n=((cl.nome||'')+' '+(cl.cognome||'')).trim(); return n||'Cliente'; }
@@ -19479,7 +19480,7 @@ function crmWaEditor(tab, titolo, ph){
 function crmWaSaveMsg(tab){ var el=document.getElementById('crmwa-'+tab); if(el && typeof waMsgSet==='function'){ waMsgSet(tab, el.value); if(typeof tcToastNew==='function') tcToastNew('Messaggio salvato',true); } }
 function crmWaSend(tel, tab, nome, extra){
   if(typeof waOpen!=='function'){ alert('Modulo WhatsApp non disponibile.'); return; }
-  var d={ nome:(String(nome||'').split(' ')[0])||String(nome||''), auto:extra||'', scadenza:extra||'' };
+  var d={ nome:(String(nome||'').split(' ')[0])||String(nome||''), auto:extra||'', scadenza:extra||'', zona:extra||'' };
   var tmpl=(typeof waMsgGet==='function')?waMsgGet(tab):'';
   waOpen(tel, (typeof waFill==='function')?waFill(tmpl,d):tmpl);
 }
@@ -19698,16 +19699,52 @@ function crmRenderConsegnate(){
   });
   return h;
 }
+var _crmAssScad30=false;
+var _crmAssZona='';
+var _crmAssZonaT=null;
+function crmAssScadToggle(v){ _crmAssScad30=!!v; crmRender(); }
+function crmAssZonaInput(v){
+  _crmAssZona=String(v||'');
+  if(_crmAssZonaT) clearTimeout(_crmAssZonaT);
+  _crmAssZonaT=setTimeout(function(){
+    crmRender();
+    try{ var el=document.getElementById('crm-ass-zona'); if(el){ el.focus(); var L=el.value.length; el.setSelectionRange(L,L); } }catch(e){}
+  },300);
+}
 function crmRenderAssic(){
   var ass=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
-  if(!ass.length) return crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
+  var editors=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')
+    +crmWaEditor('evento_naturale','Messaggio evento naturale (grandine, ecc.) WhatsApp','{nome} {zona}');
+  if(!ass.length) return editors+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
   ass=ass.map(function(cv){ var mesi=parseInt(cv.assicMesi,10); if(isNaN(mesi)||mesi<=0||mesi>120) mesi=12; cv._scad=crmAddMesi(cv.consegnatoTs, mesi); cv._gg=Math.round((cv._scad-Date.now())/(1000*60*60*24)); return cv; }).sort(function(a,b){return a._scad-b._scad;});
-  var h=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze attive. In arancione quelle in scadenza entro 60 giorni.</div>';
+  var totAttive=ass.length;
+  var n30=ass.filter(function(cv){ return cv._gg<=30; }).length;
+  /* filtro scadenza entro 30 giorni (incluse le gia' scadute) */
+  if(_crmAssScad30) ass=ass.filter(function(cv){ return cv._gg<=30; });
+  /* filtro zona: citta', provincia o CAP del cliente */
+  var q=String(_crmAssZona||'').toLowerCase().trim();
+  if(q) ass=ass.filter(function(cv){ var cl=cv.cliente||{};
+    return ((cl.citta||'')+' '+(cl.prov||'')+' '+(cl.cap||'')).toLowerCase().indexOf(q)>=0; });
+  var h=editors;
+  var btn=function(on,label,click){ return '<button onclick="'+click+'" style="flex:0 0 auto;padding:8px 13px;border-radius:9px;border:1px solid '+(on?'#d97706':'#cbd5e1')+';background:'+(on?'#d97706':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;">'+label+'</button>'; };
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:12px;">'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    +btn(!_crmAssScad30,'Tutte ('+totAttive+')','crmAssScadToggle(false)')
+    +btn(_crmAssScad30,'⚠️ Entro 30 gg ('+n30+')','crmAssScadToggle(true)')
+    +'<input id="crm-ass-zona" value="'+crmEsc(_crmAssZona)+'" oninput="crmAssZonaInput(this.value)" placeholder="📍 Filtra per citt\u00e0, provincia o CAP (es. Paderno, MB, 20037)" style="flex:1;min-width:200px;padding:9px 11px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box;">'
+    +'</div>'
+    +(q?'<div style="font-size:11.5px;color:#64748b;margin-top:7px;">Zona \u00ab'+crmEsc(_crmAssZona)+'\u00bb: <b>'+ass.length+'</b> polizze trovate. Usa il bottone ⛈ per avvisare i clienti dell\u2019evento naturale coperto.</div>':'')
+    +'</div>';
+  if(!ass.length) return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna polizza corrisponde ai filtri.</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze mostrate ('+totAttive+' attive in totale, '+n30+' in scadenza entro 30 gg). In arancione quelle in scadenza entro 60 giorni.</div>';
   ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<60;
+    var zona=[(cl.citta||''),(cl.prov?('('+cl.prov+')'):''),(cl.cap||'')].filter(Boolean).join(' ');
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
       +'<div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Scadenza</div><div style="font-weight:800;color:'+(scad?'#d97706':'#1a4fa0')+';">'+crmDMY(cv._scad)+'</div><div style="font-size:11px;color:'+(cv._gg<0?'#dc2626':'#94a3b8')+';">'+(cv._gg<0?'scaduta':('tra '+cv._gg+' gg'))+'</div></div></div>'
+      +(zona?'<div style="font-size:12px;color:#94a3b8;margin-top:3px;">📍 '+crmEsc(zona)+'</div>':'')
       +crmWaBtn((cl.telefono||''),'assicurazioni',(cl.nome||''),crmDMY(cv._scad),'Ricorda rinnovo')
+      +crmWaBtn((cl.telefono||''),'evento_naturale',(cl.nome||''),(cl.citta||'zona'),'⛈ Evento naturale')
       +'</div>';
   });
   return h;
