@@ -11940,11 +11940,35 @@ function pmDedup(){
 }
 function pmInit(){ pmDedup(); pmRender(); pmSupaLoad(); pmLoadDaSheets(); }
 
+var _pmTab='ingresso', _pmQ='';
+function pmSetTab(t){ _pmTab=t; pmRender(); }
+function pmSetQ(v){ _pmQ=String(v||''); pmRender(); var el=document.getElementById('pm-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} } }
+/* Una perizia e' conclusa quando la permuta e' entrata in magazzino o e' stata esportata. */
+function pmConclusa(p){
+  try{
+    if(p && (p.permutaStato==='entrata' || p.permutaStato==='esportata' || p.magazzinoId)) return true;
+    var cvs=(typeof cvLoad==='function')?cvLoad():[];
+    for(var i=0;i<cvs.length;i++){
+      var pm=cvs[i] && cvs[i].permuta; if(!pm) continue;
+      var stesso=(pm.periziaId && p && pm.periziaId===p.id) || (p && p.targa && pm.targa && String(pm.targa).toUpperCase()===String(p.targa).toUpperCase());
+      if(stesso && (pm.permutaStato==='entrata' || pm.permutaStato==='esportata')) return true;
+    }
+  }catch(e){}
+  return false;
+}
 function pmRender(){
   var wrap=document.getElementById('pm-lista'); if(!wrap) return;
-  var list=pmLoad().sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
-  if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessuna perizia. Premi “Nuova permuta”.</div>'; return; }
-  var h='';
+  var tutte=pmLoad().sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
+  var concl=tutte.filter(pmConclusa), ingr=tutte.filter(function(p){ return !pmConclusa(p); });
+  var base=(_pmTab==='concluse')?concl:ingr;
+  var q=_pmQ.toLowerCase().trim();
+  var list=q? base.filter(function(p){ return ((p.targa||'')+' '+(p.modello||'')+' '+(p.cliente||'')+' '+(p.telaio||'')).toLowerCase().indexOf(q)>=0; }) : base;
+  var h='<input id="pm-q" value="'+pmEsc(_pmQ)+'" oninput="pmSetQ(this.value)" autocomplete="off" placeholder="\ud83d\udd0e Cerca targa, modello o cliente\u2026" style="width:100%;padding:12px 14px;border:1.5px solid #cbd5e1;border-radius:11px;font-family:inherit;font-size:15px;box-sizing:border-box;margin-bottom:10px;">';
+  h+='<div style="display:flex;gap:7px;margin-bottom:12px;">'
+    +'<button onclick="pmSetTab(\'ingresso\')" style="flex:1;padding:9px;border-radius:9px;border:1px solid '+(_pmTab==='ingresso'?'#1a4fa0':'#cbd5e1')+';background:'+(_pmTab==='ingresso'?'#1a4fa0':'#fff')+';color:'+(_pmTab==='ingresso'?'#fff':'#64748b')+';font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">In ingresso ('+ingr.length+')</button>'
+    +'<button onclick="pmSetTab(\'concluse\')" style="flex:1;padding:9px;border-radius:9px;border:1px solid '+(_pmTab==='concluse'?'#1a4fa0':'#cbd5e1')+';background:'+(_pmTab==='concluse'?'#1a4fa0':'#fff')+';color:'+(_pmTab==='concluse'?'#fff':'#64748b')+';font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Concluse ('+concl.length+')</button>'
+    +'</div>';
+  if(!list.length){ wrap.innerHTML=h+'<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">'+(q?('Nessuna perizia trovata per \u00ab'+pmEsc(_pmQ)+'\u00bb.'):(_pmTab==='concluse'?'Nessuna permuta conclusa.':'Nessuna perizia in ingresso. Premi Nuova permuta.'))+'</div>'; return; }
   list.forEach(function(p){
     var firmato = !!(p.firma) || p.metodoFirma==='carta';
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
@@ -13333,6 +13357,15 @@ function pmiExport(cvId){
   cv.permutaOn=false;
   var rimosso=0;
   if(cv.pagamenti){ cv.pagamenti=cv.pagamenti.filter(function(p){ if(/permuta/i.test(p.metodo||'')){ rimosso+=cvNum(p.importo); return false; } return true; }); }
+  /* Il valore riconosciuto per la permuta resta dovuto: diventa un pagamento
+     in contanti ancora da confermare, cosi' non sparisce dal conteggio. */
+  if(!rimosso && cv.permuta && cvNum(cv.permuta.prezzoAcq)>0) rimosso=cvNum(cv.permuta.prezzoAcq);
+  if(rimosso>0){
+    cv.pagamenti=cv.pagamenti||[];
+    cv.pagamenti.push({ id:'pm_exp_'+Date.now(), tipo:'Saldo', metodo:'Contanti', importo:rimosso,
+      confermato:false, data:new Date().toISOString().slice(0,10),
+      note:'Valore permuta non ritirata \u2014 da incassare' });
+  }
   if(cv.isContratto){
     var t=cvCalcola(cv); var pags=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
     var incassato=pags.filter(function(p){return p.confermato;}).reduce(function(s,p){return s+cvNum(p.importo);},0);
