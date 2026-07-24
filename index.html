@@ -10386,11 +10386,32 @@ document.addEventListener('DOMContentLoaded',function(){
   }
   function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita')?'45':'90'; }catch(e){} }
   function ccNomeCliente(o){ var c=(o&&o.cliente)?o.cliente:o||{}; return (c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()); }
+  /* Per cercare un'auto anche dal cognome del cliente: costruisco l'elenco
+     dei proprietari a partire da contratti e vendite. */
+  var _ccProp=null, _ccPropLen=-1;
+  function ccIdxProprietari(){
+    try{
+      if(typeof cvLoad!=='function') return;
+      var l=cvLoad();
+      if(_ccProp && _ccPropLen===l.length) return;
+      _ccProp={};
+      for(var i=0;i<l.length;i++){
+        var c=l[i]; if(!c || !c.autoId) continue;
+        var cl=c.cliente||{};
+        var nome=(cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim());
+        if(!nome) continue;
+        var pre=_ccProp[c.autoId];
+        if(!pre || (c.isContratto && !pre.contratto)) _ccProp[c.autoId]={nome:nome, contratto:!!c.isContratto};
+      }
+      _ccPropLen=l.length;
+    }catch(e){}
+  }
+  function ccProprietario(autoId){ ccIdxProprietari(); var p=_ccProp&&_ccProp[autoId]; return p?p.nome:''; }
   function ccPopolaSuggerimenti(){
     try{
       try{ ccNotaSugg(); }catch(e){}
       var vl=document.getElementById('cc-veicoli-list');
-      if(vl && typeof mzLoad==='function'){ vl.innerHTML=mzLoad().filter(function(a){return a && a.stato!=='venduta';}).map(function(a){ var lab=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):''))); return '<option value="'+ccEsc(lab)+'"></option>'; }).join(''); }
+      if(vl && typeof mzLoad==='function'){ ccIdxProprietari(); vl.innerHTML=mzLoad().filter(function(a){ if(!a) return false; if(a.stato!=='venduta') return true; /* le vendute restano cercabili se sono state consegnate da noi: servono per i tagliandi */ return !!ccProprietario(a.id); }).map(function(a){ var lab=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):''))); var _pr=ccProprietario(a.id); if(_pr) lab+=' \u00b7 '+_pr; return '<option value="'+ccEsc(lab)+'"></option>'; }).join(''); }
       var cl=document.getElementById('cc-clienti-list');
       if(cl && typeof clAggrega==='function'){ var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join(''); }
     }catch(e){}
@@ -12450,6 +12471,30 @@ function mzProvVenditore(tipo){
 function mzTipoAuto(est){ _mzEstera=!!est; var bi=document.getElementById('mz-it-si'), be=document.getElementById('mz-it-est'); if(bi){ bi.style.background=!est?'#1a4fa0':'#fff'; bi.style.color=!est?'#fff':'#334155'; bi.style.borderColor=!est?'#1a4fa0':'#cbd5e1'; } if(be){ be.style.background=est?'#1a4fa0':'#fff'; be.style.color=est?'#fff':'#334155'; be.style.borderColor=est?'#1a4fa0':'#cbd5e1'; } var tr=document.getElementById('mz-targa-req'), ter=document.getElementById('mz-telaio-req'), nw=document.getElementById('mz-numauto-wrap'); if(tr) tr.textContent=est?'':'*'; if(ter) ter.textContent=est?'*':''; if(nw) nw.style.display=est?'block':'none'; var ivw=document.getElementById('mz_ivaEsposta'), ivb=document.getElementById('mz-iva-wrap'), ivh=document.getElementById('mz-iva-hint'); var pvw=document.getElementById('mz-provit-wrap'); if(pvw) pvw.style.display=est?'none':'block'; if(ivw){ if(est){ ivw.checked=true; ivw.disabled=true; } else { ivw.disabled=false; ivw.checked=(_mzProvVend==='azienda'); } } if(ivb) ivb.style.opacity=est?'.7':'1'; if(ivh) ivh.textContent=est?'Auto estera: sempre IVA esposta (importata al netto IVA).':((_mzProvVend==='azienda')?'Provenienza da azienda: IVA esposta (attivata in automatico).':'Provenienza da privato: IVA a margine.'); }
 var _mzTab='auto';
 var MZ_STATI=[['disponibile','Disponibile','#16a34a'],['prenotata','Opzionata','#d97706'],['venduta','Venduta','#64748b'],['permuta','In permuta','#7c3aed']];
+/* I dati importati usano diciture diverse da quelle del gestionale
+   (BENZINA, BENZINA/ELETTRICO, MANUALE...): qui vengono ricondotte
+   ai valori dei menu, cosi' i campi risultano compilati. */
+var MZ_SINONIMI={
+  alimentazione:{
+    'benzina':'Benzina','diesel':'Diesel','gasolio':'Diesel','gpl':'GPL','metano':'Metano',
+    'elettrica':'Elettrica','elettrico':'Elettrica','ev':'Elettrica',
+    'ibrida':'Ibrida','ibrido':'Ibrida','hybrid':'Ibrida',
+    'benzina/elettrico':'Ibrida','benzina/elettrica':'Ibrida','elettrico/benzina':'Ibrida',
+    'diesel/hybrid':'Ibrida','diesel/elettrico':'Ibrida','mhev':'Ibrida','hev':'Ibrida','phev':'Ibrida',
+    'benzina/gpl':'Benzina/GPL','gpl/benzina':'Benzina/GPL','benzinagpl':'Benzina/GPL',
+    'benzina/metano':'Benzina/Metano','metano/benzina':'Benzina/Metano'
+  },
+  cambio:{ 'manuale':'Manuale','man':'Manuale','automatico':'Automatico','aut':'Automatico',
+           'auto':'Automatico','automatica':'Automatico','sequenziale':'Automatico' }
+};
+function mzNormVal(key, val){
+  var v=String(val==null?'':val).trim();
+  if(!v) return '';
+  var tab=MZ_SINONIMI[key];
+  if(!tab) return v;
+  var k=v.toLowerCase().replace(/\s+/g,'');
+  return tab[k] || v;
+}
 var MZ_ALIM=['Benzina','Diesel','GPL','Metano','Ibrida','Elettrica','Benzina/GPL','Benzina/Metano'];
 var MZ_CAMBIO=['Manuale','Automatico'];
 var _mzFiltro='disponibile';
@@ -12792,6 +12837,7 @@ function gsearchRun(){
         +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(sub)+'</div></div>'
         +(prezzo?('<div style="font-size:12px;font-weight:700;color:#0f172a;flex:0 0 auto;">'+prezzo+'</div>'):'')
         +gsLibBtn(a.id)
+        +gsVendBtn(a.id)
         +'<span style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+st[2]+';color:'+st[1]+';">'+mzEsc(st[0])+'</span>'
         +'</div>';
     }).join('');
@@ -12804,6 +12850,45 @@ function gsearchVaiClienti(q){
   var inp=document.getElementById('gsearch-input'); if(inp){ inp.value=''; inp.blur(); }
   try{ if(typeof sidebarNav==='function') sidebarNav('clienti', document.getElementById('si-clienti')); }catch(e){}
   setTimeout(function(){ try{ if(typeof _clFiltri!=='undefined'){ _clFiltri.rag=''; _clFiltri.nome=''; _clFiltri.cognome=q||''; _clFiltri.citta=''; if(typeof clRender==='function') clRender(); } }catch(e){} }, 160);
+}
+/* Dal risultato di ricerca si puo' aprire la scheda del veicolo (clic sulla riga)
+   oppure la vendita collegata (bottone dedicato). */
+var _gsVendIdx=null, _gsVendLen=-1;
+function gsVendPerAuto(autoId){
+  try{
+    if(typeof cvLoad!=='function') return null;
+    var l=cvLoad();
+    if(!_gsVendIdx || _gsVendLen!==l.length){
+      _gsVendIdx={};
+      for(var i=0;i<l.length;i++){
+        var c=l[i]; if(!c||!c.autoId) continue;
+        var pre=_gsVendIdx[c.autoId];
+        /* a parita' di auto vince il contratto sul preventivo, e il piu' recente */
+        if(!pre || (c.isContratto && !pre.isContratto) || ((c.isContratto===pre.isContratto) && (c.updatedAt||0)>(pre.updatedAt||0))) _gsVendIdx[c.autoId]=c;
+      }
+      _gsVendLen=l.length;
+    }
+    return _gsVendIdx[autoId]||null;
+  }catch(e){ return null; }
+}
+function gsVendBtn(autoId){
+  var cv=gsVendPerAuto(autoId); if(!cv) return '';
+  var lab=cv.isContratto?'Vendita':'Preventivo';
+  return '<button onclick="event.stopPropagation();gsearchApriVendita(\''+cv.id+'\')" title="Apri la scheda '+lab.toLowerCase()+'" '
+    +'style="flex:0 0 auto;font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;cursor:pointer;font-family:inherit;">'+lab+'</button>';
+}
+function gsearchApriVendita(id){
+  var box=document.getElementById('gsearch-results'); if(box){ box.style.display='none'; }
+  var inp=document.getElementById('gsearch-input'); if(inp){ inp.value=''; inp.blur(); }
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  var vendita=!!(cv && cv.isContratto);
+  try{
+    if(vendita){
+      if(typeof cvVendGo==='function') cvVendGo(cv.statoVendita||'consegnato');
+      else if(typeof sidebarNav==='function') sidebarNav('vendite', document.getElementById('si-vendite'));
+    } else if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi'));
+  }catch(e){}
+  setTimeout(function(){ try{ if(typeof cvForm==='function') cvForm(id); }catch(e){} }, 170);
 }
 function gsearchApriCliente(keyEnc){
   var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
@@ -12970,7 +13055,7 @@ function mzForm(id){
   var v=function(k){ return a&&a[k]!=null?mzEsc(a[k]):''; };
   var MZ_UP={marca:1,modello:1,allestimento:1,colore:1};
   var f=function(lab,key,ph,type){ var up=MZ_UP[key]?' oninput="this.value=this.value.toUpperCase()"':''; return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">'+lab+'</label><input type="'+(type||'text')+'" id="mz_'+key+'"'+up+' value="'+v(key)+'" placeholder="'+(ph||'')+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
-  var sel=function(lab,key,opts){ var cur=a?a[key]:''; return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">'+lab+'</label><select id="mz_'+key+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;"><option value="">—</option>'+opts.map(function(o){var val=Array.isArray(o)?o[0]:o,txt=Array.isArray(o)?o[1]:o;return '<option value="'+mzEsc(val)+'"'+(cur===val?' selected':'')+'>'+mzEsc(txt)+'</option>';}).join('')+'</select>'; };
+  var sel=function(lab,key,opts){ var cur=mzNormVal(key, a?a[key]:''); return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">'+lab+'</label><select id="mz_'+key+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;"><option value="">—</option>'+opts.map(function(o){var val=Array.isArray(o)?o[0]:o,txt=Array.isArray(o)?o[1]:o;return '<option value="'+mzEsc(val)+'"'+(cur===val?' selected':'')+'>'+mzEsc(txt)+'</option>';}).join('')+'</select>'; };
   var h='<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
   h+='<div style="background:#1a4fa0;color:#fff;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;font-size:16px;">'+(a?'Modifica auto':'Nuova auto')+'</span><button onclick="mzChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>';
   h+='<div style="padding:16px 18px;max-height:72vh;overflow:auto;">';
@@ -19549,9 +19634,15 @@ function crmRenderLead(){
   return h;
 }
 function crmRenderConsegnate(){
-  var cons=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.statoVendita==='consegnato';}).sort(function(a,b){return (b.consegnatoTs||0)-(a.consegnatoTs||0);});
-  if(!cons.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna auto consegnata.</div>';
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🚗 '+cons.length+' auto consegnate. A ~11 mesi dalla consegna compare il promemoria per proporre il pacchetto manutenzione (tagliando).</div>';
+  /* Qui interessa solo chi e' arrivato al momento giusto per la proposta:
+     consegne di circa 11 mesi fa, mostrate per una finestra di 30 giorni. */
+  var _oggi=Date.now(), _MESE=30*24*3600000;
+  var _da=_oggi-12*_MESE, _a=_oggi-11*_MESE;   /* finestra di 30 giorni intorno agli 11 mesi */
+  var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.statoVendita==='consegnato';});
+  var cons=tutte.filter(function(x){ var t=+(x.consegnatoTs||0); return t && t>=_da && t<=_a; })
+                .sort(function(a,b){return (a.consegnatoTs||0)-(b.consegnatoTs||0);});
+  if(!cons.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna consegna in scadenza.<div style="font-size:12px;margin-top:6px;">Qui compaiono le auto consegnate circa 11 mesi fa, per 30 giorni: e\u0301 il momento giusto per proporre tagliando e rinnovo polizza.<br>Consegne totali in archivio: '+tutte.length+'.</div></div>';
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;"><b>'+cons.length+'</b> da contattare adesso \u00b7 consegnate tra 11 e 12 mesi fa \u00b7 archivio totale '+tutte.length+' consegne</div>';
   cons.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var mesi=crmMesiDa(cv.consegnatoTs); var tag=mesi>=11;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(tag?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div></div>'
