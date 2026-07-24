@@ -12488,7 +12488,12 @@ function mzFornChange(){
   else if(haCf){ if(typeof mzProvVenditore==='function') mzProvVenditore('privato'); if(el) el.checked=false; }
 }
 function mzPuoPrezzoAcq(){ try{ return (typeof isAdmin==='function'&&isAdmin()) || eaIsContabilita(); }catch(_e){ return false; } }
-function mzById(id){ return mzLoad().filter(function(a){return a.id===id;})[0]||null; }
+var _mzIdx=null, _mzIdxLen=-1;
+function mzById(id){
+  var l=mzLoad();
+  if(!_mzIdx || _mzIdxLen!==l.length){ _mzIdx={}; for(var i=0;i<l.length;i++){ if(l[i]&&l[i].id) _mzIdx[l[i].id]=l[i]; } _mzIdxLen=l.length; }
+  return _mzIdx[id]||null;
+}
 function mzStatoInfo(s){ for(var i=0;i<MZ_STATI.length;i++){ if(MZ_STATI[i][0]===s) return MZ_STATI[i]; } return MZ_STATI[0]; }
 function mzEuro(n){ n=parseFloat(n); if(isNaN(n)) return '—'; return '€ '+n.toLocaleString('it-IT'); }
 
@@ -13098,8 +13103,15 @@ function cvLoad(){
   try{ _cvMem=JSON.parse(localStorage.getItem(CV_KEY)||'[]')||[]; }catch(e){ _cvMem=[]; }
   return _cvMem;
 }
+var _cvSaveT=null;
 function cvSave(list){
-  _cvMem=list||[];
+  _cvMem=list||[]; _cvIdx=null;
+  /* la scrittura su disco e' costosa: la accorpo se arrivano piu' salvataggi ravvicinati */
+  if(_cvSaveT) clearTimeout(_cvSaveT);
+  _cvSaveT=setTimeout(function(){ _cvSaveT=null; cvSaveOra(_cvMem); }, 400);
+}
+function cvSaveOra(list){
+  list=list||_cvMem||[];
   var vivi=_cvMem.filter(function(x){ return !cvIsStorico(x); });
   try{ localStorage.setItem(CV_KEY, JSON.stringify(vivi)); return; }catch(e){}
   /* se non basta ancora: tengo i piu' recenti, il resto arriva dal cloud */
@@ -15398,7 +15410,12 @@ function cvVendAutoAvanza(){
   try{
     if(typeof cvLoad!=='function') return false;
     var list=cvLoad(); var changed=[];
-    list.forEach(function(cv){ if(cvVendAvanzaStato(cv)){ cv.updatedAt=Date.now(); changed.push(cv); } });
+    list.forEach(function(cv){
+      if(!cv || !cv.isContratto) return;                       /* solo contratti */
+      if(cv.origine==='sicom' || cv.origine==='sicom_prev') return;  /* storico: non si tocca */
+      if((cv.statoVendita||'')==='consegnato') return;
+      if(cvVendAvanzaStato(cv)){ cv.updatedAt=Date.now(); changed.push(cv); }
+    });
     if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(cv){ supaUpsert('preventivi', cv); }); }
     return changed.length>0;
   }catch(e){ return false; }
@@ -17966,38 +17983,8 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
   cvVendAutoAvanza();
   if(typeof cvVendBadge==='function') cvVendBadge();
   var all=cvContratti();
-  /* Totali della sezione: da incassare, permute da ritirare e (solo admin) margine. */
-  var _tot=(function(){
-    var lst=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;});
-    var daInc=0, nInc=0, perm=0, nPerm=0, marg=0, nMarg=0, fatt=0;
-    lst.forEach(function(cv){
-      try{
-        var t=(typeof cvCalcola==='function')?cvCalcola(cv):null;
-        if(t){ fatt+=(t.totaleScontato||0);
-          var pags=cvPagIncasso(cv.pagamenti).filter(function(x){return x.confermato;});
-          var inc=pags.reduce(function(s,x){return s+(cvNum(x.importo)||0);},0);
-          var r=(t.totaleScontato||0)-inc; if(r>0.5){ daInc+=r; nInc++; }
-        }
-        if(cv.permutaOn||(cv.permuta&&cv.permuta.valore)){
-          var pv=(cv.permuta&&(parseFloat(cv.permuta.valore)||0))||0;
-          if(!cv.permutaRitirata){ perm+=pv; nPerm++; }
-        }
-        if(typeof stMargine==='function'){ var m=stMargine(cv); if(m!=null){ marg+=m; nMarg++; } }
-      }catch(e){}
-    });
-    return {daInc:daInc,nInc:nInc,perm:perm,nPerm:nPerm,marg:marg,nMarg:nMarg,fatt:fatt,n:lst.length};
-  })();
-  var _euT=function(n){ return Math.round(n||0).toLocaleString('it-IT')+' \u20ac'; };
-  var _isAdm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
-  var _bx='background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:11px 14px;';
-  var totBar='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px;">'
-    +'<div style="'+_bx+'border-left:4px solid #1a4fa0;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Totale vendite</div><div style="font-size:20px;font-weight:900;">'+_euT(_tot.fatt)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.n+' pratiche</div></div>'
-    +'<div style="'+_bx+'border-left:4px solid #d97706;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Da incassare</div><div style="font-size:20px;font-weight:900;color:'+(_tot.daInc>0?'#b45309':'#0f172a')+';">'+_euT(_tot.daInc)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.nInc+' con saldo aperto</div></div>'
-    +'<div style="'+_bx+'border-left:4px solid #7c3aed;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Permute da ritirare</div><div style="font-size:20px;font-weight:900;">'+_euT(_tot.perm)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">'+_tot.nPerm+' auto attese</div></div>'
-    +(_isAdm?('<div style="'+_bx+'border-left:4px solid #16a34a;"><div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div><div style="font-size:20px;font-weight:900;color:#16a34a;">'+_euT(_tot.marg)+'</div><div style="font-size:11px;color:#94a3b8;font-weight:600;">su '+_tot.nMarg+' auto \u00b7 solo admin</div></div>'):'')
-    +'</div>';
   var _tabList=CV_STATI;
-  var tabs=totBar+'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
+  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
   if(!cvPuoConfermarePagamenti()){ tabs+='<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">Solo Amministrazione e Contabilità possono confermare i pagamenti.</div>'; }
   var list=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
   var _vLim=window._vLim||40, _vTot=list.length;
