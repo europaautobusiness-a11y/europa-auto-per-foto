@@ -12669,6 +12669,21 @@ function mzRender(){
   try{ var _eb=document.getElementById('mz-export-bar'); if(_eb) _eb.style.display=mzPuoPrezzoAcq()?'flex':'none'; }catch(e){}
   var q=(document.getElementById('mz-cerca')||{}).value||''; q=q.toLowerCase().trim();
   var all=mzLoad();
+  /* Scheda Permute: non sono ancora auto di magazzino, ma permute dei contratti
+     in attesa di conferma. Da qui si decide se entrano o no. */
+
+  if(_mzFiltro==='permuta'){
+    var _permHTML=(typeof pmiCardsHTML==='function')?pmiCardsHTML():'';
+    var _inMag=all.filter(function(a){ return a.stato==='permuta'; });
+    var _hMag='';
+    if(_inMag.length){
+      _hMag='<div style="margin:16px 0 8px;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Veicoli gi\u00e0 a magazzino come permuta</div>'
+        +_inMag.map(function(a){
+          return '<div onclick="mzForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;">'
+            +'<div style="font-weight:800;font-size:14px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+(a.targa?(' <span style="font-weight:600;color:#64748b;">'+mzEsc(a.targa)+'</span>'):'')+'</div>'
+            +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+(a.km?(mzEsc(a.km)+' km \u00b7 '):'')+mzEsc(a.colore||'')+'</div></div>';
+        }).join('');
+    }
   // statistiche
   var disp=all.filter(function(a){return a.stato==='disponibile' && !a.impegnata;});
   var valore=disp.reduce(function(s,a){var n=parseFloat(a.prezzoVen);return s+(isNaN(n)?0:n);},0);
@@ -12709,20 +12724,6 @@ function mzRender(){
   });
   if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessuna auto. Premi "➕ Aggiungi auto".</div>'; return; }
   var h='<style>@media(min-width:900px){.mz-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start;}.mz-grid>div{margin-bottom:0!important;}}</style><div class="mz-grid">';
-  /* Scheda "Permute da ritirare": non sono ancora auto di magazzino, ma permute
-     dei contratti in attesa di conferma. Da qui si decide se entrano o no. */
-  if(_mzFiltro==='permuta'){
-    var _permHTML=(typeof pmiCardsHTML==='function')?pmiCardsHTML():'';
-    var _inMag=all.filter(function(a){ return a.stato==='permuta'; });
-    var _hMag='';
-    if(_inMag.length){
-      _hMag='<div style="margin:16px 0 8px;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Veicoli gi\u00e0 a magazzino come permuta</div>'
-        +_inMag.map(function(a){
-          return '<div onclick="mzForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;">'
-            +'<div style="font-weight:800;font-size:14px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+(a.targa?(' <span style="font-weight:600;color:#64748b;">'+mzEsc(a.targa)+'</span>'):'')+'</div>'
-            +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+(a.km?(mzEsc(a.km)+' km \u00b7 '):'')+mzEsc(a.colore||'')+'</div></div>';
-        }).join('');
-    }
     wrap.innerHTML='<div style="margin-bottom:10px;font-size:12.5px;color:#64748b;">'
       +'Permute dei contratti da gestire: confermando l\'ingresso il veicolo entra tra le <b>disponibili</b> e nel registro di carico.'
       +'</div>'
@@ -13982,7 +13983,7 @@ function cvLive(){
   if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
   h+=r('Passaggio di proprietà / Imm.',t.passaggio);
   if(t.gar) h+=r('Garanzia',t.gar);
-  if(_cv.assicOn) h+=r('Assicurazione',t.assic);
+  if(_cv.assicOn && cvNum(_cv.assicImporto)>0) h+=r('Assicurazione',t.assic);
   (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
   if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
   h+=r('Totale vendita',t.totaleVendita,true);
@@ -14724,7 +14725,7 @@ function cvBuildHTML(c, tipo){
   doc+=row('Prezzo vendita',t.prezzo);
   if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104', t.imponibile104)+row('IVA agevolata 4%', t.iva104)+row('Totale (escluso passaggio)', t.veicolo); }
   doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
-  if(c.assicOn) doc+=row('Assicurazione',t.assic);
+  if(c.assicOn && cvNum(c.assicImporto)>0) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
   (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
   if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
