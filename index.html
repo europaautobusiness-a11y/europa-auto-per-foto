@@ -19429,6 +19429,16 @@ function notifLoad(){ try{ return JSON.parse(localStorage.getItem(NOTIF_KEY)||'[
 function notifSave(list){ try{ localStorage.setItem(NOTIF_KEY, JSON.stringify((list||[]).slice(-300))); }catch(e){} }
 function notifUserKey(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'anon').toLowerCase(); return 'ea_notif_seen_'+e; }
 function notifLastSeen(){ try{ return parseInt(localStorage.getItem(notifUserKey())||'0',10)||0; }catch(e){ return 0; } }
+/* ===== MOSTRATE UNA VOLTA SOLA =====
+   window._notifToasted viveva solo in memoria: a ogni ricarica della
+   pagina le stesse conferme (appuntamento salvato, email programmata,
+   firma digitale) tornavano a impilarsi. L'elenco degli id gia' mostrati
+   ora resta su localStorage, per utente. Le nuove notifiche hanno id
+   nuovi, quindi i solleciti continuano ad arrivare regolarmente. */
+function notifToastKey(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'anon').toLowerCase(); return 'ea_notif_toast_'+e; }
+function notifToastLoad(){ try{ return JSON.parse(localStorage.getItem(notifToastKey())||'{}'); }catch(e){ return {}; } }
+function notifToastMark(ids){ try{ var m=notifToastLoad(); (ids||[]).forEach(function(i){ if(i) m[i]=1; }); var k=Object.keys(m); if(k.length>600){ k.slice(0,k.length-600).forEach(function(i){ delete m[i]; }); } localStorage.setItem(notifToastKey(), JSON.stringify(m)); }catch(e){} }
+function notifGiaMostrata(id){ try{ if(!id) return false; if(window._notifToasted && window._notifToasted[id]) return true; return !!notifToastLoad()[id]; }catch(e){ return false; } }
 function notifSetLastSeen(ts){ try{ localStorage.setItem(notifUserKey(), String(ts||Date.now())); }catch(e){} }
 function notifStack(){ var s=document.getElementById('ea-notif-stack'); if(!s){ s=document.createElement('div'); s.id='ea-notif-stack'; s.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100000;display:flex;flex-direction:column;gap:8px;width:min(380px,94vw);pointer-events:none;'; document.body.appendChild(s); } return s; }
 function notifCard(n){
@@ -19488,7 +19498,13 @@ function notifCard(n){
   return d;
 }
 function notifShowCards(arr){
-  if(!arr||!arr.length) return; var stack=notifStack();
+  if(!arr||!arr.length) return;
+  arr=arr.filter(function(n){ return n && n.id && !notifGiaMostrata(n.id); });
+  if(!arr.length) return;
+  if(!window._notifToasted) window._notifToasted={};
+  arr.forEach(function(n){ window._notifToasted[n.id]=1; });
+  notifToastMark(arr.map(function(n){ return n.id; }));
+  var stack=notifStack();
   arr.slice(-6).forEach(function(n,i){ var c=notifCard(n); stack.appendChild(c); requestAnimationFrame(function(){ c.style.transform='translateY(0)'; c.style.opacity='1'; }); setTimeout(function(){ if(c.parentNode){ c.style.opacity='0'; c.style.transform='translateY(-12px)'; setTimeout(function(){ if(c.parentNode) c.parentNode.removeChild(c); },220); } }, 9000+i*500); });
 }
 /* ===== A CHI E' DESTINATA UNA NOTIFICA =====
@@ -20368,10 +20384,15 @@ function crmLeads(){
   var byKey={};
   (typeof cvLoad==='function'?cvLoad():[]).forEach(function(cv){
     var cl=cv.cliente||{}; var key=crmKey(cl); if(!key) return;
-    if(!byKey[key]) byKey[key]={ key:key, nome:cl.nome||'', cognome:cl.cognome||'', telefono:cl.telefono||'', email:cl.email||'', autos:{}, ultimo:0, hasContratto:false, consegnato:false, nPrev:0 };
+    if(!byKey[key]) byKey[key]={ key:key, nome:cl.nome||'', cognome:cl.cognome||'', telefono:cl.telefono||'', email:cl.email||'', autos:{}, ultimo:0, ultimoPrev:0, hasContratto:false, consegnato:false, nPrev:0 };
     var l=byKey[key]; l.nPrev++;
     var am=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||''; if(am) l.autos[am]=true;
     var ts=cv.updatedAt||cv.createdAt||0; if(ts>l.ultimo) l.ultimo=ts;
+    /* Lo storico importato ha updatedAt = data di import: userebbe la
+       pipeline come archivio. Per la finestra dei 21 giorni conta solo
+       la data reale di creazione dei preventivi non storici. */
+    var _sto=(cv.origine==='sicom'||cv.origine==='sicom_prev'||cv.origine==='sicom_ap');
+    if(!_sto){ var tsp=cv.createdAt||cv.updatedAt||0; if(tsp>l.ultimoPrev) l.ultimoPrev=tsp; }
     if(cv.isContratto) l.hasContratto=true; if(cv.statoVendita==='consegnato') l.consegnato=true;
     if(!l.nome&&cl.nome) l.nome=cl.nome; if(!l.cognome&&cl.cognome) l.cognome=cl.cognome; if(!l.email&&cl.email) l.email=cl.email; if(!l.telefono&&cl.telefono) l.telefono=cl.telefono;
   });
@@ -20700,15 +20721,15 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
   var _tot=leads.length;
   leads=leads.filter(function(l){
-    if(store[l.key] && store[l.key].stato) return true;      /* gia' lavorato */
-    if(l.hasContratto && !l.consegnato) return true;          /* vendita in corso */
-    return (l.ultimo||0)>=_lim;                               /* attivita' recente */
+    if(l.hasContratto && !l.consegnato) return true;                        /* vendita in corso */
+    if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
+    return (l.ultimoPrev||0)>=_lim;                                          /* preventivo negli ultimi 21 giorni */
   });
   var _esclusi=_tot-leads.length; leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
-    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti pi\u00f9 vecchi di '+CRM_GIORNI_CALDI+' giorni non compaiono</span>'):'')+'<br>'
+    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti senza preventivi negli ultimi '+CRM_GIORNI_CALDI+' giorni non compaiono</span>'):'')+'<br>'
     +'Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
   h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
   h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
