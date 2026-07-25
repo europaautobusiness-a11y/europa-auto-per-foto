@@ -10215,7 +10215,13 @@ document.addEventListener('DOMContentLoaded',function(){
       var isTask=(c.categoria==='task');
       var ti=ccTipoInfo(c.tipo);
       var col=c.fatto?'#94a3b8':(isTask?'#0d9488':ti[2]);
-      var titolo=(isTask?'\u2705 ':(ti[0]+' '))+(c.titolo||(isTask?'Task':'Appuntamento'))+(c.dipNome?(' \u00b7 '+c.dipNome):'');
+      /* Il tipo di intervento (tagliando, grandine, freni...) va letto dal calendario
+         senza aprire la scheda: si aggiunge al titolo dell'evento. */
+      var interv=String(c.nota||'').replace(/\s+/g,' ').trim();
+      if(interv.length>42) interv=interv.slice(0,40)+'\u2026';
+      var titolo=(isTask?'\u2705 ':(ti[0]+' '))+(c.titolo||(isTask?'Task':'Appuntamento'))
+        +(interv?(' \u00b7 '+interv):'')
+        +(c.dipNome?(' \u00b7 '+c.dipNome):'');
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
       var mm=ora.match(/^(\d{1,2}):(\d{2})$/);
@@ -10573,6 +10579,19 @@ document.addEventListener('DOMContentLoaded',function(){
     ccPermessoNotifiche();
     if(categoria!=='task' && email && typeof eaInviaMessaggio==='function'){ try{
       var _acData=c.data||'', _acOra=c.ora||'';
+      /* Data in italiano con l'articolo corretto: dell'8 settembre, del 3 maggio.
+         L'apostrofo serve davanti ai giorni che iniziano per vocale: 1, 8, 11. */
+      var _acDataIt='', _acArt='del';
+      try{
+        var _m=String(_acData).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if(_m){
+          var _MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+          var _g=parseInt(_m[3],10), _me=parseInt(_m[2],10)-1, _a=_m[1];
+          _acDataIt=_g+' '+(_MESI[_me]||'')+' '+_a;
+          _acArt=([1,8,11].indexOf(_g)>=0)?'dell\u2019':'del ';
+        }
+      }catch(e){}
+      if(!_acDataIt) _acDataIt=_acData;
       /* Marca e modello dal magazzino: nel campo veicolo spesso c'e' solo la targa.
          Al cliente si scrive l'auto, non 'intervento'. */
       var _acVeic='';
@@ -10586,11 +10605,11 @@ document.addEventListener('DOMContentLoaded',function(){
       var _acPerT = _acVeic ? (' per il veicolo '+_acVeic) : '';
       var _acHtml='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.5;">'
         +'<p>Gentile '+(titolo||'cliente')+',</p>'
-        +'<p>le confermiamo l\u2019appuntamento'+_acPer+(_acData?(' del <b>'+_acData+'</b>'):'')+(_acOra?(' alle <b>'+_acOra+'</b>'):'')+'.</p>'
+        +'<p>le confermiamo l\u2019appuntamento'+_acPer+(_acDataIt?(' '+_acArt+'<b>'+_acDataIt+'</b>'):'')+(_acOra?(' alle ore <b>'+_acOra+'</b>'):'')+'.</p>'
         /* Le note sono lavoro interno (tagliando, pastiglie, spia motore):
            al cliente non servono e possono confonderlo o allarmarlo. */
         +'<p>A presto,<br>Europa Auto Srl</p></div>';
-      var _acText='Gentile '+(titolo||'cliente')+',\nle confermiamo l\u2019appuntamento'+_acPerT+(_acData?(' del '+_acData):'')+(_acOra?(' alle '+_acOra):'')+'.'+'\n\nA presto,\nEuropa Auto Srl';
+      var _acText='Gentile '+(titolo||'cliente')+',\nle confermiamo l\u2019appuntamento'+_acPerT+(_acDataIt?(' '+_acArt+_acDataIt):'')+(_acOra?(' alle ore '+_acOra):'')+'.'+'\n\nA presto,\nEuropa Auto Srl';
       eaInviaMessaggio({ to:email, subject:'Conferma appuntamento \u2014 Europa Auto', html:(typeof eaMailWrap==='function'?eaMailWrap(_acHtml):_acHtml), text:_acText });
     }catch(e){} }
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
@@ -11211,6 +11230,17 @@ function sinCard(s){
   html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+sinEsc(s.nome||'(senza nome)')+'</div>';
   html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div>';
   if(s.tipoSinistro) html+='<div style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 10px;">'+sinEsc(s.tipoSinistro)+'</div>';
+  var _app=sinAppuntamento(s);
+  if(_app){
+    var _dt=String(_app.data).split('-').reverse().join('/');
+    var _oggi=new Date(); _oggi.setHours(0,0,0,0);
+    var _futuro=(new Date(_app.data+'T00:00:00')>=_oggi);
+    html+='<div style="display:inline-block;margin-top:5px;margin-left:6px;font-size:11px;font-weight:800;border-radius:999px;padding:3px 10px;'
+      +'background:'+(_futuro?'#ecfdf5':'#f1f5f9')+';color:'+(_futuro?'#15803d':'#64748b')+';">'
+      +'\ud83d\uddd3 '+(_futuro?'Programmato':'Era programmato')+' il '+_dt+(_app.ora?(' alle '+sinEsc(_app.ora)):'')
+      +(_app.nota?(' \u00b7 '+sinEsc(String(_app.nota).slice(0,28))):'')
+      +'</div>';
+  }
   if(s.preventivoTotale!=null && sinVedePreventivo()){
     html+='<div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;background:'+(s.preventivoConfermato?'#f0fdf4':'#fffbeb')+';border:1px solid '+(s.preventivoConfermato?'#bbf7d0':'#fde68a')+';border-radius:7px;padding:4px 10px;">'
       +'<span style="font-size:11px;font-weight:800;color:'+(s.preventivoConfermato?'#15803d':'#b45309')+';">\ud83e\uddfe Preventivo'+(s.preventivoConfermato?'':' (bozza)')+'</span>'
@@ -11286,6 +11316,31 @@ function sinCard(s){
 }
 
 function sinFmtApp(v){ try{ var d=new Date(v); if(isNaN(d.getTime())) return v; return d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return v; } }
+/* Se per il veicolo del sinistro c'e' un appuntamento in calendario
+   (grandine, carrozzeria, perizia...) lo si mostra sulla scheda della pratica:
+   il collegamento avviene per targa o, in mancanza, per nome cliente. */
+function sinAppuntamento(s){
+  try{
+    if(!s || typeof window.ccLoad!=='function') return null;
+    var tg=String(s.targa||'').toUpperCase().replace(/\s/g,'');
+    var nm=String(s.nome||'').toLowerCase().trim();
+    if(!tg && !nm) return null;
+    var oggi=new Date(); oggi.setHours(0,0,0,0);
+    var res=window.ccLoad().filter(function(c){
+      if(!c || !c.data || c.fatto) return false;
+      if(c.categoria==='task') return false;
+      var v=String(c.veicolo||'').toUpperCase().replace(/\s/g,'');
+      var t=String(c.titolo||'').toLowerCase();
+      var okTarga=(tg && v.indexOf(tg)>=0);
+      var okNome=(!tg && nm && t.indexOf(nm)>=0);
+      return okTarga || okNome;
+    }).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
+    if(!res.length) return null;
+    /* preferisco il primo appuntamento futuro, altrimenti l'ultimo passato */
+    var futuri=res.filter(function(c){ var d=new Date(c.data+'T00:00:00'); return d>=oggi; });
+    return futuri.length?futuri[0]:res[res.length-1];
+  }catch(e){ return null; }
+}
 function sinFmtData(v){ if(!v) return ''; var p=String(v).split('-'); if(p.length===3) return p[2]+'/'+p[1]+'/'+p[0]; return v; }
 function sinAggiornaCampo(id, campo, valore){
   var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
@@ -13459,6 +13514,14 @@ function cvById(id){
   if(!_cvIdx || _cvIdxLen!==l.length){ _cvIdx={}; for(var i=0;i<l.length;i++){ if(l[i]&&l[i].id) _cvIdx[l[i].id]=l[i]; } _cvIdxLen=l.length; }
   return _cvIdx[id]||null;
 }
+/* Le date arrivano in due formati (gg/mm/aa scritto da noi, aaaa-mm-gg
+   dai dati importati): in elenco si mostrano sempre all'italiana. */
+function cvDataIt(v){
+  var s=String(v||'').trim(); if(!s) return '';
+  var m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return m[3]+'/'+m[2]+'/'+m[1].slice(2);
+  return s;
+}
 function cvOggi(){ var d=new Date(),z=function(n){return String(n).padStart(2,'0');}; return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+String(d.getFullYear()).slice(2); }
 
 function mzTab(t){
@@ -13920,7 +13983,7 @@ function cvRender(){
   var wrap=document.getElementById('cv-lista'); if(!wrap) return;
   /* Lo storico importato dal vecchio gestionale non e' una trattativa aperta:
      vive in Vendite (Consegnate), non tra i preventivi. */
-  var list=cvLoad().filter(function(c){ return !(c && c.origine==='sicom'); })
+  var list=cvLoad().filter(function(c){ var o=c&&c.origine; return !(o==='sicom' || o==='sicom_ap'); })
     .sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);});
   if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun preventivo. Premi "➕ Nuovo preventivo".</div>'; return; }
   var _lim=window._cvLim||60;
@@ -13935,7 +13998,7 @@ function cvRender(){
     return '<div onclick="cvForm(\''+c.id+'\')" style="background:#fff;border:1px solid '+(c.isContratto?'#ddd6fe':'#e2e8f0')+';border-radius:11px;padding:14px 16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;gap:10px;"><div><div style="font-weight:800;font-size:15px;">'+cvEsc((c.cliente&&(c.cliente.nome||'')+' '+(c.cliente&&c.cliente.cognome||''))||'Cliente')+badge+'</div>'
       +'<div style="font-size:13px;color:#475569;margin-top:2px;">'+cvEsc(c.autoDesc||(c.autoSnapshot&&c.autoSnapshot.modello)||'—')+(cvAutoNum(c)?(' \u00b7 <b style="color:#3730a3;">N\u00b0 '+cvEsc(cvAutoNum(c))+'</b>'):'')+'</div>'
-      +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+cvEsc(c.data||'')+'</div></div>'
+      +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+cvEsc(cvDataIt(c.data))+'</div></div>'
       +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div></div>';
   }).join('')+_piu;
 }
@@ -13984,12 +14047,15 @@ function cvForm(id, fromVend){
   h+='<div class="cvwrap"><div class="cvcol-sx">';
   h+='<div class="cvsez"><h3>Veicolo</h3>';
   h+=lab('Auto');
-  h+='<input id="cv_autoQ" type="search" placeholder="\ud83d\udd0e Cerca marca, modello, targa, telaio o n\u00b0 auto\u2026" oninput="cvAutoFiltra()" autocomplete="off" style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;margin-bottom:6px;">';
+  h+='<input id="cv_autoQ" type="text" list="cv_autoList" placeholder="\ud83d\udd0e Digita marca, modello, targa, telaio o n\u00b0 auto\u2026" oninput="cvAutoScegli()" autocomplete="off" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">';
+  h+='<datalist id="cv_autoList"></datalist>';
   h+='<div id="cv_autoInfo" style="font-size:11px;color:#94a3b8;margin-bottom:4px;"></div>';
-  h+='<select id="cv_auto" onchange="cvAutoSel()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+optAuto+'</select>';
+  h+='<select id="cv_auto" style="display:none;" data-x="1" onchange="cvAutoSel()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+optAuto+'</select>';
   h+=lab('Km aggiornati')+inp('cv_km',_cv.kmAgg,'','number');
   h+='</div><div class="cvsez"><h3>Cliente</h3>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Nome')+inp('cv_nome',_cv.cliente.nome)+'</div><div style="flex:1;">'+lab('Cognome')+inp('cv_cognome',_cv.cliente.cognome)+'</div></div>';
+  h+='<datalist id="cv_cliList"></datalist>';
+  h+='<div id="cv_cliInfo" style="font-size:11.5px;color:#16a34a;font-weight:700;margin-bottom:4px;"></div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Nome')+inp('cv_nome',_cv.cliente.nome)+'</div><div style="flex:1;">'+lab('Cognome')+'<input id="cv_cognome" list="cv_cliList" value="'+cvEsc(_cv.cliente.cognome||'')+'" oninput="cvLive();cvCliSugg()" autocomplete="off" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'+'</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Telefono *')+inp('cv_tel',_cv.cliente.telefono)+'</div><div style="flex:1;">'+lab('Email *')+inp('cv_email',_cv.cliente.email)+'</div></div>';
   h+='</div><div class="cvsez"><h3>Prezzo e servizi</h3>';
   h+=lab('Prezzo di vendita €')+'<input id="cv_prezzo" type="number" value="'+cvEsc(_cv.prezzoVendita==null?'':_cv.prezzoVendita)+'" oninput="cvLive()" onchange="cvAutoSaldo()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">';
@@ -14004,7 +14070,11 @@ function cvForm(id, fromVend){
     +'<div style="font-size:11px;color:#64748b;margin:2px 0 6px;">Stampa il riepilogo del finanziamento e il confronto fra acquisto senza finanziamento, finanziamento a scadenza ed estinzione anticipata. Senza TAN e TAEG. Se lasci vuoti i campi, vengono calcolati da soli.</div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_polizzaAnnua',_cv.polizzaAnnua,'polizza annua \u20ac (auto)','number')+'</div>'
     +'<div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div>'
-    +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'+'<div style="margin-top:8px;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Soluzioni da stampare</div>'+[['scSenza','Senza finanziamento'],['scScadenza','Con finanziamento fino a scadenza'],['scEstinzione','Con estinzione anticipata']].map(function(o){ var on=(_cv[o[0]]!==false); return '<label style="display:flex;align-items:center;gap:7px;margin-top:5px;font-size:13px;cursor:pointer;">'+'<input type="checkbox" id="cv_'+o[0]+'" '+(on?'checked':'')+' onchange="cvSync();cvLive();" style="width:16px;height:16px;">'+o[1]+'</label>'; }).join('')
+    +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'+'<div style="margin-top:8px;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Soluzioni da stampare</div>'+[['scSenza','Senza finanziamento'],['scScadenza','Con finanziamento fino a scadenza'],['scEstinzione','Con estinzione anticipata']].map(function(o){
+        /* di serie si stampano il confronto senza finanziamento e l'estinzione
+           anticipata: la scadenza piena si attiva solo se serve */
+        var on=(_cv[o[0]]!==undefined && _cv[o[0]]!==null) ? (_cv[o[0]]!==false) : (o[0]!=='scScadenza');
+        return '<label style="display:flex;align-items:center;gap:7px;margin-top:5px;font-size:13px;cursor:pointer;">'+'<input type="checkbox" id="cv_'+o[0]+'" '+(on?'checked':'')+' onchange="cvSync();cvLive();" style="width:16px;height:16px;">'+o[1]+'</label>'; }).join('')
     +'<div style="font-size:11px;color:#64748b;margin-top:3px;">Se lo lasci vuoto viene stimato dal piano teorico. Meglio inserire il valore reale letto sul piano di ammortamento della finanziaria.</div></div>';
   h+=tog('cv_listinoOn',_cv.listinoOn,'Mostra prezzo listino');
   h+='<div id="cv-listino-box" style="display:'+(_cv.listinoOn?'block':'none')+';padding-left:8px;">'+inp('cv_listino',_cv.listino,'prezzo di listino €','number')+'</div>';
@@ -14106,6 +14176,91 @@ function repAutoUsa(){
     if(info) info.innerHTML='<b>\u2713 Dati presi dal magazzino</b> \u2014 correggi pure quello che serve.';
   }catch(e){}
 }
+/* Se il cliente e' gia' passato da noi, i suoi dati si compilano da soli:
+   si digita il cognome e si sceglie dal suggerimento. */
+function cvCliSugg(){
+  try{
+    var elC=document.getElementById('cv_cognome'), elN=document.getElementById('cv_nome');
+    if(!elC) return;
+    var q=((elC.value||'')+' '+((elN&&elN.value)||'')).toLowerCase().trim();
+    var dl=document.getElementById('cv_cliList');
+    if(q.length<2){ if(dl) dl.innerHTML=''; return; }
+    if(typeof clAggrega!=='function') return;
+    var t=q.split(/\s+/).filter(Boolean);
+    var res=clAggrega().filter(function(c){
+      var hay=((c.cognome||'')+' '+(c.nome||'')+' '+(c.ragSociale||'')).toLowerCase();
+      for(var i=0;i<t.length;i++){ if(hay.indexOf(t[i])<0) return false; }
+      return true;
+    }).slice(0,10);
+    if(dl) dl.innerHTML=res.map(function(c){
+      var vis=(c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim());
+      var det=[c.telefono,c.email].filter(Boolean).join(' \u00b7 ');
+      return '<option value="'+String(vis).replace(/"/g,'')+'"'+(det?(' label="'+String(det).replace(/"/g,'')+'"'):'')+'></option>';
+    }).join('');
+    /* corrispondenza esatta sul cognome: compilo i dati mancanti */
+    var esatto=res.filter(function(c){
+      var vis=((c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim())).toLowerCase();
+      return vis===(elC.value||'').toLowerCase().trim();
+    })[0];
+    if(esatto) cvCliUsa(esatto);
+  }catch(e){}
+}
+function cvCliUsa(c){
+  try{
+    var set=function(id,v){ var el=document.getElementById(id); if(el && v && !el.value.trim()){ el.value=v; } };
+    if(c.business&&c.ragSociale){ set('cv_cognome', c.ragSociale); }
+    else { set('cv_cognome', c.cognome); set('cv_nome', c.nome); }
+    set('cv_tel', c.telefono); set('cv_email', c.email);
+    set('cv_cf', c.piva||c.cf);
+    var i0=(c.indirizzi&&c.indirizzi.length)?c.indirizzi[c.indirizzi.length-1]:null;
+    if(i0){
+      set('cv_via', [i0.via,i0.civico].filter(Boolean).join(' '));
+      set('cv_cap', i0.cap);
+      set('cv_citta', [i0.citta,(i0.prov?('('+i0.prov+')'):'')].filter(Boolean).join(' '));
+    }
+    _cv.clienteKey=c.key||'';
+    var info=document.getElementById('cv_cliInfo');
+    if(info) info.textContent='\u2713 Cliente gi\u00e0 in anagrafica: dati compilati, correggi se serve.';
+    if(typeof cvLive==='function') cvLive();
+  }catch(e){}
+}
+function cvAutoScegli(){
+  try{
+    var inp=document.getElementById('cv_autoQ'), sel=document.getElementById('cv_auto'), dl=document.getElementById('cv_autoList');
+    if(!inp||!sel) return;
+    var q=String(inp.value||'').toLowerCase().trim();
+    var t=q.split(/\s+/).filter(Boolean);
+    /* suggerimenti: al massimo 12, quelli che contengono tutte le parole digitate */
+    if(dl){
+      var out=[], n=0;
+      for(var i=0;i<sel.options.length && n<12;i++){
+        var o=sel.options[i]; if(!o.value) continue;
+        var testo=((o.getAttribute('data-cerca')||'')+' '+o.text).toLowerCase();
+        var ok=true; for(var k=0;k<t.length;k++){ if(testo.indexOf(t[k])<0){ ok=false; break; } }
+        if(ok){ out.push('<option value="'+o.text.replace(/"/g,'')+'"></option>'); n++; }
+      }
+      dl.innerHTML=out.join('');
+    }
+    /* se il testo coincide con un'auto, la collego */
+    var scelto=null;
+    for(var j=0;j<sel.options.length;j++){
+      var op=sel.options[j];
+      if(op.value && op.text.toLowerCase()===q){ scelto=op; break; }
+    }
+    if(scelto){ if(sel.value!==scelto.value){ sel.value=scelto.value; cvAutoSel(); } return; }
+    /* un solo risultato: lo collego comunque, senza obbligare a scriverlo tutto */
+    if(q.length>=2){
+      var uno=null, cnt=0;
+      for(var m=0;m<sel.options.length;m++){
+        var oo=sel.options[m]; if(!oo.value) continue;
+        var tx=((oo.getAttribute('data-cerca')||'')+' '+oo.text).toLowerCase();
+        var ok2=true; for(var z=0;z<t.length;z++){ if(tx.indexOf(t[z])<0){ ok2=false; break; } }
+        if(ok2){ cnt++; uno=oo; if(cnt>1) break; }
+      }
+      if(cnt===1 && uno && sel.value!==uno.value){ sel.value=uno.value; cvAutoSel(); }
+    }
+  }catch(e){}
+}
 function cvAutoFiltra(){
   try{
     var q=String((document.getElementById('cv_autoQ')||{}).value||'').toLowerCase().trim();
@@ -14191,10 +14346,22 @@ function cvAutoSaldo(){
     if(typeof cvLive==='function') cvLive();
   }catch(e){}
 }
+/* Sui pagamenti dilazionati servono due date: la scadenza concordata
+   e quella in cui il denaro e' davvero entrato. Indicare l'incasso
+   conferma il pagamento, cancellarlo lo rimette in attesa. */
+function cvPagIncassoData(i,v){
+  try{
+    var p=_cv.pagamenti[i]; if(!p) return;
+    p.data=v||'';
+    if(v){ p.confermato=true; p.confermatoTs=Date.parse(v+'T12:00:00')||Date.now(); }
+    else { p.confermato=false; p.confermatoTs=null; }
+    cvRenderPag(); cvLive();
+  }catch(e){}
+}
 function cvRenderPag(){
   var c=document.getElementById('cv-pag'); if(!c)return;
   var tipi=['Caparra','Acconto','Saldo'];
-  var metodi=['Bonifico','Contanti','POS','Finanziamento','Finanziamento PROMO'];
+  var metodi=['Bonifico','Contanti','Assegno','POS','Finanziamento','Finanziamento PROMO'];
   var ss='padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-width:0;box-sizing:border-box;';
   c.innerHTML=_cv.pagamenti.map(function(x,i){
     var isFin = x.tipo==='Finanziamento' || /finanziamento/i.test(x.metodo||'');
@@ -14210,6 +14377,12 @@ function cvRenderPag(){
       +'</div>'
       +(isFin?('<div style="display:flex;gap:8px;margin-top:6px;"><input value="'+cvEsc(x.rate||'')+'" placeholder="n° rate" type="number" oninput="_cv.pagamenti['+i+'].rate=this.value" style="flex:1;'+ss+'"><input value="'+cvEsc(x.importoRata||'')+'" placeholder="importo rata €" type="number" oninput="_cv.pagamenti['+i+'].importoRata=this.value" style="flex:1;'+ss+'">'+'<button onclick="simDaPreventivo('+i+')" title="Calcola la rata col simulatore" style="flex:0 0 auto;padding:9px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">\uD83E\uDDEE Simula</button>'+'</div>'):'')
       +(isPromo?('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px;margin-top:6px;">'+'<div style="font-size:10px;font-weight:800;color:#92400e;margin-bottom:6px;">\u26a1 FINANZIAMENTO PROMO \u2014 da compilare</div>'+'<div style="display:flex;gap:8px;">'+'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:800;color:#92400e;margin-bottom:3px;">Mesi polizza</label>'+'<input id="cvp_assicMesi" type="number" inputmode="numeric" value="'+cvEsc(_cv.assicMesi||'')+'" placeholder="es. 60" oninput="cvPromoSet(\'assicMesi\',this.value)" style="width:100%;padding:9px;border:1px solid #f59e0b;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;font-weight:700;"></div>'+'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:800;color:#92400e;margin-bottom:3px;">Sconto \u20ac</label>'+'<input id="cvp_scontoImporto" type="number" inputmode="decimal" value="'+cvEsc(_cv.scontoImporto||'')+'" placeholder="obbligatorio" oninput="cvPromoSet(\'scontoImporto\',this.value)" style="width:100%;padding:9px;border:1px solid #f59e0b;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;font-weight:700;"></div>'+'</div>'+'<div style="font-size:10px;color:#92400e;margin-top:5px;">Gli stessi campi restano in alto nel preventivo: qui sono solo comodi da raggiungere.</div>'+'</div>'):'')
+      +'<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
+        +'<div style="flex:1;"><div style="font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:2px;">Scadenza</div>'
+        +'<input type="date" value="'+cvEsc(x.scadenza||'')+'" onchange="_cv.pagamenti['+i+'].scadenza=this.value;cvLive()" style="width:100%;'+ss+'"></div>'
+        +'<div style="flex:1;"><div style="font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:2px;">Incassato il</div>'
+        +'<input type="date" value="'+cvEsc(x.data||'')+'" onchange="cvPagIncassoData('+i+',this.value)" style="width:100%;'+ss+'"></div>'
+      +'</div>'
       +'<input value="'+cvEsc(x.note||'')+'" placeholder="note (es. causale)" oninput="_cv.pagamenti['+i+'].note=this.value" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;">'
       +'</div>';
   }).join('');
@@ -15146,7 +15319,8 @@ function cvBuildHTML(c, tipo){
       s+='<div class="cvh" style="page-break-inside:avoid;">Confronto delle soluzioni</div><div class="cvbox" style="padding:0;">';
 
       var totSenzaFin=(t.totaleVendita||0)+polAnnua*anni;
-      var _okSenza=(c.scSenza!==false), _okScad=(c.scScadenza!==false), _okEst=(c.scEstinzione!==false);
+      var _dflt=function(v,def){ return (v===undefined||v===null)?def:(v!==false); };
+      var _okSenza=_dflt(c.scSenza,true), _okScad=_dflt(c.scScadenza,false), _okEst=_dflt(c.scEstinzione,true);
       if(_okSenza) s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
         +'<div class="cvsmall">prezzo di vendita '+eu(t.totaleVendita||0)
         +(scontoPromo?('<br><b>Sconto promo non applicabile: + '+eu(scontoPromo)+'</b>'):'')
@@ -19490,7 +19664,9 @@ function cvRiepilogo(id){
   h2+='<div style="margin-top:14px;font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em;">Pagamenti</div>';
   if(!pags.length) h2+='<div style="font-size:13px;color:#94a3b8;padding:8px 0;">Nessun pagamento registrato.</div>';
   pags.forEach(function(p){
-    var dt=p.data?String(p.data).split('-').reverse().join('/'):(p.confermatoTs?new Date(p.confermatoTs).toLocaleDateString('it-IT'):'');
+    var _it=function(x){ return x?String(x).slice(0,10).split('-').reverse().join('/'):''; };
+    var dt=p.confermato ? ('incassato il '+(_it(p.data)||(p.confermatoTs?new Date(p.confermatoTs).toLocaleDateString('it-IT'):'')))
+                        : (p.scadenza?('scadenza '+_it(p.scadenza)):(_it(p.data)?('previsto '+_it(p.data)):''));
     h2+='<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #f1f5f9;font-size:13.5px;">'
       +'<span><b>'+cvEsc(p.tipo||'Pagamento')+'</b> <span style="color:#64748b;">'+cvEsc(p.metodo||'')+(dt?(' \u00b7 '+dt):'')+'</span></span>'
       +'<span style="text-align:right;white-space:nowrap;"><b>'+cvEuro(cvNum(p.importo))+'</b>'
@@ -20297,7 +20473,7 @@ function crmRender(){
   var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['lead','Contatti','\ud83d\udc64'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
   var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='pipeline' ? crmRenderKanban() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderLead())));
-  wrap.innerHTML='<div style="max-width:960px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
+  wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
   var store=crmLoad();
@@ -20404,15 +20580,29 @@ function crmDaFareBanner(){ var s=crmLoad(); var oggi=crmOggiISO(); var rit=0,og
   if(!rit&&!ogg) return '';
   return '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'+(rit?'<div style="flex:1;min-width:120px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px;"><div style="font-size:20px;font-weight:800;color:#dc2626;">'+rit+'</div><div style="font-size:12px;color:#991b1b;">promemoria in ritardo</div></div>':'')+(ogg?'<div style="flex:1;min-width:120px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;"><div style="font-size:20px;font-weight:800;color:#d97706;">'+ogg+'</div><div style="font-size:12px;color:#92400e;">da fare oggi</div></div>':'')+'</div>'; }
 function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI.length) return; crmSetStato(key,CRM_STATI[ni]); }
-function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads(); leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
+var CRM_GIORNI_CALDI=21;   /* finestra di lavorazione: tre settimane */
+function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
+  /* Una pipeline con tutti i contatti non e' una pipeline: e' un archivio.
+     Restano le trattative degli ultimi giorni, piu' quelle che hai gia'
+     toccato (spostate di fase) e i contratti non ancora consegnati. */
+  var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
+  var _tot=leads.length;
+  leads=leads.filter(function(l){
+    if(store[l.key] && store[l.key].stato) return true;      /* gia' lavorato */
+    if(l.hasContratto && !l.consegnato) return true;          /* vendita in corso */
+    return (l.ultimo||0)>=_lim;                               /* attivita' recente */
+  });
+  var _esclusi=_tot-leads.length; leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
+    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti pi\u00f9 vecchi di '+CRM_GIORNI_CALDI+' giorni non compaiono</span>'):'')+'<br>'
+    +'Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
   h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
   h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
-  h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch;">';
+  h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch;align-items:flex-start;">';
   CRM_STATI.forEach(function(st){ var items=leads.filter(function(l){return l._stato===st;}); var si=CRM_STATI.indexOf(st);
-    h+='<div style="flex:0 0 240px;background:#f1f5f9;border-radius:12px;padding:10px;"><div style="font-weight:800;font-size:13px;color:'+(col[st]||'#334155')+';margin-bottom:8px;display:flex;justify-content:space-between;"><span>'+st+'</span><span style="background:#fff;border-radius:20px;padding:1px 8px;font-size:12px;">'+items.length+'</span></div>';
+    h+='<div style="flex:1 1 240px;min-width:240px;background:#f1f5f9;border-radius:12px;padding:10px;"><div style="font-weight:800;font-size:13px;color:'+(col[st]||'#334155')+';margin-bottom:8px;display:flex;justify-content:space-between;"><span>'+st+'</span><span style="background:#fff;border-radius:20px;padding:1px 8px;font-size:12px;">'+items.length+'</span></div>';
     if(!items.length){ h+='<div style="font-size:12px;color:#94a3b8;padding:8px 0;">\u2014</div>'; }
     items.forEach(function(l){
       var waBtn=(l.telefono && !l.hasContratto)?('<div style="display:flex;gap:6px;margin-top:7px;"><button onclick="crmWaSend('+jq(l.telefono)+',\'preventivi\','+jq(l.nome)+','+jq(l.auto)+')" style="flex:1;border:none;background:#25D366;color:#fff;border-radius:6px;height:28px;cursor:pointer;font-weight:800;font-size:11px;">\ud83d\udcac Messaggio</button><button onclick="crmWaSend('+jq(l.telefono)+',\'offerta_prev\','+jq(l.nome)+','+jq(l.auto)+')" style="flex:1;border:none;background:#ea580c;color:#fff;border-radius:6px;height:28px;cursor:pointer;font-weight:800;font-size:11px;">\ud83c\udff7\ufe0f Offerta 48h</button></div>'):'';
