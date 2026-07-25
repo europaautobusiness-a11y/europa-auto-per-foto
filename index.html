@@ -11635,12 +11635,41 @@ function sinSalva(id, isNew){
   s.appuntamento=s.peritoOnline?'':g('appuntamento'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
   var idx=list.findIndex(function(x){return x.id===id;});
+  var _nuovo=(idx<0);
   if(idx>=0) list[idx]=s; else list.push(s);
   sinSave(list); sinPush(s);
+  /* I sinistri li apre di norma l'amministrazione: se lo inserisce qualcun altro
+     parte una segnalazione, cosi' la pratica non resta ferma. */
+  if(_nuovo) try{ sinAvvisaApertura(s); }catch(e){}
   sinChiudi(); _sinTab=s.stato; sinSetTab(s.stato);
   if(typeof tcToastNew==='function') tcToastNew('✅ Sinistro salvato',true);
 }
 
+function sinAvvisaApertura(s){
+  if(typeof eaInviaMessaggio!=='function' || !s) return;
+  var chi=(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)?String(_currentUserEmail):'';
+  if(chi && chi.toLowerCase().indexOf('amministrazione')>=0) return;   /* aperto dall'amministrazione: nessun avviso */
+  var nomeChi=(typeof _currentUserName!=='undefined'&&_currentUserName)?_currentUserName:(chi||'un collaboratore');
+  var E=function(x){ return sinEsc(x||'\u2014'); };
+  var righe=[
+    ['Cliente', s.nome], ['Tipo di sinistro', s.tipoSinistro], ['Targa', s.targa],
+    ['Modello', s.modello], ['Telaio', s.telaio], ['Compagnia', s.compagnia],
+    ['Finanziaria', s.finanziaria], ['Perito', s.perito],
+    ['Appuntamento perizia', s.appuntamento], ['Residenza', s.residenza], ['Note', s.note]
+  ].filter(function(r){ return r[1]; });
+  var html='<div style="font-family:Segoe UI,Arial,sans-serif;color:#1e293b;">'
+    +'<h2 style="color:#1a4fa0;margin:0 0 4px;">Nuovo sinistro da aprire</h2>'
+    +'<div style="font-size:13px;color:#64748b;margin-bottom:12px;">Inserito da <b>'+E(nomeChi)+'</b></div>'
+    +'<table style="border-collapse:collapse;font-size:14px;">'
+    +righe.map(function(r){ return '<tr><td style="padding:5px 14px 5px 0;color:#64748b;">'+r[0]+'</td><td style="padding:5px 0;font-weight:700;">'+E(r[1])+'</td></tr>'; }).join('')
+    +'</table>'
+    +'<div style="margin-top:14px;font-size:12.5px;color:#94a3b8;">Messaggio automatico del gestionale Europa Auto.</div></div>';
+  eaInviaMessaggio({
+    to:'amministrazione@europaautosrl.it',
+    subject:'Nuovo sinistro: '+(s.nome||'cliente')+(s.targa?(' \u00b7 '+s.targa):''),
+    html:html
+  }).catch(function(){});
+}
 function sinElimina(id){
   if(!confirm('Eliminare definitivamente questo sinistro?')) return;
   sinAddTombstone(id);
@@ -12527,8 +12556,39 @@ var _mzFiltro='disponibile';
 var _mzId=null;
 
 function mzEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function mzLoad(){ try{ return JSON.parse(localStorage.getItem(MZ_KEY)||'[]'); }catch(e){ return []; } }
-function mzSave(list){ try{ localStorage.setItem(MZ_KEY, JSON.stringify(list)); }catch(e){ alert('Memoria piena: impossibile salvare.'); } }
+/* ---- Magazzino: memoria di lavoro + cache locale ------------------------
+   Con lo storico importato (oltre 1600 veicoli) lo spazio del browser non
+   basta: in locale restano solo le auto "vive" (disponibili, opzionate,
+   permute), lo storico venduto vive in memoria e si rilegge da Supabase.   */
+var _mzMem=null, _mzSaveT=null;
+function mzIsStorico(a){
+  if(!a) return false;
+  if(a.origine==='sicom' || a.origine==='sicom_disp' || a.origine==='sicom_veic' || a.origine==='sicom_ap') return a.stato==='venduta';
+  return false;
+}
+function mzLoad(){
+  if(_mzMem) return _mzMem;
+  try{ _mzMem=JSON.parse(localStorage.getItem(MZ_KEY)||'[]')||[]; }catch(e){ _mzMem=[]; }
+  return _mzMem;
+}
+function mzSave(list){
+  _mzMem=list||[]; _mzIdx=null;
+  if(_mzSaveT) clearTimeout(_mzSaveT);
+  _mzSaveT=setTimeout(function(){ _mzSaveT=null; mzSaveOra(); }, 400);
+}
+function mzSaveOra(){
+  var vivi=(_mzMem||[]).filter(function(a){ return !mzIsStorico(a); });
+  try{ localStorage.setItem(MZ_KEY, JSON.stringify(vivi)); return; }catch(e){}
+  /* se ancora non basta: tengo le piu' recenti, il resto arriva dal cloud */
+  try{
+    var ord=vivi.slice().sort(function(a,b){ return (b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0); });
+    for(var n=600; n>=100; n=Math.floor(n/2)){
+      try{ localStorage.setItem(MZ_KEY, JSON.stringify(ord.slice(0,n))); return; }catch(e2){}
+    }
+  }catch(e3){}
+  try{ localStorage.setItem(MZ_KEY,'[]'); }catch(e4){}
+}
+
 function mzPropagaContratti(a){
   if(!a || !a.id || typeof cvLoad!=='function' || typeof cvSave!=='function') return;
   var list=cvLoad(); var changed=false;
@@ -12855,6 +12915,7 @@ function gsearchRun(){
         return '<div onclick="gsearchApriCliente(\'' + encodeURIComponent(o.key) + '\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;background:#fff;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'#fff\'">'
           +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(nome)+'</div>'
           +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(sub)+'</div></div>'
+          +gsVenditaBtn(o.key)
           +'<span style="flex:0 0 auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;background:#e0e7ff;color:#4338ca;white-space:nowrap;">CLIENTE</span>'
           +'</div>';
       }).join('');
@@ -12946,6 +13007,48 @@ function gsearchApriVendita(id){
     } else if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi'));
   }catch(e){}
   setTimeout(function(){ try{ if(typeof cvForm==='function') cvForm(id); }catch(e){} }, 170);
+}
+/* Dal risultato di ricerca su un cliente si arriva anche alla sua vendita,
+   senza passare dalla modifica del contratto. */
+function gsVenditeDi(key){
+  try{
+    if(typeof cvLoad!=='function') return [];
+    return cvLoad().filter(function(c){ return c && c.isContratto && c.clienteKey===key; })
+      .sort(function(a,b){ return (b.consegnatoTs||b.contrattoTs||0)-(a.consegnatoTs||a.contrattoTs||0); });
+  }catch(e){ return []; }
+}
+function gsVenditaBtn(key){
+  var v=gsVenditeDi(key);
+  if(!v.length) return '';
+  return '<button onclick="event.stopPropagation();gsApriVenditaCliente(\''+encodeURIComponent(key)+'\')" '
+    +'title="Scheda vendita" style="flex:0 0 auto;font-size:9px;font-weight:800;padding:4px 9px;border-radius:20px;'
+    +'border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;cursor:pointer;font-family:inherit;white-space:nowrap;">'
+    +'VENDITA'+(v.length>1?(' '+v.length):'')+'</button>';
+}
+function gsApriVenditaCliente(keyEnc){
+  var key=decodeURIComponent(keyEnc);
+  var v=gsVenditeDi(key);
+  if(!v.length) return;
+  var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
+  var inp=document.getElementById('gsearch-input'); if(inp){ inp.value=''; inp.blur(); }
+  if(v.length===1){ if(typeof cvRiepilogo==='function') cvRiepilogo(v[0].id); return; }
+  /* piu' vendite: si sceglie quale */
+  var h='<div style="max-width:460px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
+   +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-weight:800;">Quale vendita?</div><div style="padding:10px 12px;">'
+   +v.map(function(c){
+      var a=c.autoSnapshot||{};
+      var dt=c.consegnatoTs?new Date(c.consegnatoTs).toLocaleDateString('it-IT'):'';
+      return '<div onclick="cvRiepChiudi();cvRiepilogo(\''+c.id+'\')" style="padding:11px 12px;border:1px solid #e2e8f0;border-radius:9px;margin-bottom:7px;cursor:pointer;">'
+        +'<div style="font-weight:800;font-size:13.5px;">'+cvEsc(a.modello||c.autoDesc||'Veicolo')+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+'</div>'
+        +'<div style="font-size:12px;color:#64748b;margin-top:2px;">'+(dt?('consegnata il '+dt):'in corso')+'</div></div>';
+   }).join('')
+   +'<button onclick="cvRiepChiudi()" style="width:100%;margin-top:4px;padding:10px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+   +'</div></div>';
+  var m=document.getElementById('cvRiepModal');
+  if(!m){ m=document.createElement('div'); m.id='cvRiepModal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
+    document.body.appendChild(m); }
+  m.innerHTML=h; m.style.display='flex';
 }
 function gsearchApriCliente(keyEnc){
   var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
@@ -13234,6 +13337,41 @@ var CV_KEY='ea_preventivi_v1';
 var EA_IBAN='IT88E0344033990000001004900';
 var EA_BENEF='EUROPA AUTO SRL';
 function cvCausale(cv){ var cog=((cv&&cv.cliente&&cv.cliente.cognome)||'').trim(); var a=(cv&&cv.autoSnapshot)||{}; var targa=((cv&&cv.nuovaTarga)||a.targa||'').trim(); var tel=(a.telaio||'').trim(); var l4=tel?tel.slice(-4):''; return ('Caparra '+cog+(targa?(' - '+targa):'')+(l4?(' '+l4):'')).replace(/\s+/g,' ').trim(); }
+var CV_POLIZZE=[
+ { id:'net', nome:'NET \u2014 Deutsche Bank', mesiDef:'60', testo:
+   '\u2022 Furto e Incendio parziale, totale.\n'
+  +'\u2022 Valore a NUOVO fino a 36 mesi\n'
+  +'\u2022 Ricorso terzi da incendio\n'
+  +'\u2022 Atti Vandalici e sociopolitici\n'
+  +'\u2022 Eventi naturali\n'
+  +'\u2022 Cristalli\n'
+  +'\u2022 Urto con animale selvatico\n'
+  +'\u2022 Soccorso stradale\n'
+  +'\u2022 Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300\u20ac' },
+ { id:'fit2you', nome:'Fit2You', mesiDef:'60', testo:
+   '\u2022 Furto e Incendio parziale, totale.\n'
+  +'\u2022 Valore a NUOVO fino a 60 mesi\n'
+  +'\u2022 Ricorso terzi da incendio\n'
+  +'\u2022 Atti Vandalici e sociopolitici\n'
+  +'\u2022 Eventi naturali\n'
+  +'\u2022 Cristalli\n'
+  +'\u2022 Urto con animale selvatico\n'
+  +'\u2022 Soccorso stradale\n'
+  +'\u2022 Rimborso sulla perdita delle chiavi\n'
+  +'\u2022 Rimborso riparazione dispositivi di sicurezza\n'
+  +'\u2022 Tutela Legale\n'
+  +'\u2022 Infortunio del conducente\n'
+  +'\u2022 Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300\u20ac' }
+];
+function cvPolizzaById(id){ for(var i=0;i<CV_POLIZZE.length;i++){ if(CV_POLIZZE[i].id===id) return CV_POLIZZE[i]; } return CV_POLIZZE[0]; }
+function cvPolizzaScegli(id){
+  var pz=cvPolizzaById(id);
+  _cv.polizzaTipo=pz.id;
+  var ta=document.getElementById('cv_assicDett'); if(ta) ta.value=pz.testo;
+  var me=document.getElementById('cv_assicMesi'); if(me && !me.value) me.value=pz.mesiDef;
+  if(typeof cvSync==='function') cvSync();
+  if(typeof cvLive==='function') cvLive();
+}
 var CV_ASSIC_DEF='• Furto Incendio parziale, totale.\n• Valore a NUOVO fino a 36 mesi\n• Ricorso terzi da incendio\n• Atti Vandalici e sociopolitici\n• Eventi naturali\n• Cristalli\n• Urto con animale selvatico\n• Soccorso stradale\n• Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300€';
 var CV_PERMUTA_DEF='Il possessore del veicolo dichiara: che l\'oggetto è esente da vincoli e ipoteche, di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIETA\', LIBRETTO ORIGINALE. Di impegnarsi a consegnare la vettura ceduta in permuta ad Europa Auto srl; nel caso in cui egli decidesse di vendere la medesima a terzi, di riconoscere ad Europa Auto srl la cifra di 1.000,00€, salvo diversi accordi qui riportati. La valutazione del veicolo è subordinata alla consegna di tutti gli accessori sopra riportati: la mancata consegna di uno o più accessori comporterà una pena pecuniaria pari al valore dell\'accessorio stesso.';
 var _cv=null;
@@ -13800,13 +13938,13 @@ function cvForm(id, fromVend){
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
   h+='<div id="cv-sconto-box" style="display:'+(_cv.scontoOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:2;">'+inp('cv_scontoDesc',_cv.scontoDesc,'descrizione (es. Sconto finanziamento PROMO)')+'</div><div style="flex:1;">'+inp('cv_scontoImporto',_cv.scontoImporto,'importo €','number')+'</div></div></div>';
   h+='<label style="display:flex;align-items:center;gap:9px;margin:8px 0;font-size:14px;cursor:pointer;"><input type="checkbox" id="cv_assicOn" '+(_cv.assicOn?'checked':'')+' onchange="cvAssicToggle()" style="width:20px;height:20px;">Assicurazione</label>';
-  h+='<div id="cv-assic-box" style="display:'+(_cv.assicOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_assicImporto',((_cv.assicOn&&(_cv.assicImporto===''||_cv.assicImporto==null))?'0':_cv.assicImporto),'importo €','number')+'</div><div style="flex:1;">'+inp('cv_assicMesi',_cv.assicMesi,'mesi','number')+'</div></div><textarea id="cv_assicDett" oninput="cvLive()" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:90px;box-sizing:border-box;">'+cvEsc(_cv.assicDettaglio||CV_ASSIC_DEF)+'</textarea></div>';
+  h+='<div id="cv-assic-box" style="display:'+(_cv.assicOn?'block':'none')+';padding-left:8px;">'+'<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:6px 0 3px;text-transform:uppercase;">Polizza</label>'+'<select id="cv_polizzaTipo" onchange="cvPolizzaScegli(this.value)" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;margin-bottom:6px;">'+CV_POLIZZE.map(function(pz){ return '<option value="'+pz.id+'"'+((_cv.polizzaTipo||'net')===pz.id?' selected':'')+'>'+pz.nome+'</option>'; }).join('')+'</select>'+'<div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_assicImporto',((_cv.assicOn&&(_cv.assicImporto===''||_cv.assicImporto==null))?'0':_cv.assicImporto),'importo €','number')+'</div><div style="flex:1;">'+inp('cv_assicMesi',_cv.assicMesi,'mesi','number')+'</div></div><textarea id="cv_assicDett" oninput="cvLive()" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:90px;box-sizing:border-box;">'+cvEsc(_cv.assicDettaglio||CV_ASSIC_DEF)+'</textarea></div>';
   h+=tog('cv_confrontoOn',_cv.confrontoOn,'Confronto soluzioni in stampa');
   h+='<div id="cv-confronto-box" style="display:'+(_cv.confrontoOn?'block':'none')+';padding-left:8px;">'
     +'<div style="font-size:11px;color:#64748b;margin:2px 0 6px;">Stampa il riepilogo del finanziamento e il confronto fra acquisto senza finanziamento, finanziamento a scadenza ed estinzione anticipata. Senza TAN e TAEG. Se lasci vuoti i campi, vengono calcolati da soli.</div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+inp('cv_polizzaAnnua',_cv.polizzaAnnua,'polizza annua \u20ac (auto)','number')+'</div>'
     +'<div style="flex:1;">'+inp('cv_estinzioneMesi',_cv.estinzioneMesi,'estinzione dopo (mesi)','number')+'</div></div>'
-    +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'
+    +'<div style="margin-top:6px;">'+inp('cv_estinzioneImporto',_cv.estinzioneImporto,'importo estinzione \u20ac (dal piano di ammortamento)','number')+'</div>'+'<div style="margin-top:8px;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Soluzioni da stampare</div>'+[['scSenza','Senza finanziamento'],['scScadenza','Con finanziamento fino a scadenza'],['scEstinzione','Con estinzione anticipata']].map(function(o){ var on=(_cv[o[0]]!==false); return '<label style="display:flex;align-items:center;gap:7px;margin-top:5px;font-size:13px;cursor:pointer;">'+'<input type="checkbox" id="cv_'+o[0]+'" '+(on?'checked':'')+' onchange="cvSync();cvLive();" style="width:16px;height:16px;">'+o[1]+'</label>'; }).join('')
     +'<div style="font-size:11px;color:#64748b;margin-top:3px;">Se lo lasci vuoto viene stimato dal piano teorico. Meglio inserire il valore reale letto sul piano di ammortamento della finanziaria.</div></div>';
   h+=tog('cv_listinoOn',_cv.listinoOn,'Mostra prezzo listino');
   h+='<div id="cv-listino-box" style="display:'+(_cv.listinoOn?'block':'none')+';padding-left:8px;">'+inp('cv_listino',_cv.listino,'prezzo di listino €','number')+'</div>';
@@ -13952,6 +14090,8 @@ function cvSync(){
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
+  var _pt=document.getElementById('cv_polizzaTipo'); if(_pt) _cv.polizzaTipo=_pt.value;
+  ['scSenza','scScadenza','scEstinzione'].forEach(function(k){ var el=document.getElementById('cv_'+k); if(el) _cv[k]=el.checked; });
   _cv.polizzaAnnua=g('cv_polizzaAnnua'); _cv.estinzioneMesi=g('cv_estinzioneMesi'); _cv.estinzioneImporto=g('cv_estinzioneImporto'); _cv.confrontoOn=ck('cv_confrontoOn');
   _cv.legge104On=ck('cv_legge104On'); _cv.listinoOn=ck('cv_listinoOn'); _cv.listino=g('cv_listino'); _cv.diniOn=ck('cv_diniOn');
   _cv.permutaOn=ck('cv_permutaOn'); _cv.note=g('cv_note');
@@ -14273,9 +14413,67 @@ function cvMailPreventivoHtml(p){
   h+='</table></td></tr></table></div>';
   return h;
 }
+/* Nella mail del preventivo mettiamo anche la prima foto dell'auto e il link
+   al report del veicolo, se lo abbiamo gia' fatto: si cerca per targa o telaio. */
+function cvFotoVeicolo(p){
+  try{
+    var a=(p.autoId && typeof mzById==='function')?mzById(p.autoId):null;
+    if(!a){
+      var tg=String((p.autoSnapshot&&p.autoSnapshot.targa)||'').toUpperCase().replace(/\s/g,'');
+      var tl=String((p.autoSnapshot&&p.autoSnapshot.telaio)||'').toUpperCase().replace(/\s/g,'');
+      if((tg||tl) && typeof mzLoad==='function'){
+        a=mzLoad().filter(function(x){
+          var xt=String(x.targa||'').toUpperCase().replace(/\s/g,'');
+          var xl=String(x.telaio||'').toUpperCase().replace(/\s/g,'');
+          return (tg&&xt===tg)||(tl&&xl===tl);
+        })[0];
+      }
+    }
+    if(a && a.foto && a.foto.length && a.foto[0] && a.foto[0].url) return a.foto[0].url;
+  }catch(e){}
+  return '';
+}
+function cvReportVeicolo(p){
+  try{
+    if(typeof loadSent!=='function') return null;
+    var tg=String((p.autoSnapshot&&p.autoSnapshot.targa)||'').toUpperCase().replace(/\s/g,'');
+    var tl=String((p.autoSnapshot&&p.autoSnapshot.telaio)||'').toUpperCase().replace(/\s/g,'');
+    if(!tg && !tl && p.autoId && typeof mzById==='function'){
+      var a=mzById(p.autoId);
+      if(a){ tg=String(a.targa||'').toUpperCase().replace(/\s/g,''); tl=String(a.telaio||'').toUpperCase().replace(/\s/g,''); }
+    }
+    if(!tg && !tl) return null;
+    var r=(loadSent()||[]).filter(function(x){
+      var xt=String(x.targa||'').toUpperCase().replace(/\s/g,'');
+      var xl=String(x.telaio||'').toUpperCase().replace(/\s/g,'');
+      return (tg&&xt===tg)||(tl&&xl===tl);
+    })[0];
+    return (r && r.link)?r:null;
+  }catch(e){ return null; }
+}
 function cvInviaMailCliente(p){
   if(!(p.cliente&&p.cliente.email) || typeof eaInviaMessaggio!=='function') return;
-  try{ eaInviaMessaggio({ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:cvMailPreventivoHtml(p) }); }catch(e){}
+  try{
+    var html=cvMailPreventivoHtml(p);
+    var foto=cvFotoVeicolo(p);
+    if(foto){
+      var imgBlocco='<tr><td style="padding:0 24px 4px;"><img src="'+foto+'" alt="" style="width:100%;max-width:520px;border-radius:10px;display:block;"></td></tr>';
+      if(html.indexOf('<tr>')>=0) html=html.replace('<tr>', imgBlocco+'<tr>');
+    }
+    var rep=cvReportVeicolo(p);
+    if(rep && rep.link){
+      var repBlocco='<tr><td style="padding:8px 24px 0;">'
+        +'<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:14px 16px;font-family:Segoe UI,Arial,sans-serif;">'
+        +'<div style="font-weight:800;color:#166534;font-size:14px;">Report fotografico del veicolo</div>'
+        +'<div style="font-size:12.5px;color:#166534;margin:3px 0 10px;">Abbiamo documentato l\'auto in ogni dettaglio: puoi consultarla prima di venire in salone.</div>'
+        +'<a href="'+rep.link+'" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Guarda il report</a>'
+        +'</div></td></tr>';
+      var mark='</table>';
+      var pos=html.lastIndexOf(mark);
+      if(pos>0) html=html.slice(0,pos)+repBlocco+html.slice(pos);
+    }
+    eaInviaMessaggio({ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:html });
+  }catch(e){}
 }
 // Invia il preventivo via email solo se, trascorsa 1 ora, NON è stato trasformato in proposta d’acquisto
 function cvCheckMailPreventivi(){
@@ -14749,7 +14947,7 @@ function cvBuildHTML(c, tipo){
      estinzione anticipata, finanziamento fino a scadenza, acquisto senza finanziamento. */
   doc+=(function(){
     try{
-      if(!c.confrontoOn) return '';   /* stampato quando l'interruttore e' attivo */
+      var _soloFin=!c.confrontoOn;   /* senza confronto resta comunque il riepilogo del finanziamento */
       var fp=(c.pagamenti||[]).filter(function(x){ return /finanziament/i.test(x.metodo||'')||/finanziament/i.test(x.tipo||''); })[0];
       if(!fp) return '';
       /* i dati migliori sono quelli della delibera; in mancanza uso il
@@ -14797,7 +14995,7 @@ function cvBuildHTML(c, tipo){
       /* sconto promo: valido solo col finanziamento, senza si perde */
       var scontoPromo=(!c.legge104On && c.scontoOn)?(cvNum(t.sconto)||0):0;
       var valPolEst=(polAnnua*anni)||polInclusa;   /* quanto costerebbe la stessa copertura da soli */
-      var polizzaSottoTotale = haPolizza
+      var polizzaSottoTotale = false
         ? '<div style="font-size:10.5px;font-weight:800;color:#166534;margin-top:2px;line-height:1.3;">FORMULA ZERO PENSIERI<br>con '+anni+' anni di polizza inclusa</div>'
         : '';
       var badgeZero = haPolizza
@@ -14811,16 +15009,18 @@ function cvBuildHTML(c, tipo){
       s+='<div class="cvrow"><div>Rata mensile</div><div><b>'+eu(rata)+'</b></div></div>';
       s+='<div class="cvrow"><div>Durata</div><div><b>'+mesi+' mesi</b></div></div>';
       if(polInclusa) s+='<div class="cvrow"><div>Polizza '+anni+' anni <span class="cvsmall">inclusa nel finanziamento</span></div><div><b>'+eu(polInclusa)+'</b></div></div>';
+      if(_soloFin) return s;   /* niente confronto: si ferma al riepilogo */
       s+='<div class="cvh" style="page-break-inside:avoid;">Confronto delle soluzioni</div><div class="cvbox" style="padding:0;">';
 
       var totSenzaFin=(t.totaleVendita||0)+polAnnua*anni;
-      s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
+      var _okSenza=(c.scSenza!==false), _okScad=(c.scScadenza!==false), _okEst=(c.scEstinzione!==false);
+      if(_okSenza) s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
         +'<div class="cvsmall">prezzo di vendita '+eu(t.totaleVendita||0)
         +(scontoPromo?('<br><b>Sconto promo non applicabile: + '+eu(scontoPromo)+'</b>'):'')
         +(polAnnua?('<br>Polizza da stipulare a parte: '+eu(polAnnua)+' all\'anno x '+anni+' anni = <b>'+eu(polAnnua*anni)+'</b>'):'')
         +'</div></div><div><b>'+eu(totSenzaFin)+'</b></div></div>';
 
-      s+='<div class="cvrow"><div><b>Con finanziamento fino a scadenza</b>'+badgeZero
+      if(_okScad) s+='<div class="cvrow"><div><b>Con finanziamento fino a scadenza</b>'+badgeZero
         +'<div class="cvsmall">'+mesi+' rate da '+eu(rata)+' = '+eu(rata*mesi)
         +(acconti?(' &middot; acconto '+eu(acconti)):'')
         +'</div>'
@@ -14828,7 +15028,7 @@ function cvBuildHTML(c, tipo){
         +(scontoPromo?('<div class="cvsmall">Sconto promo mantenuto &minus; '+eu(scontoPromo)+'</div>'):'')
         +'</div><div style="text-align:right;"><b>'+eu(totFin)+'</b>'+polizzaSottoTotale+'</div></div>';
 
-      s+='<div class="cvrow"><div><b>Con estinzione anticipata a '+kEst+' mesi</b>'+badgeZero
+      if(_okEst) s+='<div class="cvrow"><div><b>Con estinzione anticipata a '+kEst+' mesi</b>'+badgeZero
         +'<div class="cvsmall">'+kEst+' rate da '+eu(rata)+' = '+eu(quotaPag)
         +(acconti?(' &middot; acconto '+eu(acconti)):'')
         +' &middot; estinzione stimata '+eu(resid)
@@ -14863,7 +15063,7 @@ function cvBuildHTML(c, tipo){
   if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
      var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
         .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
-     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if((x.rate||x.importoRata) && !c.confrontoOn){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
+     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
   if(_haPenale){ var _finImp=_finPromoImp; { var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh" style="page-break-after:avoid;">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; doc+=cvFirmaHTML(); } }
   /* La doppia chiave si scrive SOLO se viene consegnata: se non c'e', il
@@ -19171,7 +19371,7 @@ function cvRiepilogo(id){
   if(cv.venditore) h2+=riga('Venditore', cvEsc(cv.venditore));
   if(cv.consegnatoTs) h2+=riga('Consegnato il', cvVendData(cv.consegnatoTs));
   h2+='<div style="display:flex;gap:8px;margin-top:18px;">'
-    +'<button onclick="cvRiepChiudi();cvForm(\''+cv.id+'\')" style="flex:1;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Apri la pratica</button>'
+    +'<button onclick="cvRiepChiudi();cvForm(\''+cv.id+'\')" style="flex:1;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Modifica</button>'
     +'<button onclick="cvRiepChiudi()" style="flex:0 0 auto;padding:11px 16px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Chiudi</button></div>';
   h2+='</div></div>';
   var m=document.getElementById('cvRiepModal');
@@ -19590,7 +19790,11 @@ function statMarginiHTML(){
      }).join('')+'</tbody></table></div>';
   }
 
-  h+=statControlloProvvHTML(V);
+  /* Il controllo provvigioni riguarda sempre il mese in corso, a prescindere
+     dal periodo scelto per le statistiche: serve a correggere gli errori adesso. */
+  var _Pm=periodo('mese');
+  var Vmese=tutti.filter(function(cv){ return _in(cv,_Pm); });
+  h+=statControlloProvvHTML(Vmese);
   h+='</div>';
   return h;
 }
@@ -19627,8 +19831,8 @@ function statControlloProvvHTML(V){
           +x[0]+': <b>'+x[1]+'</b> <span style="color:#94a3b8;font-weight:600;">delibera '+x[2]+'</span></span>'; }).join('')
       +'</div>';
   });
-  if(!righe) out='<div style="padding:16px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;">\u2713 Tutte le provvigioni del periodo corrispondono ai dati deliberati.</div>';
-  return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Controllo provvigioni</div>'
+  if(!righe) out='<div style="padding:16px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;">\u2713 Tutte le provvigioni del mese corrispondono ai dati deliberati.</div>';
+  return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Controllo provvigioni \u2014 mese in corso</div>'
     +'<div style="'+box+'overflow:hidden;">'+out+'</div>';
 }
 function statInit(){ statRender(); }
