@@ -19416,18 +19416,48 @@ function stCfDi(cv){
   return '';
 }
 function statMarginiHTML(){
-  var mese=(document.getElementById('stat-mese')||{}).value;
-  var oggi=new Date(); if(!mese) mese=oggi.getFullYear()+'-'+('0'+(oggi.getMonth()+1)).slice(-2);
-  var mesi=[]; for(var i=0;i<12;i++){ var d=new Date(oggi.getFullYear(), oggi.getMonth()-i, 1);
-    mesi.push([d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2),
-      ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'][d.getMonth()]+' '+d.getFullYear()]); }
-  var inMese=function(cv,m){ var t=cv.consegnatoTs||cv.contrattoTs||cv.createdAt; if(!t) return false;
-    var d=new Date(t); return (d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2))===m; };
+  /* Periodo di analisi: mese, trimestre, anno in corso o anni passati. */
+  var oggi=new Date(), AY=oggi.getFullYear(), AM=oggi.getMonth();
+  var per=(document.getElementById('stat-per')||{}).value || 'mese';
+  var MESI_N=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+  function _r(d1,d2,lab){ return {da:d1.getTime(), a:d2.getTime(), lab:lab}; }
+  function periodo(codice){
+    var m;
+    if(codice==='mese')      return _r(new Date(AY,AM,1), new Date(AY,AM+1,1), MESI_N[AM]+' '+AY);
+    if(codice==='mese_prec'){ m=new Date(AY,AM-1,1); return _r(m, new Date(m.getFullYear(),m.getMonth()+1,1), MESI_N[m.getMonth()]+' '+m.getFullYear()); }
+    if(codice==='trimestre'){ var q=Math.floor(AM/3)*3; return _r(new Date(AY,q,1), new Date(AY,q+3,1), 'trimestre '+(Math.floor(AM/3)+1)+'\u00b0 '+AY); }
+    if(codice==='trim_prec'){ var q2=Math.floor(AM/3)*3-3; var y2=AY; if(q2<0){ q2+=12; y2--; } return _r(new Date(y2,q2,1), new Date(y2,q2+3,1), 'trimestre '+(Math.floor(q2/3)+1)+'\u00b0 '+y2); }
+    if(codice==='anno')      return _r(new Date(AY,0,1), new Date(AY+1,0,1), 'anno '+AY+' (da inizio anno)');
+    if(/^\d{4}$/.test(codice)){ var y=parseInt(codice,10); return _r(new Date(y,0,1), new Date(y+1,0,1), 'anno '+y); }
+    return _r(new Date(AY,AM,1), new Date(AY,AM+1,1), MESI_N[AM]+' '+AY);
+  }
+  function periodoPrec(codice){
+    if(codice==='mese')      return periodo('mese_prec');
+    if(codice==='mese_prec'){ var m=new Date(AY,AM-2,1); return _r(m,new Date(m.getFullYear(),m.getMonth()+1,1),''); }
+    if(codice==='trimestre') return periodo('trim_prec');
+    if(codice==='anno')      return _r(new Date(AY-1,0,1), new Date(AY,0,1), '');
+    if(/^\d{4}$/.test(codice)){ var y=parseInt(codice,10); return _r(new Date(y-1,0,1), new Date(y,0,1), ''); }
+    return null;
+  }
+  var P=periodo(per), Pp=periodoPrec(per);
   var tutti=(typeof cvContratti==='function')?cvContratti():[];
-  var V=tutti.filter(function(cv){ return inMese(cv,mese) && stMargine(cv)!=null; });
-  var idxPrec=mesi.map(function(x){return x[0];}).indexOf(mese);
-  var Vprec=(idxPrec>=0&&mesi[idxPrec+1])?tutti.filter(function(cv){ return inMese(cv,mesi[idxPrec+1][0]) && stMargine(cv)!=null; }):[];
+  var _ts=function(cv){ return +(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0); };
+  var _in=function(cv,R){ var t=_ts(cv); return R && t>=R.da && t<R.a; };
+  var V=tutti.filter(function(cv){ return _in(cv,P) && stMargine(cv)!=null; });
+  var Vprec=Pp?tutti.filter(function(cv){ return _in(cv,Pp) && stMargine(cv)!=null; }):[];
+  /* anni disponibili nei dati, per il menu */
+  var _anni={}; tutti.forEach(function(cv){ var t=_ts(cv); if(t) _anni[new Date(t).getFullYear()]=1; });
+  var anniPrec=Object.keys(_anni).map(Number).filter(function(y){return y<AY;}).sort(function(a,b){return b-a;}).slice(0,5);
   var somma=function(arr,f){ return arr.reduce(function(s,x){ return s+(f(x)||0); },0); };
+  /* Gli importi del margine sono riservati all'amministratore: agli altri
+     lo stesso dato viene mostrato in percentuale sul venduto. */
+  var _isAdmSt=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  var _fattTot=somma(V,function(cv){ return stNum(cv.prezzoVendita)||0; });
+  function stM(v, base){
+    if(_isAdmSt) return stEu(v);
+    var b=(base!=null?base:_fattTot);
+    return b>0 ? stPct(v/b*100) : '\u2014';
+  }
   var marg=somma(V,stMargine), margPrec=somma(Vprec,stMargine);
   var ivaM=somma(V,stIvaMargine);
   var provv=somma(V,function(cv){ var r=stProvvDi(cv); return r?(stNum(r.provvigione)||0):0; });
@@ -19439,22 +19469,26 @@ function statMarginiHTML(){
   h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     +'<div style="font-weight:900;font-size:17px;">\ud83d\udcb0 Marginalit\u00e0</div>'
     +'<span style="font-size:10.5px;font-weight:800;background:#111827;color:#fff;border-radius:99px;padding:3px 10px;">solo amministratore</span>'
-    +'<select id="stat-mese" onchange="statRender()" style="margin-left:auto;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;">'
-    +mesi.map(function(m){ return '<option value="'+m[0]+'"'+(m[0]===mese?' selected':'')+'>'+m[1]+'</option>'; }).join('')+'</select></div>';
+    +'<select id="stat-per" onchange="statRender()" style="margin-left:auto;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;">'
+    +[['mese','Mese in corso'],['mese_prec','Mese scorso'],['trimestre','Trimestre in corso'],['trim_prec','Trimestre scorso'],['anno','Da inizio anno']]
+      .concat(anniPrec.map(function(y){ return [String(y),'Anno '+y]; }))
+      .map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===per?' selected':'')+'>'+o[1]+'</option>'; }).join('')
+    +'</select></div>';
+  h+='<div style="font-size:12px;color:#94a3b8;font-weight:600;margin:-4px 0 10px;">Periodo: '+P.lab+'</div>';
 
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">'
     +'<div style="'+box+'border-left:4px solid #16a34a;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stEu(marg)+'</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stM(marg)+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">'+V.length+' auto vendute</div>'
-      +(delta!=null?('<div style="font-size:11.5px;font-weight:800;color:'+(delta>=0?'#16a34a':'#dc2626')+';">'+(delta>=0?'\u25b2':'\u25bc')+' '+stPct(Math.abs(delta))+' sul mese scorso</div>'):'')+'</div>'
-    +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stEu(V.length?marg/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
+      +(delta!=null?('<div style="font-size:11.5px;font-weight:800;color:'+(delta>=0?'#16a34a':'#dc2626')+';">'+(delta>=0?'\u25b2':'\u25bc')+' '+stPct(Math.abs(delta))+' sul periodo precedente</div>'):'')+'</div>'
+    +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto'+(_isAdmSt?'':' %')+'</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stM(V.length?marg/V.length:0, V.length?_fattTot/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
     +'<div style="'+box+'border-left:4px solid #7c3aed;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stEu(provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">dal registro provvigioni</div></div>'
-    +'<div style="'+box+'border-left:4px solid #d97706;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stEu(marg+provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>'
+    +'<div style="'+box+'border-left:4px solid #d97706;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni'+(_isAdmSt?'':' %')+'</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stM(marg+provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>'
     +'</div>';
-  if(senzaAcq) h+='<div style="margin-top:8px;font-size:12px;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;">\u26a0 '+senzaAcq+' vendite del mese non hanno il prezzo di acquisto in magazzino: escluse dal calcolo.</div>';
+  if(senzaAcq) h+='<div style="margin-top:8px;font-size:12px;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;">\u26a0 '+senzaAcq+' vendite del periodo non hanno il prezzo di acquisto in magazzino: escluse dal calcolo.</div>';
 
   /* per categoria */
   var agg=[0,1,2].map(function(i){
@@ -19464,6 +19498,9 @@ function statMarginiHTML(){
     var pr=somma(g,function(cv){ var r=stProvvDi(cv); return r?(stNum(r.provvigione)||0):0; });
     return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,tot:g.length?((m+pr)/g.length):0};
   });
+  var _fattBy={}, _nBy={};
+  [0,1,2].forEach(function(i){ var g=V.filter(function(cv){ return stCat(cv)===i; });
+    _nBy[i]=g.length; _fattBy[i]=somma(g,function(cv){ return stNum(cv.prezzoVendita)||0; }); });
   var maxMedia=Math.max.apply(null,agg.map(function(a){return a.media;}).concat([1]));
   var best=agg.slice().sort(function(a,b){return b.media-a.media;})[0];
   var bestFin=agg.slice().sort(function(a,b){return b.tot-a.tot;})[0];
@@ -19471,14 +19508,14 @@ function statMarginiHTML(){
   var td='padding:11px 12px;border-bottom:1px solid #f1f5f9;';
   h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Dove guadagni di pi\u00f9</div>'
    +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr>'
-   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Auto</th><th style="'+th+'text-align:right;">Margine netto</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
+   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Auto</th><th style="'+th+'text-align:right;"'+(_isAdmSt?'>Margine netto':'>Margine %')+'</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
    +agg.map(function(a){ var c=ST_CAT[a.i];
      return '<tr><td style="'+td+'"><div style="font-weight:800;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:3px;background:'+c.col+';"></span>'+c.nome
        +((a===best&&a.n)?'<span style="font-size:10px;font-weight:800;background:#ecfdf5;color:#16a34a;border-radius:99px;padding:2px 8px;">miglior media</span>':'')+'</div>'
        +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:6px;max-width:200px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,a.media)/maxMedia*100)+'%;background:'+c.col+';"></i></div></td>'
        +'<td style="'+td+'text-align:right;font-weight:700;">'+a.n+'</td>'
-       +'<td style="'+td+'text-align:right;font-weight:700;">'+stEu(a.marg)+'</td>'
-       +'<td style="'+td+'text-align:right;font-weight:900;color:'+c.col+';">'+stEu(a.media)+'</td></tr>';
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+stM(a.marg, _fattBy[a.i])+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:900;color:'+c.col+';">'+stM(a.media, (_nBy[a.i]?_fattBy[a.i]/_nBy[a.i]:0))+'</td></tr>';
    }).join('')+'</tbody></table></div>';
 
   h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Finanziamenti \u2014 quali auto rendono di pi\u00f9</div>'
@@ -19530,8 +19567,8 @@ function statMarginiHTML(){
     for(var i=0;i<FASCE.length;i++){
       if(e>=FASCE[i][0] && e<=FASCE[i][1]){
         var k=FASCE[i][2];
-        byF[k]=byF[k]||{n:0,marg:0};
-        byF[k].n++; byF[k].marg+=(stMargine(cv)||0);
+        byF[k]=byF[k]||{n:0,marg:0,fatt:0};
+        byF[k].n++; byF[k].marg+=(stMargine(cv)||0); byF[k].fatt=(byF[k].fatt||0)+(stNum(cv.prezzoVendita)||0);
         break;
       }
     }
@@ -19539,17 +19576,17 @@ function statMarginiHTML(){
   if(etaN){
     var maxMed=Math.max.apply(null,FASCE.map(function(f){ var d=byF[f[2]]; return d&&d.n?d.marg/d.n:0; }).concat([1]));
     h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Clienti \u2014 et\u00e0 e redditivit\u00e0</div>'
-     +'<div style="'+box+'margin-bottom:8px;"><span style="font-size:12px;color:#64748b;">Et\u00e0 media degli acquirenti del mese: </span><b style="font-size:16px;">'+Math.round(etaTot/etaN)+' anni</b>'
+     +'<div style="'+box+'margin-bottom:8px;"><span style="font-size:12px;color:#64748b;">Et\u00e0 media degli acquirenti: </span><b style="font-size:16px;">'+Math.round(etaTot/etaN)+' anni</b>'
      +'<span style="font-size:11.5px;color:#94a3b8;"> \u00b7 su '+etaN+' clienti con codice fiscale</span></div>'
      +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:460px;"><thead><tr>'
-     +'<th style="'+th+'">Fascia d\'et\u00e0</th><th style="'+th+'text-align:right;">Auto vendute</th><th style="'+th+'text-align:right;">Margine</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
+     +'<th style="'+th+'">Fascia d\'et\u00e0</th><th style="'+th+'text-align:right;">Auto vendute</th><th style="'+th+'text-align:right;"'+(_isAdmSt?'>Margine':'>Margine %')+'</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
      +FASCE.map(function(f){ var d=byF[f[2]]; if(!d||!d.n) return '';
-        var med=d.marg/d.n;
+        var med=d.marg/d.n; var _fattFascia=d.fatt||0;
         return '<tr><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni</div>'
           +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:5px;max-width:190px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,med)/maxMed*100)+'%;background:#1a4fa0;"></i></div></td>'
           +'<td style="'+td+'text-align:right;font-weight:700;">'+d.n+'</td>'
-          +'<td style="'+td+'text-align:right;font-weight:700;">'+stEu(d.marg)+'</td>'
-          +'<td style="'+td+'text-align:right;font-weight:900;color:#1a4fa0;">'+stEu(med)+'</td></tr>';
+          +'<td style="'+td+'text-align:right;font-weight:700;">'+stM(d.marg, _fattFascia)+'</td>'
+          +'<td style="'+td+'text-align:right;font-weight:900;color:#1a4fa0;">'+stM(med, (d.n?_fattFascia/d.n:0))+'</td></tr>';
      }).join('')+'</tbody></table></div>';
   }
 
@@ -19590,7 +19627,7 @@ function statControlloProvvHTML(V){
           +x[0]+': <b>'+x[1]+'</b> <span style="color:#94a3b8;font-weight:600;">delibera '+x[2]+'</span></span>'; }).join('')
       +'</div>';
   });
-  if(!righe) out='<div style="padding:16px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;">\u2713 Tutte le provvigioni del mese corrispondono ai dati deliberati.</div>';
+  if(!righe) out='<div style="padding:16px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;">\u2713 Tutte le provvigioni del periodo corrispondono ai dati deliberati.</div>';
   return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Controllo provvigioni</div>'
     +'<div style="'+box+'overflow:hidden;">'+out+'</div>';
 }
