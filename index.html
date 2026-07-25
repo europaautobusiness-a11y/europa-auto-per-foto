@@ -597,6 +597,12 @@ html, body{
     <div class="card">
       <div class="card-hd">📋 Dati Veicolo — tutti i campi sono obbligatori</div>
       <div class="card-bd">
+        <div class="fg" style="margin-bottom:14px;padding:12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;">
+          <label style="color:#0369a1;">Prendi i dati da un'auto del magazzino</label>
+          <input type="search" id="rep_autoQ" placeholder="&#128269; Cerca marca, modello, targa, telaio o n&deg; auto&hellip;" oninput="repAutoFiltra()" autocomplete="off" style="width:100%;margin-bottom:6px;">
+          <select id="rep_auto" onchange="repAutoUsa()" style="width:100%;"><option value="">&mdash; nessuna: compilo a mano &mdash;</option></select>
+          <div id="rep_autoInfo" style="font-size:11px;color:#0369a1;margin-top:4px;"></div>
+        </div>
         <div class="form-row">
           <div class="fg"><label>Marca <span class="req">*</span></label><input type="text" id="marca" oninput="this.classList.remove('err')" placeholder="es. BMW"></div>
           <div class="fg"><label>Modello <span class="req">*</span></label><input type="text" id="modello" oninput="this.classList.remove('err')" placeholder="es. Serie 3 320d"></div>
@@ -9846,6 +9852,7 @@ function sidebarNav(view,btn){
   var title = SIDEBAR_TITLES ? SIDEBAR_TITLES[view] : view;
   if (t) t.textContent = (Array.isArray(title) ? title[0] : title) || view;
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
+  if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
@@ -10232,6 +10239,11 @@ document.addEventListener('DOMContentLoaded',function(){
           height:'auto',
           expandRows:true,
           nowIndicator:true,
+          editable:true,            /* si trascina l'appuntamento per spostarlo */
+          eventStartEditable:true,
+          eventDurationEditable:true,
+          eventResizableFromStart:false,
+          dragRevertDuration:0,
           slotMinTime:'07:00:00',
           slotMaxTime:'21:00:00',
           allDayText:'giornata',
@@ -10241,6 +10253,8 @@ document.addEventListener('DOMContentLoaded',function(){
           eventTimeFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           events:function(info,success){ try{ success(ccBuildEvents()); }catch(e){ success([]); } },
           dateClick:function(info){ var ds=String(info.dateStr); var d=ds.slice(0,10); var tm=ds.match(/T(\d{2}:\d{2})/); ccApri(d); setTimeout(function(){ try{ if(typeof ccDurataDefault==='function') ccDurataDefault(); if(tm){ var oe=document.getElementById('cc-ora'); if(oe) oe.value=tm[1]; } var te=document.getElementById('cc-titolo'); if(te) te.focus(); }catch(e){} }, 150); },
+          eventDrop:function(info){ ccSpostaEvento(info); },
+          eventResize:function(info){ ccSpostaEvento(info); },
           eventClick:function(info){ var _id=info.event.id||(info.event.extendedProps&&info.event.extendedProps.id); if(_id && typeof ccApriEvento==='function'){ ccApriEvento(_id); } else { var ds=(info.event.extendedProps&&info.event.extendedProps.ds)||String(info.event.startStr||'').slice(0,10); if(ds) ccApri(ds); } }
         });
         ccFC.render();
@@ -10426,6 +10440,34 @@ document.addEventListener('DOMContentLoaded',function(){
     }catch(e){}
   }
   var _ccEditId = null;
+  /* Spostamento per trascinamento: cambia solo data, ora ed eventuale durata.
+     Non parte alcuna conferma al cliente: e' una correzione nostra, non una
+     riprogrammazione concordata. Per avvisare il cliente si usa il pulsante
+     dedicato dentro la scheda dell'appuntamento. */
+  function ccSpostaEvento(info){
+    try{
+      var ev=info && info.event; if(!ev) return;
+      var id=ev.id||(ev.extendedProps&&ev.extendedProps.id); if(!id) return;
+      var s=ev.start; if(!s){ if(info.revert) info.revert(); return; }
+      var z=function(n){ return String(n).padStart(2,'0'); };
+      var data=s.getFullYear()+'-'+z(s.getMonth()+1)+'-'+z(s.getDate());
+      var ora=ev.allDay?'':(z(s.getHours())+':'+z(s.getMinutes()));
+      var durata=null;
+      if(ev.end && !ev.allDay) durata=Math.max(15, Math.round((ev.end-s)/60000));
+      var l=ccLoad(); var i=-1;
+      for(var k=0;k<l.length;k++){ if(String(l[k].id)===String(id)){ i=k; break; } }
+      if(i<0){ if(info.revert) info.revert(); return; }
+      l[i].data=data;
+      if(ora) l[i].ora=ora;
+      if(durata!=null) l[i].durata=durata;
+      l[i].updatedAt=Date.now();
+      l[i].spostatoTs=Date.now();
+      ccSave(l);
+      try{ ccSync(l[i]); }catch(e){}   /* sincronizza senza avvisare il cliente */
+      var quando=data.split('-').reverse().join('/')+(ora?(' alle '+ora):'');
+      if(typeof tcToastNew==='function') tcToastNew('\ud83d\uddd3 Appuntamento spostato al '+quando+' \u00b7 nessun avviso inviato al cliente', true);
+    }catch(e){ try{ if(info.revert) info.revert(); }catch(e2){} }
+  }
   function ccChiudiEvento(){ var ov=document.getElementById('cc-evento-overlay'); if(ov) ov.style.display='none'; }
   function ccEliminaEvento(id){ ccChiudiEvento(); if(typeof ccElimina==='function') ccElimina(id); }
   function ccApriEvento(id){
@@ -13935,7 +13977,6 @@ function cvForm(id, fromVend){
   h+='<style>'
     +'.cvwrap{padding:20px 18px 70px;max-width:1280px;margin:0 auto;}'
     +'@media(min-width:1000px){.cvwrap{display:grid;grid-template-columns:1.5fr 1fr;gap:22px;align-items:start;}'
-  h+='</div>';   /* chiude l'ultimo riquadro */
     +'.cvcol-dx{position:sticky;top:74px;}}'
     +'.cvsez{background:#fff;border:1px solid #e4e8ee;border-radius:12px;padding:14px 16px;margin-bottom:14px;}'
     +'.cvsez>h3{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:0 0 10px;}'
@@ -13989,6 +14030,7 @@ function cvForm(id, fromVend){
   h+=lab('Dichiarazione difetti visibili e non visibili del veicolo in permuta')+'<textarea id="cv_pm_difetti" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:70px;box-sizing:border-box;">'+cvEsc(pm.difetti||'')+'</textarea>';
   h+='</div>';
   h+=lab('Note contratto')+'<textarea id="cv_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+cvEsc(_cv.note||'')+'</textarea>';
+  h+='</div>';   /* chiude l'ultimo riquadro della colonna sinistra */
   h+='</div><div class="cvcol-dx">';
   h+='<div id="cv-riepilogo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;"></div>';
   if(fromVend && _cv.isContratto){
@@ -14018,6 +14060,52 @@ function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.d
 function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')?parLoad():{}; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; _cv.garanziaImporto=(mesi==='24')?n(p.garanzia24):0; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} var gc=document.getElementById('cv-gar-costo'); if(gc){ gc.innerHTML=(mesi==='24')?('Costo garanzia 24 mesi (da Parametri): <b>'+cvEuro(_cv.garanziaImporto)+'</b>'):'Garanzia 12 mesi inclusa (legale)'; } if(typeof cvLive==='function') cvLive(); }
 /* Ricerca nel menu auto: si digita e restano solo i veicoli che
    corrispondono per marca, modello, targa, telaio o numero interno. */
+/* Report veicolo: i dati si prendono dal magazzino invece di riscriverli. */
+function repAutoPopola(){
+  var sel=document.getElementById('rep_auto'); if(!sel) return;
+  var autos=(typeof mzLoad==='function')?mzLoad():[];
+  var lista=autos.filter(function(a){ return a && a.stato!=='venduta'; })
+    .sort(function(a,b){ return ((a.marca||'')+' '+(a.modello||'')).localeCompare(((b.marca||'')+' '+(b.modello||'')),'it'); });
+  var esc=function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); };
+  sel.innerHTML='<option value="">\u2014 nessuna: compilo a mano \u2014</option>'+lista.map(function(a){
+    var lab='#'+(a.targa||a.numero_interno||'???')+' - '+((a.marca||'')+' '+(a.modello||'')).trim();
+    var cerca=[a.marca,a.modello,a.allestimento,a.targa,a.telaio,a.numero_interno,a.colore].filter(Boolean).join(' ');
+    return '<option value="'+a.id+'" data-cerca="'+esc(cerca)+'">'+esc(lab)+'</option>';
+  }).join('');
+}
+function repAutoFiltra(){
+  try{
+    var q=String((document.getElementById('rep_autoQ')||{}).value||'').toLowerCase().trim();
+    var sel=document.getElementById('rep_auto'); if(!sel) return;
+    if(sel.options.length<2) repAutoPopola();
+    var t=q.split(/\s+/).filter(Boolean), vis=0, tot=0, primo=null;
+    for(var i=0;i<sel.options.length;i++){
+      var o=sel.options[i];
+      if(!o.value){ o.hidden=false; continue; }
+      tot++;
+      var testo=(o.getAttribute('data-cerca')||o.text||'').toLowerCase();
+      var ok=true; for(var k=0;k<t.length;k++){ if(testo.indexOf(t[k])<0){ ok=false; break; } }
+      o.hidden=!ok; if(ok){ vis++; if(!primo) primo=o; }
+    }
+    var info=document.getElementById('rep_autoInfo');
+    if(info) info.textContent=q?(vis+' di '+tot+' veicoli'):'';
+    if(q && vis===1 && primo && sel.value!==primo.value){ sel.value=primo.value; repAutoUsa(); }
+  }catch(e){}
+}
+function repAutoUsa(){
+  try{
+    var sel=document.getElementById('rep_auto'); if(!sel || !sel.value) return;
+    var a=(typeof mzById==='function')?mzById(sel.value):null; if(!a) return;
+    var set=function(id,v){ var el=document.getElementById(id); if(el && v!=null && v!==''){ el.value=v; el.classList.remove('err'); } };
+    set('marca', a.marca);
+    set('modello', ((a.modello||'')+' '+(a.allestimento||'')).trim());
+    set('targa', a.targa || a.telaio || a.numero_interno);
+    set('anno', a.anno || (a.dataImm?String(a.dataImm).slice(0,4):''));
+    set('km', a.km);
+    var info=document.getElementById('rep_autoInfo');
+    if(info) info.innerHTML='<b>\u2713 Dati presi dal magazzino</b> \u2014 correggi pure quello che serve.';
+  }catch(e){}
+}
 function cvAutoFiltra(){
   try{
     var q=String((document.getElementById('cv_autoQ')||{}).value||'').toLowerCase().trim();
