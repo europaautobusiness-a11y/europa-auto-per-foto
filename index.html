@@ -14258,8 +14258,6 @@ function cvMailPreventivoHtml(p){
   h+='<tr><td style="padding:18px 24px 0;">'
     +'<div style="'+F+'font-size:11px;color:#94a3b8;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:12px;">'
     +'Preventivo valido salvo disponibilit\u00e0 del veicolo.'
-    + (fin ? ' L\u2019importo della rata \u00e8 indicativo e viene definito dalla finanziaria all\u2019approvazione della pratica.' : '')
-    +' Il dettaglio completo e le condizioni ti verranno consegnati al momento della proposta d\u2019acquisto.'
     +'</div></td></tr>';
 
   /* piede */
@@ -19366,6 +19364,10 @@ function stMargine(cv){
   if(vend==null||acq==null) return null;          /* senza prezzo d'acquisto niente margine */
   var c=stCat(cv);
   var m=(c===2)?(vend/(1+ST_IVA)-acq):((vend-acq)/(1+ST_IVA));
+  /* Dal margine si tolgono i costi vivi che sosteniamo noi: passaggio di
+     proprieta', minivoltura e lavori extra. Sono partite di giro incassate
+     dal cliente ma pagate a terzi, quindi non sono guadagno. */
+  m -= (stNum(cv.passaggio)||0) + (stNum(cv.minivoltura)||0) + (stNum(cv.costiExtraTot)||0);
   return Math.round(m*100)/100;
 }
 function stIvaMargine(cv){
@@ -19388,6 +19390,30 @@ function stProvvDi(cv){
     }
   }catch(e){}
   return null;
+}
+/* Eta' del cliente ricavata dal codice fiscale: posizioni 7-8 anno,
+   9 mese (lettera), 11-12 giorno (>40 per le donne). */
+var CF_MESI={A:1,B:2,C:3,D:4,E:5,H:6,L:7,M:8,P:9,R:10,S:11,T:12};
+function stEtaDaCF(cf){
+  try{
+    cf=String(cf||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(cf.length<11) return null;
+    var aa=parseInt(cf.substr(6,2),10); var ml=cf.charAt(8); var gg=parseInt(cf.substr(9,2),10);
+    if(isNaN(aa)||isNaN(gg)||!CF_MESI[ml]) return null;
+    if(gg>40) gg-=40;                      /* donne */
+    var oggi=new Date(); var secolo=(aa<=(oggi.getFullYear()%100))?2000:1900;
+    var anno=secolo+aa;
+    var eta=oggi.getFullYear()-anno;
+    var m=oggi.getMonth()+1;
+    if(m<CF_MESI[ml] || (m===CF_MESI[ml] && oggi.getDate()<gg)) eta--;
+    return (eta>=17 && eta<=100)?eta:null;
+  }catch(e){ return null; }
+}
+function stCfDi(cv){
+  var cl=cv&&cv.cliente||{};
+  if(cl.cf) return cl.cf;
+  try{ if(cv.clienteKey && typeof clFind==='function'){ var a=clFind(cv.clienteKey); if(a&&a.cf) return a.cf; } }catch(e){}
+  return '';
 }
 function statMarginiHTML(){
   var mese=(document.getElementById('stat-mese')||{}).value;
@@ -19465,6 +19491,67 @@ function statMarginiHTML(){
        +'<td style="'+td+'text-align:right;font-weight:700;color:#7c3aed;">'+stEu(a.provv)+'</td>'
        +'<td style="'+td+'text-align:right;font-weight:900;">'+stEu(a.tot)+'</td></tr>';
    }).join('')+'</tbody></table></div>';
+
+  /* ---- Rotazione: quanto vende una categoria rispetto a quanto pesa in magazzino ---- */
+  var mag=(typeof mzLoad==='function')?mzLoad():[];
+  var disp=mag.filter(function(a){ return a && a.stato==='disponibile'; });
+  var catMag=[0,1,2].map(function(i){
+    return disp.filter(function(a){
+      var ivaEsp=(a.ivaEsposta===true), est=(a.estera===true);
+      var c=!ivaEsp?0:(est?2:1);
+      return c===i;
+    }).length;
+  });
+  var totMag=catMag.reduce(function(s,x){return s+x;},0)||1;
+  var totV=V.length||1;
+  h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Rotazione \u2014 vendite rispetto allo stock</div>'
+   +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr>'
+   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">% del venduto</th><th style="'+th+'text-align:right;">% dello stock</th><th style="'+th+'text-align:right;">Indice</th></tr></thead><tbody>'
+   +agg.map(function(a,i){ var c=ST_CAT[a.i];
+     var pv=a.n/totV*100, pm=catMag[a.i]/totMag*100;
+     var idx=pm>0?(pv/pm):null;
+     var col=(idx==null)?'#94a3b8':(idx>=1.2?'#16a34a':(idx<0.8?'#dc2626':'#64748b'));
+     var lab=(idx==null)?'\u2014':(idx.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+'\u00d7');
+     return '<tr><td style="'+td+'"><div style="font-weight:800;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:3px;background:'+c.col+';"></span>'+c.nome+'</div>'
+       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'+a.n+' vendute \u00b7 '+catMag[a.i]+' in stock</div></td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+stPct(pv)+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:700;">'+stPct(pm)+'</td>'
+       +'<td style="'+td+'text-align:right;font-weight:900;color:'+col+';">'+lab+'</td></tr>';
+   }).join('')+'</tbody></table></div>'
+   +'<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">Indice sopra 1 = la categoria vende pi\u00f9 di quanto pesa in magazzino, quindi ruota pi\u00f9 in fretta.</div>';
+
+  /* ---- Clienti: eta' media e fasce piu' redditizie ---- */
+  var FASCE=[[0,29,'fino a 29'],[30,39,'30-39'],[40,49,'40-49'],[50,59,'50-59'],[60,199,'60 e oltre']];
+  var byF={}; var etaTot=0, etaN=0;
+  V.forEach(function(cv){
+    var e=stEtaDaCF(stCfDi(cv));
+    if(e==null) return;
+    etaTot+=e; etaN++;
+    for(var i=0;i<FASCE.length;i++){
+      if(e>=FASCE[i][0] && e<=FASCE[i][1]){
+        var k=FASCE[i][2];
+        byF[k]=byF[k]||{n:0,marg:0};
+        byF[k].n++; byF[k].marg+=(stMargine(cv)||0);
+        break;
+      }
+    }
+  });
+  if(etaN){
+    var maxMed=Math.max.apply(null,FASCE.map(function(f){ var d=byF[f[2]]; return d&&d.n?d.marg/d.n:0; }).concat([1]));
+    h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Clienti \u2014 et\u00e0 e redditivit\u00e0</div>'
+     +'<div style="'+box+'margin-bottom:8px;"><span style="font-size:12px;color:#64748b;">Et\u00e0 media degli acquirenti del mese: </span><b style="font-size:16px;">'+Math.round(etaTot/etaN)+' anni</b>'
+     +'<span style="font-size:11.5px;color:#94a3b8;"> \u00b7 su '+etaN+' clienti con codice fiscale</span></div>'
+     +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:460px;"><thead><tr>'
+     +'<th style="'+th+'">Fascia d\'et\u00e0</th><th style="'+th+'text-align:right;">Auto vendute</th><th style="'+th+'text-align:right;">Margine</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
+     +FASCE.map(function(f){ var d=byF[f[2]]; if(!d||!d.n) return '';
+        var med=d.marg/d.n;
+        return '<tr><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni</div>'
+          +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:5px;max-width:190px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,med)/maxMed*100)+'%;background:#1a4fa0;"></i></div></td>'
+          +'<td style="'+td+'text-align:right;font-weight:700;">'+d.n+'</td>'
+          +'<td style="'+td+'text-align:right;font-weight:700;">'+stEu(d.marg)+'</td>'
+          +'<td style="'+td+'text-align:right;font-weight:900;color:#1a4fa0;">'+stEu(med)+'</td></tr>';
+     }).join('')+'</tbody></table></div>';
+  }
 
   h+=statControlloProvvHTML(V);
   h+='</div>';
@@ -19600,7 +19687,7 @@ function statRender(){
   for(var _mm=0;_mm<12;_mm++){ if(_revMese[_mm]>0) h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;"><span>'+mesi[_mm]+'</span><b>'+cvEuro(_revMese[_mm])+'</b></div>'; }
   h+='</div>';
   h+='</div>';
-  try{ if(typeof getCurrentRole==='function' && getCurrentRole()==='admin') h+=statMarginiHTML(); }catch(e){}
+  try{ var _r=(typeof getCurrentRole==='function')?getCurrentRole():''; if(_r==='admin'||_r==='staff'||_r==='vendite') h+=statMarginiHTML(); }catch(e){}
   wrap.innerHTML=h;
 
 }
