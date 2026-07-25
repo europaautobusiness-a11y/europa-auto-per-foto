@@ -12693,7 +12693,17 @@ function mzPropagaContratti(a){
     if(cv && cv.autoId===a.id){
       cv.autoSnapshot={ modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(), alimentazione:a.alimentazione, cilindrata:a.cilindrata, potenza:a.potenza, cambio:a.cambio, telaio:a.telaio, targa:a.targa, numeroInterno:a.numero_interno, estera:a.estera, ivaEsposta:!!a.ivaEsposta, dataImm:a.dataImm, colore:a.colore, km:a.km };
       cv.autoDesc=(a.targa?('#'+a.targa+' - '):'')+(a.marca||'')+' '+(a.modello||'');
-      if(!cv.diniOn && typeof cvPassaggioKw==='function'){ var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='' && pp!=null) cv.passaggio=pp; }
+      /* Il passaggio di proprieta' NON si ricalcola sulle pratiche gia'
+         esistenti: i costi del trapasso sono cambiati nel tempo e i vecchi
+         preventivi (compresi quelli importati) devono restare con l'importo
+         con cui sono stati fatti. Lo calcolo solo se manca del tutto. */
+      if(!cv.diniOn && !cv.passaggioForzato && typeof cvPassaggioKw==='function'){
+        var _ppVecchio=parseFloat(cv.passaggio);
+        if(isNaN(_ppVecchio) || _ppVecchio<=0){
+          var pp=cvPassaggioKw(a.potenza, a.estera);
+          if(pp!=='' && pp!=null) cv.passaggio=pp;
+        }
+      }
       cv.updatedAt=Date.now(); changed=true;
       if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
     }
@@ -14059,7 +14069,33 @@ function cvForm(id, fromVend){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Telefono *')+inp('cv_tel',_cv.cliente.telefono)+'</div><div style="flex:1;">'+lab('Email *')+inp('cv_email',_cv.cliente.email)+'</div></div>';
   h+='</div><div class="cvsez"><h3>Prezzo e servizi</h3>';
   h+=lab('Prezzo di vendita €')+'<input id="cv_prezzo" type="number" value="'+cvEsc(_cv.prezzoVendita==null?'':_cv.prezzoVendita)+'" oninput="cvLive()" onchange="cvAutoSaldo()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">';
-  h+=lab('Passaggio di proprietà / Immatricolazione € (calcolato dai kW)')+'<input id="cv_passaggio" type="number" value="'+(cvEsc(_cv.passaggio==null?'':_cv.passaggio))+'" readonly style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#eef2f7;color:#334155;">'+'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">Calcolato automaticamente dai kW del veicolo e dai Parametri. Non modificabile dal venditore.</div>';
+  h+=(function(){
+    /* Passaggio di proprieta': normalmente e' calcolato dai kW e bloccato.
+       L'amministratore puo' forzarlo a mano (i costi del trapasso cambiano
+       nel tempo e il calcolo automatico non sempre torna). */
+    var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+    var _ppF=!!_cv.passaggioForzato;
+    var _val=cvEsc(_cv.passaggio==null?'':_cv.passaggio);
+    var _open=(_adm&&_ppF);
+    var _st='width:100%;padding:11px;border:1px solid '+(_open?'#f59e0b':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:'+(_open?'#fffbeb':'#eef2f7')+';color:#334155;font-weight:'+(_open?'700':'400')+';';
+    var s=lab('Passaggio di proprietà / Immatricolazione € (calcolato dai kW)')
+      +'<input id="cv_passaggio" type="number" step="0.01" value="'+_val+'" '+(_open?'oninput="cvLive()"':'readonly')+' style="'+_st+'">';
+    if(_adm){
+      s+='<label style="display:flex;align-items:center;gap:9px;margin:7px 0 2px;font-size:13px;cursor:pointer;color:#92400e;font-weight:700;">'
+        +'<input type="checkbox" id="cv_passaggioForza" '+(_ppF?'checked':'')+' onchange="cvPassaggioForzaToggle()" style="width:19px;height:19px;">'
+        +'\uD83D\uDD13 Forza importo (amministratore)</label>'
+        +'<div style="font-size:11px;color:'+(_ppF?'#92400e':'#94a3b8')+';margin-top:2px;">'
+        +(_ppF?'Importo forzato a mano: il calcolo automatico dai kW non lo sovrascrive più.'
+              :'Calcolato automaticamente dai kW del veicolo e dai Parametri. Spunta per inserirlo a mano.')
+        +'</div>';
+    } else {
+      s+='<div style="font-size:11px;color:#94a3b8;margin-top:3px;">'
+        +(_ppF?'Importo impostato dall\u2019amministrazione. Non modificabile.'
+              :'Calcolato automaticamente dai kW del veicolo e dai Parametri. Non modificabile dal venditore.')
+        +'</div>';
+    }
+    return s;
+  })();
   h+=tog('cv_legge104On',_cv.legge104On,'Legge 104');
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
   h+='<div id="cv-sconto-box" style="display:'+(_cv.scontoOn?'block':'none')+';padding-left:8px;"><div style="display:flex;gap:10px;"><div style="flex:2;">'+inp('cv_scontoDesc',_cv.scontoDesc,'descrizione (es. Sconto finanziamento PROMO)')+'</div><div style="flex:1;">'+inp('cv_scontoImporto',_cv.scontoImporto,'importo €','number')+'</div></div></div>';
@@ -14285,7 +14321,25 @@ function cvAutoFiltra(){
 }
 function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof mzById==='function')?mzById(sel.value):null; if(a){ _cv.autoId=a.id; _cv.autoDesc=(a.targa?('#'+a.targa+' - '):'')+(a.marca||'')+' '+(a.modello||''); _cv.autoSnapshot={modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(),alimentazione:a.alimentazione,cilindrata:a.cilindrata,potenza:a.potenza,cambio:a.cambio,telaio:a.telaio,targa:a.targa,numeroInterno:a.numero_interno,estera:a.estera,ivaEsposta:!!a.ivaEsposta,dataImm:a.dataImm,colore:a.colore,km:a.km}; var pz=document.getElementById('cv_prezzo'); if(pz&&!pz.value&&a.prezzoVen) pz.value=a.prezzoVen; var km=document.getElementById('cv_km'); if(km&&!km.value&&a.km) km.value=a.km; if(a.listino){ _cv.listino=a.listino; _cv.listinoOn=true; var _li=document.getElementById('cv_listino'); if(_li) _li.value=a.listino; var _lo=document.getElementById('cv_listinoOn'); if(_lo) _lo.checked=true; var _lb=document.getElementById('cv-listino-box'); if(_lb) _lb.style.display='block'; } cvAggiornaPassaggio(); } }
 function cvAutoNum(c){ var n=(c&&c.autoSnapshot&&c.autoSnapshot.numeroInterno)||''; if(!n && c && c.autoId && typeof mzById==='function'){ var a=mzById(c.autoId); if(a) n=a.numero_interno||''; } return n?String(n):''; }
-function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
+function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; if(_cv && _cv.passaggioForzato){ if(typeof cvLive==='function') cvLive(); return; } var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
+/* Sblocco/riblocco del campo passaggio: solo amministratore. */
+function cvPassaggioForzaToggle(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  var ck=document.getElementById('cv_passaggioForza'), pa=document.getElementById('cv_passaggio');
+  if(!pa) return;
+  var on=!!(ck&&ck.checked);
+  if(typeof _cv!=='undefined' && _cv) _cv.passaggioForzato=on;
+  if(on){
+    pa.readOnly=false; pa.style.background='#fffbeb'; pa.style.border='1px solid #f59e0b'; pa.style.fontWeight='700';
+    pa.setAttribute('oninput','cvLive()');
+    try{ pa.focus(); pa.select(); }catch(e){}
+  } else {
+    pa.readOnly=true; pa.style.background='#eef2f7'; pa.style.border='1px solid #cbd5e1'; pa.style.fontWeight='400';
+    pa.removeAttribute('oninput');
+    cvAggiornaPassaggio();
+  }
+  if(typeof cvLive==='function') cvLive();
+}
 function cvPassaggioKw(kw, estera){ var p=(typeof parLoad==='function')?parLoad():null; if(!p) return ''; kw=parseFloat(kw)||0; if(kw<=0) return ''; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; var base; if(kw<54) base=n(p.ppMinore54); else if(kw==54) base=n(p.ppUguale54); else base=n(p.ppUguale54)+(kw-54)*n(p.ppOltre54); if(estera) base+=n(p.immatricolazione); return base; }
 function cvAddExtra(){ cvSync(); _cv.costiExtra.push({desc:'',importo:''}); cvRenderExtra(); cvLive(); }
 function cvRenderExtra(){ var c=document.getElementById('cv-extra'); if(!c)return; c.innerHTML=_cv.costiExtra.map(function(x,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px;"><input value="'+cvEsc(x.desc)+'" placeholder="descrizione" oninput="_cv.costiExtra['+i+'].desc=this.value" style="flex:2;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><input value="'+cvEsc(x.importo)+'" placeholder="€" type="number" oninput="_cv.costiExtra['+i+'].importo=this.value;cvLive()" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><button onclick="_cv.costiExtra.splice('+i+',1);cvRenderExtra();cvLive()" style="border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;cursor:pointer;">✕</button></div>'; }).join(''); }
@@ -14394,6 +14448,7 @@ function cvSync(){
   var ck=function(id){ var el=document.getElementById(id); return el?el.checked:false; };
   _cv.kmAgg=g('cv_km'); _cv.cliente=Object.assign({}, _cv.cliente, {nome:g('cv_nome'),cognome:g('cv_cognome'),telefono:g('cv_tel'),email:g('cv_email')});
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
+  var _pf=document.getElementById('cv_passaggioForza'); if(_pf) _cv.passaggioForzato=!!_pf.checked;
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
   var _pt=document.getElementById('cv_polizzaTipo'); if(_pt) _cv.polizzaTipo=_pt.value;
@@ -18754,6 +18809,47 @@ function cvDeliberaForm(id){
   var inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;';
   var lab='display:block;font-size:10px;font-weight:700;color:#64748b;margin:9px 0 3px;text-transform:uppercase;';
   var hint=function(x,u){ return (x===''||x===null||x===undefined)?'':('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">simulato: '+x+(u||'')+'</div>'); };
+
+  /* ---- POLIZZE ----------------------------------------------------------
+     Col simulatore (finanziamento Deutsche Bank) l'importo delle polizze
+     arriva gia' calcolato (CPI + CVT + EasyCare): non va inserito a mano.
+     Con un'altra finanziaria invece servono tipo di polizza e importo. */
+  window._delibCvId = cv.id;
+  var _pagSim=(function(){ try{ var p=(typeof cvFinPag==='function')?cvFinPag(cv):null; return !!(p && p.finDati && p.finDati.aggiornatoTs); }catch(e){ return false; } })();
+  var _polDaSim;
+  if(d.daSimulatore!==undefined && !fromSim) _polDaSim=(d.daSimulatore===true);
+  else _polDaSim=(!!fromSim || _pagSim);
+  if(window._delibPolManuale===true){ _polDaSim=false; }
+  window._delibPolManuale=false;
+  var _polVal = val('polizze'); if(_polVal===''||_polVal===null||_polVal===undefined) _polVal='';
+  var _polTipo = String(d.polizzaTipo||'');
+  var _esc=function(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); };
+
+  var _polAuto = '<label style="'+lab+'">Polizze \u20ac</label>'
+   +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:10px 11px;">'
+   +'<div style="font-size:17px;font-weight:800;color:#166534;">'+((_polVal===''?'0':_polVal))+' \u20ac</div>'
+   +'<div style="font-size:11px;color:#166534;font-weight:600;margin-top:2px;">\u2713 Gi\u00e0 comprese nel simulatore \u2014 non serve inserirle</div></div>'
+   +'<input type="hidden" id="dl_polizze" value="'+(_polVal===''?'0':_esc(_polVal))+'">'
+   +'<input type="hidden" id="dl_polizzaTipo" value="'+_esc(_polTipo||'net')+'">'
+   +'<input type="hidden" id="dl_daSim" value="1">'
+   +'<div style="margin-top:5px;"><a onclick="cvDelibPolManualeSwitch()" style="font-size:11px;color:#1a4fa0;cursor:pointer;text-decoration:underline;">Altra polizza \u2014 inseriscila a mano</a></div>';
+
+  var _polOpts = '<option value="">\u2014 scegli \u2014</option>'
+   + (typeof CV_POLIZZE!=='undefined'?CV_POLIZZE:[]).map(function(pz){
+       return '<option value="'+_esc(pz.id)+'"'+(_polTipo===pz.id?' selected':'')+'>'+pz.nome+'</option>'; }).join('')
+   + '<option value="altra"'+(_polTipo==='altra'?' selected':'')+'>Altra polizza</option>'
+   + '<option value="nessuna"'+(_polTipo==='nessuna'?' selected':'')+'>Nessuna polizza</option>';
+
+  var _polMan = '<label style="'+lab+'">Tipo polizza *</label>'
+   +'<select id="dl_polizzaTipo" onchange="cvDelibPolTipo(this.value)" style="'+inp+'background:#fff;">'+_polOpts+'</select>'
+   +'<label style="'+lab+'">Polizze \u20ac * <span style="text-transform:none;font-weight:600;color:#94a3b8;">(0 se non presenti)</span></label>'
+   +'<input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+_esc(_polTipo==='nessuna'?'0':_polVal)+'"'+(_polTipo==='nessuna'?' readonly':'')+'>'
+   +hint(sim.polizze,' \u20ac')
+   +'<input type="hidden" id="dl_daSim" value="0">';
+
+  window._delibPolManHTML=_polMan;
+  var _polBox = '<div id="dl_polbox">'+(_polDaSim?_polAuto:_polMan)+'</div>';
+
   var h2='<div style="max-width:520px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
    +'<span style="font-weight:800;">Dati della delibera</span>'
@@ -18769,7 +18865,7 @@ function cvDeliberaForm(id){
    +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac *</label><input id="dl_rata" type="number" step="0.01" style="'+inp+'" value="'+val('rata')+'">'+hint(sim.rata,' \u20ac')+'</div></div>'
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate *</label><input id="dl_durata" type="number" style="'+inp+'" value="'+val('durata')+'">'+hint(sim.durata,'')+'</div>'
    +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac *</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+val('istruttoria')+'">'+hint(sim.istruttoria,' \u20ac')+'</div></div>'
-   +'<label style="'+lab+'">Polizze \u20ac * <span style="text-transform:none;font-weight:600;color:#94a3b8;">(0 se non presenti)</span></label><input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+val('polizze')+'">'+hint(sim.polizze,' \u20ac')
+   +_polBox
    +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
@@ -18777,6 +18873,19 @@ function cvDeliberaForm(id){
   m.innerHTML=h2; m.style.display='flex';
 }
 function cvDeliberaChiudi(){ var m=document.getElementById('cvDeliberaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+/* passa dalla polizza automatica del simulatore all'inserimento a mano
+   (finanziaria diversa da Deutsche Bank): riscrive solo il riquadro polizze,
+   cosi' gli altri campi gia' compilati restano dove sono. */
+function cvDelibPolManualeSwitch(){
+  var box=document.getElementById('dl_polbox'); if(!box||!window._delibPolManHTML) return;
+  box.innerHTML=window._delibPolManHTML;
+  var t=document.getElementById('dl_polizzaTipo'); if(t) t.focus();
+}
+function cvDelibPolTipo(v){
+  var e=document.getElementById('dl_polizze'); if(!e) return;
+  if(v==='nessuna'){ e.value='0'; e.readOnly=true; e.style.background='#f8fafc'; }
+  else { e.readOnly=false; e.style.background='#fff'; if(e.value==='0') e.value=''; }
+}
 function cvDeliberaSalva(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   var g=function(k){ var el=document.getElementById('dl_'+k); return el?el.value.trim():''; };
@@ -18790,11 +18899,14 @@ function cvDeliberaSalva(id){
   if(n('durata')===null) mancanti.push('Numero rate');
   if(n('istruttoria')===null) mancanti.push('Commissioni finanziarie');
   if(n('polizze')===null) mancanti.push('Polizze');
+  var _daSim=(g('daSim')==='1');
+  if(!_daSim && !g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   list[i].finDelibera={ confermata:true, finanziaria:g('finanziaria'), tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
-    polizze:n('polizze'), note:g('note'), data:new Date().toISOString().slice(0,10),
+    polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
+    note:g('note'), data:new Date().toISOString().slice(0,10),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
   list[i].updatedAt=Date.now();
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
