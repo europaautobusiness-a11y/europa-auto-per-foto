@@ -4567,6 +4567,27 @@ function loadReady(){
 function loadSent(){
   try{ return JSON.parse(localStorage.getItem(SENT_KEY)||'[]'); }catch(e){ return []; }
 }
+/* ===== LINK PUBBLICO DEL REPORT =====
+   I record dei report non hanno mai avuto un campo link: per questo il
+   riquadro "Guarda il report" non e' mai comparso nelle mail dei preventivi.
+   Appena il report viene generato lo carico su R2 e salvo l'indirizzo, cosi'
+   diventa allegabile a qualsiasi comunicazione. */
+function reportCaricaLink(rec, html){
+  try{
+    if(!rec || !html || typeof WORKER_FOTO==='undefined' || !WORKER_FOTO) return;
+    var tg=String(rec.targa||'auto').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    var nome='report-'+tg+'-'+(rec.id||Date.now())+'.html';
+    var blob=new Blob([html],{type:'text/html; charset=utf-8'});
+    fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent('report')+'&nome='+encodeURIComponent(nome), {
+      method:'POST', headers:{'Content-Type':'text/html; charset=utf-8'}, body:blob
+    }).then(function(r){ return r.json(); }).then(function(res){
+      if(!(res && res.ok && res.url)) return;
+      var s=loadSent();
+      for(var i=0;i<s.length;i++){ if(s[i].id===rec.id){ s[i].link=res.url; s[i].linkKey=res.key||''; break; } }
+      saveSent(s);
+    }).catch(function(){});
+  }catch(e){}
+}
 function updateCounts(){
   try{
     const readyData = JSON.parse(localStorage.getItem(READY_KEY)||'[]');
@@ -5034,6 +5055,7 @@ function generateAndDownloadPDF(id, nomeCliente){
       optionalEnabled:r.optionalEnabled, scores:r.scores, ratings:r.ratings,
     });
     saveSent(sent);
+    try{ reportCaricaLink(sent[0], reportHtml); }catch(e){}
     showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+' → '+nomeCliente);
   }catch(err){
     console.error(err);
@@ -13643,6 +13665,9 @@ function pmiConfermaIngresso(cvId){
     note:'Ingresso da permuta'+(nome?(' \u2014 '+nome):''), dataCarico:oggi, origine:'permuta', permutaContrattoId:cv.id,
     permutaDifetti:(pm.difetti||''), periziaId:periziaId, ivaEsposta:!!ivaEsp, provenienzaVenditore:'privato',
     fornitoreNome:_rag, fornitoreId:_fornId, estera:false };
+  /* Il depositante della permuta e' il cliente che ha ceduto il veicolo:
+     nome, CF/P.IVA e indirizzo entrano subito nel registro e restano fissi. */
+  try{ if(typeof regFreezeCarico==='function') regFreezeCarico(auto, cv); }catch(e){}
   if(typeof mzLoad==='function'){ var ml=mzLoad(); ml.push(auto); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(auto); }
   cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now(); cv.updatedAt=Date.now();
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
@@ -14790,26 +14815,34 @@ function cvFotoVeicolo(p){
         })[0];
       }
     }
-    if(a && a.foto && a.foto.length && a.foto[0] && a.foto[0].url) return a.foto[0].url;
+    /* non sempre la prima voce ha un url utilizzabile: prendo la prima buona */
+    if(a && a.foto && a.foto.length){
+      for(var i=0;i<a.foto.length;i++){ var f=a.foto[i]; if(f && f.url) return f.url; }
+    }
   }catch(e){}
   return '';
 }
 function cvReportVeicolo(p){
   try{
-    if(typeof loadSent!=='function') return null;
-    var tg=String((p.autoSnapshot&&p.autoSnapshot.targa)||'').toUpperCase().replace(/\s/g,'');
-    var tl=String((p.autoSnapshot&&p.autoSnapshot.telaio)||'').toUpperCase().replace(/\s/g,'');
-    if(!tg && !tl && p.autoId && typeof mzById==='function'){
+    var tg=String((p.autoSnapshot&&p.autoSnapshot.targa)||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!tg && p.autoId && typeof mzById==='function'){
       var a=mzById(p.autoId);
-      if(a){ tg=String(a.targa||'').toUpperCase().replace(/\s/g,''); tl=String(a.telaio||'').toUpperCase().replace(/\s/g,''); }
+      if(a) tg=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
     }
-    if(!tg && !tl) return null;
-    var r=(loadSent()||[]).filter(function(x){
-      var xt=String(x.targa||'').toUpperCase().replace(/\s/g,'');
-      var xl=String(x.telaio||'').toUpperCase().replace(/\s/g,'');
-      return (tg&&xt===tg)||(tl&&xl===tl);
-    })[0];
-    return (r && r.link)?r:null;
+    if(!tg) return null;
+    /* Si cerca sia tra i report gia' inviati sia tra quelli pronti: un
+       report esiste, quindi va allegato, anche se non e' ancora partito
+       verso nessun cliente. E non si pretende piu' il campo link: se manca
+       si manda comunque la sintesi della perizia. */
+    var pool=[];
+    try{ if(typeof loadSent==='function') pool=pool.concat(loadSent()||[]); }catch(e){}
+    try{ if(typeof loadReady==='function') pool=pool.concat(loadReady()||[]); }catch(e){}
+    var trovati=pool.filter(function(x){
+      return x && String(x.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===tg;
+    });
+    if(!trovati.length) return null;
+    /* meglio uno con link, altrimenti il primo */
+    return trovati.filter(function(x){return x.link;})[0] || trovati[0];
   }catch(e){ return null; }
 }
 function cvInviaMailCliente(p){
@@ -14822,12 +14855,13 @@ function cvInviaMailCliente(p){
       if(html.indexOf('<tr>')>=0) html=html.replace('<tr>', imgBlocco+'<tr>');
     }
     var rep=cvReportVeicolo(p);
-    if(rep && rep.link){
+    if(rep){
       var repBlocco='<tr><td style="padding:8px 24px 0;">'
         +'<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:14px 16px;font-family:Segoe UI,Arial,sans-serif;">'
         +'<div style="font-weight:800;color:#166534;font-size:14px;">Report fotografico del veicolo</div>'
         +'<div style="font-size:12.5px;color:#166534;margin:3px 0 10px;">Abbiamo documentato l\'auto in ogni dettaglio: puoi consultarla prima di venire in salone.</div>'
-        +'<a href="'+rep.link+'" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Guarda il report</a>'
+        +(rep.avg?('<div style="font-size:12.5px;color:#166534;margin-bottom:8px;">Valutazione complessiva: <b>'+rep.avg+'</b>'+(rep.dataIspezione?(' \u00b7 ispezione del '+rep.dataIspezione):'')+(rep.ispettore?(' \u00b7 '+rep.ispettore):'')+'</div>'):'')
+        +(rep.link?('<a href="'+rep.link+'" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Guarda il report</a>'):'<div style="font-size:12px;color:#166534;">Il report completo \u00e8 disponibile in salone su richiesta.</div>')
         +'</div></td></tr>';
       var mark='</table>';
       var pos=html.lastIndexOf(mark);
@@ -16008,19 +16042,69 @@ var _regId=null;
 var REG_CAUSALI=['Vendita','Permuta','Reso','Rottamazione','Trasferimento','Altro'];
 function regEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function regDMY(s){ if(!s) return ''; var m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?(m[3]+'/'+m[2]+'/'+m[1].slice(2)):String(s); }
+/* ===== CONGELAMENTO DEI DATI DEL REGISTRO =====
+   Un registro e' un documento storico: se domani cambia l'indirizzo in
+   anagrafica non deve cambiare una riga di due anni fa. Alla consegna (e
+   all'ingresso di una permuta) i dati della controparte vengono scritti
+   dentro la scheda del veicolo e da li' non si toccano piu'. Quello che e'
+   gia' scritto non viene mai sovrascritto: si completa solo cio' che manca. */
+function regFreezeScarico(a, cv, causale){
+  var sc=(a&&a.scarico)||{}; var d=regDatiCliente(cv);
+  var ts=(cv&&(cv.consegnatoTs||cv.contrattoTs))||Date.now();
+  a.scarico={
+    causale:        sc.causale        || causale || 'Vendita',
+    dataScarico:    sc.dataScarico    || new Date(ts).toISOString().slice(0,10),
+    destinatario:   sc.destinatario   || d.nome || '',
+    destinatarioCf: sc.destinatarioCf || d.cf   || '',
+    destinatarioInd:sc.destinatarioInd|| d.ind  || '',
+    congelato:true, congelatoTs: sc.congelatoTs || Date.now()
+  };
+  return a.scarico;
+}
+function regFreezeCarico(a, cv){
+  if(!a || !cv) return;
+  var d=regDatiCliente(cv);
+  if(!a.depositanteNome) a.depositanteNome = d.nome || '';
+  if(!a.depositanteCf)   a.depositanteCf   = d.cf   || '';
+  if(!a.depositanteInd)  a.depositanteInd  = d.ind  || '';
+  a.caricoCongelatoTs = a.caricoCongelatoTs || Date.now();
+}
 function regSelfHealScarico(){
   try{
     if(typeof mzLoad!=='function'||typeof cvLoad!=='function') return;
     var ml=mzLoad(); var cvs=cvLoad(); var changed=[];
+    /* contratto consegnato piu' recente per ciascun veicolo */
+    var perAuto={};
+    cvs.forEach(function(c){
+      if(!c || !c.autoId || c.statoVendita!=='consegnato') return;
+      var pre=perAuto[c.autoId];
+      if(!pre || (c.consegnatoTs||0)>(pre.consegnatoTs||0)) perAuto[c.autoId]=c;
+    });
+    /* contratto di provenienza per le permute entrate in magazzino */
+    var perId={}; cvs.forEach(function(c){ if(c&&c.id) perId[c.id]=c; });
+    var MAX=150;   /* niente valanghe di scritture al primo avvio */
     ml.forEach(function(a){
-      if(a.stato==='venduta' && !(a.scarico&&a.scarico.dataScarico)){
-        var cv=cvs.filter(function(c){return c.autoId===a.id && c.statoVendita==='consegnato';}).sort(function(x,y){return (y.consegnatoTs||0)-(x.consegnatoTs||0);})[0];
-        if(cv){ var _cl=cv.cliente||{};
-          var _dest=(_cl.business&&_cl.ragSociale)?_cl.ragSociale:(((_cl.cognome||'')+' '+(_cl.nome||'')).trim());
-          a.scarico={ causale:'Vendita', dataScarico:(cv.consegnatoTs?new Date(cv.consegnatoTs).toISOString().slice(0,10):new Date().toISOString().slice(0,10)), destinatario:_dest||'Cliente', destinatarioCf:(_cl.business?(_cl.piva||''):(_cl.cf||'')), destinatarioInd:_cl.business?(_cl.sedeLegale||''):[(_cl.via||''),(_cl.civico||''),(_cl.cap||''),(_cl.citta||''),(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ') };
-          if(!a.dataCarico && cv.contrattoTs) a.dataCarico=new Date(cv.contrattoTs).toISOString().slice(0,10);
-          a.updatedAt=Date.now(); changed.push(a);
+      if(changed.length>=MAX) return;
+      var prima=JSON.stringify([a.scarico||null,a.depositanteNome||'',a.depositanteCf||'',a.depositanteInd||'']);
+      /* lato scarico */
+      if(a.stato==='venduta'){
+        var sc=a.scarico||{};
+        var completo=!!(sc.congelato && sc.dataScarico && sc.destinatario && sc.destinatarioCf && sc.destinatarioInd);
+        if(!completo){
+          var cv=perAuto[a.id];
+          if(cv){
+            regFreezeScarico(a, cv, 'Vendita');
+            if(!a.dataCarico && cv.contrattoTs) a.dataCarico=new Date(cv.contrattoTs).toISOString().slice(0,10);
+          }
         }
+      }
+      /* lato carico: permute, dove il depositante e' il cliente che ha ceduto */
+      if(a.permutaContrattoId && !(a.depositanteCf && a.depositanteInd)){
+        var cvp=perId[a.permutaContrattoId];
+        if(cvp) regFreezeCarico(a, cvp);
+      }
+      if(JSON.stringify([a.scarico||null,a.depositanteNome||'',a.depositanteCf||'',a.depositanteInd||''])!==prima){
+        a.updatedAt=Date.now(); changed.push(a);
       }
     });
     if(changed.length){ mzSave(ml); if(typeof mzSupaUpsert==='function') changed.forEach(function(a){ mzSupaUpsert(a); }); }
@@ -16030,6 +16114,29 @@ function regInit(){ regSelfHealScarico(); regRender(); }
 function regAutos(){ return (typeof mzLoad==='function'?mzLoad():[]).slice(); }
 /* Il destinatario dello scarico e' l'acquirente: nome, codice fiscale e
    indirizzo si ricavano dalla vendita collegata e dall'anagrafica clienti. */
+/* ===== CONTROPARTE DEL REGISTRO =====
+   Il registro di carico e scarico vuole, su ENTRAMBI i lati, denominazione,
+   codice fiscale o partita IVA e indirizzo. I dati stanno gia' sul contratto:
+   qui si leggono da li' e si completano con l'anagrafica. */
+function regDatiCliente(cv){
+  var out={nome:'',cf:'',ind:''};
+  try{
+    if(!cv) return out;
+    var cl=cv.cliente||{};
+    out.nome=(cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim());
+    out.cf=(cl.business?(cl.piva||cl.cf):(cl.cf||cl.piva))||'';
+    var _v=[cl.via,cl.civico].filter(Boolean).join(' ').trim();
+    out.ind=[_v,cl.cap,cl.citta,(cl.prov?('('+cl.prov+')'):'')].filter(Boolean).join(' ').trim();
+    var an=null;
+    try{ if(cv.clienteKey && typeof clFind==='function') an=clFind(cv.clienteKey); }catch(e){}
+    if(an){
+      if(!out.nome) out.nome=(an.business&&an.ragSociale)?an.ragSociale:(((an.cognome||'')+' '+(an.nome||'')).trim());
+      if(!out.cf) out.cf=(an.business?(an.piva||an.cf):(an.cf||an.piva))||'';
+      if(!out.ind){ var ii=(an.indirizzi&&an.indirizzi.length)?an.indirizzi[an.indirizzi.length-1]:null; if(ii) out.ind=[ii.via,ii.civico,ii.cap,ii.citta,(ii.prov?('('+ii.prov+')'):'')].filter(Boolean).join(' ').trim(); }
+    }
+  }catch(e){}
+  return out;
+}
 function regDestinatarioDa(a){
   var out={nome:'',cf:'',ind:''};
   try{
@@ -16042,18 +16149,22 @@ function regDestinatarioDa(a){
       }
     }
     if(!cv) return out;
-    var cl=cv.cliente||{};
-    out.nome=(cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim());
-    out.cf=cl.piva||cl.cf||'';
-    /* dati piu' completi dalla scheda cliente in anagrafica */
-    var an=null;
-    try{ if(cv.clienteKey && typeof clFind==='function') an=clFind(cv.clienteKey); }catch(e){}
-    if(an){
-      if(!out.cf) out.cf=an.piva||an.cf||'';
-      var ii=(an.indirizzi&&an.indirizzi.length)?an.indirizzi[an.indirizzi.length-1]:null;
-      if(ii) out.ind=[ii.via,ii.civico,ii.cap,ii.citta,(ii.prov?('('+ii.prov+')'):'')].filter(Boolean).join(' ').trim();
-      if(!out.nome) out.nome=(an.business&&an.ragSociale)?an.ragSociale:(((an.cognome||'')+' '+(an.nome||'')).trim());
+    return regDatiCliente(cv);
+  }catch(e){}
+  return out;
+}
+/* Lato carico: se il veicolo e' entrato in permuta non c'e' un fornitore,
+   il depositante e' il cliente che lo ha ceduto. */
+function regDepositanteDa(a){
+  var out={nome:'',cf:'',ind:''};
+  try{
+    if(!a) return out;
+    if(a.depositanteNome||a.depositanteCf||a.depositanteInd){
+      return {nome:a.depositanteNome||'', cf:a.depositanteCf||'', ind:a.depositanteInd||''};
     }
+    if(!a.permutaContrattoId || typeof cvLoad!=='function') return out;
+    var cvs=cvLoad();
+    for(var i=0;i<cvs.length;i++){ if(cvs[i] && cvs[i].id===a.permutaContrattoId) return regDatiCliente(cvs[i]); }
   }catch(e){}
   return out;
 }
@@ -16083,7 +16194,7 @@ function regRender(){
     return '<div onclick="regForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:0;margin-bottom:12px;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f0fdf4;border-bottom:1px solid #dcfce7;"><div style="font-weight:800;font-size:14px;color:#0f172a;">'+regEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'(veicolo)')+'</div><div style="font-size:12px;font-weight:700;color:'+(scaricato?'#64748b':'#16a34a')+';">'+(scaricato?'SCARICATO':'A CARICO')+'</div></div>'
       +'<div style="padding:10px 14px;font-size:12px;color:#475569;">'
-      +'<div><b>⬇️ Carico</b> '+regEsc(regDMY(a.dataCarico))+' — '+regEsc(a.fornitoreNome||'—')+'</div>'
+      +'<div><b>⬇️ Carico</b> '+regEsc(regDMY(a.dataCarico))+' — '+regEsc(a.fornitoreNome||regDepositanteDa(a).nome||'—')+'</div>'
       +'<div style="color:#94a3b8;margin-top:2px;">'+regEsc(idv)+(a.potenza?(' · '+regEsc(a.potenza)+' kW'):'')+'</div>'
       +(scaricato?('<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e2e8f0;"><b>⬆️ Scarico</b> '+regEsc(regDMY(sc.dataScarico))+' — '+regEsc(sc.causale||'Vendita')+' a '+regEsc(sc.destinatario||_dstReg.nome||'—')+((sc.destinatarioCf||_dstReg.cf)?('<div style="font-size:11.5px;color:#64748b;">CF/P.IVA '+regEsc(sc.destinatarioCf||_dstReg.cf)+'</div>'):'')+((sc.destinatarioInd||_dstReg.ind)?('<div style="font-size:11.5px;color:#64748b;">'+regEsc(sc.destinatarioInd||_dstReg.ind)+'</div>'):'')+'</div>'):'')
       +'</div></div>';
@@ -16119,7 +16230,8 @@ function regSalva(){
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===_regId;}); if(idx<0){ regChiudi(); return; }
   list[idx].dataCarico=g('dataCarico');
   var cs=document.getElementById('reg_causale');
-  list[idx].scarico={ causale:cs?cs.value:'', dataScarico:g('dataScarico'), destinatario:g('destinatario'), destinatarioCf:g('destinatarioCf'), destinatarioInd:g('destinatarioInd') };
+  var _scPre=list[idx].scarico||{};
+  list[idx].scarico={ causale:cs?cs.value:'', dataScarico:g('dataScarico'), destinatario:g('destinatario'), destinatarioCf:g('destinatarioCf'), destinatarioInd:g('destinatarioInd'), congelato:true, congelatoTs:_scPre.congelatoTs||Date.now() };
   list[idx].updatedAt=Date.now();
   mzSave(list); mzSupaUpsert(list[idx]); regChiudi(); regRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Registro aggiornato',true);
@@ -16127,11 +16239,18 @@ function regSalva(){
 
 function regStampa(){
   var autos=regAutos().sort(function(a,b){ return (a.dataCarico||'').localeCompare(b.dataCarico||''); });
+  var _mkNo=function(v){ return v?regEsc(v):'<span style="color:#b91c1c;font-weight:bold;">DATO MANCANTE</span>'; };
   var rows=autos.map(function(a){ var f=regForn(a); var sc=a.scarico||{};
+    var _dep=regDepositanteDa(a); var _dst=(sc.dataScarico?regDestinatarioDa(a):{nome:'',cf:'',ind:''});
+    var _depNome=regFornNome(a)||_dep.nome, _depCf=(f&&(f.piva||f.cfpiva))||_dep.cf, _depInd=(f&&f.indirizzo)||_dep.ind;
+    var _scNome=sc.destinatario||_dst.nome, _scCf=sc.destinatarioCf||_dst.cf, _scInd=sc.destinatarioInd||_dst.ind;
     return '<tr>'
-      +'<td>'+regEsc(regDMY(a.dataCarico))+'</td><td>'+regEsc(regFornNome(a))+'</td><td>'+regEsc(f?(f.piva||f.cfpiva||''):'')+'</td><td>'+regEsc(f?(f.indirizzo||''):'')+'</td>'
+      +'<td>'+regEsc(regDMY(a.dataCarico))+'</td><td>'+_mkNo(_depNome)+'</td><td>'+_mkNo(_depCf)+'</td><td>'+_mkNo(_depInd)+'</td>'
       +'<td>'+regEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</td><td style="text-align:center;">'+regEsc(a.potenza||'')+'</td><td>'+regEsc(a.telaio||'')+'</td><td>'+regEsc(a.targa||'')+'</td>'
-      +'<td>'+regEsc(sc.causale||'')+'</td><td>'+regEsc(regDMY(sc.dataScarico))+'</td><td>'+regEsc(sc.destinatario||'')+'</td><td>'+regEsc(sc.destinatarioCf||'')+'</td><td>'+regEsc(sc.destinatarioInd||'')+'</td>'
+      +'<td>'+regEsc(sc.causale||'')+'</td><td>'+regEsc(regDMY(sc.dataScarico))+'</td>'
+      +(sc.dataScarico
+         ? ('<td>'+_mkNo(_scNome)+'</td><td>'+_mkNo(_scCf)+'</td><td>'+_mkNo(_scInd)+'</td>')
+         : '<td></td><td></td><td></td>')
       +'</tr>';
   }).join('');
   var css='*{-webkit-print-color-adjust:exact;print-color-adjust:exact;} body{font-family:Arial,sans-serif;color:#000;margin:10px;} h2{font-size:16px;margin:0 0 2px;} .sub{font-size:11px;color:#333;margin-bottom:10px;} table{width:100%;border-collapse:collapse;font-size:10px;} th,td{border:1px solid #999;padding:4px 5px;text-align:left;vertical-align:top;} thead th{background:#e8eef7;} .grp{background:#dbe4f0;font-weight:bold;text-align:center;} @page{size:A4 landscape;margin:8mm;}';
@@ -18909,18 +19028,26 @@ function cvDeliberaSalva(id){
     note:g('note'), data:new Date().toISOString().slice(0,10),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
   list[i].updatedAt=Date.now();
+  /* La delibera e' il fatto che sblocca la pratica: lo stato si ricalcola qui,
+     non alla prossima apertura della schermata. */
+  if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(list[i]);
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
   cvDeliberaChiudi();
+  if(typeof cvVendBadge==='function') cvVendBadge();
   if(typeof cvVendRender==='function') cvVendRender();
-  if(typeof tcToastNew==='function') tcToastNew('\u2705 Delibera registrata',true);
+  var _nuovoSt=((typeof CV_STATI!=='undefined'&&(CV_STATI.filter(function(s){return s[0]===list[i].statoVendita;})[0]||[])[1])||'');
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Delibera registrata'+(_nuovoSt?(' \u2014 '+_nuovoSt):''),true);
 }
 function cvDeliberaAnnulla(id){
   if(!confirm('Annullare la conferma della delibera? La pratica torner\u00e0 tra quelle in attesa.')) return;
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   if(list[i].finDelibera) list[i].finDelibera.confermata=false;
   list[i].updatedAt=Date.now();
+  if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(list[i]);
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
-  cvDeliberaChiudi(); if(typeof cvVendRender==='function') cvVendRender();
+  cvDeliberaChiudi();
+  if(typeof cvVendBadge==='function') cvVendBadge();
+  if(typeof cvVendRender==='function') cvVendRender();
 }
 function cvApriAuto(autoId){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
@@ -19020,12 +19147,16 @@ function cvVendCard(cv){
     var _fTit=_fOk?((cv.firmaDigitale.data?('Firma del '+String(cv.firmaDigitale.data).split('-').reverse().join('/')):'Firma confermata')+(cv.firmaDigitale.auto?' \u00b7 rilevata da Gmail':'')):'Firma del finanziamento ancora da fare';
     firmaTag='<span title="'+_fTit+'" style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_fOk?'#dcfce7':'#fee2e2')+';color:'+(_fOk?'#166534':'#991b1b')+';white-space:nowrap;">\uD83D\uDD8A firm. dig.'+(_fOk?' OK':'')+'</span>';
   }
-  /* Delibera del finanziamento: arancione finche' mancano i dati definitivi. */
-  var delTag='';
+  /* Delibera del finanziamento: arancione finche' mancano i dati definitivi.
+     Se la pratica sta gia' nella colonna "In attesa di delibera" il pill di
+     stato lo dice gia': il secondo pill arancione era un doppione. In quel
+     caso non lo disegno e rendo cliccabile direttamente il pill di stato. */
+  var delTag=''; var _delDaStato=false;
   if(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv)){
     var _dOk=!!(cv.finDelibera && cv.finDelibera.confermata);
+    if(!_dOk && st==='in_attesa_delibera') _delDaStato=true;
     var _dTit=_dOk?('Delibera'+(cv.finDelibera.data?(' del '+String(cv.finDelibera.data).split('-').reverse().join('/')):'')+(cv.finDelibera.finanziaria?(' \u00b7 '+cv.finDelibera.finanziaria):'')):'Dati della delibera non ancora inseriti';
-    delTag='<span onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="'+_dTit+'" style="cursor:pointer;flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_dOk?'#dcfce7':'#fff7ed')+';color:'+(_dOk?'#166534':'#b45309')+';border:1px solid '+(_dOk?'#bbf7d0':'#fed7aa')+';">'+(_dOk?'\u2713 Delibera':'\u26a0 Delibera da inserire')+'</span>';
+    if(!_delDaStato) delTag='<span onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="'+_dTit+'" style="cursor:pointer;flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+(_dOk?'#dcfce7':'#fff7ed')+';color:'+(_dOk?'#166534':'#b45309')+';border:1px solid '+(_dOk?'#bbf7d0':'#fed7aa')+';">'+(_dOk?'\u2713 Delibera':'\u26a0 Delibera da inserire')+'</span>';
   }
   firmaTag=firmaTag+delTag;
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
@@ -19033,7 +19164,7 @@ function cvVendCard(cv){
     ?'<div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12px;color:#9a3412;font-weight:700;cursor:pointer;">\u23f3 '+daConf+' pagament'+(daConf===1?'o':'i')+' da confermare</div>'
     :'<div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;font-size:12px;color:#64748b;cursor:pointer;text-decoration:underline;">Vedi dettaglio pagamenti</div>';
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;">'+sb[2]+'</div></div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
     +recap+cvFirmaBottone(cv)
     +pagHint
     +azione+stampe+annulla+demoDel+'</div>';
@@ -19250,11 +19381,8 @@ function cvVendConsegnaFinale(){
     if(_mi>=0){
     _ml[_mi].stato='venduta'; _ml[_mi].impegnata=true;
     if(!_ml[_mi].dataCarico) _ml[_mi].dataCarico=(list[idx].contrattoTs?new Date(list[idx].contrattoTs).toISOString().slice(0,10):new Date().toISOString().slice(0,10));
-    var _cl=list[idx].cliente||{};
-    var _dest=(_cl.business&&_cl.ragSociale)?_cl.ragSociale:((( _cl.cognome||'')+' '+(_cl.nome||'')).trim());
-    var _destCf=(_cl.business?(_cl.piva||''):(_cl.cf||''));
-    var _destInd=_cl.business?(_cl.sedeLegale||''):[(_cl.via||''),(_cl.civico||''),(_cl.cap||''),(_cl.citta||''),(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ');
-    _ml[_mi].scarico={ causale:'Vendita', dataScarico:new Date().toISOString().slice(0,10), destinatario:_dest||'Cliente', destinatarioCf:_destCf, destinatarioInd:_destInd };
+    /* Il registro si scrive qui, alla consegna, e da qui in poi non cambia. */
+    if(typeof regFreezeScarico==='function') regFreezeScarico(_ml[_mi], list[idx], 'Vendita');
     _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   cvSave(list); supaUpsert('preventivi', list[idx]);
   cvModChiudi(); cvVendRender();
@@ -20384,7 +20512,7 @@ function crmLeads(){
   var byKey={};
   (typeof cvLoad==='function'?cvLoad():[]).forEach(function(cv){
     var cl=cv.cliente||{}; var key=crmKey(cl); if(!key) return;
-    if(!byKey[key]) byKey[key]={ key:key, nome:cl.nome||'', cognome:cl.cognome||'', telefono:cl.telefono||'', email:cl.email||'', autos:{}, ultimo:0, ultimoPrev:0, hasContratto:false, consegnato:false, nPrev:0 };
+    if(!byKey[key]) byKey[key]={ key:key, nome:cl.nome||'', cognome:cl.cognome||'', telefono:cl.telefono||'', email:cl.email||'', autos:{}, ultimo:0, ultimoPrev:0, ultimoPrevAperto:0, ultimoConsegna:0, contrattoAperto:false, hasContratto:false, consegnato:false, nPrev:0 };
     var l=byKey[key]; l.nPrev++;
     var am=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||''; if(am) l.autos[am]=true;
     var ts=cv.updatedAt||cv.createdAt||0; if(ts>l.ultimo) l.ultimo=ts;
@@ -20393,12 +20521,24 @@ function crmLeads(){
        la data reale di creazione dei preventivi non storici. */
     var _sto=(cv.origine==='sicom'||cv.origine==='sicom_prev'||cv.origine==='sicom_ap');
     if(!_sto){ var tsp=cv.createdAt||cv.updatedAt||0; if(tsp>l.ultimoPrev) l.ultimoPrev=tsp; }
-    if(cv.isContratto) l.hasContratto=true; if(cv.statoVendita==='consegnato') l.consegnato=true;
+    /* Un preventivo trasformato in proposta d'acquisto non e' piu' una
+       trattativa da inseguire: il cliente ha comprato e la pratica vive in
+       Vendite. Nella pipeline contano solo i preventivi ancora aperti. */
+    var _venduto=!!(cv.isContratto || cv.statoVendita);
+    if(!_sto && !_venduto){ var tpa=cv.createdAt||cv.updatedAt||0; if(tpa>l.ultimoPrevAperto) l.ultimoPrevAperto=tpa; }
+    if(_venduto && cv.statoVendita!=='consegnato') l.contrattoAperto=true;
+    if(cv.isContratto) l.hasContratto=true;
+    if(cv.statoVendita==='consegnato'){ l.consegnato=true; var tc=cv.consegnatoTs||cv.updatedAt||0; if(tc>l.ultimoConsegna) l.ultimoConsegna=tc; }
     if(!l.nome&&cl.nome) l.nome=cl.nome; if(!l.cognome&&cl.cognome) l.cognome=cl.cognome; if(!l.email&&cl.email) l.email=cl.email; if(!l.telefono&&cl.telefono) l.telefono=cl.telefono;
   });
   return Object.keys(byKey).map(function(k){ var l=byKey[k]; l.auto=Object.keys(l.autos).join(', '); return l; }).sort(function(a,b){return b.ultimo-a.ultimo;});
 }
-function crmDefaultStato(l){ return l.consegnato?'chiuso vinto':'nuovo'; }
+function crmDefaultStato(l){
+  if(!l) return 'nuovo';
+  /* cliente storico che torna con un preventivo nuovo: e' una trattativa nuova */
+  if(l.ultimoPrevAperto && l.ultimoPrevAperto>(l.ultimoConsegna||0)) return 'nuovo';
+  return l.consegnato?'chiuso vinto':'nuovo';
+}
 function crmInit(){ crmSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); crmRender(); }
 function crmMesiDa(ts){ if(!ts) return 0; return Math.floor((Date.now()-ts)/(1000*60*60*24*30.44)); }
 function crmDMY(ts){ if(!ts) return '—'; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
@@ -20649,11 +20789,40 @@ function crmRenderConsegnate(){
   });
   return h;
 }
+var _crmAssFiltro='attive';   /* 'attive' | 'tutte' */
+function crmAssFiltro(v){ _crmAssFiltro=v; if(typeof crmRender==='function') crmRender(); }
+/* Decorrenza della polizza: senza una consegna valida non si puo' calcolare
+   nessuna scadenza. Sui record importati consegnatoTs vale 0, e 0 + 60 mesi
+   produceva il famoso 01/01/1975. */
+function crmAssBase(cv){
+  var t=+(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0);
+  return (t>946684800000)?t:0;    /* successiva al 01/01/2000 */
+}
 function crmRenderAssic(){
-  var ass=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
-  if(!ass.length) return crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna assicurazione attiva registrata (auto consegnate con assicurazione).</div>';
-  ass=ass.map(function(cv){ var mesi=parseInt(cv.assicMesi,10); if(isNaN(mesi)||mesi<=0||mesi>120) mesi=12; cv._scad=crmAddMesi(cv.consegnatoTs, mesi); cv._gg=Math.round((cv._scad-Date.now())/(1000*60*60*24)); return cv; }).sort(function(a,b){return a._scad-b._scad;});
-  var h=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}')+'<div style="font-size:12px;color:#64748b;margin-bottom:12px;">🛡️ '+ass.length+' polizze attive. In arancione quelle in scadenza entro 60 giorni.</div>';
+  var edit=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}');
+  var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
+  var senzaData=0, ass=[];
+  tutte.forEach(function(cv){
+    var base=crmAssBase(cv);
+    if(!base){ senzaData++; return; }
+    var mesi=parseInt(cv.assicMesi,10); if(isNaN(mesi)||mesi<=0||mesi>120) mesi=12;
+    cv._scad=crmAddMesi(base, mesi);
+    cv._gg=Math.round((cv._scad-Date.now())/(1000*60*60*24));
+    ass.push(cv);
+  });
+  var nTot=ass.length;
+  var nAttive=ass.filter(function(cv){ return cv._gg>=-60; }).length;
+  if(_crmAssFiltro!=='tutte') ass=ass.filter(function(cv){ return cv._gg>=-60; });
+  ass.sort(function(a,b){return a._scad-b._scad;});
+  var _btn=function(v,txt,n){ var on=(_crmAssFiltro===v);
+    return '<button onclick="crmAssFiltro(\''+v+'\')" style="flex:1;padding:9px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+txt+' ('+n+')</button>'; };
+  var h=edit;
+  h+='<div style="display:flex;gap:8px;margin-bottom:10px;">'+_btn('attive','\u2705 Attive e in scadenza',nAttive)+_btn('tutte','\ud83d\udcda Storico completo',nTot)+'</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">\ud83d\udee1\ufe0f '+ass.length+' polizze mostrate. In arancione quelle in scadenza entro 60 giorni.'
+    +(_crmAssFiltro!=='tutte'?' <span style="color:#94a3b8;">Le polizze scadute da oltre 60 giorni non compaiono.</span>':'')
+    +(senzaData?('<br><span style="color:#b45309;">\u26a0\ufe0f '+senzaData+' polizze senza data di consegna valida: scadenza non calcolabile.</span>'):'')
+    +'</div>';
+  if(!ass.length) return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna polizza in questo elenco.</div>';
   ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<60;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
@@ -20663,6 +20832,7 @@ function crmRenderAssic(){
   });
   return h;
 }
+
 var CRM_FONTI=['AutoScout','Subito','Facebook','Passaparola','Salone','Sito web','Altro'];
 var CRM_ATT_TIPI=['Chiamata','Email','WhatsApp','Appuntamento','Da fare'];
 function crmOggiISO(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
@@ -20721,15 +20891,16 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
   var _tot=leads.length;
   leads=leads.filter(function(l){
-    if(l.hasContratto && !l.consegnato) return true;                        /* vendita in corso */
+    if(l.contrattoAperto) return false;                                      /* ha gia' la proposta: sta in Vendite */
+    if((l.ultimoPrevAperto||0)>=_lim) return true;                           /* preventivo aperto negli ultimi 21 giorni */
     if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
-    return (l.ultimoPrev||0)>=_lim;                                          /* preventivo negli ultimi 21 giorni */
+    return false;
   });
   var _esclusi=_tot-leads.length; leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
-    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti senza preventivi negli ultimi '+CRM_GIORNI_CALDI+' giorni non compaiono</span>'):'')+'<br>'
+    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti esclusi: proposta gi\u00e0 firmata o nessun preventivo aperto negli ultimi '+CRM_GIORNI_CALDI+' giorni</span>'):'')+'<br>'
     +'Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
   h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
   h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
