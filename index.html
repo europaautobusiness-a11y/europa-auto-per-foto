@@ -5792,6 +5792,16 @@ function pDaDelibera(){
     var set=function(id,v){ var el=document.getElementById(id); if(el && v!==null && v!==undefined && v!=='') el.value=v; };
     set('pTan', d.tan);
     set('pComm', d.istruttoria);
+    /* valore del veicolo e anticipo arrivano dalla delibera: se la delibera
+       e' vecchia e non li ha, si ricavano dall'importo finanziato */
+    var _val=(d.valoreVeicolo!=null && d.valoreVeicolo!=='')?d.valoreVeicolo:null;
+    var _ant=(d.anticipo!=null && d.anticipo!=='')?d.anticipo:null;
+    if(_val==null && r.cv){
+      try{ var _t=(typeof cvCalcola==='function')?cvCalcola(r.cv):null; if(_t && _t.totaleScontato!=null) _val=Math.round(_t.totaleScontato); }catch(e){}
+    }
+    if(_val!=null && _ant==null && d.importoFinanziato!=null) _ant=Math.max(0, Math.round(_val-d.importoFinanziato));
+    if(_val!=null) set('pValore', _val);
+    if(_ant!=null) set('pAcconto', _ant);
     if(r.cv){
       var a=r.cv.autoSnapshot||{};
       if(a.marca) set('pMarca', a.marca);
@@ -5803,6 +5813,16 @@ function pDaDelibera(){
     pSetTog('cpi', String(d.cpi||'NO'));
     pSetTog('gap', String(d.gap||'NO'));
     if(fi && fi!=='NO') pSetTog('fiMesi', String(parseInt(d.polizzaMesi,10)||48));
+    /* La finanziaria e' scritta in delibera: qui si traduce nella voce del
+       calcolatore. Prov Premium resta una scelta di Rudy, perche' dipende da
+       condizioni che la delibera non dichiara. */
+    try{
+      var _f=String(d.finanziaria||'').toLowerCase();
+      var _sel=null;
+      if(_f.indexOf('compass')>=0) _sel='compass';
+      else if(_f.indexOf('avvera')>=0 || _f.indexOf('deutsche')>=0 || _f.indexOf('db')>=0) _sel='db';
+      if(_sel && typeof pSeleziona==='function') pSeleziona(_sel);
+    }catch(e){}
     window._pDaDelibera=true;
     pBloccaCampi(true);
     pCalcola();
@@ -5867,10 +5887,15 @@ function pProvvAuto(cv){
       e.fi=P_FI_DA_POLIZZA[String(d.polizzaTipo||'').toLowerCase()]||'NO';
       e.cpi=d.cpi||'NO'; e.gap=d.gap||'NO';
       e.fiMesi=(e.fi!=='NO')?(parseInt(d.polizzaMesi,10)||48):null;
+      if(d.valoreVeicolo!=null && d.valoreVeicolo!=='') e.valore=d.valoreVeicolo;
+      if(d.anticipo!=null && d.anticipo!=='') e.acconto=d.anticipo;
+      e.finanziariaDelibera=d.finanziaria||'';
       e.provvigione=0;
       /* la scelta fra Compass, Deutsche Bank/Avvera e Best cambia l'importo
          e non si puo' dedurre: la fa Rudy */
-      e.manca=['finanziaria'].concat(e.fonte?[]:['fonte']);
+      var _fd=String(d.finanziaria||'').toLowerCase();
+      var _nota=(_fd.indexOf('compass')>=0 || _fd.indexOf('avvera')>=0 || _fd.indexOf('deutsche')>=0 || _fd.indexOf('db')>=0);
+      e.manca=(_nota?[]:['finanziaria']).concat(e.fonte?[]:['fonte']);
     } else {
       e.tipo='attesa'; e.provvigione=0; e.finanziaria='';
       e.manca=['delibera'];
@@ -10203,11 +10228,26 @@ function eaHasBackTarget(){
   var m2=document.getElementById('cv-mod-modal'); if(m2 && m2.style.display==='block') return true;
   return !!(typeof _navHistory!=='undefined' && _navHistory && _navHistory.length>0);
 }
+/* Chrome su Android ignora le voci di cronologia aggiunte prima che l'utente
+   abbia toccato lo schermo (history manipulation intervention): la trappola
+   veniva saltata e il tasto indietro usciva dall'app. Va quindi armata al
+   primo tocco, e riarmata a ogni navigazione, che e' sempre un gesto. */
+var _eaBackArmato=false;
+function eaBackArma(){
+  try{ history.pushState({ea:Date.now()}, ''); _eaBackArmato=true; }catch(e){}
+}
+function eaBackAssicura(){ if(!_eaBackArmato) eaBackArma(); }
 (function eaInitBackTrap(){
-  try{ history.pushState({ea:1}, ''); }catch(e){}
+  var arma=function(){ eaBackArma(); };
+  try{
+    document.addEventListener('touchstart', arma, {once:true, passive:true});
+    document.addEventListener('pointerdown', arma, {once:true, passive:true});
+    document.addEventListener('click', arma, {once:true});
+    document.addEventListener('keydown', arma, {once:true});
+  }catch(e){ try{ document.addEventListener('click', arma); }catch(_e){} }
   window.addEventListener('popstate', function(){
-    // Rimettiamo sempre uno stato: così il tasto indietro non porta mai fuori dall'app
-    try{ history.pushState({ea:1}, ''); }catch(e){}
+    /* si rimette sempre uno stato: il tasto indietro non deve mai uscire */
+    eaBackArma();
     if(eaHasBackTarget()){ try{ eaGoBack(); }catch(e){} }
   });
 })();
@@ -10242,6 +10282,7 @@ function sidebarNav(view,btn){
     }
   }catch(e){}
   if(typeof isMobile==='function'&&isMobile())closeSidebarMobile();
+  try{ if(typeof eaBackAssicura==='function') eaBackAssicura(); }catch(e){}
   if(!_navBack){ if(_navCurrent && _navCurrent!==view) _navHistory.push(_navCurrent); } _navBack=false; _navCurrent=view; if(typeof eaBackShow==='function') eaBackShow();
   // Usa solo classList — il CSS usa .view.active{display:block !important}
   ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','bmvalue','magazzino','preventivi','simulatore','crm','vendite','fornitori','parametri','statistiche','clienti','whatsapp'].forEach(function(v){
@@ -15049,7 +15090,7 @@ function cvProgrammaMailCliente(cv){
     if(_tg && typeof fotoRendiPubbliche==='function') fotoRendiPubbliche(_tg);
   }catch(e){}
   try{
-    var _h=''; try{ _h=cvMailPreventivoHtml(cv); }catch(e){}
+    var _h=''; try{ _h=cvMailArricchisci(cv, cvMailPreventivoHtml(cv)); }catch(e){}
     cv.mailProg = { to:cv.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:_h };
   }catch(e){}
 }
@@ -15334,10 +15375,11 @@ function cvReportVeicolo(p){
     return trovati.filter(function(x){return x.link;})[0] || trovati[0];
   }catch(e){ return null; }
 }
-function cvInviaMailCliente(p){
-  if(!(p.cliente&&p.cliente.email) || typeof eaInviaMessaggio!=='function') return;
+/* Foto del veicolo e report della perizia vanno su TUTTE le mail del
+   preventivo, anche su quella programmata a un'ora: prima quella veniva
+   pre-renderizzata al momento del salvataggio, senza immagine ne' report. */
+function cvMailArricchisci(p, html){
   try{
-    var html=cvMailPreventivoHtml(p);
     var foto=cvFotoVeicolo(p);
     if(foto){
       var imgBlocco='<tr><td style="padding:0 24px 4px;"><img src="'+foto+'" alt="" style="width:100%;max-width:520px;border-radius:10px;display:block;"></td></tr>';
@@ -15352,11 +15394,23 @@ function cvInviaMailCliente(p){
         +(rep.avg?('<div style="font-size:12.5px;color:#166534;margin-bottom:8px;">Valutazione complessiva: <b>'+rep.avg+'</b>'+(rep.dataIspezione?(' \u00b7 ispezione del '+rep.dataIspezione):'')+(rep.ispettore?(' \u00b7 '+rep.ispettore):'')+'</div>'):'')
         +(rep.link?('<a href="'+rep.link+'" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Guarda il report</a>'):'<div style="font-size:12px;color:#166534;">Il report completo \u00e8 disponibile in salone su richiesta.</div>')
         +'</div></td></tr>';
-      var mark='</table>';
-      var pos=html.lastIndexOf(mark);
+      var mark='</table>'; var pos=html.lastIndexOf(mark);
       if(pos>0) html=html.slice(0,pos)+repBlocco+html.slice(pos);
     }
+    /* se manca qualcosa lo si viene a sapere subito, non dal cliente */
+    if(!foto || !rep){
+      var mancanti=[]; if(!foto) mancanti.push('foto'); if(!rep) mancanti.push('report');
+      try{ if(typeof notifPush==='function') notifPush('Mail preventivo senza '+mancanti.join(' e ')+' \u2014 '+String((p.autoSnapshot&&p.autoSnapshot.targa)||p.autoDesc||''), '\u26a0\ufe0f'); }catch(e){}
+    }
+  }catch(e){}
+  return html;
+}
+function cvInviaMailCliente(p){
+  if(!(p.cliente&&p.cliente.email) || typeof eaInviaMessaggio!=='function') return;
+  try{
+    var html=cvMailArricchisci(p, cvMailPreventivoHtml(p));
     eaInviaMessaggio({ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:html });
+    return;
   }catch(e){}
 }
 // Invia il preventivo via email solo se, trascorsa 1 ora, NON è stato trasformato in proposta d’acquisto
@@ -16025,12 +16079,22 @@ function cvBuildHTML(c, tipo){
       if(_soloFin) return s;   /* niente confronto: si ferma al riepilogo */
       s+='<div class="cvh" style="page-break-inside:avoid;">Confronto delle soluzioni</div><div class="cvbox" style="padding:0;">';
 
-      var totSenzaFin=(t.totaleVendita||0)+polAnnua*anni;
+      /* Senza finanziamento il cliente perde lo sconto promo e la nostra
+         polizza: paga il prezzo pieno e se la copertura la vuole se la
+         compra da solo. La polizza inclusa va tolta prima di aggiungere
+         quella da stipulare a parte, altrimenti veniva contata due volte. */
+      var _polNostra=(t.assic||0);
+      var _prezzoPieno=(t.totaleVendita||0)-_polNostra;      /* gia' al lordo dello sconto */
+      var totSenzaFin=_prezzoPieno+polAnnua*anni;
       var _dflt=function(v,def){ return (v===undefined||v===null)?def:(v!==false); };
       var _okSenza=_dflt(c.scSenza,true), _okScad=_dflt(c.scScadenza,false), _okEst=_dflt(c.scEstinzione,true);
       if(_okSenza) s+='<div class="cvrow"><div><b>Senza finanziamento</b>'
-        +'<div class="cvsmall">prezzo di vendita '+eu(t.totaleVendita||0)
-        +(scontoPromo?('<br><b>Sconto promo non applicabile: + '+eu(scontoPromo)+'</b>'):'')
+        +'<div class="cvsmall">'
+        +(scontoPromo
+           ? ('prezzo con finanziamento '+eu(_prezzoPieno-scontoPromo)
+              +'<br><b>+ '+eu(scontoPromo)+' &mdash; lo sconto promo vale solo col finanziamento</b>'
+              +'<br>prezzo di vendita <b>'+eu(_prezzoPieno)+'</b>')
+           : ('prezzo di vendita '+eu(_prezzoPieno)))
         +(polAnnua?('<br>Polizza da stipulare a parte: '+eu(polAnnua)+' all\'anno x '+anni+' anni = <b>'+eu(polAnnua*anni)+'</b>'):'')
         +'</div></div><div><b>'+eu(totSenzaFin)+'</b></div></div>';
 
@@ -19553,6 +19617,23 @@ function cvDeliberaForm(id){
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
   var fromSim=window._delibDaSim||null; window._delibDaSim=null;
+  /* Valore del veicolo e anticipo si propongono dal contratto: sono gia'
+     scritti li', e da qui arrivano poi alla provvigione senza ridigitarli. */
+  var _valDef='', _antDef='';
+  try{
+    var _t=(typeof cvCalcola==='function')?cvCalcola(cv):null;
+    if(_t && _t.totaleScontato!=null) _valDef=Math.round(_t.totaleScontato);
+    var _acc=0;
+    (cv.pagamenti||[]).forEach(function(pg){
+      if(!pg) return;
+      var tp=String(pg.tipo||'').toLowerCase();
+      if(tp.indexOf('caparra')>=0 || tp.indexOf('acconto')>=0 || tp.indexOf('anticipo')>=0){
+        var v=parseFloat(pg.importo); if(!isNaN(v)) _acc+=v;
+      }
+    });
+    if(_acc>0) _antDef=Math.round(_acc);
+    else if(_valDef!=='' && d.importoFinanziato) _antDef=Math.max(0, Math.round(_valDef-d.importoFinanziato));
+  }catch(e){}
   var val=function(k){
     if(fromSim && fromSim[k]!==undefined && fromSim[k]!==null) return fromSim[k];
     if(d[k]!==undefined && d[k]!==null && d[k]!=='') return d[k];
@@ -19631,6 +19712,10 @@ function cvDeliberaForm(id){
    +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:12px;">'
    +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Dati per la provvigione</div>'
    +'<div style="display:flex;gap:10px;">'
+   +'<div style="flex:1;"><label style="'+lab+'">Valore del veicolo</label><input id="dl_valore" type="number" step="1" style="'+inp+'" value="'+(d.valoreVeicolo!=null?d.valoreVeicolo:_valDef)+'"></div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Anticipo</label><input id="dl_anticipo" type="number" step="1" style="'+inp+'" value="'+(d.anticipo!=null?d.anticipo:_antDef)+'"></div>'
+   +'</div>'
+   +'<div style="display:flex;gap:10px;">'
    +'<div style="flex:1;"><label style="'+lab+'">CPI</label><select id="dl_cpi" style="'+inp+'background:#fff;">'
      +'<option value="NO"'+(String(d.cpi||'NO')==='NO'?' selected':'')+'>No</option>'
      +'<option value="SI"'+(String(d.cpi||'')==='SI'?' selected':'')+'>S\u00ec</option></select></div>'
@@ -19681,6 +19766,7 @@ function cvDeliberaSalva(id){
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
     polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
     cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'), polizzaMesi:(n('polMesi')||48),
+    valoreVeicolo:n('valore'), anticipo:n('anticipo'),
     note:g('note'), data:new Date().toISOString().slice(0,10),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
   list[i].updatedAt=Date.now();
