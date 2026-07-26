@@ -985,7 +985,7 @@ html, body{
 
         <div style="margin-bottom:14px;">
           <label class="lbl">Cliente <span style="color:var(--red);">*</span></label>
-          <input type="text" id="pCliente" class="inp" placeholder="es. Rossi Mario">
+          <input type="text" id="pCliente" class="inp" placeholder="es. Rossi Mario" oninput="try{pControllo()}catch(e){}">
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
@@ -995,7 +995,7 @@ html, body{
           </div>
           <div>
             <label class="lbl">Modello <span style="color:var(--red);">*</span></label>
-            <input type="text" id="pModello" class="inp" placeholder="es. CHR">
+            <input type="text" id="pModello" class="inp" placeholder="es. CHR" oninput="try{pControllo()}catch(e){}">
           </div>
         </div>
 
@@ -1157,6 +1157,7 @@ html, body{
         </label>
 
         <div id="pSelWarn" style="display:none;background:#fff3cd;border:1px solid var(--yel);padding:10px 14px;font-size:13px;color:#856404;margin-top:8px;">⚠ Seleziona la finanziaria prima di salvare.</div>
+        <div id="pCtrlDelibera" style="display:none;margin-top:10px;"></div>
       </div>
 
       <div style="margin-bottom:14px;">
@@ -5757,7 +5758,153 @@ function pPerc(tan) {
 
 function pEur(n) { return '€ ' + Math.round(n); }
 
+/* ===== CONTROLLO DELLA PROVVIGIONE CONTRO LA DELIBERA =====
+   La delibera e' il documento che fa fede: TAN, TAEG, commissioni di
+   istruttoria, polizza e importo finanziato sono quelli. Qui la scheda
+   provvigione viene confrontata con la delibera della stessa pratica e le
+   caselle che non corrispondono si colorano di arancione scuro. */
+var P_CTRL_CAMPI=['pTan','pComm','pValore','pAcconto'];
+/* ===== LA DELIBERA COMPILA LA PROVVIGIONE =====
+   Rudy inserisce i dati una volta sola, in delibera. Qui vengono riportati e
+   bloccati: valore bene e acconto restano suoi, perche' sono il prezzo
+   dell'auto e non un dato bancario, e servono a verificare per differenza
+   l'importo finanziato deliberato. */
+var P_DA_DELIBERA_MAP={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', nessuna:'NO', altra:''};
+var P_BLOCCATI=['pTan','pComm'];
+function pSetTog(k,v){
+  try{
+    var btns=document.querySelectorAll('button.ptb');
+    for(var i=0;i<btns.length;i++){
+      var oc=btns[i].getAttribute('onclick')||'';
+      if(oc.indexOf("ptog('"+k+"','"+v+"'")>=0){ btns[i].click(); return true; }
+    }
+  }catch(e){}
+  return false;
+}
+function pDaDelibera(){
+  try{
+    var r=pDiffDelibera(); var d=r.d;
+    if(!d){ alert('Nessuna delibera confermata per questo cliente.\n\nControlla che il nome sia scritto come nel contratto.'); return; }
+    var set=function(id,v){ var el=document.getElementById(id); if(el && v!==null && v!==undefined && v!=='') el.value=v; };
+    set('pTan', d.tan);
+    set('pComm', d.istruttoria);
+    if(r.cv){
+      var a=r.cv.autoSnapshot||{};
+      if(a.marca) set('pMarca', a.marca);
+      if(a.modello) set('pModello', a.modello);
+    }
+    var fi=P_DA_DELIBERA_MAP[String(d.polizzaTipo||'').toLowerCase()];
+    pSetTog('fin','SI');
+    if(fi) pSetTog('fi', fi);
+    pSetTog('cpi', String(d.cpi||'NO'));
+    pSetTog('gap', String(d.gap||'NO'));
+    if(fi && fi!=='NO') pSetTog('fiMesi', String(parseInt(d.polizzaMesi,10)||48));
+    window._pDaDelibera=true;
+    pBloccaCampi(true);
+    pCalcola();
+    if(typeof tcToastNew==='function') tcToastNew('\u2713 Compilato dalla delibera',true);
+  }catch(e){ console.error(e); }
+}
+function pBloccaCampi(on){
+  P_BLOCCATI.forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    if(on){ el.setAttribute('readonly','readonly'); el.disabled=(el.tagName==='SELECT'); el.style.background='#f1f5f9'; el.title='Valore preso dalla delibera'; }
+    else { el.removeAttribute('readonly'); el.disabled=false; el.style.background=''; el.title=''; }
+  });
+}
+function pSbloccaDelibera(){
+  window._pDaDelibera=false;
+  pBloccaCampi(false);
+  pControllo();
+}
+function pNorm(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
+function pTrovaDelibera(cliente, modello){
+  try{
+    if(typeof cvLoad!=='function') return null;
+    var cli=pNorm(cliente); if(cli.length<3) return null;
+    var mod=pNorm(modello); var best=null;
+    cvLoad().forEach(function(cv){
+      if(!cv || !cv.finDelibera || !cv.finDelibera.confermata) return;
+      var rc=pNorm(((cv.cliente&&((cv.cliente.cognome||'')+' '+(cv.cliente.nome||'')))||'')
+                 +((cv.cliente&&cv.cliente.ragSociale)||''));
+      if(!rc) return;
+      if(!(rc===cli || rc.indexOf(cli)>=0 || cli.indexOf(rc)>=0)) return;
+      if(mod){
+        var m=pNorm((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'');
+        if(m && !(m.indexOf(mod)>=0 || mod.indexOf(m)>=0)) return;
+      }
+      if(!best || (cv.finDelibera.ts||0)>(best.finDelibera.ts||0)) best=cv;
+    });
+    return best;
+  }catch(e){ return null; }
+}
+function pDiffDelibera(){
+  var out={cv:null, d:null, diff:[], campi:{}};
+  try{
+    var gv=function(id){ var el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+    var nv=function(id){ var v=parseFloat(gv(id)); return isNaN(v)?null:v; };
+    var cliente=gv('pCliente'); if(!cliente) return out;
+    var cv=pTrovaDelibera(cliente, gv('pModello')); if(!cv) return out;
+    var d=cv.finDelibera; out.cv=cv; out.d=d;
+    var cmp=function(et,id,a,b,tol){
+      if(a==null||b==null) return;
+      if(Math.abs(a-b)>tol){ out.diff.push([et,a,b]); if(id) out.campi[id]=true; }
+    };
+    cmp('TAN','pTan', nv('pTan'), d.tan, 0.01);
+    cmp('Commissioni','pComm', nv('pComm'), d.istruttoria, 1);
+    var val=nv('pValore');
+    if(val!==null) cmp('Importo finanziato','pValore', val-(nv('pAcconto')||0), d.importoFinanziato, 50);
+    /* Polizza: il calcolatore usa etichette commerciali, la delibera gli id. */
+    var mapFi={'NET':'net','FIT TO YOU':'fit2you'};
+    var fiSel=(typeof PS!=='undefined')?(PS.fi||''):'';
+    var dTipo=pNorm(d.polizzaTipo||'');
+    if(dTipo){
+      if(fiSel==='NO') { out.diff.push(['Polizza','nessuna',d.polizzaTipo]); out.campi._fi=true; }
+      else if(mapFi[fiSel] && mapFi[fiSel]!==dTipo){ out.diff.push(['Polizza',fiSel,d.polizzaTipo]); out.campi._fi=true; }
+    }
+  }catch(e){}
+  return out;
+}
+function pControllo(){
+  var r={diff:[],campi:{},d:null};
+  try{
+    r=pDiffDelibera();
+    P_CTRL_CAMPI.forEach(function(id){ var el=document.getElementById(id); if(el){ el.style.borderColor=''; el.style.backgroundColor=''; el.style.boxShadow=''; } });
+    var box=document.getElementById('pCtrlDelibera'); if(!box) return r;
+    if(!r.d){ box.style.display='none'; box.innerHTML=''; return r; }
+    Object.keys(r.campi).forEach(function(id){
+      var el=document.getElementById(id);
+      if(el){ el.style.borderColor='#9a3412'; el.style.backgroundColor='#fff7ed'; el.style.boxShadow='0 0 0 2px rgba(154,52,18,.18)'; }
+    });
+    var d=r.d;
+    var rif='<div style="font-size:11.5px;color:#78716c;margin-top:7px;line-height:1.7;">Delibera '+(d.finanziaria?('<b>'+d.finanziaria+'</b> '):'')
+      +(d.data?('del '+String(d.data).split('-').reverse().join('/')):'')+' \u00b7 TAN '+(d.tan!=null?d.tan:'\u2014')
+      +' \u00b7 TAEG '+(d.taeg!=null?d.taeg:'\u2014')+' \u00b7 istruttoria '+(d.istruttoria!=null?d.istruttoria+' \u20ac':'\u2014')
+      +' \u00b7 polizze '+(d.polizze!=null?d.polizze+' \u20ac':'\u2014')+(d.polizzaTipo?(' ('+d.polizzaTipo+')'):'')
+      +' \u00b7 finanziato '+(d.importoFinanziato!=null?d.importoFinanziato+' \u20ac':'\u2014')+'</div>';
+    var _btnFill=window._pDaDelibera
+      ? '<div style="margin-top:8px;font-size:11.5px;color:#64748b;">\ud83d\udd12 TAN e commissioni presi dalla delibera. <a onclick="pSbloccaDelibera()" style="color:#1a4fa0;cursor:pointer;text-decoration:underline;">Sblocca per modificarli</a></div>'
+      : '<button onclick="pDaDelibera()" style="margin-top:9px;width:100%;padding:10px;border:1px solid #1a4fa0;border-radius:8px;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udce5 Compila dalla delibera</button>';
+    if(!r.diff.length){
+      box.style.display='block';
+      box.innerHTML='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:11px 13px;">'
+        +'<div style="font-size:13px;font-weight:800;color:#166534;">\u2713 Corrisponde alla delibera</div>'+rif+_btnFill+'</div>';
+      return r;
+    }
+    box.style.display='block';
+    box.innerHTML='<div style="background:#fff7ed;border:2px solid #9a3412;border-radius:9px;padding:11px 13px;">'
+      +'<div style="font-size:13px;font-weight:800;color:#7c2d12;">\u26a0\ufe0f I dati non corrispondono alla delibera</div>'
+      +'<div style="font-size:12px;color:#9a3412;margin-top:2px;">Controlla i campi in arancione prima di salvare.</div>'
+      +r.diff.map(function(x){
+        return '<span style="display:inline-block;background:#fff;border:1px solid #9a3412;border-radius:7px;padding:3px 8px;font-size:11.5px;font-weight:700;color:#7c2d12;margin:6px 6px 0 0;">'
+          +x[0]+': <b>'+x[1]+'</b> <span style="color:#a8a29e;font-weight:600;">delibera '+x[2]+'</span></span>';
+      }).join('')
+      +rif+_btnFill+'</div>';
+  }catch(e){}
+  return r;
+}
 function pCalcola() {
+  try{ setTimeout(pControllo, 0); }catch(e){}
   const valore  = parseFloat(document.getElementById('pValore')?.value) || 0;
   const acconto = parseFloat(document.getElementById('pAcconto')?.value) || 0;
   const comm    = parseFloat(document.getElementById('pComm')?.value) || 0;
@@ -6113,6 +6260,16 @@ function pSalva() {
   const comm = parseFloat(document.getElementById('pComm')?.value) || 0;
   const tan  = parseFloat(document.getElementById('pTan')?.value) || 0;
 
+  /* Ultimo avviso: la delibera esiste e non torna. Non blocco, perche' un
+     caso legittimo esiste sempre, ma va confermato consapevolmente. */
+  try{
+    const _ctrl = pControllo();
+    if (_ctrl && _ctrl.diff && _ctrl.diff.length) {
+      const _el = _ctrl.diff.map(x => '\u2022 ' + x[0] + ': hai messo ' + x[1] + ', in delibera \u00e8 ' + x[2]).join('\n');
+      if (!confirm('\u26a0 I dati non corrispondono alla delibera:\n\n' + _el + '\n\nSalvare lo stesso?')) return;
+    }
+  }catch(e){}
+
   // Commissione finanziaria minima: 300 € (se inserita)
   if (comm > 0 && comm < 300) {
     alert('⚠ La commissione finanziaria non può essere inferiore a 300 €.\nInserisci almeno 300 € (oppure lasciala vuota se non prevista).');
@@ -6159,6 +6316,7 @@ function pSalva() {
   pRenderReg();
   pAggStats();
   const banner=document.getElementById('pEditingBanner');if(banner)banner.style.display='none';
+  try{ window._pDaDelibera=false; pBloccaCampi(false); }catch(e){}
   ['pCliente','pMarca','pModello','pValore','pAcconto','pComm'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('pTan').value='';
   pCalcola();
@@ -14252,6 +14410,7 @@ function cvForm(id, fromVend){
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('pratica', _cv.id, 'cvdoc')+'</div>';
     h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa proposta d’acquisto</button>';
+    h+='<button onclick="cvLogMostra(\''+_cv.id+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🕓 Storico modifiche</button>';
   } else if(!_cv.isContratto){
     h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
     if(c){
@@ -15201,7 +15360,9 @@ function cvTrasformaContrattoFinale(){
     _cv.pagamenti.forEach(function(pg){ var t=(pg&&pg.tipo)||''; if(['Saldo','Caparra','Acconto','Finanziamento'].indexOf(t)>=0){ _conta[t]=(_conta[t]||0)+1; if(_conta[t]>1 && !_dup) _dup=t; } });
     if(_dup){ alert('\u26a0\ufe0f Pagamenti non validi: \u00e8 presente un doppio "'+_dup+'".\n\nOgni tipo (Caparra, Acconto, Saldo, Finanziamento) pu\u00f2 comparire una sola volta. Correggi i pagamenti prima di confermare.'); return; }
   }
+  try{ var _pr=JSON.parse(JSON.stringify(_cv)); }catch(e){ var _pr=null; }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
+  try{ cvLogRegistra(_pr, _cv, 'proposta'); }catch(e){}
   if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
@@ -15284,6 +15445,128 @@ function cvCreaPeriziaDaPermuta(cv){
     if(typeof pmPush==='function'){ try{ pmPush(per); }catch(e){} }
   }catch(e){}
 }
+/* ===================== STORICO MODIFICHE =====================
+   Traccia cosa e' cambiato, quando e per mano di chi, su preventivi,
+   proposte e contratti. Solo sulle pratiche nuove: sullo storico importato
+   non esiste un "prima" con cui confrontare. Le righe sono a sola aggiunta
+   e hanno id univoco, quindi il merge fra dispositivi e' un'unione e non
+   puo' cancellare la cronologia. */
+var CVLOG_KEY='ea_cvlog_v1';
+var CVLOG_CAMPI=[
+  ['cliente.cognome','Cognome'], ['cliente.nome','Nome'], ['cliente.ragSociale','Ragione sociale'],
+  ['cliente.telefono','Telefono'], ['cliente.email','Email'],
+  ['cliente.cf','Codice fiscale'], ['cliente.piva','Partita IVA'],
+  ['autoDesc','Veicolo'], ['autoId','Veicolo collegato'],
+  ['prezzo','Prezzo'], ['sconto','Sconto'], ['prezzoVendita','Prezzo di vendita'],
+  ['statoVendita','Stato vendita'], ['isContratto','Proposta'],
+  ['assicOn','Polizza'], ['assicImporto','Importo polizza'], ['assicMesi','Durata polizza'],
+  ['polizzaTipo','Tipo polizza'],
+  ['permutaOn','Permuta'], ['permuta.valore','Valore permuta'],
+  ['permuta.marca','Permuta marca'], ['permuta.modello','Permuta modello'],
+  ['finDelibera.confermata','Delibera confermata'], ['finDelibera.finanziaria','Finanziaria'],
+  ['finDelibera.tan','TAN'], ['finDelibera.taeg','TAEG'],
+  ['finDelibera.istruttoria','Commissioni'], ['finDelibera.polizze','Polizze delibera'],
+  ['finDelibera.importoFinanziato','Importo finanziato'], ['finDelibera.rata','Rata'],
+  ['finDelibera.durata','Numero rate'],
+  ['venditore','Venditore'], ['note','Note'], ['consegnatoTs','Consegna']
+];
+function cvLogVia(o, path){
+  try{ return path.split('.').reduce(function(a,k){ return (a==null)?undefined:a[k]; }, o); }catch(e){ return undefined; }
+}
+function cvLogFmt(v){
+  if(v===undefined || v===null || v==='') return '\u2014';
+  if(v===true) return 's\u00ec';
+  if(v===false) return 'no';
+  if(typeof v==='number' && v>1000000000000) return new Date(v).toLocaleDateString('it-IT');
+  return String(v);
+}
+function cvLogLoad(){ try{ return JSON.parse(localStorage.getItem(CVLOG_KEY)||'[]')||[]; }catch(e){ return []; } }
+function cvLogSave(l){
+  try{
+    l=(l||[]).filter(function(x){return x&&x.id;}).sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+    localStorage.setItem(CVLOG_KEY, JSON.stringify(l.slice(-1500)));
+  }catch(e){}
+}
+function cvLogChi(){
+  try{
+    if(typeof _currentUserName!=='undefined' && _currentUserName) return _currentUserName;
+    if(typeof _currentUserEmail!=='undefined' && _currentUserEmail) return _currentUserEmail;
+  }catch(e){}
+  return 'sconosciuto';
+}
+function cvLogRegistra(prima, dopo, evento){
+  try{
+    if(!dopo || !dopo.id) return;
+    /* solo pratiche nuove */
+    if(typeof cvIsStorico==='function' && cvIsStorico(dopo)) return;
+    if(dopo.origine==='sicom_ap') return;
+    var diff=[];
+    if(prima){
+      CVLOG_CAMPI.forEach(function(c){
+        var a=cvLogVia(prima,c[0]), b=cvLogVia(dopo,c[0]);
+        if(a===undefined && b===undefined) return;
+        if(String(a)===String(b)) return;
+        diff.push({c:c[1], da:cvLogFmt(a), a:cvLogFmt(b)});
+      });
+      if(!diff.length && evento==='modifica') return;   /* nulla di sostanziale */
+    }
+    var ts=Date.now();
+    var rec={
+      id:'log_'+dopo.id+'_'+ts+'_'+Math.random().toString(36).slice(2,7),
+      cvId:dopo.id, ts:ts, updatedAt:ts, chi:cvLogChi(),
+      evento:evento||'modifica', diff:diff,
+      cliente:((((dopo.cliente&&dopo.cliente.cognome)||'')+' '+((dopo.cliente&&dopo.cliente.nome)||'')).trim())
+              ||((dopo.cliente&&dopo.cliente.ragSociale)||''),
+      auto:String((dopo.autoSnapshot&&dopo.autoSnapshot.modello)||dopo.autoDesc||'')
+    };
+    var l=cvLogLoad(); l.push(rec); cvLogSave(l);
+    if(typeof supaUpsert==='function') supaUpsert('cv_log_app', rec);
+  }catch(e){}
+}
+function cvLogDi(cvId){
+  return cvLogLoad().filter(function(x){ return x && x.cvId===cvId; })
+                    .sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+}
+function cvLogSupaLoad(){
+  try{ if(typeof supaLoadList==='function') supaLoadList('cv_log_app', cvLogLoad, cvLogSave); }catch(e){}
+}
+var CVLOG_ETICHETTE={ creazione:['#dcfce7','#166534','Creato'], modifica:['#e0e7ff','#3730a3','Modificato'],
+  proposta:['#ede9fe','#5b21b6','Trasformato in proposta'], delibera:['#ffedd5','#9a3412','Delibera confermata'],
+  delibera_annullata:['#fee2e2','#991b1b','Delibera annullata'], consegna:['#dbeafe','#1e40af','Consegnato'],
+  fattura:['#f0fdf4','#166534','Fattura generata'], fattura_annullata:['#fee2e2','#991b1b','Fattura annullata'],
+  eliminato:['#fee2e2','#991b1b','Eliminato'] };
+function cvLogMostra(id){
+  var righe=cvLogDi(id);
+  var m=document.getElementById('cvLogModal');
+  if(!m){ m=document.createElement('div'); m.id='cvLogModal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
+    document.body.appendChild(m); }
+  var h='<div style="max-width:560px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
+   +'<div style="background:#334155;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
+   +'<span style="font-weight:800;">Storico modifiche</span>'
+   +'<button onclick="cvLogChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
+   +'<div style="padding:14px 18px;max-height:74vh;overflow:auto;">';
+  if(!righe.length){
+    h+='<div style="color:#94a3b8;font-size:13px;padding:14px 0;">Nessuna modifica registrata per questa pratica. Lo storico parte dalle modifiche fatte da qui in avanti.</div>';
+  } else {
+    righe.forEach(function(r){
+      var e=CVLOG_ETICHETTE[r.evento]||['#f1f5f9','#334155',r.evento];
+      var d=new Date(r.ts);
+      h+='<div style="border-bottom:1px solid #f1f5f9;padding:11px 0;">'
+        +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">'
+        +'<span style="font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:20px;background:'+e[0]+';color:'+e[1]+';">'+e[2]+'</span>'
+        +'<span style="font-size:11.5px;color:#94a3b8;">'+d.toLocaleDateString('it-IT')+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+' \u00b7 <b style="color:#64748b;">'+cvEsc(r.chi||'')+'</b></span></div>';
+      (r.diff||[]).forEach(function(x){
+        h+='<div style="font-size:12px;color:#334155;margin-top:5px;line-height:1.5;">'
+          +'<b>'+cvEsc(x.c)+'</b>: <span style="color:#94a3b8;text-decoration:line-through;">'+cvEsc(x.da)+'</span> \u2192 <b style="color:#0f172a;">'+cvEsc(x.a)+'</b></div>';
+      });
+      h+='</div>';
+    });
+  }
+  h+='</div></div>';
+  m.innerHTML=h; m.style.display='flex';
+}
+function cvLogChiudi(){ var m=document.getElementById('cvLogModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvSalva(){
   cvSync();
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
@@ -15295,9 +15578,13 @@ function cvSalva(){
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0);
   if(isNew){ cvProgrammaMailCliente(_cv); }
+  /* copia del documento com'era prima del salvataggio: e' il termine di
+     paragone per lo storico modifiche */
+  var _prima=(idx>=0)?JSON.parse(JSON.stringify(list[idx])):null;
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
   cvSave(list); supaUpsert('preventivi', _cv);
+  try{ cvLogRegistra(_prima, _cv, isNew?'creazione':'modifica'); }catch(e){}
   cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Preventivo salvato',true);
 }
@@ -18920,6 +19207,7 @@ function eaBadgeBoot(){
       }, 300000);
     }
   }catch(e){}
+  try{ if(typeof cvLogSupaLoad==='function') cvLogSupaLoad(); }catch(e){}
   try{ if(typeof notifAvvia==='function') notifAvvia(); }catch(e){}
   /* le mansioni del calendario: senza queste la campanella parte a zero */
   try{ if(typeof ccSupaLoad==='function') ccSupaLoad(); }catch(e){}
@@ -19043,6 +19331,10 @@ function cvDeliberaForm(id){
   var _polOpts = '<option value="">\u2014 scegli \u2014</option>'
    + (typeof CV_POLIZZE!=='undefined'?CV_POLIZZE:[]).map(function(pz){
        return '<option value="'+_esc(pz.id)+'"'+(_polTipo===pz.id?' selected':'')+'>'+pz.nome+'</option>'; }).join('')
+   + ['zurich','Zurich','unipol','Unipol','kasko','Kasko'].reduce(function(acc,v,i,a){
+       if(i%2) return acc;
+       return acc+'<option value="'+a[i]+'"'+(_polTipo===a[i]?' selected':'')+'>'+a[i+1]+'</option>';
+     },'')
    + '<option value="altra"'+(_polTipo==='altra'?' selected':'')+'>Altra polizza</option>'
    + '<option value="nessuna"'+(_polTipo==='nessuna'?' selected':'')+'>Nessuna polizza</option>';
 
@@ -19072,6 +19364,20 @@ function cvDeliberaForm(id){
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate *</label><input id="dl_durata" type="number" style="'+inp+'" value="'+val('durata')+'">'+hint(sim.durata,'')+'</div>'
    +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac *</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+val('istruttoria')+'">'+hint(sim.istruttoria,' \u20ac')+'</div></div>'
    +_polBox
+   /* Questi tre dati non servono alla delibera in se': servono al calcolo
+      della provvigione. Raccogliendoli qui, Rudy inserisce una volta sola. */
+   +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:12px;">'
+   +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Dati per la provvigione</div>'
+   +'<div style="display:flex;gap:10px;">'
+   +'<div style="flex:1;"><label style="'+lab+'">CPI</label><select id="dl_cpi" style="'+inp+'background:#fff;">'
+     +'<option value="NO"'+(String(d.cpi||'NO')==='NO'?' selected':'')+'>No</option>'
+     +'<option value="SI"'+(String(d.cpi||'')==='SI'?' selected':'')+'>S\u00ec</option></select></div>'
+   +'<div style="flex:1;"><label style="'+lab+'">GAP</label><select id="dl_gap" style="'+inp+'background:#fff;">'
+     +'<option value="NO"'+(String(d.gap||'NO')==='NO'?' selected':'')+'>No</option>'
+     +'<option value="SI"'+(String(d.gap||'')==='SI'?' selected':'')+'>S\u00ec</option></select></div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Durata polizza</label><select id="dl_polMesi" style="'+inp+'background:#fff;">'
+     +[24,36,48,60,72].map(function(mm){ return '<option value="'+mm+'"'+((parseInt(d.polizzaMesi,10)||48)===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('')
+     +'</select></div></div></div>'
    +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
@@ -19112,6 +19418,7 @@ function cvDeliberaSalva(id){
   list[i].finDelibera={ confermata:true, finanziaria:g('finanziaria'), tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
     polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
+    cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'), polizzaMesi:(n('polMesi')||48),
     note:g('note'), data:new Date().toISOString().slice(0,10),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
   list[i].updatedAt=Date.now();
@@ -19119,6 +19426,7 @@ function cvDeliberaSalva(id){
      non alla prossima apertura della schermata. */
   if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(list[i]);
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
+  try{ cvLogRegistra(null, list[i], 'delibera'); }catch(e){}
   cvDeliberaChiudi();
   if(typeof cvVendBadge==='function') cvVendBadge();
   if(typeof cvVendRender==='function') cvVendRender();
@@ -19130,6 +19438,7 @@ function cvDeliberaAnnulla(id){
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   if(list[i].finDelibera) list[i].finDelibera.confermata=false;
   list[i].updatedAt=Date.now();
+  try{ cvLogRegistra(null, list[i], 'delibera_annullata'); }catch(e){}
   if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(list[i]);
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
   cvDeliberaChiudi();
@@ -20496,6 +20805,14 @@ function statControlloProvvHTML(V){
    preventivo, contrattoTs al momento della trasformazione. Lo storico
    importato non ha createdAt reali e resta fuori dal calcolo. */
 var ST_CH_MIN_TS = 946684800000;   /* 01/01/2000 */
+/* contrattoTs e createdAt potrebbero essere numeri, stringhe numeriche o
+   date ISO a seconda di come sono stati scritti: normalizzo prima di usarli */
+function stChTs(v){
+  if(v===null || v===undefined || v==='') return 0;
+  if(typeof v==='number') return isFinite(v)?v:0;
+  var n=+v; if(!isNaN(n) && n>0) return n;
+  var t=Date.parse(v); return isNaN(t)?0:t;
+}
 function stChStorico(cv){
   return !!(cv && (cv.origine==='sicom' || cv.origine==='sicom_prev' || cv.origine==='sicom_ap'));
 }
@@ -20506,7 +20823,7 @@ function stChGiorni(cv){
        date sono quelle vere (dateReali:true). Senza quella dichiarazione
        createdAt e' la data di import e falserebbe ogni media. */
     if(stChStorico(cv) && cv.dateReali!==true) return null;
-    var a=+(cv.createdAt||0), b=+(cv.contrattoTs||0);
+    var a=stChTs(cv.createdAt), b=stChTs(cv.contrattoTs);
     if(a<ST_CH_MIN_TS || b<ST_CH_MIN_TS || b<a) return null;
     return Math.floor((b-a)/86400000);
   }catch(e){ return null; }
@@ -20535,19 +20852,38 @@ function statChiusuraHTML(all, yr){
     /* ---- chiusure del periodo scelto ---- */
     var perMese=[[],[],[],[],[],[],[],[],[],[],[],[]];
     var tutti=[], esclusi=0, storicoFuori=0, annoSel=(yr && yr!=='tutti')?parseInt(yr,10):null;
+    /* contatori diagnostici: quando non esce niente serve sapere perche' */
+    var dg={tot:0, contratti:0, fuoriAnno:0, senzaCreated:0, senzaContratto:0, invertite:0, storico:0};
     all.forEach(function(cv){
-      if(!cv || !cv.isContratto) return;
-      var g=stChGiorni(cv);
-      var d=new Date(cv.contrattoTs||cv.createdAt||0);
-      if(annoSel!==null && d.getFullYear()!==annoSel) return;
-      if(g===null){ if(!stChStorico(cv)) esclusi++; else storicoFuori++; return; }
+      if(!cv) return;
+      dg.tot++;
+      if(!cv.isContratto) return;
+      dg.contratti++;
+      var a=stChTs(cv.createdAt), b=stChTs(cv.contrattoTs);
+      var d=new Date(b||a||0);
+      if(annoSel!==null && d.getFullYear()!==annoSel){ dg.fuoriAnno++; return; }
+      if(stChStorico(cv) && cv.dateReali!==true){ dg.storico++; storicoFuori++; return; }
+      if(a<ST_CH_MIN_TS){ dg.senzaCreated++; esclusi++; return; }
+      if(b<ST_CH_MIN_TS){ dg.senzaContratto++; esclusi++; return; }
+      if(b<a){ dg.invertite++; esclusi++; return; }
+      var g=Math.floor((b-a)/86400000);
       tutti.push(g); perMese[d.getMonth()].push(g);
     });
 
     var h='<div style="max-width:920px;margin:0 auto;">';
     h+='<div style="'+box+'">'+tit('Da preventivo a proposta','Giorni impiegati per chiudere. Solo pratiche con date reali: lo storico importato resta fuori.');
     if(!tutti.length){
-      h+='<div style="color:#94a3b8;font-size:13px;">Nessuna proposta con date utilizzabili in questo periodo.</div></div></div>';
+      var riga=function(l,v,c){ return v?('<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:12.5px;"><span style="color:#64748b;">'+l+'</span><b style="color:'+(c||'#334155')+';">'+v+'</b></div>'):''; };
+      h+='<div style="color:#94a3b8;font-size:13px;margin-bottom:10px;">Nessuna proposta con date utilizzabili in questo periodo. Ecco cosa manca:</div>'
+        +riga('Documenti in archivio', dg.tot)
+        +riga('Di cui proposte o contratti', dg.contratti, dg.contratti?'#16a34a':'#b91c1c')
+        +riga('Escluse perch\u00e9 di un altro anno', dg.fuoriAnno, '#64748b')
+        +riga('Storico importato senza date dichiarate reali', dg.storico, '#64748b')
+        +riga('Senza data di creazione del preventivo', dg.senzaCreated, '#b45309')
+        +riga('Senza data della proposta (contrattoTs)', dg.senzaContratto, '#b45309')
+        +riga('Con la proposta datata prima del preventivo', dg.invertite, '#b91c1c')
+        +'<div style="font-size:11.5px;color:#94a3b8;margin-top:10px;line-height:1.6;">Se sono quasi tutte senza data della proposta, il campo veniva scritto solo dalla trasformazione in proposta: le pratiche pi\u00f9 vecchie non ce l\u2019hanno. Se sono fuori anno, cambia l\u2019anno in alto.</div>'
+        +'</div></div>';
       return h;
     }
     var med=stChMediana(tutti), avg=stChMedia(tutti);
@@ -21074,19 +21410,27 @@ function crmRenderAssic(){
     ass.push(cv);
   });
   var nTot=ass.length;
-  var nAttive=ass.filter(function(cv){ return cv._gg>=-60; }).length;
-  if(_crmAssFiltro!=='tutte') ass=ass.filter(function(cv){ return cv._gg>=-60; });
+  /* Finestra di lavoro: dalle scadute del mese in corso fino a 40 giorni
+     avanti. Prima si guardava indietro 60 giorni a scorrimento, che a fine
+     mese trascinava dentro polizze del mese precedente gia' chiuse. */
+  var _o=new Date();
+  var _daT=new Date(_o.getFullYear(), _o.getMonth(), 1, 0, 0, 0, 0).getTime();
+  var _aT=Date.now()+40*86400000;
+  var _inFinestra=function(cv){ return cv._scad>=_daT && cv._scad<=_aT; };
+  var nAttive=ass.filter(_inFinestra).length;
+  if(_crmAssFiltro!=='tutte') ass=ass.filter(_inFinestra);
   ass.sort(function(a,b){return a._scad-b._scad;});
   var _btn=function(v,txt,n){ var on=(_crmAssFiltro===v);
     return '<button onclick="crmAssFiltro(\''+v+'\')" style="flex:1;padding:9px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+txt+' ('+n+')</button>'; };
   var h=edit;
-  h+='<div style="display:flex;gap:8px;margin-bottom:10px;">'+_btn('attive','\u2705 Attive e in scadenza',nAttive)+_btn('tutte','\ud83d\udcda Storico completo',nTot)+'</div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">\ud83d\udee1\ufe0f '+ass.length+' polizze mostrate. In arancione quelle in scadenza entro 60 giorni.'
-    +(_crmAssFiltro!=='tutte'?' <span style="color:#94a3b8;">Le polizze scadute da oltre 60 giorni non compaiono.</span>':'')
+  h+='<div style="display:flex;gap:8px;margin-bottom:10px;">'+_btn('attive','\ud83d\udd14 Da lavorare',nAttive)+_btn('tutte','\ud83d\udcda Storico completo',nTot)+'</div>';
+  var _mesiN=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;">\ud83d\udee1\ufe0f '+ass.length+' polizze mostrate.'
+    +(_crmAssFiltro!=='tutte'?(' Scadute in '+_mesiN[_o.getMonth()]+' e in scadenza entro 40 giorni. <span style="color:#94a3b8;">In rosso quelle gi\u00e0 scadute.</span>'):' Tutto lo storico.')
     +(senzaData?('<br><span style="color:#b45309;">\u26a0\ufe0f '+senzaData+' polizze senza data di consegna valida: scadenza non calcolabile.</span>'):'')
     +'</div>';
   if(!ass.length) return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna polizza in questo elenco.</div>';
-  ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<60;
+  ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<40;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
       +'<div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Scadenza</div><div style="font-weight:800;color:'+(scad?'#d97706':'#1a4fa0')+';">'+crmDMY(cv._scad)+'</div><div style="font-size:11px;color:'+(cv._gg<0?'#dc2626':'#94a3b8')+';">'+(cv._gg<0?'scaduta':('tra '+cv._gg+' gg'))+'</div></div></div>'
