@@ -4572,9 +4572,10 @@ function loadSent(){
    riquadro "Guarda il report" non e' mai comparso nelle mail dei preventivi.
    Appena il report viene generato lo carico su R2 e salvo l'indirizzo, cosi'
    diventa allegabile a qualsiasi comunicazione. */
-function reportCaricaLink(rec, html){
+function reportCaricaLink(rec, html, dove){
   try{
     if(!rec || !html || typeof WORKER_FOTO==='undefined' || !WORKER_FOTO) return;
+    var _pronti=(dove==='ready');
     var tg=String(rec.targa||'auto').toUpperCase().replace(/[^A-Z0-9]/g,'');
     var nome='report-'+tg+'-'+(rec.id||Date.now())+'.html';
     var blob=new Blob([html],{type:'text/html; charset=utf-8'});
@@ -4582,9 +4583,11 @@ function reportCaricaLink(rec, html){
       method:'POST', headers:{'Content-Type':'text/html; charset=utf-8'}, body:blob
     }).then(function(r){ return r.json(); }).then(function(res){
       if(!(res && res.ok && res.url)) return;
-      var s=loadSent();
-      for(var i=0;i<s.length;i++){ if(s[i].id===rec.id){ s[i].link=res.url; s[i].linkKey=res.key||''; break; } }
-      saveSent(s);
+      var s=_pronti?loadReady():loadSent();
+      for(var i=0;i<s.length;i++){ if(String(s[i].id)===String(rec.id)){ s[i].link=res.url; s[i].linkKey=res.key||''; break; } }
+      if(_pronti) saveReady(s); else saveSent(s);
+      try{ if(_pronti && typeof renderReady==='function') renderReady(''); else if(typeof renderArchive==='function') renderArchive(''); }catch(e){}
+      if(typeof tcToastNew==='function') tcToastNew('\ud83d\udd17 Link del report pronto',true);
     }).catch(function(){});
   }catch(e){}
 }
@@ -5098,6 +5101,8 @@ function redownloadSent(id){
   buildPDFTemplate();
   try{
     const reportHtml = buildReportHTML(r.marca, r.targa, r.dataIspezione||'');
+    /* I report generati prima non hanno un link: riscaricandoli lo si crea. */
+    try{ if(!r.link && typeof reportCaricaLink==='function') reportCaricaLink(r, reportHtml); }catch(e){}
     showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+(r.nomeCliente?' → '+r.nomeCliente:''));
   }catch(err){
     console.error(err);
@@ -5144,6 +5149,7 @@ function renderReady(filter){
       <div class="archive-card-meta">🔍 Ispettore: ${r.ispettore||'—'}</div>
       <div class="archive-card-actions">
         <button class="arc-btn arc-btn-blue" data-readyid="${r.id}" onclick="downloadReadyPDF(${r.id})">⬇ Scarica e Invia</button>
+        ${r.link ? `<button class="arc-btn" onclick="reportProntoCopia(${r.id})" title="${r.link}" style="background:#16a34a;border-color:#16a34a;color:#fff;">🔗 Copia link</button><button class="arc-btn" onclick="reportProntoApri(${r.id})" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534;">👁 Apri</button>` : `<button class="arc-btn" onclick="reportProntoGenera(${r.id})" style="background:#fff7ed;border-color:#fed7aa;color:#b45309;">🔗 Genera link</button>`}
         <button class="arc-btn" onclick="editReady(${r.id})">✏️ Modifica</button>
         <button class="arc-btn" onclick="downloadGalleryDirect('${r.targa}','${r.marca||''}','${r.modello||''}')" style="background:#1a4fa0;border-color:#1a4fa0;color:white;min-width:70px;">📸 <span id="fotobtn-${r.targa}">${fotoCountInline(r.targa)}</span></button>
         <button class="arc-btn arc-btn-red" onclick="deleteReady(${r.id})">🗑 Elimina</button>
@@ -5191,6 +5197,66 @@ function deleteReady(id){
 // ══════════════════════════════════════════════════════════════
 // RENDER ARCHIVIO INVIATI
 // ══════════════════════════════════════════════════════════════
+/* Link pubblico del report: si copia negli appunti e si apre in una scheda,
+   cosi' e' incollabile su WhatsApp o in una mail scritta a mano. */
+function reportCopiaLink(id){
+  var r=(loadSent()||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(!r || !r.link){ alert('Questo report non ha ancora un link.\n\nPremi "Riscarica PDF": il link viene creato in quel momento.'); return; }
+  var ok=function(){ if(typeof tcToastNew==='function') tcToastNew('\ud83d\udd17 Link del report copiato',true); else alert('Link copiato:\n'+r.link); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(r.link).then(ok, function(){ prompt('Link del report:', r.link); }); }
+    else prompt('Link del report:', r.link);
+  }catch(e){ prompt('Link del report:', r.link); }
+}
+function reportApriLink(id){
+  var r=(loadSent()||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(r && r.link) window.open(r.link,'_blank');
+}
+/* ===== STESSE FUNZIONI PER I REPORT PRONTI =====
+   Il link serve prima ancora di inviare il report: si genera ricostruendo
+   l'HTML dai punteggi salvati, senza toccare il lavoro in corso sul form
+   (stato salvato e ripristinato come fa "Riscarica PDF"). */
+function reportProntoCopia(id){
+  var r=(loadReady()||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(!r || !r.link){ reportProntoGenera(id); return; }
+  var ok=function(){ if(typeof tcToastNew==='function') tcToastNew('\ud83d\udd17 Link del report copiato',true); else alert('Link copiato:\n'+r.link); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(r.link).then(ok, function(){ prompt('Link del report:', r.link); }); }
+    else prompt('Link del report:', r.link);
+  }catch(e){ prompt('Link del report:', r.link); }
+}
+function reportProntoApri(id){
+  var r=(loadReady()||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(r && r.link) window.open(r.link,'_blank');
+}
+function reportProntoGenera(id){
+  var r=(loadReady()||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(!r){ alert('Report non trovato.'); return; }
+  var savedScores={...scores}, savedRatings={...ratings}, savedScorta={...scortaType}, savedOptional={...optionalEnabled};
+  var flds=['marca','modello','targa','anno','km','dealerName','dealerAddr','dealerTel','peritoName','dataIspezione'];
+  var savedForm={}; flds.forEach(function(k){ var el=document.getElementById(k); if(el) savedForm[k]=el.value; });
+  try{
+    Object.assign(scores,          r.scores          || {});
+    Object.assign(ratings,         r.ratings         || {});
+    Object.assign(scortaType,      r.scortaType      || {p4:'ruota'});
+    Object.assign(optionalEnabled, r.optionalEnabled || {e5:false});
+    var fill={ marca:r.marca, modello:r.modello, targa:r.targa, anno:r.anno||'', km:r.km||'',
+      dealerName:'Europa Auto S.r.l.', dealerAddr:'Via Nigra 4, Paderno Dugnano (MI) 20037',
+      dealerTel:'0362285390', peritoName:r.ispettore||'', dataIspezione:r.dataIspezione||'' };
+    Object.keys(fill).forEach(function(k){ var el=document.getElementById(k); if(el) el.value=fill[k]; });
+    buildPDFTemplate();
+    var html=buildReportHTML(r.marca, r.targa, r.dataIspezione||'');
+    reportCaricaLink(r, html, 'ready');
+    if(typeof tcToastNew==='function') tcToastNew('\u23f3 Creo il link del report\u2026',true);
+  }catch(err){ console.error(err); alert('Errore: '+err.message); }
+  finally{
+    Object.assign(scores,          savedScores);
+    Object.assign(ratings,         savedRatings);
+    Object.assign(scortaType,      savedScorta);
+    Object.assign(optionalEnabled, savedOptional);
+    flds.forEach(function(k){ var el=document.getElementById(k); if(el) el.value=savedForm[k]||''; });
+  }
+}
 function renderArchive(filter){
   const sent      = loadSent();
   // Aggiorna contatore SEMPRE, indipendentemente dal filtro
@@ -5223,6 +5289,7 @@ function renderArchive(filter){
       <div class="archive-card-meta">🔍 ${r.ispettore||'—'} · Data: ${r.dataIspezione||'—'}</div>
       <div class="archive-card-actions">
         <button class="arc-btn arc-btn-blue" data-sentid="${r.id}" onclick="redownloadSent(${r.id})">⬇ Riscarica PDF</button>
+        ${r.link ? `<button class="arc-btn" onclick="reportCopiaLink(${r.id})" title="${r.link}" style="background:#16a34a;border-color:#16a34a;color:#fff;">🔗 Copia link</button><button class="arc-btn" onclick="reportApriLink(${r.id})" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534;">👁 Apri</button>` : `<button class="arc-btn" onclick="redownloadSent(${r.id})" title="Il link si crea riscaricando il PDF" style="background:#fff7ed;border-color:#fed7aa;color:#b45309;">🔗 Genera link</button>`}
         <button class="arc-btn" onclick="downloadGalleryDirect('${r.targa}','${r.marca||''}','${r.modello||''}')" style="background:#1a4fa0;border-color:#1a4fa0;color:white;min-width:70px;">📸 <span id="fotobtn-${r.targa}">${fotoCountInline(r.targa)}</span></button>
         <button class="arc-btn arc-btn-red" onclick="deleteSent(${r.id})">🗑 Elimina</button>
       </div>
@@ -13492,6 +13559,23 @@ var CV_POLIZZE=[
   +'\u2022 Infortunio del conducente\n'
   +'\u2022 Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300\u20ac' }
 ];
+/* ===== CONDIZIONI DI POLIZZA =====
+   Sul contratto finale l'elenco delle coperture deve esserci sempre. Se la
+   scheda non ha un dettaglio scritto a mano si ricade sul testo standard
+   della polizza scelta, poi sui parametri, poi sul default. */
+function cvAssicTesto(c){
+  try{
+    if(!c) return '';
+    var t=String(c.assicDettaglio||'').trim();
+    if(t) return t;
+    var id=c.polizzaTipo || (c.finDelibera && c.finDelibera.polizzaTipo) || '';
+    if(id){ var pz=cvPolizzaById(id); if(pz && pz.testo) return pz.testo; }
+    try{ var pr=(typeof parLoad==='function')?parLoad():null; if(pr && pr.assicurazione && String(pr.assicurazione).trim()) return String(pr.assicurazione); }catch(e){}
+    if(typeof CV_ASSIC_DEF!=='undefined' && CV_ASSIC_DEF) return String(CV_ASSIC_DEF);
+    if(typeof CV_POLIZZE!=='undefined' && CV_POLIZZE.length && CV_POLIZZE[0].testo) return CV_POLIZZE[0].testo;
+  }catch(e){}
+  return '';
+}
 function cvPolizzaById(id){ for(var i=0;i<CV_POLIZZE.length;i++){ if(CV_POLIZZE[i].id===id) return CV_POLIZZE[i]; } return CV_POLIZZE[0]; }
 function cvPolizzaScegli(id){
   var pz=cvPolizzaById(id);
@@ -15445,16 +15529,19 @@ function cvBuildHTML(c, tipo){
   var _finPromo=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');});
   var _finPromoImp=_finPromo.reduce(function(s,p){return s+cvNum(p.importo);},0);
   var _haPenale=(isFinale && _finPromoImp>0 && !!c.assicOn);
-  if(c.assicOn){
+  /* La polizza c'e' anche quando assicOn non e' stato spuntato ma il costo
+     e' dentro il finanziamento o dentro la delibera. */
+  var _haAssic=!!(c.assicOn || cvNum(c.assicImporto)>0 || (c.finDelibera && cvNum(c.finDelibera.polizze)>0));
+  if(_haAssic){
     /* Le coperture si leggono meglio una per riga: i dati importati arrivano
        separati da ';' su una riga sola. */
-    var _voci=String(c.assicDettaglio||'').split(/\r?\n|;/)
+    var _voci=String(cvAssicTesto(c)).split(/\r?\n|;/)
       .map(function(s){ return s.replace(/^[\s\u2022\-\u00b7*]+/,'').trim(); })
       .filter(function(s){ return s && !/^(mesi|compagnia|finanziaria)\s*:?\s*[\/\-]?\s*$/i.test(s); });
     doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div>';
     doc+='<div class="cvbox">'+(_voci.length
       ? ('<ul style="margin:0;padding-left:18px;">'+_voci.map(function(v){ return '<li style="margin:2px 0;">'+cvEsc(v)+'</li>'; }).join('')+'</ul>')
-      : cvEsc(c.assicDettaglio||''))+'</div>';
+      : cvEsc(cvAssicTesto(c)))+'</div>';
   }
   if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
      var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
@@ -20403,6 +20490,181 @@ function statControlloProvvHTML(V){
   return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Controllo provvigioni \u2014 mese in corso</div>'
     +'<div style="'+box+'overflow:hidden;">'+out+'</div>';
 }
+/* ===================== TEMPO DI CHIUSURA =====================
+   Quanti giorni passano dal preventivo alla proposta d'acquisto.
+   Il dato e' esatto, non stimato: createdAt e' scritto alla creazione del
+   preventivo, contrattoTs al momento della trasformazione. Lo storico
+   importato non ha createdAt reali e resta fuori dal calcolo. */
+var ST_CH_MIN_TS = 946684800000;   /* 01/01/2000 */
+function stChStorico(cv){
+  return !!(cv && (cv.origine==='sicom' || cv.origine==='sicom_prev' || cv.origine==='sicom_ap'));
+}
+function stChGiorni(cv){
+  try{
+    if(!cv || !cv.isContratto) return null;
+    /* Lo storico entra nel calcolo solo se l'importazione dichiara che le due
+       date sono quelle vere (dateReali:true). Senza quella dichiarazione
+       createdAt e' la data di import e falserebbe ogni media. */
+    if(stChStorico(cv) && cv.dateReali!==true) return null;
+    var a=+(cv.createdAt||0), b=+(cv.contrattoTs||0);
+    if(a<ST_CH_MIN_TS || b<ST_CH_MIN_TS || b<a) return null;
+    return Math.floor((b-a)/86400000);
+  }catch(e){ return null; }
+}
+function stChMediana(arr){
+  if(!arr || !arr.length) return null;
+  var s=arr.slice().sort(function(x,y){return x-y;}), n=s.length, m=Math.floor(n/2);
+  return (n%2)?s[m]:Math.round((s[m-1]+s[m])/2);
+}
+function stChMedia(arr){
+  if(!arr || !arr.length) return null;
+  return Math.round(arr.reduce(function(s,x){return s+x;},0)/arr.length*10)/10;
+}
+function statApriPrev(id){
+  try{ if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi')); }catch(e){}
+  setTimeout(function(){ try{ if(typeof cvForm==='function') cvForm(id); }catch(e){} }, 170);
+}
+function statChiusuraHTML(all, yr){
+  try{
+    all=all||[];
+    var mesiN=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+    var box='background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;';
+    var tit=function(t,s){ return '<div style="font-weight:800;color:#334155;margin-bottom:'+(s?'2px':'10px')+';">'+t+'</div>'
+      +(s?('<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">'+s+'</div>'):''); };
+
+    /* ---- chiusure del periodo scelto ---- */
+    var perMese=[[],[],[],[],[],[],[],[],[],[],[],[]];
+    var tutti=[], esclusi=0, storicoFuori=0, annoSel=(yr && yr!=='tutti')?parseInt(yr,10):null;
+    all.forEach(function(cv){
+      if(!cv || !cv.isContratto) return;
+      var g=stChGiorni(cv);
+      var d=new Date(cv.contrattoTs||cv.createdAt||0);
+      if(annoSel!==null && d.getFullYear()!==annoSel) return;
+      if(g===null){ if(!stChStorico(cv)) esclusi++; else storicoFuori++; return; }
+      tutti.push(g); perMese[d.getMonth()].push(g);
+    });
+
+    var h='<div style="max-width:920px;margin:0 auto;">';
+    h+='<div style="'+box+'">'+tit('Da preventivo a proposta','Giorni impiegati per chiudere. Solo pratiche con date reali: lo storico importato resta fuori.');
+    if(!tutti.length){
+      h+='<div style="color:#94a3b8;font-size:13px;">Nessuna proposta con date utilizzabili in questo periodo.</div></div></div>';
+      return h;
+    }
+    var med=stChMediana(tutti), avg=stChMedia(tutti);
+    var entro1=tutti.filter(function(g){return g<=1;}).length;
+    var entro7=tutti.filter(function(g){return g<=7;}).length;
+    var pct=function(n){ return Math.round(n/tutti.length*100); };
+    var kpi=function(l,v,c,sub){ return '<div style="flex:1 1 130px;background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:12px;">'
+      +'<div style="font-size:11.5px;color:#64748b;">'+l+'</div>'
+      +'<div style="font-size:22px;font-weight:800;color:'+(c||'#0f172a')+';line-height:1.2;">'+v+'</div>'
+      +(sub?('<div style="font-size:11px;color:#94a3b8;">'+sub+'</div>'):'')+'</div>'; };
+    h+='<div style="display:flex;flex-wrap:wrap;gap:10px;">'
+      +kpi('Mediana','<b>'+med+'</b> gg','#1a4fa0','il valore tipico')
+      +kpi('Media','<b>'+String(avg).replace('.',',')+'</b> gg','#64748b','sensibile ai casi lunghi')
+      +kpi('Stesso giorno o l\'indomani', pct(entro1)+'%','#16a34a', entro1+' su '+tutti.length)
+      +kpi('Entro 7 giorni', pct(entro7)+'%','#0d9488', entro7+' su '+tutti.length)
+      +'</div>';
+
+    /* ---- distribuzione ---- */
+    var fasce=[['Stesso giorno',function(g){return g===0;}],['1-3 giorni',function(g){return g>=1&&g<=3;}],
+               ['4-7 giorni',function(g){return g>=4&&g<=7;}],['8-14 giorni',function(g){return g>=8&&g<=14;}],
+               ['15-30 giorni',function(g){return g>=15&&g<=30;}],['Oltre 30 giorni',function(g){return g>30;}]];
+    var maxF=1; fasce.forEach(function(f){ var n=tutti.filter(f[1]).length; if(n>maxF) maxF=n; });
+    h+='<div style="margin-top:14px;">';
+    fasce.forEach(function(f){
+      var n=tutti.filter(f[1]).length, w=Math.round(n/maxF*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px;">'
+        +'<div style="flex:0 0 108px;color:#64748b;">'+f[0]+'</div>'
+        +'<div style="flex:1;background:#f1f5f9;border-radius:5px;height:16px;overflow:hidden;"><div style="width:'+w+'%;height:100%;background:#1a4fa0;"></div></div>'
+        +'<div style="flex:0 0 62px;text-align:right;font-weight:700;color:#334155;">'+n+' ('+pct(n)+'%)</div></div>';
+    });
+    h+='</div>';
+    if(esclusi) h+='<div style="font-size:11.5px;color:#b45309;margin-top:10px;">\u26a0\ufe0f '+esclusi+' proposte senza date utilizzabili non sono nel calcolo.</div>';
+    if(storicoFuori) h+='<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">'+storicoFuori+' pratiche storiche importate senza date dichiarate reali sono escluse.</div>';
+    h+='</div>';
+
+    /* ---- andamento mese per mese ---- */
+    var righe='';
+    var maxMed=1;
+    perMese.forEach(function(arr){ var m=stChMediana(arr); if(m!==null && m>maxMed) maxMed=m; });
+    for(var i=0;i<12;i++){
+      var m=stChMediana(perMese[i]); if(m===null) continue;
+      righe+='<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px;">'
+        +'<div style="flex:0 0 40px;color:#64748b;">'+mesiN[i]+'</div>'
+        +'<div style="flex:1;background:#f1f5f9;border-radius:5px;height:16px;overflow:hidden;"><div style="width:'+Math.round(m/maxMed*100)+'%;height:100%;background:#0d9488;"></div></div>'
+        +'<div style="flex:0 0 92px;text-align:right;font-weight:700;color:#334155;">'+m+' gg <span style="color:#94a3b8;font-weight:600;">('+perMese[i].length+')</span></div></div>';
+    }
+    if(righe){
+      h+='<div style="'+box+'">'+tit('Andamento del tempo di chiusura','Mediana dei giorni per mese. Fra parentesi il numero di proposte.')+righe;
+      /* confronto ultimi 90 giorni contro i 90 precedenti, indipendente dall'anno scelto */
+      var ora=Date.now(), g90=90*86400000, rec=[], pre=[];
+      all.forEach(function(cv){
+        var g=stChGiorni(cv); if(g===null) return;
+        var t=+cv.contrattoTs;
+        if(t>ora-g90) rec.push(g); else if(t>ora-2*g90) pre.push(g);
+      });
+      var mr=stChMediana(rec), mp=stChMediana(pre);
+      if(mr!==null && mp!==null && rec.length>=3 && pre.length>=3){
+        var delta=mr-mp;
+        var meglio=(delta<0), uguale=(delta===0);
+        var col=uguale?'#64748b':(meglio?'#166534':'#991b1b');
+        var bg =uguale?'#f8fafc':(meglio?'#f0fdf4':'#fef2f2');
+        var bd =uguale?'#e2e8f0':(meglio?'#bbf7d0':'#fecaca');
+        h+='<div style="margin-top:12px;background:'+bg+';border:1px solid '+bd+';border-radius:9px;padding:11px 13px;font-size:12.5px;color:'+col+';line-height:1.6;">'
+          +(uguale?'\u2192':(meglio?'\u2193':'\u2191'))+' <b>Ultimi 90 giorni: '+mr+' gg</b> di mediana contro '+mp+' gg dei 90 precedenti'
+          +(uguale?'. Nessuna variazione.':(meglio?('. Chiudete <b>'+Math.abs(delta)+' giorni prima</b>.'):('. Ci mettete <b>'+Math.abs(delta)+' giorni in pi\u00f9</b>.')))
+          +' <span style="color:#94a3b8;">('+rec.length+' contro '+pre.length+' proposte)</span></div>';
+      } else {
+        h+='<div style="margin-top:12px;font-size:12px;color:#94a3b8;">Per il confronto fra trimestri servono almeno 3 proposte per periodo.</div>';
+      }
+      h+='</div>';
+    }
+
+    /* ---- preventivi aperti da recuperare ---- */
+    var soglia=(med!==null?Math.max(med,3):7);
+    var aperti=[];
+    all.forEach(function(cv){
+      if(!cv || cv.isContratto || cv.statoVendita) return;
+      if(cv.deleted) return;
+      if(stChStorico(cv) && cv.dateReali!==true) return;
+      var t=+(cv.createdAt||0); if(t<ST_CH_MIN_TS) return;
+      var eta=Math.floor((Date.now()-t)/86400000);
+      if(eta<=soglia) return;                 /* ancora nei tempi normali */
+      if(eta>365) return;                     /* oltre l'anno non e' recupero */
+      aperti.push({cv:cv, eta:eta});
+    });
+    aperti.sort(function(a,b){ return a.eta-b.eta; });
+    h+='<div style="'+box+'">'+tit('Preventivi aperti da recuperare','Mai trasformati in proposta e piu\u0027 vecchi della mediana di chiusura ('+soglia+' gg). Sotto quella soglia sono ancora trattative normali.');
+    if(!aperti.length){
+      h+='<div style="color:#16a34a;font-size:13px;font-weight:700;">\u2713 Nessun preventivo arretrato.</div>';
+    } else {
+      var f1=aperti.filter(function(x){return x.eta<=30;}).length;
+      var f2=aperti.filter(function(x){return x.eta>30&&x.eta<=90;}).length;
+      var f3=aperti.filter(function(x){return x.eta>90;}).length;
+      h+='<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;">'
+        +kpi('Tiepidi', f1, '#d97706', 'fino a 30 gg')
+        +kpi('Freddi', f2, '#b45309', 'da 31 a 90 gg')
+        +kpi('Da archiviare', f3, '#991b1b', 'oltre 90 gg')
+        +'</div>';
+      aperti.slice(0,25).forEach(function(x){
+        var cv=x.cv, cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+        var nome=((cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()))||'(cliente)';
+        var auto=(a.modello||cv.autoDesc||'\u2014');
+        var c=(x.eta<=30)?'#d97706':((x.eta<=90)?'#b45309':'#991b1b');
+        h+='<div onclick="statApriPrev(\''+cv.id+'\')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;">'
+          +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+cvEsc(nome)+'</div>'
+          +'<div style="font-size:11.5px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+cvEsc(auto)+(cl.telefono?(' \u00b7 '+cvEsc(cl.telefono)):'')+'</div></div>'
+          +'<div style="flex:0 0 auto;font-weight:800;font-size:12.5px;color:'+c+';white-space:nowrap;">'+x.eta+' gg</div></div>';
+      });
+      if(aperti.length>25) h+='<div style="font-size:12px;color:#94a3b8;margin-top:10px;">e altri '+(aperti.length-25)+'. Tocca una riga per aprire il preventivo.</div>';
+      else h+='<div style="font-size:12px;color:#94a3b8;margin-top:10px;">Tocca una riga per aprire il preventivo.</div>';
+    }
+    h+='</div>';
+
+    h+='</div>';
+    return h;
+  }catch(e){ return ''; }
+}
 function statInit(){ statRender(); }
 function statAnni(){ var s={}; cvLoad().forEach(function(x){ var d=new Date(x.createdAt||x.contrattoTs||Date.now()); s[d.getFullYear()]=true; }); var arr=Object.keys(s).sort().reverse(); if(!arr.length) arr=[String(new Date().getFullYear())]; return arr; }
 function statRender(){
@@ -20496,6 +20758,7 @@ function statRender(){
   for(var _mm=0;_mm<12;_mm++){ if(_revMese[_mm]>0) h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;"><span>'+mesi[_mm]+'</span><b>'+cvEuro(_revMese[_mm])+'</b></div>'; }
   h+='</div>';
   h+='</div>';
+  try{ h+=statChiusuraHTML(all, yr); }catch(e){}
   try{ var _r=(typeof getCurrentRole==='function')?getCurrentRole():''; if(_r==='admin'||_r==='staff'||_r==='vendite') h+=statMarginiHTML(); }catch(e){}
   wrap.innerHTML=h;
 
