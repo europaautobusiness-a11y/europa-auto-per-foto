@@ -4217,18 +4217,9 @@ function doLogin() {
   }, 1500);
 }
 
-function disconnettiUtente() {
-  if (!confirm('Vuoi uscire?')) return;
-  try{ localStorage.removeItem('ea_last_login'); }catch(e){}
-  _currentUserEmail = null;
-  _currentUserRole  = null;
-  _driveAccessToken = null;
-  _driveTokenExpiry = 0;
-  var loginDisplay = document.getElementById('login-email-display');
-  if (loginDisplay) loginDisplay.style.display = 'none';
-  var ws = document.getElementById('welcome-screen');
-  if(ws) { ws.style.display = 'flex'; ws.style.opacity = '1'; }
-}
+/* disconnettiUtente e' definita piu' avanti: quella versione azzera anche
+   il riquadro utente nella barra laterale ed e' l'unica che veniva eseguita,
+   perche' in JavaScript l'ultima definizione sovrascrive le precedenti. */
 
 function eaBootRestore(){
   var ws = document.getElementById('welcome-screen');
@@ -4270,18 +4261,8 @@ let _driveTokenExpiry = 0;
 
 
 // ══════════════════════════════════════════════════════════════
-// COLORI PUNTEGGIO
+// COLORI PUNTEGGIO — definita una sola volta piu' in alto (blocco EDITOR UI)
 // ══════════════════════════════════════════════════════════════
-function scoreColor(s){
-  if(s<=3) return '#e74c3c';
-  if(s<=4) return '#e67e22';
-  if(s===5) return '#f39c12';
-  if(s===6) return '#a8d96a';
-  if(s===7) return '#52c97a';
-  if(s===8) return '#2ecc71';
-  if(s===9) return '#27ae60';
-  return '#1e8449';
-}
 
 // ══════════════════════════════════════════════════════════════
 // DATI COMPONENTI
@@ -4362,11 +4343,11 @@ function setGsUrl(url){
 
 let GS_SHEET_URL = localStorage.getItem('ea_gs_sheet_url') || 'https://docs.google.com/spreadsheets/d/1X9UC39V7Wm6p_a_0qfYqBMLPVLIWvGVOrEQh5AOCi3E/edit';
 
-function openGoogleSheet(){
-  const url = GS_SHEET_URL || localStorage.getItem('ea_gs_sheet_url');
-  if(url) window.open(url, '_blank');
-  else alert('Nessun link Google Sheet configurato.');
-}
+/* openGoogleSheet, gsUrlSave e gsSheetUrlSave sono definite una sola volta,
+   piu' avanti nel file: quelle versioni verificano il ruolo prima di aprire o
+   modificare il collegamento al foglio. Le definizioni che stavano qui erano
+   irraggiungibili (in JavaScript vince l'ultima) e una usava perfino una
+   chiave diversa in localStorage. */
 
 function saveGsSheetUrl(){
   const el = document.getElementById('gsSheetUrl');
@@ -4378,35 +4359,8 @@ function saveGsSheetUrl(){
   setTimeout(()=>{ el.style.borderColor = ''; }, 2000);
 }
 
-function gsUrlSave(){
-  const el = document.getElementById('gsUrlInput');
-  const url = (el.value||'').trim();
-  if(!url){ alert('Inserisci un URL valido.'); return; }
-  setGsUrl(url);
-  const st = document.getElementById('gsStatus');
-  if(st){ st.textContent = '🔄 Sincronizzazione...'; st.style.color = 'var(--gray)'; }
-  syncFromSheets();
-  el.style.borderColor = '#27ae60';
-  setTimeout(()=>{ el.style.borderColor = ''; }, 2000);
-}
+/* gsSheetUrlSave e' definita piu' avanti, in un'unica versione. */
 
-function gsSheetUrlSave(){
-  const el = document.getElementById('gsSheetUrlInput');
-  const url = (el.value||'').trim();
-  if(!url){ alert('Inserisci il link del Google Sheet.'); return; }
-  localStorage.setItem('ea_sheet_url', url);
-  el.style.borderColor = '#27ae60';
-  setTimeout(()=>{ el.style.borderColor = ''; }, 2000);
-}
-
-function openGoogleSheet(){
-  const url = localStorage.getItem('ea_sheet_url') || SHEET_URL;
-  if(!url){
-    alert('Inserisci prima il link del tuo Google Sheet nella sezione Concessionaria.');
-    return;
-  }
-  window.open(url, '_blank');
-}
 
 function unlockGsUrl(el){
   el.blur();
@@ -6146,15 +6100,23 @@ function pCalcola() {
              : PS.fi  === 'FIT TO YOU' ? C15 * 0.0025   // base
              : PS.fi  === 'NET'        ? C15 * 0.003
              : PS.fi  === 'KASKO'      ? C15 * 0.0038 : 0;
+  /* Il GAP si vende solo con Compass: entrando nella base comune faceva
+     salire anche Deutsche Bank e Prov Premium, per giunta amplificato dai
+     moltiplicatori (x1,45 e x1,15). Finche' non si sceglieva la finanziaria,
+     il confronto mostrava importi gonfiati proprio nel momento della scelta.
+     Da qui in avanti la quota GAP resta nel solo ramo Compass. */
   const pGAP = PS.gap === 'SI'     ? C15 * 0.0005 : 0;
-  const G11b=G12+pCPI+pFI+pGAP;
+  const G11b=G12+pCPI+pFI;
   let fiMult=1;
   if(PS.fi!=='NO'){const fm=PS.fiMesi||48;if(fm<=36)fiMult=0.87;else if(fm>=72)fiMult=1.05;}
   const G11=G11b*fiMult;
+  const G11gap=(G11b+pGAP)*fiMult;   /* base del solo Compass */
 
   // ── SOTTOCOSTO → solo provvigione minima ─────────────────
   if (PS.sotto === 'SI') {
-    const base = PS.eta === 'nuova' ? G11 : G11 * 0.75;
+    /* sul sottocosto il GAP conta solo se e' gia' stata scelta Compass */
+    const G11s = (_pFinSelezionata==='compass') ? G11gap : G11;
+    const base = PS.eta === 'nuova' ? G11s : G11s * 0.75;
     const sottocosto = Math.round(base / 2.4);
     const sw = document.getElementById('pRisSottoWrap');
     const sr = document.getElementById('pRisSotto');
@@ -6164,13 +6126,15 @@ function pCalcola() {
   }
 
   // ── NORMALE con finanziamento ────────────────────────────
-  const base    = PS.eta === 'nuova' ? G11 : G11 * 0.80;
+  const base     = PS.eta === 'nuova' ? G11    : G11    * 0.80;   /* senza GAP */
+  const baseGap  = PS.eta === 'nuova' ? G11gap : G11gap * 0.80;   /* con GAP */
   // Fascia alta (60-120 mesi) ha provvigione leggermente maggiore
   const rateNum = parseInt(PS.rate) || 36;
   const isAltaFascia = rateNum >= 60;
   const rateMult = isAltaFascia ? 1.08 : 1.0; // +8% fascia 60+ mesi
-  const compass = base * 0.70 * rateMult;
-  const dbAvvera = compass * 1.45;
+  const compass = baseGap * 0.70 * rateMult;
+  /* Deutsche Bank e Prov Premium partono dalla base senza GAP */
+  const dbAvvera = (base * 0.70 * rateMult) * 1.45;
   const bestCondition = isAltaFascia && tan >= 9 && comm >= 500 && PS.fi !== 'NO' && (PS.fiMesi||48)>=60;
   const bestProvv = dbAvvera * 1.15;
 
@@ -6190,6 +6154,23 @@ function pCalcola() {
   if (fw) fw.style.display = 'block';
   document.getElementById('pRisCompass').textContent = '€ ' + compassR;
   document.getElementById('pRisDB').textContent = '€ ' + dbR;
+  /* con il GAP attivo va detto perche' gli altri due importi sono piu' bassi */
+  try{
+    var _gn=document.getElementById('pGapSoloCompass');
+    if(!_gn){
+      var _dbc=document.getElementById('pCardDb')||document.getElementById('pCardDB');
+      if(_dbc && _dbc.parentNode){
+        _gn=document.createElement('div'); _gn.id='pGapSoloCompass';
+        _gn.style.cssText='font-size:11px;color:#fde68a;margin-top:6px;line-height:1.5;';
+        _dbc.parentNode.insertBefore(_gn, _dbc.nextSibling);
+      }
+    }
+    if(_gn){
+      var _on=(PS.gap==='SI');
+      _gn.textContent=_on?'⚠ Il GAP è conteggiato solo su Compass: sulle altre finanziarie non è disponibile.':'';
+      _gn.style.display=_on?'block':'none';
+    }
+  }catch(e){}
   const bestCard = document.getElementById('pCardBest');
   if (bestCondition) {
     document.getElementById('pRisBest').textContent = '€ ' + bestR;
@@ -9198,7 +9179,10 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
   var reg=tcLoadReg(), idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===oggi;});
   var rec;
   if(idx>=0){rec=reg[idx];}else{rec={id:email+'_'+oggi,dipendente:email,data:oggi,mese:mese,entrata:null,pausa:null,rientro:null,uscita:null};reg.push(rec);idx=reg.length-1;}
-  rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now(); reg[idx]=rec;
+  rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now();
+  /* la stessa pausa va scritta anche col nome usato dalla vista amministrativa */
+  try{ if(typeof presenzeAlias==='function') presenzeAlias(rec); }catch(e){}
+  reg[idx]=rec;
   try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(reg)); }catch(e){}
   var nomi={entrata:'Entrata',pausa:'Pausa pranzo',rientro:'Rientro',uscita:'Uscita'};
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
@@ -9749,6 +9733,13 @@ function getDipendenteNome(email) {
   var d=getDipendenteByEmail(email); return d?d.nome:email;
 }
 
+/* ===== VECCHIO MODULO TIMBRATURE - RIMOSSO =====
+   Qui stavano presenzeAggiornaPulsante e presenzeRenderTimbra: disegnavano
+   pulsanti che chiamavano timbra(), una funzione che non esiste piu' nel
+   file. Non erano richiamate da nessuna parte, quindi non facevano danni,
+   ma se qualcuno le avesse riagganciate i pulsanti sarebbero rimasti muti.
+   Il modulo attivo e' tcInit / tcTimbra. */
+
 function timbraLabel(tipo) {
   return {entrata:'\uD83D\uDFE2 Entrata',uscita_pranzo:'\uD83C\uDF7D Uscita Pranzo',rientro_pranzo:'\uD83D\uDD19 Rientro Pranzo',uscita:'\uD83D\uDD34 Uscita'}[tipo]||tipo;
 }
@@ -9772,6 +9763,7 @@ function presenzeOrarioDi(email){
 function calcolaOreGiorno(entry) {
   function toMin(t){ if(!t)return 0; var p=String(t).split(':').map(Number); return p[0]*60+(p[1]||0); }
   if(!entry) return '--';
+  presenzeAlias(entry);   /* la pausa puo' essere stata timbrata con l'altro nome */
   var o = presenzeOrarioDi(entry.dipendente);
   var M1=toMin(o.m1), M2=toMin(o.m2), P1=toMin(o.p1), P2=toMin(o.p2);
   var TOLL = (o.toll!=null?o.toll:0);
@@ -9816,58 +9808,7 @@ function calcolaOre(e,u){
   return Math.floor(diff/60)+'h '+String(diff%60).padStart(2,'0')+'m';
 }
 
-function presenzeAggiornaPulsante(tipo, orario) {
-  var btn=document.getElementById('btn-timbra-'+tipo);
-  if(!btn)return;
-  var lbl=btn.querySelector('.timbra-label');
-  var sub=btn.querySelector('.timbra-ora');
-  if(lbl)lbl.textContent=timbraLabel(tipo);
-  if(sub)sub.textContent=orario?orario:'Tocca per timbrare';
-}
 
-function presenzeRenderTimbra() {
-  // Usa la nuova UI dark se disponibile
-  if (typeof tcInit === 'function' && document.getElementById('tc-ring')) {
-    tcInit(); return;
-  }
-  var el=document.getElementById('presenze-timbra-box');
-  if(!el)return;
-  var oggi=new Date().toISOString().split('T')[0];
-  var reg=presenzeLoadReg();
-  var entry=reg.find(function(r){return r.dipendente===_currentUserEmail&&r.data===oggi;})||{};
-  var role=getCurrentRole();
-
-  // 4 timbrature per admin/manager, 2 per dipendente
-  var tipi = isManager()
-    ? ['entrata','uscita_pranzo','rientro_pranzo','uscita']
-    : ['entrata','uscita'];
-
-  var html='';
-  tipi.forEach(function(tipo){
-    var fieldMap={entrata:'entrata',uscita_pranzo:'uscita_pranzo',rientro_pranzo:'rientro_pranzo',uscita:'uscita'};
-    var val=entry[fieldMap[tipo]]||'';
-    var done=!!val;
-    var isEntrata=tipo==='entrata'||tipo==='rientro_pranzo';
-    var color=done?'#aaa':(isEntrata?'#27ae60':'#e74c3c');
-    var bg=done?'#f5f5f5':'white';
-
-    html+='<button id="btn-timbra-'+tipo+'" '+(done?'disabled ':'')+' onclick="timbra(\''+tipo+'\')" '
-      +'style="width:100%;padding:20px;background:'+bg+';border:3px solid '+color+';color:'+color+';'
-      +'font-family:var(--font);cursor:'+(done?'default':'pointer')+';text-align:center;'
-      +'display:flex;flex-direction:column;align-items:center;gap:6px;">'
-      +'<span class="timbra-label" style="font-size:18px;font-weight:700;">'+timbraLabel(tipo)+'</span>'
-      +'<span class="timbra-ora" style="font-size:13px;font-weight:400;">'+(done?val:'Tocca per timbrare')+'</span>'
-      +'</button>';
-  });
-  el.innerHTML=html;
-
-  // Label oggi
-  var lblDip=document.getElementById('presenze-oggi-label-dip');
-  if(lblDip){
-    var d=new Date();
-    lblDip.textContent=d.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  }
-}
 
 // ══════════════════════════════════════════════════════════════
 // PRESENZE — STORAGE
@@ -9974,6 +9915,7 @@ function presenzeRenderTabella() {
   h+='</tr></thead><tbody>';
   reg.sort(function(a,b){return a.data.localeCompare(b.data)||a.dipendente.localeCompare(b.dipendente);});
   reg.forEach(function(r){
+    presenzeAlias(r);
     var nome=getDipendenteNome(r.dipendente);
     h+='<tr>'+TD(r.data.split('-').reverse().join('/'))+TD('<strong>'+nome+'</strong>')+TD(r.entrata||'--')+TD(r.uscita_pranzo||'--')+TD(r.rientro_pranzo||'--')+TD(r.uscita||'--')+'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;font-weight:700;color:var(--blue);">'+(((typeof calcolaOreGiorno==='function')?calcolaOreGiorno(r):null)||r.ore||'--')+'</td></tr>';
   });
@@ -10145,8 +10087,8 @@ function apriTimbraturaForzata(email) {
         reg2.push(entry2);
       }
       if(tipo==='entrata')        entry2.entrata       =orario;
-      if(tipo==='uscita_pranzo')  entry2.uscita_pranzo =orario;
-      if(tipo==='rientro_pranzo') entry2.rientro_pranzo=orario;
+      if(tipo==='uscita_pranzo')  { entry2.uscita_pranzo =orario; entry2.pausa  =orario; }
+      if(tipo==='rientro_pranzo') { entry2.rientro_pranzo=orario; entry2.rientro=orario; }
       if(tipo==='uscita')         {entry2.uscita=orario;entry2.ore=calcolaOreGiorno(entry2);}
       window._presenzeUltima=entry2;
       presenzeSaveReg(reg2);
@@ -10170,6 +10112,7 @@ function presenzeEsportaPDF(){
     +'<table><thead><tr><th>Data</th><th>Dipendente</th><th>Entrata</th><th>Usc.Pranzo</th><th>Rient.Pranzo</th><th>Uscita</th><th>Ore</th></tr></thead><tbody>';
   reg.sort(function(a,b){return a.data.localeCompare(b.data);});
   reg.forEach(function(r){
+    presenzeAlias(r);
     html+='<tr><td>'+r.data.split('-').reverse().join('/')+'</td><td>'+getDipendenteNome(r.dipendente)+'</td><td>'+(r.entrata||'--')+'</td><td>'+(r.uscita_pranzo||'--')+'</td><td>'+(r.rientro_pranzo||'--')+'</td><td>'+(r.uscita||'--')+'</td><td>'+(((typeof calcolaOreGiorno==='function')?calcolaOreGiorno(r):null)||r.ore||'--')+'</td></tr>';
   });
   html+='</tbody></table><p style="font-size:11px;color:#888;margin-top:20px;">Generato il '+new Date().toLocaleDateString('it-IT')+' — Europa Auto</p></body></html>';
@@ -10184,6 +10127,7 @@ function presenzeEsportaExcel(){
   var csv='Data,Dipendente,Entrata,Uscita Pranzo,Rientro Pranzo,Uscita,Ore Totali\n';
   reg.sort(function(a,b){return a.data.localeCompare(b.data);});
   reg.forEach(function(r){
+    presenzeAlias(r);
     csv+=r.data.split('-').reverse().join('/')+','+getDipendenteNome(r.dipendente)+','+(r.entrata||'--')+','+(r.uscita_pranzo||'--')+','+(r.rientro_pranzo||'--')+','+(r.uscita||'--')+','+(((typeof calcolaOreGiorno==='function')?calcolaOreGiorno(r):null)||r.ore||'--')+'\n';
   });
   var blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
@@ -13295,7 +13239,7 @@ function mzRender(){
       _hMag='<div style="margin:16px 0 8px;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Veicoli gi\u00e0 a magazzino come permuta</div>'
         +_inMag.map(function(a){
           return '<div onclick="mzForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;">'
-            +'<div style="font-weight:800;font-size:14px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+(a.targa?(' <span style="font-weight:600;color:#64748b;">'+mzEsc(a.targa)+'</span>'):'')+'</div>'
+            +'<div style="font-weight:800;font-size:14px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+(a.targa?(' <span style="font-weight:600;color:#64748b;">'+mzEsc(a.targa)+'</span>'):'')+(typeof mzChiaveTag==='function'?mzChiaveTag(a):'')+'</div>'
             +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+(a.km?(mzEsc(a.km)+' km \u00b7 '):'')+mzEsc(a.colore||'')+'</div></div>';
         }).join('');
     }
@@ -13753,12 +13697,21 @@ function mzVenditaDettaglio(autoId){
   m.innerHTML=h; m.style.display='flex';
 }
 function mzVenditaChiudi(){ var m=document.getElementById('mzVenditaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+/* Etichetta per l'elenco: le chiavi in arrivo vanno viste senza aprire la
+   scheda, perche' sono quelle da sollecitare al venditore. */
+function mzChiaveTag(a){
+  var v=a&&a.doppiaChiave;
+  if(v==='attesa') return '<span style="display:inline-block;font-size:10px;font-weight:800;background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:20px;padding:2px 8px;margin-left:6px;white-space:nowrap;">\uD83D\uDD11 chiave in arrivo</span>';
+  if(v==='no') return '<span style="display:inline-block;font-size:10px;font-weight:800;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:20px;padding:2px 8px;margin-left:6px;white-space:nowrap;">\uD83D\uDD11 chiave unica</span>';
+  return '';
+}
 function mzDoppiaChiave(v){
   window._mzDoppiaChiave=(window._mzDoppiaChiave===v)?'':v;   /* ritocco = annulla */
-  ['si','no'].forEach(function(k){
+  var COL={ si:['#166534','#f0fdf4'], attesa:['#92400e','#fffbeb'], no:['#991b1b','#fef2f2'] };
+  ['si','attesa','no'].forEach(function(k){
     var el=document.getElementById('mzdk_'+k); if(!el) return;
     var on=(window._mzDoppiaChiave===k);
-    var col=(k==='si')?'#166534':'#991b1b', bg=(k==='si')?'#f0fdf4':'#fef2f2';
+    var col=COL[k][0], bg=COL[k][1];
     el.style.borderColor=on?col:'#e2e8f0';
     el.style.background=on?bg:'#fff';
     el.style.color=on?col:'#94a3b8';
@@ -13959,11 +13912,12 @@ function mzForm(id){
     };
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:10px;">'
       +'<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-bottom:6px;">\uD83D\uDD11 Doppia chiave</div>'
-      +'<div style="display:flex;gap:8px;">'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
       +_b('si','\u2713 Presente','#166534','#f0fdf4')
+      +_b('attesa','\u23f3 In arrivo','#92400e','#fffbeb')
       +_b('no','\u2717 Non disponibile','#991b1b','#fef2f2')
       +'</div>'
-      +'<div style="font-size:11px;color:#94a3b8;margin-top:5px;">Rilevata in perizia. Se non c\u2019\u00e8, alla consegna non va promessa al cliente.</div>'
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:5px;">Rilevata in perizia. <b>In arrivo</b> = il venditore deve ancora consegnarla: va sollecitata prima della vendita.</div>'
       +'</div>';
   })();
   h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('auto', _mzId, 'mzdoc', null, null, null, true)+'</div>';
@@ -18333,14 +18287,31 @@ function presenzeFondi(a, b){
     else out[k] = a[k] || b[k] || out[k] || '';
   });
   out.updatedAt = Math.max(presenzeTs(a), presenzeTs(b)) || Date.now();
-  return out;
+  return presenzeAlias(out);
 }
 
+/* ===== DUE NOMI PER LA STESSA PAUSA =====
+   Il modulo di timbratura scrive pausa/rientro, la vista amministrativa e
+   l'export leggono uscita_pranzo/rientro_pranzo. Nessuno dei due scriveva
+   i campi dell'altro, quindi nel riepilogo le pause uscivano sempre '--'
+   anche quando erano state timbrate. Qui i due nomi vengono tenuti
+   allineati, in entrambe le direzioni, senza toccare i dati esistenti. */
+function presenzeAlias(r){
+  if(!r) return r;
+  var coppie=[['pausa','uscita_pranzo'],['rientro','rientro_pranzo']];
+  coppie.forEach(function(c){
+    var a=r[c[0]], b=r[c[1]];
+    if(a && !b) r[c[1]]=a;
+    else if(b && !a) r[c[0]]=b;
+  });
+  return r;
+}
 /* Normalizza: id deterministico, updatedAt presente, doppioni fusi */
 function presenzeNormalizza(list){
   var byId = {}, cambiato = false;
   (list||[]).forEach(function(r){
     if(!r || !r.dipendente || !r.data) return;
+    presenzeAlias(r);
     var id = presenzeId(r.dipendente, r.data);
     if(r.id !== id){ r.id = id; cambiato = true; }
     if(!r.updatedAt){ r.updatedAt = presenzeTs(r) || Date.now(); cambiato = true; }
@@ -21371,7 +21342,27 @@ function statControlloProvvHTML(V){
         if(Math.abs(a-b)>(tol||0.01)) diff.push([et, a, b]); };
       cmp('TAN', r.tan, d.tan, 0.01);
       cmp('Commissioni', r.comm, d.istruttoria, 1);
-      cmp('Polizze', (stNum(r.cpi)||0)+(stNum(r.gap)||0), d.polizze, 1);
+      /* La riga polizze confrontava cpi+gap con l'importo deliberato, ma nel
+         calcolatore quei due valgono 'SI'/'NO', non euro: il confronto dava
+         sempre null e non ha mai segnalato nulla. Si confronta invece il tipo
+         di polizza, che e' il dato che i due documenti hanno davvero in comune. */
+      var _mapFi={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', nessuna:'NO'};
+      var _dTipo=String(d.polizzaTipo||'').toLowerCase();
+      if(_dTipo && _mapFi[_dTipo]){
+        var _rFi=String(r.fi||'').toUpperCase();
+        if(_rFi && _rFi!==_mapFi[_dTipo]) diff.push(['Polizza', (_rFi==='NO'?'nessuna':_rFi), d.polizzaTipo]);
+        else if(!_rFi && _mapFi[_dTipo]!=='NO') diff.push(['Polizza', 'non indicata', d.polizzaTipo]);
+      }
+      /* GAP: si vende solo con Compass. Segnalarlo qui evita provvigioni
+         gonfiate su pratiche di altre finanziarie. */
+      if(String(r.gap||'').toUpperCase()==='SI' && r.finanziaria && !/compass/i.test(String(r.finanziaria)))
+        diff.push(['GAP', 'conteggiato', 'non disponibile con '+r.finanziaria]);
+      /* CPI: vale solo con istruttoria >= 450 e TAN >= 8,5 */
+      if(String(r.cpi||'').toUpperCase()==='SI'){
+        var _ist=stNum(d.istruttoria), _tan=stNum(d.tan);
+        if((_ist!=null && _ist<450) || (_tan!=null && _tan<8.5))
+          diff.push(['CPI', 'conteggiata', 'non spetta: istruttoria '+(_ist!=null?_ist:'?')+' \u20ac, TAN '+(_tan!=null?_tan:'?')+'%']);
+      }
       cmp('Importo finanziato', (stNum(r.valore)||0)-(stNum(r.acconto)||0), d.importoFinanziato, 50);
       if(diff.length) stato='ko';
     }
