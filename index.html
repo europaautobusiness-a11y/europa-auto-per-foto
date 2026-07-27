@@ -948,6 +948,7 @@ html, body{
   </div>
   <div id="mz-pan-reg" style="display:none;">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+      <button onclick="regDiagnosi()" style="padding:10px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;margin-right:8px;">&#128270; Controlla dati</button>
       <button onclick="regStampa()" style="padding:10px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa registro</button>
       <input id="reg-cerca" oninput="regRender()" placeholder="🔎 Cerca targa, telaio, nome…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">
     </div>
@@ -13901,6 +13902,42 @@ function mzForm(id){
     perizHtml+='</div>';
   }
   h+=perizHtml;
+  /* Date del registro: si vedono e si correggono da qui, senza passare
+     dalla sezione Registro. */
+  (function(){
+    var _sc=(a&&a.scarico)||{};
+    var _lab='display:block;font-size:10px;font-weight:700;color:#64748b;margin:9px 0 3px;text-transform:uppercase;';
+    var _inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+    var _giorni='';
+    if(a && a.dataCarico && _sc.dataScarico){
+      var d1=Date.parse(a.dataCarico), d2=Date.parse(_sc.dataScarico);
+      if(!isNaN(d1)&&!isNaN(d2)&&d2>=d1){
+        var g=Math.round((d2-d1)/86400000);
+        _giorni='<div style="font-size:12px;color:'+(g<90?'#166534':(g<180?'#b45309':'#991b1b'))+';font-weight:700;margin-top:6px;">Giacenza: '+g+' giorni</div>';
+      }
+    } else if(a && a.dataCarico && a.stato!=='venduta'){
+      var d0=Date.parse(a.dataCarico);
+      if(!isNaN(d0)){
+        var gg=Math.round((Date.now()-d0)/86400000);
+        _giorni='<div style="font-size:12px;color:'+(gg<90?'#166534':(gg<180?'#b45309':'#991b1b'))+';font-weight:700;margin-top:6px;">In stock da '+gg+' giorni</div>';
+      }
+    }
+    /* Sola lettura: il registro e' un documento storico, le date nascono
+       dal carico e dalla consegna e non si correggono da qui. */
+    var _dmy=function(s){ if(!s) return '\u2014'; var q=String(s).split('-'); return (q.length===3)?(q[2]+'/'+q[1]+'/'+q[0]):s; };
+    var _cell=function(l,v){ return '<div style="flex:1 1 140px;"><label style="'+_lab+'">'+l+'</label>'
+      +'<div style="padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:14px;font-weight:700;color:'+(v?'#0f172a':'#94a3b8')+';">'+_dmy(v)+'</div></div>'; };
+    h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:10px;">'
+      +'<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-bottom:2px;">\uD83D\uDCD2 Registro carico e scarico</div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap;">'
+      +_cell('Data di carico', (a&&a.dataCarico)||'')
+      +_cell('Data di scarico', _sc.dataScarico||'')
+      +'</div>'
+      +(_sc.destinatario?('<div style="font-size:11.5px;color:#94a3b8;margin-top:5px;">Scaricata a <b style="color:#64748b;">'+cvEsc(_sc.destinatario)+'</b>'+(_sc.congelato?' \u00b7 dati congelati alla consegna':'')+'</div>'):'')
+      +_giorni
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:6px;">Date del registro: si scrivono al carico e alla consegna, non si modificano da qui.</div>'
+      +'</div>';
+  })();
   h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('auto', _mzId, 'mzdoc', null, null, null, true)+'</div>';
   /* Il dettaglio della vendita compare solo se l'auto e' effettivamente venduta */
   if(a && a.stato==='venduta' && typeof mzContrattoDi==='function' && mzContrattoDi(a.id)){
@@ -13940,6 +13977,9 @@ function mzSalva(){
   if(!_fid && !_daPermuta){ alert('Seleziona la provenienza / fornitore. Se non esiste, aggiungilo con "+ nuovo".'); return; }
   var _isNewAuto=!mzById(_mzId);
   var a=mzById(_mzId)||{ id:_mzId, createdAt:Date.now() };
+  /* La data di carico e' il giorno in cui il veicolo entra in magazzino:
+     si scrive una volta, alla creazione, e non si tocca mai piu'. */
+  if(!a.dataCarico) a.dataCarico=new Date(a.createdAt||Date.now()).toISOString().slice(0,10);
   var _canPrAcq=mzPuoPrezzoAcq();
   ['marca','modello','allestimento','targa','anno','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note','dotazioni','etichetta'].forEach(function(k){ if(k==='prezzoAcq' && !_canPrAcq) return; a[k]=g(k); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
   a.estera=_mzEstera;
@@ -14698,6 +14738,9 @@ function cvForm(id, fromVend){
     h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa proposta d’acquisto</button>';
     h+='<button onclick="cvLogMostra(\''+_cv.id+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🕓 Storico modifiche</button>';
+    h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'
+      +docPannelloHTML('pratica', _cv.id, 'cvdoc_'+_cv.id, null, 'Fattura, F24, libretto, documenti del cliente.', 'Documenti della pratica', true)
+      +'</div>';
   } else if(!_cv.isContratto){
     h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
     if(c){
@@ -14715,7 +14758,9 @@ function cvForm(id, fromVend){
   var m=document.getElementById('cv-modal'); if(m && m.parentNode!==document.body){ document.body.appendChild(m); } m.innerHTML=h; m.style.display='block';
   try{ if(typeof eaBackShow==='function') eaBackShow(); }catch(e){}
   cvGar(_cv.garanziaMesi||'12'); cvRenderExtra(); cvRenderPag(); cvLive();
-  if(fromVend && _cv.isContratto){ try{ docListaRender('pratica', _cv.id, 'cvdoc'); }catch(e){} }
+  /* il prefisso deve combaciare con quello del pannello, altrimenti la
+     lista dei documenti gia' caricati non compare mai */
+  try{ docListaRender('pratica', _cv.id, 'cvdoc_'+_cv.id); }catch(e){}
 }
 function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')?parLoad():{}; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; _cv.garanziaImporto=(mesi==='24')?n(p.garanzia24):0; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} var gc=document.getElementById('cv-gar-costo'); if(gc){ gc.innerHTML=(mesi==='24')?('Costo garanzia 24 mesi (da Parametri): <b>'+cvEuro(_cv.garanziaImporto)+'</b>'):'Garanzia 12 mesi inclusa (legale)'; } if(typeof cvLive==='function') cvLive(); }
@@ -16314,7 +16359,7 @@ function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/<
 var DOC_CAT={
   auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
-  pratica:[['contratto_firmato','Contratto firmato'],['libretto_nuovo','Libretto nuovo intestato'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['altro','Altro']],
+  pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
   sinistro:[['denuncia','Denuncia sinistro'],['libretto','Libretto veicolo'],['cid','CID / constatazione amichevole'],['foto_danni','Foto danni'],['perizia','Perizia'],['preventivo','Preventivo riparazione'],['cessione','Atto di cessione'],['fattura','Fattura'],['altro','Altro']]
 };
@@ -16752,7 +16797,8 @@ function regFreezeScarico(a, cv, causale){
   var ts=(cv&&(cv.consegnatoTs||cv.contrattoTs))||Date.now();
   a.scarico={
     causale:        sc.causale        || causale || 'Vendita',
-    dataScarico:    sc.dataScarico    || new Date(ts).toISOString().slice(0,10),
+    /* data di scarico = giorno della consegna, non della firma */
+    dataScarico:    sc.dataScarico    || new Date((cv&&cv.consegnatoTs)||ts).toISOString().slice(0,10),
     destinatario:   sc.destinatario   || d.nome || '',
     destinatarioCf: sc.destinatarioCf || d.cf   || '',
     destinatarioInd:sc.destinatarioInd|| d.ind  || '',
@@ -16793,7 +16839,7 @@ function regSelfHealScarico(){
           var cv=perAuto[a.id];
           if(cv){
             regFreezeScarico(a, cv, 'Vendita');
-            if(!a.dataCarico && cv.contrattoTs) a.dataCarico=new Date(cv.contrattoTs).toISOString().slice(0,10);
+            if(!a.dataCarico) a.dataCarico=new Date(a.createdAt||cv.contrattoTs||Date.now()).toISOString().slice(0,10);
           }
         }
       }
@@ -16809,7 +16855,54 @@ function regSelfHealScarico(){
     if(changed.length){ mzSave(ml); if(typeof mzSupaUpsert==='function') changed.forEach(function(a){ mzSupaUpsert(a); }); }
   }catch(e){}
 }
-function regInit(){ regSelfHealScarico(); regRender(); }
+/* Il registro non vive solo di magazzino: il fornitore sta in "fornitori",
+   l'acquirente nei preventivi e in anagrafica clienti. regInit caricava solo
+   se stesso, quindi su un dispositivo dove quelle liste non erano ancora
+   arrivate da Supabase le colonne uscivano vuote a intermittenza, pur essendo
+   i dati presenti. Qui si aspettano le dipendenze e si ridisegna quando
+   arrivano. */
+var _regAtteso=false;
+function regInit(){
+  regSelfHealScarico(); regRender();
+  if(_regAtteso) return;
+  _regAtteso=true;
+  var ridisegna=function(){ try{ regSelfHealScarico(); regRender(); }catch(e){} };
+  try{ if(typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
+  try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
+  try{ if(typeof clSupaLoad==='function') clSupaLoad(); }catch(e){}
+  [1200, 3000, 6000].forEach(function(ms){ setTimeout(ridisegna, ms); });
+}
+/* Diagnostica: dice riga per riga cosa manca e da quale archivio dovrebbe
+   arrivare, invece di lasciare celle vuote senza spiegazione. */
+function regDiagnosi(){
+  var autos=regAutos().filter(function(a){ return a && (a.dataCarico || a.stato==='venduta'); });
+  var pr=[];
+  autos.forEach(function(a){
+    var f=regForn(a), sc=a.scarico||{}, dep=regDepositanteDa(a);
+    var manca=[];
+    if(!(regFornNome(a)||dep.nome)) manca.push('venditore');
+    if(!((f&&(f.piva||f.cfpiva))||dep.cf)) manca.push('CF/P.IVA venditore');
+    if(!((f&&f.indirizzo)||dep.ind)) manca.push('indirizzo venditore');
+    if(!a.dataCarico) manca.push('data di carico');
+    if(a.stato==='venduta'){
+      var dst=regDestinatarioDa(a);
+      if(!sc.dataScarico) manca.push('data di scarico');
+      if(!(sc.destinatario||dst.nome)) manca.push('acquirente');
+      if(!(sc.destinatarioCf||dst.cf)) manca.push('CF/P.IVA acquirente');
+      if(!(sc.destinatarioInd||dst.ind)) manca.push('indirizzo acquirente');
+    }
+    if(manca.length) pr.push({a:a, manca:manca});
+  });
+  var n=pr.length;
+  if(!n){ alert('Registro completo: nessun dato mancante su '+autos.length+' veicoli.'); return; }
+  var txt='Su '+autos.length+' veicoli, '+n+' hanno dati incompleti:\n\n';
+  pr.slice(0,25).forEach(function(x){
+    txt+='\u2022 '+((x.a.marca||'')+' '+(x.a.modello||'')).trim()+' '+(x.a.targa||x.a.numero_interno||'')+'\n   manca: '+x.manca.join(', ')+'\n';
+  });
+  if(n>25) txt+='\n...e altri '+(n-25)+'.';
+  txt+='\n\nSe i dati esistono ma non compaiono, apri Fornitori e Clienti una volta: il registro li rilegge da l\u00ec.';
+  alert(txt);
+}
 function regAutos(){ return (typeof mzLoad==='function'?mzLoad():[]).slice(); }
 /* Il destinatario dello scarico e' l'acquirente: nome, codice fiscale e
    indirizzo si ricavano dalla vendita collegata e dall'anagrafica clienti. */
@@ -16911,10 +17004,13 @@ function regForm(id){
   h+='<div style="padding:16px 18px;max-height:74vh;overflow:auto;">';
   h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;font-size:13px;color:#334155;"><div style="font-weight:800;">'+regEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</div><div style="color:#64748b;margin-top:2px;">'+idv+(a.potenza?(' · '+regEsc(a.potenza)+' kW'):'')+'</div><div style="color:#64748b;margin-top:2px;">Fornitore: '+regEsc(a.fornitoreNome||'—')+(f?(' · '+regEsc(f.piva||f.cfpiva||'')):'')+'</div><div style="font-size:11px;color:#94a3b8;margin-top:4px;">I dati del veicolo si modificano dal Magazzino → Auto.</div></div>';
   h+='<div style="font-weight:800;font-size:13px;color:#16a34a;text-transform:uppercase;margin:16px 0 4px;">⬇️ Carico</div>';
-  h+=lab('Data carico')+inp('reg_dataCarico',a.dataCarico||'','','date');
+  /* Sola lettura: la data di carico nasce con il veicolo. */
+  h+=lab('Data carico')+'<div style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:14px;font-weight:700;color:'+(a.dataCarico?'#0f172a':'#94a3b8')+';">'+(a.dataCarico?regDMY(a.dataCarico):'\u2014')+'</div>';
   h+='<div style="font-weight:800;font-size:13px;color:#7c3aed;text-transform:uppercase;margin:18px 0 4px;">⬆️ Scarico (se venduto/ceduto)</div>';
   h+=lab('Causale')+'<select id="reg_causale" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;"><option value="">— nessuna (ancora a carico) —</option>'+REG_CAUSALI.map(function(x){return '<option'+(sc.causale===x?' selected':'')+'>'+x+'</option>';}).join('')+'</select>';
-  h+=lab('Data scarico')+inp('reg_dataScarico',sc.dataScarico||'','','date');
+  /* Sola lettura: la data di scarico e' quella della consegna. */
+  h+=lab('Data scarico')+'<div style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:14px;font-weight:700;color:'+(sc.dataScarico?'#0f172a':'#94a3b8')+';">'+(sc.dataScarico?regDMY(sc.dataScarico):'\u2014')+'</div>'
+   +'<div style="font-size:11px;color:#94a3b8;margin:4px 0 2px;">Le date del registro si scrivono al carico e alla consegna: non sono modificabili.</div>';
   var _dst=regDestinatarioDa(a);
   h+=lab('Destinatario')+inp('reg_destinatario',sc.destinatario||_dst.nome||'','nome cliente');
   h+=lab('CF / P.IVA destinatario')+inp('reg_destinatarioCf',sc.destinatarioCf||_dst.cf||'','');
@@ -16927,10 +17023,11 @@ function regChiudi(){ var m=document.getElementById('reg-modal'); if(m){ m.style
 function regSalva(){
   var g=function(k){ var el=document.getElementById('reg_'+k); return el?el.value.trim():''; };
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===_regId;}); if(idx<0){ regChiudi(); return; }
-  list[idx].dataCarico=g('dataCarico');
+  /* Le date non si toccano: restano quelle scritte al carico e alla consegna.
+     Qui si possono correggere solo i dati della controparte. */
   var cs=document.getElementById('reg_causale');
   var _scPre=list[idx].scarico||{};
-  list[idx].scarico={ causale:cs?cs.value:'', dataScarico:g('dataScarico'), destinatario:g('destinatario'), destinatarioCf:g('destinatarioCf'), destinatarioInd:g('destinatarioInd'), congelato:true, congelatoTs:_scPre.congelatoTs||Date.now() };
+  list[idx].scarico={ causale:cs?cs.value:'', dataScarico:_scPre.dataScarico||'', destinatario:g('destinatario'), destinatarioCf:g('destinatarioCf'), destinatarioInd:g('destinatarioInd'), congelato:true, congelatoTs:_scPre.congelatoTs||Date.now() };
   list[idx].updatedAt=Date.now();
   mzSave(list); mzSupaUpsert(list[idx]); regChiudi(); regRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Registro aggiornato',true);
@@ -19795,7 +19892,8 @@ function cvDeliberaAnnulla(id){
   if(typeof cvVendRender==='function') cvVendRender();
 }
 function cvApriAuto(autoId){
-  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  /* Non serve essere amministratori per guardare la scheda del veicolo:
+     il vincolo rendeva il nome del veicolo un testo morto per i venditori. */
   if(!autoId){ if(typeof tcToastNew==='function') tcToastNew('Nessuna auto collegata a questa pratica',false); return; }
   if(typeof mzById==='function' && !mzById(autoId)){ if(typeof tcToastNew==='function') tcToastNew('Auto non trovata in magazzino',false); return; }
   try{ if(typeof sidebarNav==='function') sidebarNav('magazzino', document.getElementById('si-magazzino')); }catch(e){}
@@ -19822,7 +19920,7 @@ function cvVeicoloLink(cv){
   if(estera && num){ idHtml=' \u00b7 <span style="color:#16a34a;">N\u00b0 '+cvEsc(num)+'</span>'; }
   else if(targa){ idHtml=' \u00b7 '+cvEsc(targa); }
   else if(num){ idHtml=' \u00b7 '+cvEsc(num); }
-  var canClick=!!(isAdmin && autoId);
+  var canClick=!!autoId;
   var attr=canClick?(' onclick="event.stopPropagation(); cvApriAuto(\''+autoId+'\')"'):'';
   var cur=canClick?'cursor:pointer;text-decoration:underline;':'';
   return '<div'+attr+' style="font-size:13px;font-weight:800;color:#1a4fa0;margin-top:3px;'+cur+'"'+(canClick?' title="Apri veicolo in magazzino"':'')+'>'+marcaMod+idHtml+'</div>';
@@ -20133,7 +20231,9 @@ function cvVendConsegnaFinale(){
     if(_mi<0){ var _tg=((list[idx].nuovaTarga||(list[idx].autoSnapshot&&list[idx].autoSnapshot.targa)||'')+'').toUpperCase().replace(/\s/g,''); if(_tg) _mi=_ml.findIndex(function(x){return ((x.targa||'')+'').toUpperCase().replace(/\s/g,'')===_tg;}); }
     if(_mi>=0){
     _ml[_mi].stato='venduta'; _ml[_mi].impegnata=true;
-    if(!_ml[_mi].dataCarico) _ml[_mi].dataCarico=(list[idx].contrattoTs?new Date(list[idx].contrattoTs).toISOString().slice(0,10):new Date().toISOString().slice(0,10));
+    /* ripiego solo per i veicoli entrati prima di questa regola: la data di
+       carico e' quella di creazione della scheda, mai quella della vendita */
+    if(!_ml[_mi].dataCarico) _ml[_mi].dataCarico=new Date(_ml[_mi].createdAt||Date.now()).toISOString().slice(0,10);
     /* Il registro si scrive qui, alla consegna, e da qui in poi non cambia. */
     if(typeof regFreezeScarico==='function') regFreezeScarico(_ml[_mi], list[idx], 'Vendita');
     _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
@@ -20691,6 +20791,11 @@ function cvRiepilogo(id){
   }
   if(cv.venditore) h2+=riga('Venditore', cvEsc(cv.venditore));
   if(cv.consegnatoTs) h2+=riga('Consegnato il', cvVendData(cv.consegnatoTs));
+  /* Documenti della pratica: fattura, F24, libretto, documenti del cliente.
+     Servono anche dopo la consegna, quando il modulo non e' piu' modificabile. */
+  h2+='<div id="cvriep-doc" style="margin-top:16px;border-top:1px solid #e2e8f0;padding-top:4px;">'
+    +docPannelloHTML('pratica', cv.id, 'cvrd_'+cv.id, null, 'Fattura, F24, libretto, documenti del cliente.', 'Documenti della pratica', true)
+    +'</div>';
   h2+='<div style="display:flex;gap:8px;margin-top:18px;">'
     +'<button onclick="cvRiepChiudi();cvForm(\''+cv.id+'\')" style="flex:1;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Modifica</button>'
     +'<button onclick="cvRiepChiudi()" style="flex:0 0 auto;padding:11px 16px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Chiudi</button></div>';
@@ -20700,6 +20805,7 @@ function cvRiepilogo(id){
     m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
     document.body.appendChild(m); }
   m.innerHTML=h2; m.style.display='flex';
+  try{ docListaRender('pratica', cv.id, 'cvrd_'+cv.id); }catch(e){}
 }
 function cvRiepChiudi(){ var m=document.getElementById('cvRiepModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvVendDettagli(id){
