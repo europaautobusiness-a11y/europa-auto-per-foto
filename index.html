@@ -8268,7 +8268,7 @@ var SEZIONI_DEFS = [
 var SEZIONI_DEFAULT_RUOLO = {
   'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
   'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','vendite','preventivi'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
 };
@@ -8335,7 +8335,7 @@ function applyRoleUI() {
   var ROLE_VIEWS = {
     'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
     'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','vendite','preventivi'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
     'manager':    ['editor','ready','archive','provv','presenze','compiti'],
     'dipendente': ['presenze','compiti']
   };
@@ -13164,7 +13164,14 @@ function fnLoadDaSheets(){
   s.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); };
   document.body.appendChild(s);
 }
-function mzInit(){ mzRenderFiltri(); mzRender(); mzSupaLoad(); }
+function mzInit(){
+  mzRenderFiltri(); mzRender(); mzSupaLoad();
+  /* Il menu dei fornitori nella scheda veicolo legge la lista locale: su un
+     dispositivo dove la sezione Fornitori non e' mai stata aperta quella lista
+     e' vuota o parziale, e mancavano fornitori pur essendoci in archivio.
+     Qui si caricano insieme al magazzino, che e' dove servono. */
+  try{ if(typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
+}
 
 function mzRenderFiltri(){
   var c=document.getElementById('mz-filtri'); if(!c) return;
@@ -13818,6 +13825,8 @@ function mzForm(id){
   var a = id ? mzById(id) : null;
   _mzId = (a&&a.id) || ('mz_'+Date.now());
   window._mzDoppiaChiave=(a&&a.doppiaChiave)||'';
+  /* se la lista fornitori e' vuota si prova a riprenderla dall'archivio */
+  try{ if(typeof fnLoad==='function' && !(fnLoad()||[]).length && typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
   var v=function(k){ return a&&a[k]!=null?mzEsc(a[k]):''; };
   var MZ_UP={marca:1,modello:1,allestimento:1,colore:1};
   var f=function(lab,key,ph,type){ var up=MZ_UP[key]?' oninput="this.value=this.value.toUpperCase()"':''; return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">'+lab+'</label><input type="'+(type||'text')+'" id="mz_'+key+'"'+up+' value="'+v(key)+'" placeholder="'+(ph||'')+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
@@ -16562,7 +16571,13 @@ function docCarica(tipo, id, pfx){
     }
     var file=files[i++];
     var safe=(file.name||'file').replace(/[^\w.\-]/g,'_');
-    var path=tipo+'/'+id+'/'+Date.now()+'_'+safe;
+    /* La chiave di un cliente e' fatta cosi': nc:longo|luca#email. I due
+       punti e la barra verticale sono legittimi nel gestionale ma vietati nei
+       percorsi dell'archivio, che li rifiutava con "Invalid key". Nel percorso
+       si usa quindi una versione ripulita; l'associazione al cliente resta
+       affidata a entita_id, che conserva la chiave originale. */
+    var idSafe=String(id==null?'':id).replace(/[^\w.\-]/g,'_').replace(/_+/g,'_').slice(0,120) || 'senza-id';
+    var path=tipo+'/'+idSafe+'/'+Date.now()+'_'+safe;
     sb.storage.from('documenti').upload(path, file, {upsert:false}).then(function(up){
       if(up.error){ if(st)st.textContent='⚠️ '+(up.error.message||'errore upload'); return; }
       sb.from('documenti').insert({entita_tipo:tipo, entita_id:id, categoria:cat, nome_file:file.name, storage_path:path, mime:file.type, dimensione:file.size}).then(function(ins){
