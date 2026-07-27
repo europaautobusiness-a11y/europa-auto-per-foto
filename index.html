@@ -13457,8 +13457,7 @@ function gsearchRun(){
           +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(sub)+'</div></div>'
           +gsVenditaBtn(o.key)
           +'<span style="flex:0 0 auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;background:#e0e7ff;color:#4338ca;white-space:nowrap;">CLIENTE</span>'
-          +'</div>'
-          +gsRigheVendite(o.key);
+          +'</div>';
       }).join('');
     }
   }
@@ -14510,7 +14509,19 @@ function clRenderDettaglio(){
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">'+((typeof docPannelloHTML==='function')?docPannelloHTML('cliente', c.key, 'cldoc'):'')+'</div>';
   var docCard=function(titolo, arr, fn){ var s='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;"><div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+titolo+' ('+arr.length+')</div>'; s+= arr.length?arr.map(fn).join(''):'<div style="font-size:13px;color:#94a3b8;">Nessuno.</div>'; return s+'</div>'; };
   h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
-  h+=docCard('Contratti', c.contratti, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; var st=(cv.statoVendita||'in_attesa_pagamento').replace(/_/g,' '); return '<div onclick="clVaiCv(\''+cv.id+'\',true)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(st)+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
+  /* Il contratto mostrava solo il modello: targa e numero interno servono per
+   riconoscere il veicolo, come gia' avviene sui preventivi. */
+  var clVeicoloEtich=function(cv){
+    var a=(cv&&cv.autoSnapshot)||{};
+    var id=[];
+    var tg=cv.nuovaTarga||a.targa;
+    if(tg) id.push(String(tg).toUpperCase());
+    var ni=a.numeroInterno||a.numero_interno;
+    if(ni) id.push('N\u00b0 '+ni);
+    var desc=((a.marca||'')+' '+(a.modello||'')).trim()||String(cv.autoDesc||'')||'\u2014';
+    return (id.length?(id.join(' \u00b7 ')+' - '):'')+desc;
+  };
+  h+=docCard('Contratti', c.contratti, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; var st=(cv.statoVendita||'in_attesa_pagamento').replace(/_/g,' '); return '<div onclick="clVaiCv(\''+cv.id+'\',true)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(clVeicoloEtich(cv))+' \u00b7 '+clEsc(st)+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
   h+=docCard('Appuntamenti', clAppuntamenti(c), function(a){ var ti=(a.tipo==='vendita'?'\ud83e\udd1d':'\ud83d\udd27'); return '<div style="padding:9px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">'+ti+' '+clEsc(a.titolo||'')+' \u00b7 '+clEsc(a.data||'')+(a.ora?(' '+clEsc(a.ora)):'')+'</div>'; });
   h+='<div style="text-align:right;margin:4px 0 20px;"><a onclick="clElimina(\''+keyEnc+'\')" style="font-size:12px;color:#dc2626;cursor:pointer;text-decoration:underline;">\ud83d\uddd1 Elimina cliente</a></div>';
   h+='</div>'; wrap.innerHTML=h;
@@ -14572,8 +14583,11 @@ function clNuovo(){
   _clSel=key; clRender();
 }
 function clVaiCv(id, isContr){
-  if(isContr){ if(typeof cvVendModifica==='function') cvVendModifica(id); }
-  else { if(typeof cvForm==='function') cvForm(id); }
+  /* Dalla scheda cliente si apriva il solo riquadro "Modifica finanziamento /
+     assicurazione", che e' una scorciatoia: il contratto per intero non si
+     vedeva. Ora si apre direttamente il modulo completo, preventivo o
+     contratto che sia. */
+  if(typeof cvForm==='function') cvForm(id);
 }
 
 /* ===================== WHATSAPP (link gratuiti wa.me) ===================== */
@@ -14801,7 +14815,12 @@ function cvVistaModifica(id){ cvVistaChiudi(); if(typeof cvForm==='function') cv
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
   _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Acconto',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
-  if(fromVend && _cv.isContratto && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'){ if(typeof cvVendModificaLimitata==='function'){ cvVendModificaLimitata(_cv.id); } return; }
+  /* Da Vendite i non amministratori vedono la versione ridotta del contratto.
+     La contabilita' invece lavora sulla pratica intera: fatturazione, dati
+     anagrafici, importi e documenti. */
+  if(fromVend && _cv.isContratto && typeof getCurrentRole==='function' && getCurrentRole()!=='admin'
+     && !(typeof eaIsContabilita==='function' && eaIsContabilita())){
+    if(typeof cvVendModificaLimitata==='function'){ cvVendModificaLimitata(_cv.id); } return; }
   if(!_cv.costiExtra) _cv.costiExtra=[]; if(!_cv.pagamenti) _cv.pagamenti=[]; if(!_cv.cliente) _cv.cliente={};
   var autos=(typeof mzLoad==='function'?mzLoad():[]);
   var _cvAutoLabel='';
@@ -14922,6 +14941,7 @@ function cvForm(id, fromVend){
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('pratica', _cv.id, 'cvdoc')+'</div>';
     h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa proposta d’acquisto</button>';
+    h+='<button onclick="cvDatiFatturazione()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🧾 Dati anagrafici e fatturazione</button>';
     h+='<button onclick="cvLogMostra(\''+_cv.id+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🕓 Storico modifiche</button>';
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'
       +docPannelloHTML('pratica', _cv.id, 'cvdoc_'+_cv.id, null, 'Fattura, F24, libretto, documenti del cliente.', 'Documenti della pratica', true)
@@ -15840,8 +15860,15 @@ function cvContrCitta(){
   var cap=document.getElementById('ct_cap'); if(cap && !(''+cap.value).trim()) cap.value=hit[0];
   var prov=document.getElementById('ct_prov'); if(prov) prov.value=hit[1];
 }
+/* ===== DATI DI FATTURAZIONE =====
+   Lo stesso modulo serve due volte: quando si trasforma il preventivo in
+   proposta e, dopo, ogni volta che serve correggere un dato anagrafico.
+   Codice fiscale sbagliato, indirizzo cambiato, codice SDI arrivato dopo:
+   prima erano modificabili solo nell'istante della trasformazione. */
+function cvDatiFatturazione(){ window._cvSoloAnagrafica=true; cvContrattoModal(); }
 function cvContrattoModal(){
   var cl=_cv.cliente||{}; var biz=!!cl.business;
+  var _solo=!!window._cvSoloAnagrafica;
   var inpm=function(id,val,ph){ return '<input id="'+id+'" value="'+cvEsc(val==null?'':val)+'" placeholder="'+(ph||'')+'" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;margin-bottom:8px;">'; };
   var labm=function(t){ return '<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin:6px 0 3px;">'+t+'</div>'; };
   var m=cvModModal();
@@ -15863,7 +15890,7 @@ function cvContrattoModal(){
     +'<div style="padding:18px;max-height:78vh;overflow:auto;">'
     +'<label style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:14px;padding:10px;background:#f8fafc;border-radius:9px;"><input type="checkbox" id="ct_biz" '+(biz?'checked':'')+' onchange="cvContrToggleBiz()" style="width:20px;height:20px;">Cliente business (azienda / P.IVA)</label>'
     +priv+bizf
-    +'<div style="display:flex;gap:8px;margin-top:14px;"><button type="button" onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvTrasformaContrattoFinale()" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Crea contratto</button></div>'
+    +'<div style="display:flex;gap:8px;margin-top:14px;"><button type="button" onclick="window._cvSoloAnagrafica=false;cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvTrasformaContrattoFinale()" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">'+(_solo?'Salva dati':'Crea contratto')+'</button></div>'
     +'</div></div>';
   m.style.display='block';
 }
@@ -15894,6 +15921,20 @@ function cvTrasformaContrattoFinale(){
     if(_dup){ alert('\u26a0\ufe0f Pagamenti non validi: \u00e8 presente un doppio "'+_dup+'".\n\nOgni tipo (Caparra, Acconto, Saldo, Finanziamento) pu\u00f2 comparire una sola volta. Correggi i pagamenti prima di confermare.'); return; }
   }
   try{ var _pr=JSON.parse(JSON.stringify(_cv)); }catch(e){ var _pr=null; }
+  /* Correzione di una pratica gia' esistente: si salvano i dati anagrafici e
+     basta, senza rigenerare la proposta ne' toccare stato e date. */
+  if(window._cvSoloAnagrafica){
+    window._cvSoloAnagrafica=false;
+    _cv.updatedAt=Date.now();
+    var _l=cvLoad(); var _i=_l.findIndex(function(x){return x.id===_cv.id;});
+    if(_i>=0) _l[_i]=_cv; else _l.push(_cv);
+    cvSave(_l); supaUpsert('preventivi', _cv);
+    try{ cvLogRegistra(_pr, _cv, 'modifica'); }catch(e){}
+    try{ if(typeof cvModChiudi==='function') cvModChiudi(); else { var _m=document.getElementById('cv-mod-modal'); if(_m) _m.style.display='none'; } }catch(e){}
+    try{ if(typeof cvForm==='function') cvForm(_cv.id); }catch(e){}
+    if(typeof tcToastNew==='function') tcToastNew('\u2713 Dati di fatturazione aggiornati', true);
+    return;
+  }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
   try{ cvLogRegistra(_pr, _cv, 'proposta'); }catch(e){}
   try{ if(typeof pProvvAuto==='function') pProvvAuto(_cv); }catch(e){}
