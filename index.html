@@ -10162,15 +10162,46 @@ var SIDEBAR_TITLES = {
 };
 
 var _navHistory=[]; var _navCurrent=null; var _navBack=false;
+/* ===== LIVELLI APERTI SOPRA LA SEZIONE =====
+   Il tasto indietro deve smontare quello che e' aperto un passo per volta:
+   prima le finestre, poi le schede di dettaglio interne a una sezione (la
+   scheda di un cliente non e' una finestra, e' uno stato della vista Clienti:
+   senza questo elenco veniva saltata e si usciva dalla sezione), e solo alla
+   fine si cambia sezione. */
+function eaLivelliAperti(){
+  var out=[];
+  /* finestre a schermo */
+  [['cv-modal', function(){ if(typeof cvChiudi==='function') cvChiudi(); else document.getElementById('cv-modal').style.display='none'; }],
+   ['cv-mod-modal', function(){ document.getElementById('cv-mod-modal').style.display='none'; }],
+   ['cvVistaModal', function(){ if(typeof cvVistaChiudi==='function') cvVistaChiudi(); }],
+   ['cvRiepModal', function(){ if(typeof cvRiepChiudi==='function') cvRiepChiudi(); }],
+   ['cvLogModal', function(){ if(typeof cvLogChiudi==='function') cvLogChiudi(); }],
+   ['mzVenditaModal', function(){ if(typeof mzVenditaChiudi==='function') mzVenditaChiudi(); }]
+  ].forEach(function(x){
+    var el=document.getElementById(x[0]);
+    if(el && el.style.display && el.style.display!=='none') out.push(x[1]);
+  });
+  /* elenco dei risultati di ricerca */
+  var gs=document.getElementById('gsearch-results');
+  if(gs && gs.style.display==='block') out.push(function(){ if(typeof gsearchChiudi==='function') gsearchChiudi(); else gs.style.display='none'; });
+  /* scheda di dettaglio dentro la sezione Clienti */
+  try{
+    if(typeof _clSel!=='undefined' && _clSel){
+      var vc=document.getElementById('view-clienti');
+      if(vc && vc.classList && vc.classList.contains('active'))
+        out.push(function(){ if(typeof clChiudiDettaglio==='function') clChiudiDettaglio(); });
+    }
+  }catch(e){}
+  return out;
+}
 function eaGoBack(){
-  var m=document.getElementById('cv-modal'); if(m && m.style.display==='block'){ if(typeof cvChiudi==='function') cvChiudi(); else m.style.display='none'; return; }
-  var m2=document.getElementById('cv-mod-modal'); if(m2 && m2.style.display==='block'){ m2.style.display='none'; return; }
+  var liv=eaLivelliAperti();
+  if(liv.length){ try{ liv[liv.length-1](); }catch(e){} return; }
   if(_navHistory.length){ var prev=_navHistory.pop(); _navBack=true; sidebarNav(prev, document.getElementById('si-'+prev)); } }
 function eaBackShow(){ var b=document.getElementById('eaBackBtn'); if(b) b.style.display='flex'; }
 // ── Tasto INDIETRO del telefono/browser = un solo passo, non esce dall'app ──
 function eaHasBackTarget(){
-  var m=document.getElementById('cv-modal'); if(m && m.style.display==='block') return true;
-  var m2=document.getElementById('cv-mod-modal'); if(m2 && m2.style.display==='block') return true;
+  try{ if(eaLivelliAperti().length) return true; }catch(e){}
   return !!(typeof _navHistory!=='undefined' && _navHistory && _navHistory.length>0);
 }
 /* Chrome su Android ignora le voci di cronologia aggiunte prima che l'utente
@@ -13426,7 +13457,8 @@ function gsearchRun(){
           +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(sub)+'</div></div>'
           +gsVenditaBtn(o.key)
           +'<span style="flex:0 0 auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;background:#e0e7ff;color:#4338ca;white-space:nowrap;">CLIENTE</span>'
-          +'</div>';
+          +'</div>'
+          +gsRigheVendite(o.key);
       }).join('');
     }
   }
@@ -13516,6 +13548,66 @@ function gsearchApriVendita(id){
     } else if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi'));
   }catch(e){}
   setTimeout(function(){ try{ if(typeof cvForm==='function') cvForm(id); }catch(e){} }, 170);
+}
+/* ===== DETTAGLIO DELLA VENDITA NELLA RICERCA =====
+   Richiamando un cliente si vede subito che auto ha comprato, a quanto e
+   come sta pagando, senza aprire la pratica. */
+function gsRigaVendita(c){
+  try{
+    var a=c.autoSnapshot||{};
+    var t=(typeof cvCalcola==='function')?cvCalcola(c):{};
+    var eu=function(v){ v=parseFloat(v); return isNaN(v)?'':((typeof cvEuro==='function')?cvEuro(v):Math.round(v)+' \u20ac'); };
+    var titolo=((a.marca||'')+' '+(a.modello||'')).trim()||String(c.autoDesc||'Veicolo');
+    var idv=[]; if(c.nuovaTarga||a.targa) idv.push(c.nuovaTarga||a.targa);
+    var _n=a.numeroInterno||a.numero_interno; if(_n) idv.push('N\u00b0 '+_n);
+    var tot=(t.totaleScontato!=null?t.totaleScontato:t.totaleVendita)||0;
+    /* incassato e modalita': si leggono dai pagamenti registrati */
+    var inc=0, modi={};
+    try{
+      (typeof cvPagIncasso==='function'?cvPagIncasso(c.pagamenti):(c.pagamenti||[])).forEach(function(pg){
+        if(!pg) return;
+        var v=parseFloat(pg.importo); if(isNaN(v)) return;
+        if(pg.confermato) inc+=v;
+        var m=String(pg.metodo||pg.tipo||'').trim(); if(m) modi[m]=1;
+      });
+    }catch(e){}
+    var resid=Math.round((tot-inc)*100)/100;
+    var STL={ in_attesa_pagamento:'In attesa pagamento', in_attesa_delibera:'In attesa di delibera',
+              in_attesa_firma:'In attesa firma', in_attesa_immatricolazione:'In attesa immatricolazione',
+              da_consegnare:'Da consegnare', consegnato:'Consegnato' };
+    var stato=STL[c.statoVendita]||c.statoVendita||'';
+    var colSt=(c.statoVendita==='consegnato')?'#166534':'#9a3412';
+    var bgSt =(c.statoVendita==='consegnato')?'#f0fdf4':'#fff7ed';
+    var mList=Object.keys(modi).slice(0,3).join(', ');
+    /* evita di ripetere "finanziamento" se e' gia' fra i metodi di pagamento */
+    if(c.finDelibera && c.finDelibera.confermata && c.finDelibera.finanziaria){
+      mList=mList.replace(/finanziamento/ig,'').replace(/,\s*,/g,',').replace(/^[,\s]+|[,\s]+$/g,'');
+      mList=(mList?mList+', ':'')+String(c.finDelibera.finanziaria);
+    }
+    return '<div onclick="event.stopPropagation();gsearchChiudi();cvRiepilogo(\''+c.id+'\')" '
+      +'style="padding:8px 12px 9px 34px;border-bottom:1px solid #f1f5f9;background:#fbfdff;cursor:pointer;">'
+      +'<div style="display:flex;gap:8px;align-items:center;">'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="font-size:12.5px;font-weight:700;color:#1a4fa0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">\uD83D\uDE97 '+mzEsc(titolo)+(idv.length?(' \u00b7 '+mzEsc(idv.join(' \u00b7 '))):'')+'</div>'
+      +'<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+      + (tot?('Totale <b>'+eu(tot)+'</b>'):'')
+      + (inc?(' \u00b7 incassato '+eu(inc)):'')
+      + (resid>0.5?(' \u00b7 <span style="color:#b45309;">residuo '+eu(resid)+'</span>'):(tot?' \u00b7 <span style="color:#166534;">saldato</span>':''))
+      + (mList?(' \u00b7 '+mzEsc(mList)):'')
+      +'</div></div>'
+      +(stato?('<span style="flex:0 0 auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+bgSt+';color:'+colSt+';white-space:nowrap;">'+mzEsc(stato)+'</span>'):'')
+      +'</div></div>';
+  }catch(e){ return ''; }
+}
+function gsRigheVendite(key){
+  var v=gsVenditeDi(key);
+  if(!v.length) return '';
+  return v.slice(0,3).map(gsRigaVendita).join('')
+    + (v.length>3?('<div style="padding:5px 12px 7px 34px;font-size:11px;color:#94a3b8;background:#fbfdff;border-bottom:1px solid #f1f5f9;">e altre '+(v.length-3)+' vendite</div>'):'');
+}
+function gsearchChiudi(){
+  var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
+  var inp=document.getElementById('gsearch-input'); if(inp){ inp.value=''; inp.blur(); }
 }
 /* Dal risultato di ricerca su un cliente si arriva anche alla sua vendita,
    senza passare dalla modifica del contratto. */
@@ -16453,7 +16545,7 @@ function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||
 function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 var DOC_CAT={
-  auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
+  auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
