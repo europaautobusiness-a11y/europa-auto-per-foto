@@ -4451,6 +4451,89 @@ var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-f
 var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-dotazioni';
 var EA_WA_NUM = '39029181820';  // 02 9181820
+/* ===================================================================
+   SENTINELLA DEI BLOCCHI
+   Il gestionale ogni tanto si pianta e non si riesce a riprodurlo a
+   comando. Questa vigila in sottofondo: ogni secondo controlla se il
+   secondo precedente e' passato davvero. Se la pagina e' rimasta ferma
+   piu' di due secondi lo annota, con l'ora, la sezione aperta e il
+   lavoro piu' lungo che stava girando in quel momento.
+   Gli ultimi 30 episodi restano salvati: si leggono con  eaBlocchi()
+   e si azzerano con  eaBlocchiPulisci().
+   Costo: una funzione da nulla una volta al secondo.
+   =================================================================== */
+var EA_BLOCCHI_KEY = 'ea_blocchi_v1';
+var EA_BLOCCO_SOGLIA = 2000;   // sotto i 2 secondi non e' un blocco, e' la vita
+var _eaLavoriLunghi = [];
+
+function eaSezioneAperta(){
+  try{
+    var v=document.querySelectorAll('[id^="view-"]');
+    for(var i=0;i<v.length;i++){ if(v[i].classList && v[i].classList.contains('active')) return v[i].id; }
+  }catch(e){}
+  return '?';
+}
+
+function eaBlocchi(){
+  try{
+    var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
+    if(!l.length){ console.log('nessun blocco registrato'); return l; }
+    console.table(l.map(function(b){
+      return { quando:b.ora, 'durata (s)':b.durata, sezione:b.sezione, 'lavoro piu lungo':b.lavoro||'—' };
+    }));
+    return l;
+  }catch(e){ return []; }
+}
+function eaBlocchiPulisci(){
+  try{ localStorage.removeItem(EA_BLOCCHI_KEY); console.log('registro azzerato'); }catch(e){}
+}
+
+(function eaSentinella(){
+  try{
+    /* i "lavori lunghi" sono le operazioni che tengono occupata la pagina:
+       servono a dire non solo QUANDO si e' bloccata, ma su cosa */
+    if(typeof PerformanceObserver==='function'){
+      try{
+        new PerformanceObserver(function(lista){
+          lista.getEntries().forEach(function(e){
+            if(e.duration>200){
+              _eaLavoriLunghi.push({ d:Math.round(e.duration), n:e.name||'task', t:Date.now() });
+              if(_eaLavoriLunghi.length>40) _eaLavoriLunghi.shift();
+            }
+          });
+        }).observe({ entryTypes:['longtask'] });
+      }catch(e){}
+    }
+
+    var ultimo=Date.now();
+    setInterval(function(){
+      var ora=Date.now(), ritardo=ora-ultimo-1000;
+      ultimo=ora;
+      if(ritardo<EA_BLOCCO_SOGLIA) return;
+      if(document.hidden) return;   /* scheda in secondo piano: il browser rallenta apposta */
+
+      var peggiore=null;
+      for(var i=0;i<_eaLavoriLunghi.length;i++){
+        var L=_eaLavoriLunghi[i];
+        if(L.t>=ora-ritardo-2000 && (!peggiore || L.d>peggiore.d)) peggiore=L;
+      }
+      var voce={
+        ora:new Date(ora).toLocaleString('it-IT'),
+        durata:(ritardo/1000).toFixed(1),
+        sezione:eaSezioneAperta(),
+        lavoro:peggiore?(peggiore.n+' '+peggiore.d+'ms'):''
+      };
+      console.warn('\u23f8\ufe0f blocco di '+voce.durata+'s \u2014 sezione '+voce.sezione+(voce.lavoro?(' \u2014 '+voce.lavoro):''));
+      try{
+        var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
+        l.push(voce);
+        while(l.length>30) l.shift();
+        localStorage.setItem(EA_BLOCCHI_KEY, JSON.stringify(l));
+      }catch(e){}
+    }, 1000);
+  }catch(e){}
+})();
+
 function eaMailWrap(contentHtml){
   var wa = EA_WA_NUM ? ('\uD83D\uDCAC WhatsApp: <a href="https://wa.me/'+EA_WA_NUM+'" style="color:#25D366;font-weight:700;text-decoration:none;">scrivici su WhatsApp</a><br>') : '';
   return '<div style="background:#f1f5f9;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;">'
@@ -4571,8 +4654,11 @@ function eaInviaPdfMail(opts){
                        .catch(function(){ /* senza link si prosegue lo stesso */ })
                    : Promise.resolve();
   return passo.then(function(){
-    if(!blob || opts.allega===false || blob.size > EA_PDF_MAXALL) return null;
-    return eaBlobToBase64(blob).catch(function(){ return null; });
+    if(!blob || opts.allega===false) return null;
+    /* se il file e' su R2 basta l'indirizzo: se lo scarica la Edge Function */
+    if(link) return { url:link };
+    if(blob.size > EA_PDF_MAXALL) return null;
+    return eaBlobToBase64(blob).then(function(b){ return { content:b }; }).catch(function(){ return null; });
   }).then(function(b64){
     var bottone = link
       ? ('<div style="margin-top:24px;text-align:center;">'
@@ -4584,7 +4670,7 @@ function eaInviaPdfMail(opts){
       subject: opts.subject || 'Documento \u2014 Europa Auto',
       html: eaMailWrap((opts.testo||'') + bottone)
     };
-    if(b64) msg.attachments = [{ filename: fn, content: b64 }];
+    if(b64) msg.attachments = [ Object.assign({ filename: fn }, b64) ];
     return eaInviaMessaggio(msg).then(function(r){
       if(r && r.error) throw new Error(String(r.error));
       return { ok:true, link:link, allegato:!!b64, risposta:r };
@@ -11389,12 +11475,92 @@ document.addEventListener('DOMContentLoaded',function(){
        comunque in campanella e in calendario. */
     try{ if('Notification' in window && Notification.permission==='granted'){ new Notification('🔔 Promemoria compito',{body:msg}); } }catch(e){}
   }
+  /* ===================== PROMEMORIA AL CLIENTE =====================
+     Il giorno prima dell'appuntamento parte una mail al cliente.
+     Orario scelto: le 18 del giorno precedente, cosi' chi non puo'
+     venire ha la mattina dopo per avvisare. Se a quell'ora non c'era
+     nessun dispositivo acceso parte al primo momento utile, purche'
+     l'appuntamento non sia gia' passato. */
+  /* Spento: il promemoria al cliente lo manda il cron su Supabase, cosi'
+     parte anche a gestionale chiuso. Qui resta solo come riserva. */
+  var CC_PROM_CLIENTE = false;
+  var CC_PROM_ORA = 18;         // ora del giorno prima in cui parte
+
+  function ccPromQuando(c){       /* momento in cui va spedita */
+    if(!c || !c.data) return null;
+    var p=String(c.data).split('-'); if(p.length!==3) return null;
+    var d=new Date(+p[0], (+p[1])-1, +p[2], CC_PROM_ORA, 0, 0, 0);
+    d.setDate(d.getDate()-1);
+    var t=d.getTime(); return isNaN(t)?null:t;
+  }
+  function ccApptQuando(c){       /* momento dell'appuntamento */
+    if(!c || !c.data) return null;
+    var p=String(c.data).split('-'); if(p.length!==3) return null;
+    var o=String(c.ora||'09:00').split(':');
+    var t=new Date(+p[0], (+p[1])-1, +p[2], +(o[0]||9), +(o[1]||0), 0, 0).getTime();
+    return isNaN(t)?null:t;
+  }
+  function ccOggiYmd(){
+    var d=new Date();
+    return d.getFullYear()+'-'+ccZ2(d.getMonth()+1)+'-'+ccZ2(d.getDate());
+  }
+
+  function ccMailPromemoriaHtml(c){
+    var g=String(c.data||'').split('-');
+    var dataIt=(g.length===3)?(g[2]+'/'+g[1]+'/'+g[0]):(c.data||'');
+    var quando=(String(c.data)===ccOggiYmd())?'oggi':'domani';
+    var righe='';
+    var r=function(l,v){ if(!v) return;
+      righe+='<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+l+'</td>'
+            +'<td style="padding:5px 0;color:#0f172a;font-size:14px;font-weight:700;">'+ccEsc(v)+'</td></tr>'; };
+    r('Giorno', dataIt); r('Orario', c.ora||''); r('Motivo', c.tipo||''); r('Veicolo', c.veicolo||'');
+    var corpo='<p>Gentile '+ccEsc(c.titolo||'Cliente')+',</p>'
+      +'<p>le ricordiamo il suo appuntamento in concessionaria <b>'+quando+'</b>.</p>'
+      +'<table style="border-collapse:collapse;margin:16px 0;">'+righe+'</table>'
+      +'<p>La aspettiamo in Via Nigra 4 a Paderno Dugnano. Se non riuscisse a essere presente '
+      +'le chiediamo solo una telefonata: troveremo insieme un altro momento.</p>'
+      +'<p>A presto,<br><b>Europa Auto</b></p>';
+    return (typeof eaMailWrap==='function') ? eaMailWrap(corpo) : corpo;
+  }
+
+  function ccPromemoriaCliente(){
+    if(!CC_PROM_CLIENTE || typeof eaInviaMessaggio!=='function') return;
+    /* spedisce un solo dispositivo: altrimenti il cliente riceve la stessa
+       mail da ogni postazione che ha il gestionale aperto */
+    if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+    var now=Date.now();
+    if(!ccIsOpen(new Date(now))) return;      // niente mail di notte o a negozio chiuso
+    var list=ccLoad(), cambiato=false;
+    list.forEach(function(c){
+      if(!c || c.fatto || c.promClienteAt) return;
+      if((c.categoria||'')==='task') return;                 // i task interni non riguardano i clienti
+      var em=String(c.email||'').trim();
+      if(em.indexOf('@')<0) return;
+      var parte=ccPromQuando(c), appunt=ccApptQuando(c);
+      if(parte===null || appunt===null) return;
+      if(now<parte || now>appunt) return;                    // troppo presto, oppure gia' passato
+      /* prima si segna, poi si spedisce: se qualcosa va storto e' meglio
+         un promemoria mancato che dieci mail allo stesso cliente */
+      c.promClienteAt=now; c.updatedAt=Date.now(); cambiato=true;
+      try{ if(typeof ccSupaUpsert==='function') ccSupaUpsert(c); }catch(e){}
+      try{ eaInviaMessaggio({ to:em, subject:'Promemoria appuntamento \u2014 Europa Auto',
+                              html:ccMailPromemoriaHtml(c) }); }catch(e){}
+      try{ if(typeof notifPush==='function') notifPush('Promemoria inviato a '+(c.titolo||em)+' \u2014 '+(c.data||'')+' '+(c.ora||''), '\u2709\ufe0f'); }catch(e){}
+    });
+    if(cambiato) ccSave(list);
+  }
+
   function ccControllaPromemoria(){
     var now=Date.now(), list=ccLoad(), cambiato=false;
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; cambiato=true; }
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
+          /* senza spingerlo sul cloud, "avvisato" resta solo qui: al primo
+             ricaricamento vince la copia remota, che non ce l'ha, e il
+             promemoria riparte all'infinito. */
+          try{ if(typeof ccSupaUpsert==='function') ccSupaUpsert(c); }catch(e){}
+        }
       }
     });
     if (cambiato) ccSave(list);
@@ -11729,7 +11895,7 @@ document.addEventListener('DOMContentLoaded',function(){
 
   /* avvio: mese corrente + promemoria + badge */
   ccVMese = (new Date()).getMonth(); ccVAnno = (new Date()).getFullYear();
-  if (!ccIntervalOn){ ccControllaPromemoria(); try{ ccSolleciti(); }catch(e){} setInterval(function(){ ccControllaPromemoria(); try{ ccSolleciti(); }catch(e){} }, 30000); ccIntervalOn = true; }
+  if (!ccIntervalOn){ ccControllaPromemoria(); try{ ccSolleciti(); }catch(e){} try{ ccPromemoriaCliente(); }catch(e){} setInterval(function(){ ccControllaPromemoria(); try{ ccSolleciti(); }catch(e){} try{ ccPromemoriaCliente(); }catch(e){} }, 30000); ccIntervalOn = true; }
   // badge iniziale (dopo eventuale login)
   setTimeout(function(){ try{ ccUpdateBadge(); }catch(e){} }, 1500);
 })();
@@ -15815,6 +15981,28 @@ function cvEmailCaparraCliente(cv, importo){
    Metti true SOLO dopo aver verificato che il cron invia davvero. */
 var CV_MAIL_SERVER = false;
 
+/* Ripulisce le buste rimaste sui preventivi gia' spediti. Gira una volta
+   sola per sessione, senza toccare quelli ancora in attesa. */
+function cvPurgaBuste(){
+  try{
+    if(typeof cvLoad!=='function') return 0;
+    var l=cvLoad(), n=0;
+    for(var i=0;i<l.length;i++){
+      var p=l[i];
+      if(p && p.mailProg && (p.emailInviata || !p.mailDaInviareAt)){
+        try{ delete p.mailProg; }catch(e){ p.mailProg=null; }
+        n++;
+      }
+    }
+    if(n && typeof cvSave==='function') cvSave(l);
+    return n;
+  }catch(e){ return 0; }
+}
+try{ setTimeout(function(){
+  var n=cvPurgaBuste();
+  if(n) console.log('buste ripulite dai preventivi gia inviati:', n);
+}, 8000); }catch(e){}
+
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
@@ -16150,7 +16338,8 @@ function cvReportVeicolo(p){
 function cvMailArricchisci(p, html){
   try{
     var foto=cvFotoVeicolo(p);
-    if(foto){
+    /* il corpo della mail la foto ce l'ha gia' messa: una sola, non due */
+    if(foto && html.indexOf('<img')<0){
       var imgBlocco='<tr><td style="padding:0 24px 4px;"><img src="'+foto+'" alt="" style="width:100%;max-width:520px;border-radius:10px;display:block;"></td></tr>';
       if(html.indexOf('<tr>')>=0) html=html.replace('<tr>', imgBlocco+'<tr>');
     }
@@ -16192,18 +16381,11 @@ function cvInviaMailCliente(p){
   var msg={ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:html };
   var pdfUrl =(p.mailPdfUrl  || (p.mailProg && p.mailProg.pdfUrl)  || '');
   var pdfNome=(p.mailPdfNome || (p.mailProg && p.mailProg.pdfNome) || 'preventivo.pdf');
-  var limite=(typeof EA_PDF_MAXALL!=='undefined')?EA_PDF_MAXALL:(6*1024*1024);
-  if(!pdfUrl || typeof eaBlobToBase64!=='function'){ eaInviaMessaggio(msg); return; }
-  /* Il PDF sta su R2: lo si riprende e lo si allega. Se non arriva, la mail
-     parte lo stesso: dentro c'e' comunque il link per scaricarlo. */
-  fetch(pdfUrl)
-    .then(function(r){ return r.ok ? r.blob() : null; })
-    .then(function(b){ return (b && b.size && b.size<=limite) ? eaBlobToBase64(b) : null; })
-    .catch(function(){ return null; })
-    .then(function(b64){
-      if(b64) msg.attachments=[{ filename:pdfNome, content:b64 }];
-      eaInviaMessaggio(msg);
-    });
+  /* L'allegato non lo scarica il browser: r2.dev non manda le intestazioni
+     CORS e la richiesta viene bloccata. Si passa l'indirizzo alla Edge
+     Function, che preleva il file da server dove il vincolo non esiste. */
+  if(pdfUrl) msg.attachments=[{ filename:pdfNome, url:pdfUrl }];
+  eaInviaMessaggio(msg);
 }
 // Invia il preventivo via email solo se, trascorsa 1 ora, NON è stato trasformato in proposta d’acquisto
 function cvCheckMailPreventivi(){
@@ -16225,6 +16407,12 @@ function cvCheckMailPreventivi(){
     };
     var marca=function(p){
       p.emailInviata=true; p.emailInviataTs=Date.now(); p.mailDaInviareAt=null;
+      /* La busta (corpo HTML gia' impaginato) serve solo nell'ora fra il
+         salvataggio e l'invio. Dopo e' peso morto: qualche kB per ogni
+         preventivo, moltiplicato per tutti quelli mai fatti, dentro uno
+         spazio locale che sta in tutto in 5 MB. Si butta.
+         Restano mailPdfUrl e mailPdfNome, che pesano nulla e servono. */
+      try{ delete p.mailProg; }catch(e){ p.mailProg=null; }
       try{
         p.emailInviataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
       }catch(e){}
