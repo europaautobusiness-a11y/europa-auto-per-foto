@@ -13626,6 +13626,17 @@ function mzFaiPreventivo(autoId){
   try{ cvForm(); }catch(e){}
   setTimeout(function(){ try{ var sel=document.getElementById('cv_auto'); if(sel){ sel.value=autoId; if(typeof cvAutoSel==='function') cvAutoSel(); } }catch(e){} }, 170);
 }
+/* Salva l'auto e apre subito il preventivo con quel veicolo gia' scelto.
+   Se il salvataggio non passa (campo obbligatorio mancante) non prosegue:
+   mzSalva esce senza segnare nulla e la scheda resta aperta sull'errore. */
+function mzSalvaEVendi(){
+  window._mzUltimoSalvato=null;
+  try{ mzSalva(); }catch(e){ return; }
+  var id=window._mzUltimoSalvato;
+  if(!id) return;
+  if(typeof mzFaiPreventivo==='function') mzFaiPreventivo(id);
+}
+
 function mzFornChange(){
   var sel=document.getElementById('mz_fornitore'); if(!sel||!sel.value) return;
   var f=(typeof fnById==='function')?fnById(sel.value):null; if(!f) return;
@@ -14587,6 +14598,10 @@ function mzForm(id){
     h+='<button onclick="mzVenditaDettaglio(\''+a.id+'\')" style="margin-top:16px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\uD83D\uDCC4 Dettaglio vendita</button>';
   }
   h+='<button onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva auto</button>';
+  /* Venduta subito: si salva e si passa al contratto senza rientrare
+     nel magazzino a ricercare la stessa auto. Non compare su quelle
+     gia' vendute, come per il pulsante nelle schede. */
+  if(!(a && a.stato==='venduta')) h+='<button onclick="mzSalvaEVendi()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83e\udd1d Vendita auto \u2014 salva e apri il contratto</button>';
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
   var m=document.getElementById('mz-modal'); m.innerHTML=h; m.style.display='block';
@@ -14648,7 +14663,10 @@ function mzSalva(){
   a.foto = (typeof _mzFoto!=='undefined' && Array.isArray(_mzFoto)) ? _mzFoto.slice() : (a.foto||[]);
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
-  mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a); mzChiudi(); mzRender();
+  mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a);
+  /* lascia detto cosa ha salvato: serve a chi vuole proseguire col contratto */
+  window._mzUltimoSalvato = a.id;
+  mzChiudi(); mzRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Auto salvata',true);
   /* Notifica del veicolo nuovo tolta su richiesta: restano permuta e perizia. */
   if(false && _isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
@@ -15655,6 +15673,11 @@ function cvForm(id, fromVend){
       +docPannelloHTML('pratica', _cv.id, 'cvdoc_'+_cv.id, null, 'Fattura, F24, libretto, documenti del cliente.', 'Documenti della pratica', true)
       +'</div>';
   } else if(!_cv.isContratto){
+    /* Residenza e codice fiscale erano raggiungibili solo dalle proposte
+       aperte da Vendite: sul preventivo non c'era modo di scriverli, e in
+       stampa restavano i trattini. Il pannello e' lo stesso e salva solo
+       l'anagrafica, quindi non trasforma niente. */
+    h+='<button onclick="cvDatiFatturazione()" style="margin-top:14px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">\ud83e\uddfe Residenza, codice fiscale e fatturazione</button>';
     h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
     if(c){
       h+='<button onclick="cvTrasformaContratto()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:2px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83d\udcc4 Trasforma in proposta d’acquisto</button>';
@@ -15761,11 +15784,18 @@ function cvCliUsa(c){
     else { set('cv_cognome', c.cognome); set('cv_nome', c.nome); }
     set('cv_tel', c.telefono); set('cv_email', c.email);
     set('cv_cf', c.piva||c.cf);
+    /* Questi dati non hanno una casella nel modulo: vivono nel pannello
+       "Residenza e fatturazione". Prima venivano scritti in campi che non
+       esistono, quindi l'anagrafica non compilava nulla in silenzio. Ora
+       finiscono sul preventivo e il pannello li trova gia' pronti. */
+    _cv.cliente=_cv.cliente||{};
+    var poni=function(k,v){ if(v && !String(_cv.cliente[k]||'').trim()) _cv.cliente[k]=v; };
+    poni('cf', (c.cf||c.piva||''));
+    if(c.business){ poni('ragSociale', c.ragSociale); poni('piva', c.piva); poni('sdi', c.sdi); poni('sedeLegale', c.sedeLegale); }
     var i0=(c.indirizzi&&c.indirizzi.length)?c.indirizzi[c.indirizzi.length-1]:null;
     if(i0){
-      set('cv_via', [i0.via,i0.civico].filter(Boolean).join(' '));
-      set('cv_cap', i0.cap);
-      set('cv_citta', [i0.citta,(i0.prov?('('+i0.prov+')'):'')].filter(Boolean).join(' '));
+      poni('via', i0.via); poni('civico', i0.civico);
+      poni('cap', i0.cap); poni('citta', i0.citta); poni('prov', i0.prov);
     }
     _cv.clienteKey=c.key||'';
     var info=document.getElementById('cv_cliInfo');
@@ -21165,6 +21195,35 @@ function cvVeicoloLink(cv){
   var cur=canClick?'cursor:pointer;text-decoration:underline;':'';
   return '<div'+attr+' style="font-size:13px;font-weight:800;color:#1a4fa0;margin-top:3px;'+cur+'"'+(canClick?' title="Apri veicolo in magazzino"':'')+'>'+marcaMod+idHtml+'</div>';
 }
+/* Pannello pagamenti della scheda: le stesse righe che stavano dentro
+   "Dettagli contratto". Chi puo' confermare vede il pulsante verde; gli
+   altri leggono soltanto lo stato. Sta in alto perche' la conferma degli
+   incassi e' la cosa che si guarda piu' spesso in questa schermata. */
+function cvPagPannello(cv){
+  try{
+    var puoConf=(typeof cvPuoConfermarePagamenti==='function')?cvPuoConfermarePagamenti():false;
+    var righe=(cv.pagamenti||[]).map(function(p,ri){
+      if(!cvNum(p.importo)) return '';
+      if(/permuta/i.test(p.metodo||'')) return '';
+      var ok=p.confermato;
+      var meta = ok
+        ? '<div style="font-size:11px;color:#16a34a;font-weight:700;margin-top:2px;">\u2713 ricevuto \u2014 '+cvEsc(p.confermatoDa||'\u2014')+(p.confermatoTs?(' \u00b7 '+cvVendData(p.confermatoTs)):'')+'</div>'
+        : '<div style="font-size:11px;color:#d97706;font-weight:700;margin-top:2px;">in attesa di conferma</div>';
+      var btn=(!ok && puoConf)
+        ? '<button onclick="event.stopPropagation();cvVendConfermaPag(\''+cv.id+'\','+ri+')" style="flex:0 0 auto;padding:8px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">Conferma ricezione</button>'
+        : '';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #eef2f7;">'
+        +'<div style="min-width:0;"><div style="font-size:13px;"><b>'+cvEsc(p.tipo||'Pagamento')+'</b>'+(p.metodo?(' \u00b7 '+cvEsc(p.metodo)):'')+' \u2014 <b>'+cvEuro(p.importo)+'</b></div>'+meta+'</div>'
+        +btn+'</div>';
+    }).join('');
+    if(!righe) return '';
+    var daConf=cvPagIncasso(cv.pagamenti).filter(function(p){ return cvNum(p.importo) && !p.confermato; }).length;
+    return '<div onclick="event.stopPropagation();" style="margin-top:10px;background:'+(daConf?'#fff7ed':'#f8fafc')+';border:1px solid '+(daConf?'#fed7aa':'#e2e8f0')+';border-radius:9px;padding:10px 12px;">'
+      +'<div style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:'+(daConf?'#9a3412':'#64748b')+';margin-bottom:4px;">Pagamenti'+(daConf?(' \u2014 '+daConf+' da confermare'):'')+'</div>'
+      +righe+'</div>';
+  }catch(e){ return ''; }
+}
+
 function cvVendCard(cv){
   var t=cvCalcola(cv); var a=cv.autoSnapshot||{}; var puo=cvPuoConfermarePagamenti(); var st=cv.statoVendita||'in_attesa_pagamento';
   var targa=cv.nuovaTarga||a.targa||'';
@@ -21188,7 +21247,7 @@ function cvVendCard(cv){
           +'<button onclick="event.stopPropagation();cvRecWa(\''+cv.id+'\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid #86efac;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDCAC WhatsApp</button>'
           +'</div></div>';
       })()
-      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
   var pag=(cv.pagamenti||[]).map(function(p,ri){ if(!cvNum(p.importo)) return '';
@@ -21202,8 +21261,12 @@ function cvVendCard(cv){
   else if(st==='da_consegnare'){ azione='<button onclick="event.stopPropagation();cvVendConsegna(\''+cv.id+'\')" style="margin-top:10px;width:100%;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">✅ Segna come consegnato</button>'; }
   else if(st==='consegnato'){ azione='<div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'; }
   var _isAdm=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
+  /* Toccando la scheda si apre direttamente il contratto in modifica: e'
+     la stessa facciata del pulsante "Modifica", cosi' non ci si ritrova
+     davanti a due schermate diverse a seconda di dove si e' cliccato. */
+  var _apriScheda=(_isAdm?('cvVendModifica(\''+cv.id+'\')'):('cvVendModificaLimitata(\''+cv.id+'\')'));
   var mod='<button onclick="event.stopPropagation();'+(_isAdm?('cvVendModifica(\''+cv.id+'\')'):('cvVendModificaLimitata(\''+cv.id+'\')'))+'" style="flex:1 1 46%;padding:8px;border-radius:7px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\u270f\ufe0f Modifica'+(_isAdm?' (completa)':' finanz./assic.')+'</button>';
-  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="event.stopPropagation();cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">📄 Proposta</button>'+((st==='consegnato')?('<button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">📄 Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
+  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+mod+'<button onclick="event.stopPropagation();cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🖨️ Proposta</button>'+((st==='consegnato')?('<button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
   var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="event.stopPropagation();cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="event.stopPropagation();cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato</a></div>'):'';
   var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
@@ -21212,7 +21275,7 @@ function cvVendCard(cv){
   var daIncassare=Math.max(0, totale-incassato);
   var finTot=pagsAll.filter(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';}).reduce(function(s,p){return s+cvNum(p.importo);},0);
   var permVal=(cv.permutaOn && cv.permuta)?cvNum(cv.permuta.prezzoAcq):0;
-  var recap='<div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px;margin-top:10px;font-size:12px;cursor:pointer;">'
+  var recap='<div onclick="event.stopPropagation();'+_apriScheda+'" style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px;margin-top:10px;font-size:12px;cursor:pointer;">'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>Totale contratto</span><b>'+cvEuro(totale)+'</b></div>'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#16a34a;"><span>✓ Incassato (confermato)</span><b>'+cvEuro(incassato)+'</b></div>'
     +'<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626;font-weight:700;"><span>Da incassare</span><b>'+cvEuro(daIncassare)+'</b></div>'
@@ -21243,13 +21306,12 @@ function cvVendCard(cv){
   }
   firmaTag=firmaTag+delTag;
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
-  var pagHint=(daConf>0)
-    ?'<div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12px;color:#9a3412;font-weight:700;cursor:pointer;">\u23f3 '+daConf+' pagament'+(daConf===1?'o':'i')+' da confermare</div>'
-    :'<div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="margin-top:10px;font-size:12px;color:#64748b;cursor:pointer;text-decoration:underline;">Vedi dettaglio pagamenti</div>';
+  /* il rimando a "Vedi dettaglio pagamenti" non serve piu': le righe
+     con la conferma stanno adesso direttamente sulla scheda */
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvVendDettagli(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();'+_apriScheda+'" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
     +recap+cvFirmaBottone(cv)
-    +pagHint
+    +cvPagPannello(cv)
     +azione+stampe+annulla+demoDel+'</div>';
 }
 
