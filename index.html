@@ -11550,6 +11550,13 @@ document.addEventListener('DOMContentLoaded',function(){
     return d.getFullYear()+'-'+ccZ2(d.getMonth()+1)+'-'+ccZ2(d.getDate());
   }
 
+  /* Disdire dev'essere facile quanto presentarsi: due pulsanti, non una frase.
+     Chi avvisa libera lo slot; chi si imbarazza a disdire sparisce e basta. */
+  function ccBtnMail(testo, href, colore){
+    return '<a href="'+href+'" style="display:inline-block;background:'+colore+';color:#fff;'
+      +'text-decoration:none;font-weight:700;font-size:14px;padding:11px 20px;border-radius:8px;'
+      +'margin:4px 6px 4px 0;">'+testo+'</a>';
+  }
   function ccMailPromemoriaHtml(c){
     var g=String(c.data||'').split('-');
     var dataIt=(g.length===3)?(g[2]+'/'+g[1]+'/'+g[0]):(c.data||'');
@@ -11558,12 +11565,18 @@ document.addEventListener('DOMContentLoaded',function(){
     var r=function(l,v){ if(!v) return;
       righe+='<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+l+'</td>'
             +'<td style="padding:5px 0;color:#0f172a;font-size:14px;font-weight:700;">'+ccEsc(v)+'</td></tr>'; };
-    r('Giorno', dataIt); r('Orario', c.ora||''); r('Motivo', c.tipo||''); r('Veicolo', c.veicolo||'');
+    r('Giorno', dataIt); r('Orario', c.ora||''); r('Veicolo', c.veicolo||'');
     var corpo='<p>Gentile '+ccEsc(c.titolo||'Cliente')+',</p>'
       +'<p>le ricordiamo il suo appuntamento in concessionaria <b>'+quando+'</b>.</p>'
       +'<table style="border-collapse:collapse;margin:16px 0;">'+righe+'</table>'
-      +'<p>La aspettiamo in Via Nigra 4 a Paderno Dugnano. Se non riuscisse a essere presente '
-      +'le chiediamo solo una telefonata: troveremo insieme un altro momento.</p>'
+      +'<p>La aspettiamo in <b>Via Nigra 4, Paderno Dugnano</b>.</p>'
+      +'<div style="margin:20px 0;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">'
+      +'<div style="font-weight:700;margin-bottom:4px;">Non riesce a venire?</div>'
+      +'<div style="font-size:13.5px;color:#475569;margin-bottom:12px;">Nessun problema, capita. '
+      +'Ci avvisi anche solo con un messaggio e spostiamo l\u2019appuntamento al primo momento che le va bene.</div>'
+      +ccBtnMail('\uD83D\uDCDE Chiama','tel:0362285390','#1a4fa0')
+      +ccBtnMail('\uD83D\uDCAC WhatsApp','https://wa.me/39029181820','#25D366')
+      +'</div>'
       +'<p>A presto,<br><b>Europa Auto</b></p>';
     return (typeof eaMailWrap==='function') ? eaMailWrap(corpo) : corpo;
   }
@@ -15985,25 +15998,102 @@ function cvAggiornaSaldo(t){
       if(el && document.activeElement!==el) el.value=saldo;
     }catch(e){}
   }
+/* ===================================================================
+   VALORE CONTRATTO: due letture dello stesso contratto
+     A = contabile   auto + passaggio - sconto danno il totale vendita,
+                     cioe' l'imponibile fatturato. Tutto il resto
+                     (garanzia, assicurazione, extra, permuta,
+                     minivoltura) scende sotto, come voci a se'.
+     C = commerciale la lettura di sempre: il totale arriva dopo la
+                     permuta, e lo sconto compare dopo con il totale
+                     valido solo col finanziamento.
+   Gli importi non cambiano: il saldo dovuto e' identico nelle due
+   viste, cambia solo l'ordine in cui ci si arriva.
+   La scelta e' personale e resta su questo dispositivo.
+   =================================================================== */
+var CV_VISTA_KEY='ea_vista_valore';
+var CV_MAIL_CONTABILI=['contabilita@europaautosrl.it','ariannapresta80@gmail.com'];
+
+function cvVistaValore(){
+  try{
+    var v=localStorage.getItem(CV_VISTA_KEY);
+    if(v==='A'||v==='C') return v;
+  }catch(e){}
+  /* mai scelta: la contabilita' parte dalla propria, gli altri da quella di sempre */
+  try{
+    var em=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+    if(CV_MAIL_CONTABILI.indexOf(em)>=0) return 'A';
+  }catch(e){}
+  return 'C';
+}
+function cvVistaSet(v){
+  try{ localStorage.setItem(CV_VISTA_KEY, (v==='A'?'A':'C')); }catch(e){}
+  try{ if(typeof cvLive==='function') cvLive(); }catch(e){}
+}
+function cvVistaBottoni(){
+  var v=cvVistaValore();
+  var b=function(cod,eti,tit){
+    var on=(v===cod);
+    return '<button type="button" onclick="cvVistaSet(\''+cod+'\')" title="'+tit+'" '
+      +'style="width:26px;height:24px;border-radius:5px;cursor:pointer;font-family:inherit;'
+      +'font-size:12px;font-weight:800;line-height:1;'
+      +(on?'background:#1a4fa0;color:#fff;border:1px solid #1a4fa0;'
+          :'background:#fff;color:#94a3b8;border:1px solid #cbd5e1;')
+      +'">'+eti+'</button>';
+  };
+  return '<span style="display:inline-flex;gap:4px;">'
+    + b('A','A','Vista contabile: il totale vendita e\u2019 auto + passaggio \u2212 sconto')
+    + b('C','C','Vista commerciale: la lettura di sempre')
+    + '</span>';
+}
+
 function cvLive(){
   cvSync();
   var t=cvCalcola(_cv);
   cvAggiornaSaldo(t);
   cvPromoSync();
   var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
-  var h='<div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+((_cv&&_cv.isContratto)?'Valore contratto':'Riepilogo prezzo')+'</div>';
+  var _vista=(typeof cvVistaValore==='function')?cvVistaValore():'C';
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">'
+    +'<span style="font-weight:800;color:#1a4fa0;">'+((_cv&&_cv.isContratto)?'Valore contratto':'Riepilogo prezzo')+'</span>'
+    +((typeof cvVistaBottoni==='function')?cvVistaBottoni():'')
+    +'</div>';
   var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
-  h+=r('Prezzo vendita',t.prezzo);
-  if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
-  h+=r('Passaggio di proprietà / Imm.',t.passaggio);
-  if(t.gar) h+=r('Garanzia',t.gar);
-  if(_cv.assicOn && cvNum(_cv.assicImporto)>0) h+=r('Assicurazione',t.assic);
-  (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
-  if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
-  h+=r('Totale vendita',t.totaleVendita,true);
-  if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale valido solo con finanziamento',t.totaleScontato,true); }
-  cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
-  h+=r('Saldo dovuto',t.saldoDovuto,true);
+  var _pagamenti=function(){
+    cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
+  };
+  var _extra=function(){
+    if(t.gar) h+=r('Garanzia',t.gar);
+    if(_cv.assicOn && cvNum(_cv.assicImporto)>0) h+=r('Assicurazione',t.assic);
+    (_cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  };
+
+  if(_vista==='A'){
+    /* Contabile: prima si forma l'imponibile, poi tutto il resto. */
+    h+=r('Prezzo vendita',t.prezzo);
+    if(_cv.legge104On){ h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); }
+    h+=r('Passaggio di proprietà / Imm.',t.passaggio);
+    if(!_cv.legge104On && _cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto);
+    /* auto + passaggio - sconto: quello che viene fatturato al cliente */
+    var _totA=(t.veicolo||0)+(t.passaggio||0)-((_cv.legge104On)?0:(t.sconto||0));
+    h+=r('Totale vendita',_totA,true);
+    _extra();
+    if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
+    h+=r('Totale contratto',t.totaleScontato,true);
+    _pagamenti();
+    h+=r('Saldo dovuto',t.saldoDovuto,true);
+  } else {
+    /* Commerciale: la lettura di sempre, invariata. */
+    h+=r('Prezzo vendita',t.prezzo);
+    if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
+    h+=r('Passaggio di proprietà / Imm.',t.passaggio);
+    _extra();
+    if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
+    h+=r('Totale vendita',t.totaleVendita,true);
+    if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale valido solo con finanziamento',t.totaleScontato,true); }
+    _pagamenti();
+    h+=r('Saldo dovuto',t.saldoDovuto,true);
+  }
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
 }
 var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le risposte inviate a questo indirizzo non verranno gestite.';
