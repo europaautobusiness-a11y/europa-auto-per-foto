@@ -3481,8 +3481,10 @@ function connectGoogleDriveSilent() {
         console.log('Drive connesso silenziosamente ✅');
         // Sync automatica all'accesso
         setTimeout(function(){
-          // Carica permessini
-          try { syncPermessiManuale(null); } catch(e) {}
+          /* La sincronizzazione dei permessi NON parte piu' da sola: scarica i
+             PDF da Gmail e su quelli scansionati fa l'OCR, che blocca la pagina
+             per una decina di secondi. Si lancia dal pulsante "Sincronizza
+             Gmail" dentro la sezione Permessi, quando serve davvero. */
           // Carica provvigioni storico
           setTimeout(function(){
             try { pRenderStorico(); } catch(e) {}
@@ -3765,8 +3767,7 @@ async function welcomeLogin() {
         setTimeout(function(){
           // Sync report (pronti + inviati + provvigioni)
           try { manualSync(null); } catch(e) {}
-          // Sync permessini
-          setTimeout(function(){ try { syncPermessiManuale(null); } catch(e) {} }, 2000);
+          /* permessi: niente sincronizzazione automatica, vedi sopra */
           // Sync storico provvigioni
           setTimeout(function(){ try { pRenderStorico(); } catch(e) {} }, 3000);
           // Sync foto galleria
@@ -4209,8 +4210,7 @@ function doLogin() {
   setTimeout(function(){
     // Sync report (pronti + inviati + provvigioni)
     try { manualSync(null); } catch(e) {}
-    // Sync permessini
-    setTimeout(function(){ try { syncPermessiManuale(null); } catch(e) {} }, 2000);
+    /* permessi: niente sincronizzazione automatica, vedi sopra */
     // Sync storico
     setTimeout(function(){ try { pRenderStorico(); } catch(e) {} }, 3000);
     // Sync foto
@@ -4479,7 +4479,8 @@ function eaBlocchi(){
     var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
     if(!l.length){ console.log('nessun blocco registrato'); return l; }
     console.table(l.map(function(b){
-      return { quando:b.ora, 'durata (s)':b.durata, sezione:b.sezione, 'lavoro piu lungo':b.lavoro||'—' };
+      return { quando:b.ora, 'durata (s)':b.durata, sezione:b.sezione,
+               causa:b.origine||'?', dettaglio:b.lavoro||'—' };
     }));
     return l;
   }catch(e){ return []; }
@@ -4538,12 +4539,22 @@ try{ setTimeout(function(){
       }catch(e){}
     }
 
+    /* Se la scheda e' stata in secondo piano, o il computer ha dormito, il
+       divario non e' un blocco: il browser rallenta apposta i timer nascosti.
+       Senza questa memoria si registrano finti blocchi da minuti interi. */
+    var _eraNascosta=false;
+    try{ document.addEventListener('visibilitychange', function(){ if(document.hidden) _eraNascosta=true; }); }catch(e){}
+
     var ultimo=Date.now();
     setInterval(function(){
       var ora=Date.now(), ritardo=ora-ultimo-1000;
       ultimo=ora;
-      if(ritardo<EA_BLOCCO_SOGLIA) return;
-      if(document.hidden) return;   /* scheda in secondo piano: il browser rallenta apposta */
+      if(ritardo<EA_BLOCCO_SOGLIA){ _eraNascosta=false; return; }
+      if(document.hidden || _eraNascosta){ _eraNascosta=false; return; }   /* non era un blocco */
+      if(ritardo>60000){                  /* oltre il minuto: computer sospeso, non bloccato */
+        console.log('\u23fb ripresa dopo '+Math.round(ritardo/1000)+'s di inattivit\u00e0 (non \u00e8 un blocco)');
+        return;
+      }
 
       var voce={
         ora:new Date(ora).toLocaleString('it-IT'),
@@ -4554,7 +4565,7 @@ try{ setTimeout(function(){
       /* Il browser consegna i "lavori lunghi" subito DOPO questo controllo,
          non prima: se si guarda adesso il campo resta sempre vuoto.
          Si aspetta un istante e poi si completa la voce. */
-      var _daQuando=ora-ritardo-3000;
+      var _daQuando=ora-Math.min(ritardo,10000)-1500;   /* finestra stretta: senno' pesca blocchi vecchi */
       setTimeout(function(){
         try{
           var peggiore=null, funz=null;
@@ -4566,8 +4577,9 @@ try{ setTimeout(function(){
             var F=_eaFunzLente[j];
             if(F.t>=_daQuando && (!funz || F.d>funz.d)) funz=F;
           }
-          voce.lavoro = funz ? (funz.n+'() '+funz.d+'ms')
-                     : (peggiore ? (peggiore.n+' '+peggiore.d+'ms') : '');
+          if(funz){ voce.lavoro=funz.n+'() '+funz.d+'ms'; voce.origine='gestionale'; }
+          else if(peggiore && peggiore.d > ritardo*0.4){ voce.lavoro='JS non nostro '+peggiore.d+'ms'; voce.origine='esterna'; }
+          else { voce.lavoro='nessun lavoro JS rilevato'; voce.origine='fuori dalla pagina'; }
           console.warn('\u23f8\ufe0f blocco di '+voce.durata+'s \u2014 sezione '+voce.sezione+(voce.lavoro?(' \u2014 '+voce.lavoro):' \u2014 nessuna funzione nostra sospetta'));
           var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
           l.push(voce);
@@ -7848,11 +7860,19 @@ async function leggiTestoPdf(b64) {
     if (testo.trim().length < 50) {
       console.log('PDF scansionato -> OCR');
       var page=await pdf.getPage(1);
-      var vp=page.getViewport({scale:2.5});
+      /* scala 2 invece di 2.5: un quarto di pixel in meno da elaborare, e il
+         riconoscimento su un documento stampato resta buono uguale */
+      var vp=page.getViewport({scale:2});
       var canvas=document.createElement('canvas');
       canvas.width=vp.width; canvas.height=vp.height;
       await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-      var imgData=canvas.toDataURL('image/png');
+      /* toDataURL comprime il PNG bloccando la pagina per secondi: su una tela
+         di questa misura e' il singolo gesto piu' costoso di tutto il giro.
+         toBlob fa lo stesso lavoro senza fermare tutto, e in JPEG. */
+      var imgData=await new Promise(function(res){
+        try{ canvas.toBlob(function(b){ res(b || canvas.toDataURL('image/jpeg',0.9)); }, 'image/jpeg', 0.9); }
+        catch(e){ res(canvas.toDataURL('image/jpeg',0.9)); }
+      });
       if (!window.Tesseract) {
         await new Promise(function(res,rej){
           var s=document.createElement('script');
