@@ -815,6 +815,7 @@ html, body{
     </div>
     <div class="pdf-ready-topbar-actions">
       <button class="pdf-ready-btn" onclick="printReport()">🖨️ Stampa / PDF</button>
+      <button class="pdf-ready-btn" onclick="reportInviaMail()">📧 Invia via mail</button>
       <button class="pdf-ready-close" onclick="closePdfOverlay()">✕ Chiudi</button>
     </div>
   </div>
@@ -4464,6 +4465,159 @@ function eaMailWrap(contentHtml){
     +'<div style="margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px;line-height:1.6;">Questa \u00e8 una email generata automaticamente: si prega di <b>non rispondere</b> a questo indirizzo. Per qualsiasi comunicazione utilizza i contatti qui sopra.</div>'
     +'</div></div></div>';
 }
+/* ===================================================================
+   INVIO PDF VIA MAIL — 100% senza Google
+   Catena: HTML -> canvas (html2canvas) -> PDF (jsPDF) -> R2 (Worker)
+           -> Supabase Edge Function "smooth-function" -> Resend
+   Il PDF viene sempre caricato su R2 (link permanente nella mail) e,
+   se la Edge Function supporta gli allegati, viene anche allegato.
+   =================================================================== */
+var EA_PDF_LARG   = 794;              // larghezza A4 a 96dpi
+var EA_PDF_MAXALL = 6 * 1024 * 1024;  // oltre questa soglia niente allegato, solo link
+
+function eaPdfLibsOk(){
+  return !!(window.jspdf && window.jspdf.jsPDF && window.html2canvas);
+}
+
+function eaCanvasToPdfBlob(canvas){
+  var JsPDF = window.jspdf.jsPDF;
+  var pdf = new JsPDF('p','mm','a4');
+  var pw=210, ph=297, mg=6;
+  var iw = pw - mg*2;
+  var pageH = ph - mg*2;
+  var ih = canvas.height * iw / canvas.width;
+  if(ih <= pageH){
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',mg,mg,iw,ih);
+  } else {
+    var pxPag = Math.floor(canvas.width * pageH / iw);
+    var y=0, primo=true;
+    while(y < canvas.height){
+      var h = Math.min(pxPag, canvas.height - y);
+      var c2 = document.createElement('canvas');
+      c2.width = canvas.width; c2.height = h;
+      var ctx = c2.getContext('2d');
+      ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c2.width,c2.height);
+      ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+      if(!primo) pdf.addPage();
+      pdf.addImage(c2.toDataURL('image/jpeg',0.92),'JPEG',mg,mg,iw, h*iw/canvas.width);
+      primo=false; y+=h;
+    }
+  }
+  return pdf.output('blob');
+}
+
+/* PDF da un elemento gia' presente nella pagina (usa il CSS della pagina) */
+function eaElementoToPdf(el, scala){
+  if(!eaPdfLibsOk()) return Promise.reject(new Error('Librerie PDF non caricate'));
+  if(!el) return Promise.reject(new Error('Elemento non trovato'));
+  return window.html2canvas(el, {scale: scala||2, useCORS:true, backgroundColor:'#ffffff', logging:false})
+    .then(function(c){ return eaCanvasToPdfBlob(c); });
+}
+
+/* PDF da un documento HTML completo (report): render in iframe nascosto */
+function eaHtmlToPdf(html){
+  return new Promise(function(resolve, reject){
+    if(!eaPdfLibsOk()){ reject(new Error('Librerie PDF non caricate')); return; }
+    var ifr = document.createElement('iframe');
+    ifr.setAttribute('aria-hidden','true');
+    ifr.style.cssText='position:fixed;left:-10000px;top:0;width:'+EA_PDF_LARG+'px;height:1400px;border:0;opacity:0;';
+    document.body.appendChild(ifr);
+    var pulisci=function(){ try{ ifr.parentNode.removeChild(ifr); }catch(e){} };
+    try{
+      var d = ifr.contentDocument || ifr.contentWindow.document;
+      d.open(); d.write(html); d.close();
+      setTimeout(function(){
+        try{
+          var body = d.body;
+          var alt = Math.max(body.scrollHeight, 1400);
+          ifr.style.height = alt+'px';
+          window.html2canvas(body, {scale:2, useCORS:true, backgroundColor:'#ffffff', logging:false,
+            windowWidth: EA_PDF_LARG, width: EA_PDF_LARG, height: alt})
+            .then(function(c){ var b=eaCanvasToPdfBlob(c); pulisci(); resolve(b); })
+            .catch(function(e){ pulisci(); reject(e); });
+        }catch(e){ pulisci(); reject(e); }
+      }, 1000);
+    }catch(e){ pulisci(); reject(e); }
+  });
+}
+
+/* Upload su Cloudflare R2 tramite il Worker gia' in uso per le foto */
+function eaR2Upload(blob, cartella, nome){
+  if(typeof WORKER_FOTO==='undefined' || !WORKER_FOTO) return Promise.reject(new Error('Worker R2 non configurato'));
+  return fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(cartella||'documenti')+'&nome='+encodeURIComponent(nome),
+    { method:'POST', headers:{'Content-Type': (blob && blob.type) || 'application/pdf'}, body: blob })
+    .then(function(r){ return r.json(); })
+    .then(function(res){ if(res && res.ok && res.url) return res.url; throw new Error('Upload R2 non riuscito'); });
+}
+
+function eaBlobToBase64(blob){
+  return new Promise(function(res, rej){
+    var rd = new FileReader();
+    rd.onload = function(){ res(String(rd.result).replace(/^data:[^;]+;base64,/,'')); };
+    rd.onerror = function(){ rej(new Error('Lettura del PDF non riuscita')); };
+    rd.readAsDataURL(blob);
+  });
+}
+
+/* opts = {to, subject, testo, blob, filename, cartella, allega} */
+function eaInviaPdfMail(opts){
+  opts = opts || {};
+  if(!opts.to || String(opts.to).indexOf('@')<0) return Promise.reject(new Error('Destinatario mancante'));
+  var blob = opts.blob;
+  var fn   = opts.filename || 'documento.pdf';
+  var link = '';
+  var passo = blob ? eaR2Upload(blob, opts.cartella||'documenti', fn)
+                       .then(function(u){ link=u; })
+                       .catch(function(){ /* senza link si prosegue lo stesso */ })
+                   : Promise.resolve();
+  return passo.then(function(){
+    if(!blob || opts.allega===false || blob.size > EA_PDF_MAXALL) return null;
+    return eaBlobToBase64(blob).catch(function(){ return null; });
+  }).then(function(b64){
+    var bottone = link
+      ? ('<div style="margin-top:24px;text-align:center;">'
+         +'<a href="'+link+'" style="display:inline-block;background:#1a4fa0;color:#ffffff;text-decoration:none;font-weight:800;font-size:15px;padding:13px 28px;border-radius:8px;">\uD83D\uDCC4 Apri il documento</a>'
+         +'</div><div style="margin-top:10px;font-size:11px;color:#94a3b8;text-align:center;word-break:break-all;">'+link+'</div>')
+      : '';
+    var msg = {
+      to: opts.to,
+      subject: opts.subject || 'Documento \u2014 Europa Auto',
+      html: eaMailWrap((opts.testo||'') + bottone)
+    };
+    if(b64) msg.attachments = [{ filename: fn, content: b64 }];
+    return eaInviaMessaggio(msg).then(function(r){
+      if(r && r.error) throw new Error(String(r.error));
+      return { ok:true, link:link, allegato:!!b64, risposta:r };
+    });
+  });
+}
+
+/* Helper UI condiviso: chiede la mail, genera, carica, invia */
+function eaChiediMailEInvia(cfg){
+  cfg = cfg || {};
+  var to = prompt('Email del destinatario:', cfg.to || '');
+  if(to===null) return;
+  to = String(to).trim();
+  if(to.indexOf('@')<0){ alert('Email non valida.'); return; }
+  var toast = function(m){ try{ if(typeof tcToastNew==='function') tcToastNew(m,true); }catch(e){} };
+  toast('\u23f3 Genero il PDF\u2026');
+  Promise.resolve()
+    .then(function(){ return cfg.getBlob(); })
+    .then(function(blob){
+      toast('\u2601\uFE0F Carico e invio\u2026');
+      return eaInviaPdfMail({ to:to, subject:cfg.subject, testo:cfg.testo,
+        blob:blob, filename:cfg.filename, cartella:cfg.cartella });
+    })
+    .then(function(res){
+      alert('\u2705 Inviato a '+to+'\n\n'+(res.allegato
+        ? 'Il PDF \u00e8 allegato alla mail.'
+        : 'Nella mail c\u2019\u00e8 il link per scaricare il PDF.'));
+    })
+    .catch(function(e){
+      alert('\u274C Invio non riuscito: '+((e&&e.message)?e.message:e));
+    });
+}
+
 function eaInviaMessaggio(msg){
   // msg = {to, subject, html?, text?, canale?} — canale default 'email'
   if(!msg || !msg.to) return Promise.reject(new Error('no destinatario'));
@@ -4859,7 +5013,7 @@ function downloadPDF(){
     const targa = document.getElementById('targa').value.trim().toUpperCase();
     const dataFmt = document.getElementById('dataIspezione').value;
     const reportHtml = buildReportHTML(marca, targa, dataFmt);
-    showPdfOverlay(reportHtml, '', marca+' '+targa+' (anteprima)');
+    showPdfOverlay(reportHtml, '', marca+' '+targa+' (anteprima)', {marca:marca, targa:targa});
   }catch(err){
     console.error(err);
     document.getElementById('errBox').style.display='block';
@@ -4887,8 +5041,30 @@ function badgeHTML(key, type, fixedVal){
 // ══════════════════════════════════════════════════════════════
 let _reportHtmlReady = null;
 
-function showPdfOverlay(htmlContent, filename, label){
+var _reportMailInfo = null;
+function reportInviaMail(){
+  if(!_reportHtmlReady){ alert('Nessun report aperto.'); return; }
+  var info = _reportMailInfo || {};
+  var html = _reportHtmlReady;
+  var tg   = String(info.targa||'auto').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  var mail = '';
+  try{ if(info.cliente && typeof recuperaEmailCliente==='function') mail = recuperaEmailCliente(info.cliente)||''; }catch(e){}
+  var veicolo = ((info.marca||'')+' '+(info.modello||'')).trim();
+  eaChiediMailEInvia({
+    to: mail,
+    subject: 'Report di valutazione \u2014 '+(veicolo||'veicolo')+(info.targa?(' ('+info.targa+')'):''),
+    testo: 'Gentile '+(info.cliente||'Cliente')+',<br><br>'
+      +'in allegato trova il <b>report di valutazione</b> del veicolo '
+      +'<b>'+(veicolo||'\u2014')+'</b>'+(info.targa?(', targa <b>'+info.targa+'</b>'):'')+'.<br><br>'
+      +'Restiamo a disposizione per qualsiasi chiarimento.',
+    filename: 'report-'+tg+'-'+Date.now()+'.pdf',
+    cartella: 'report',
+    getBlob: function(){ return eaHtmlToPdf(html); }
+  });
+}
+function showPdfOverlay(htmlContent, filename, label, info){
   _reportHtmlReady = htmlContent;
+  _reportMailInfo  = info || null;
   const sub = document.getElementById('pdfReadySub');
   if(sub) sub.textContent = label || '';
   const fw = document.getElementById('reportFrameWrap');
@@ -5019,7 +5195,7 @@ function generateAndDownloadPDF(id, nomeCliente){
     });
     saveSent(sent);
     try{ reportCaricaLink(sent[0], reportHtml); }catch(e){}
-    showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+' → '+nomeCliente);
+    showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+' → '+nomeCliente, {marca:r.marca, modello:r.modello, targa:r.targa, cliente:nomeCliente});
   }catch(err){
     console.error(err);
     alert('Errore: '+err.message);
@@ -5063,7 +5239,7 @@ function redownloadSent(id){
     const reportHtml = buildReportHTML(r.marca, r.targa, r.dataIspezione||'');
     /* I report generati prima non hanno un link: riscaricandoli lo si crea. */
     try{ if(!r.link && typeof reportCaricaLink==='function') reportCaricaLink(r, reportHtml); }catch(e){}
-    showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+(r.nomeCliente?' → '+r.nomeCliente:''));
+    showPdfOverlay(reportHtml, '', r.marca.toUpperCase()+' '+r.targa+(r.nomeCliente?' → '+r.nomeCliente:''), {marca:r.marca, modello:r.modello, targa:r.targa, cliente:r.nomeCliente});
   }catch(err){
     console.error(err);
     alert('Errore: '+err.message);
@@ -12249,6 +12425,7 @@ function sinPreventivo(id){
   html+='<div style="display:flex;gap:8px;">';
   html+='<button onclick="pvSalva()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">💾 Salva bozza</button>';
   html+='<button onclick="pvStampa()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">🖨️ Stampa / PDF</button>';
+  html+='<button onclick="pvInviaMail()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">📧 Invia al cliente</button>';
   html+='</div>';
   html+='<button onclick="pvConferma()" style="margin-top:8px;width:100%;padding:13px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">✅ Conferma preventivo (rendilo scaricabile)</button>';
   html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:'+(s.preventivoConfermato?'#16a34a':'#d97706')+';">'+(s.preventivoConfermato?'✅ Preventivo confermato — scaricabile dalla scheda':'⏳ Bozza — confermalo per poterlo scaricare')+'</div>';
@@ -12373,7 +12550,7 @@ function pvConferma(){
   if(typeof sinChiudi==='function'){ sinChiudi(); } else { var m=document.getElementById('sin-modal'); if(m){ m.style.display='none'; } }
   if(typeof sinRender==='function') sinRender();
 }
-function pvStampa(){
+function pvDocHtml(){
   var t=pvCompute(); var rh='';
   _pvRighe.forEach(function(r){ rh+='<tr><td class="c">'+sinEsc(r.cr)+'</td><td>'+sinEsc(r.descr)+'</td><td class="c">'+(r.sr?sinEsc(r.sr):'')+'</td><td class="c">'+(r.la?sinEsc(r.la):'')+'</td><td class="c">'+(r.ve?sinEsc(r.ve):'')+'</td><td class="c">'+(r.me?sinEsc(r.me):'')+'</td><td class="r">'+(r.ric?pvEu(pvN(r.ric)):'')+'</td></tr>'; });
   for(var k=_pvRighe.length;k<18;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
@@ -12407,10 +12584,44 @@ function pvStampa(){
   +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+pvEu(t.imponibile)+'</td></tr>'
   +'<tr><td><div class="lab">IVA '+pvOr2(t.ivaPct)+'%</div></td><td class="r">'+pvEu(t.iva)+'</td></tr>'
   +'<tr><td class="big">TOTALE DOCUMENTO</td><td class="r big">'+pvEu(t.totale)+'</td></tr></table></div>';
-  var pa=document.getElementById('sin-print'); if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
-  pa.innerHTML=doc; pa.style.display='block'; document.body.classList.add('sin-printing');
+  return doc;
+}
+function pvAreaStampa(){
+  var pa=document.getElementById('sin-print');
+  if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
+  return pa;
+}
+function pvStampa(){
+  var pa=pvAreaStampa();
+  pa.innerHTML=pvDocHtml(); pa.style.display='block'; document.body.classList.add('sin-printing');
   setTimeout(function(){ try{ window.print(); }catch(e){} },200);
   setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); },1500);
+}
+function pvInviaMail(){
+  var cliente=pvVal('pv_cliente'), targa=pvVal('pv_targa'), veicolo=pvVal('pv_veicolo');
+  var num=pvVal('pv_num'), tot=0;
+  try{ tot=pvCompute().totale; }catch(e){}
+  var mail='';
+  try{ if(cliente && typeof recuperaEmailCliente==='function') mail=recuperaEmailCliente(cliente)||''; }catch(e){}
+  var tg=String(targa||'auto').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  eaChiediMailEInvia({
+    to: mail,
+    subject: 'Preventivo di riparazione'+(num?(' n. '+num):'')+(targa?(' \u2014 '+targa):''),
+    testo: 'Gentile '+(cliente||'Cliente')+',<br><br>'
+      +'in allegato trova il <b>preventivo di riparazione</b>'+(num?(' n. <b>'+num+'</b>'):'')
+      +' per il veicolo <b>'+(veicolo||'\u2014')+'</b>'+(targa?(' targa <b>'+targa+'</b>'):'')+'.<br><br>'
+      +(tot?('Totale documento: <b>\u20ac '+pvEu(tot)+'</b> (IVA inclusa).<br><br>'):'')
+      +'Il preventivo ha validit\u00e0 30 giorni. Restiamo a disposizione per qualsiasi chiarimento.',
+    filename: 'preventivo-'+tg+(num?('-'+String(num).replace(/[^0-9A-Za-z]/g,'')):'')+'.pdf',
+    cartella: 'preventivi',
+    getBlob: function(){
+      var pa=pvAreaStampa();
+      pa.innerHTML=pvDocHtml();
+      pa.style.display='block'; pa.style.background='#ffffff'; pa.style.padding='10px';
+      return eaElementoToPdf(pa, 2).then(function(b){ pa.style.display='none'; return b; })
+        .catch(function(e){ pa.style.display='none'; throw e; });
+    }
+  });
 }
 
 /* ===================== PERMUTE (perizia veicolo in permuta) ===================== */
@@ -14418,7 +14629,8 @@ function pmiCard(cv){
         +'<button onclick="pmiExport(\''+cv.id+'\')" style="flex:1;min-width:120px;padding:11px;border-radius:8px;border:1px solid #dc2626;background:#fff;color:#dc2626;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udce4 Export</button>'
         +'</div>';
     } else if(stato==='entrata'){
-      azioni='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><span style="font-size:12px;color:#16a34a;font-weight:700;flex:1;min-width:150px;">\u2705 Entrata in magazzino e nel registro</span>'+(pm.magazzinoId?('<button onclick="pmiApriVeicolo(\''+pm.magazzinoId+'\')" style="padding:9px 13px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">Apri scheda veicolo \u2192</button>'):'')+'</div>';
+      var _rg = pm.regimeIva ? ('<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:9px;margin-left:6px;'+(pm.regimeIva==='esposta'?'background:#fff7ed;color:#9a3412;':'background:#f1f5f9;color:#475569;')+'">'+(pm.regimeIva==='esposta'?'\ud83e\uddfe IVA ESPOSTA':'Art. 36 \u2014 MARGINE')+'</span>') : '';
+      azioni='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><span style="font-size:12px;color:#16a34a;font-weight:700;flex:1;min-width:150px;">\u2705 Entrata in magazzino e nel registro'+_rg+'</span>'+(pm.magazzinoId?('<button onclick="pmiApriVeicolo(\''+pm.magazzinoId+'\')" style="padding:9px 13px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">Apri scheda veicolo \u2192</button>'):'')+'</div>';
     } else if(stato==='esportata'){
       azioni='<div style="margin-top:10px;font-size:12px;color:#991b1b;font-weight:700;">\ud83d\udce4 Esportata \u2014 rimossa dal contratto (archiviata per eventuali controlli)</div>';
     }
@@ -14435,6 +14647,46 @@ function pmiApriVeicolo(mzId){
   if(typeof mzTab==='function') mzTab('auto');
   setTimeout(function(){ if(typeof mzForm==='function') mzForm(mzId); }, 150);
 }
+/* Regime IVA della permuta: domanda esplicita, due risposte.
+   Prima era un confirm() con OK=esposta / Annulla=margine: un Esc o un tocco
+   fuori posto decideva il regime fiscale al posto nostro. Qui si esce solo
+   premendo uno dei bottoni, e la domanda e' posta nel verso naturale. */
+function pmiChiediRegimeIva(info){
+  info = info || {};
+  return new Promise(function(resolve){
+    var vecchio=document.getElementById('pmi-iva-modal');
+    if(vecchio && vecchio.parentNode) vecchio.parentNode.removeChild(vecchio);
+    var esc=function(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+    var suggerito = (info.suggerito==='esposta') ? 'esposta' : 'margine';
+    var hint = (suggerito==='esposta')
+      ? 'Il cedente risulta un\u2019azienda con partita IVA: di norma il veicolo arriva con <b>IVA esposta</b>.'
+      : 'Il cedente risulta un privato: di norma il veicolo rientra nel <b>regime del margine</b> (art. 36 D.L. 41/1995).';
+    var wrap=document.createElement('div');
+    wrap.id='pmi-iva-modal';
+    wrap.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:18px;';
+    wrap.innerHTML=
+      '<div style="background:#fff;border-radius:14px;max-width:430px;width:100%;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.32);font-family:inherit;">'
+      +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;font-weight:800;font-size:15px;">\uD83E\uDDFE Regime IVA della permuta</div>'
+      +'<div style="padding:20px;">'
+      +'<div style="font-size:13px;color:#334155;font-weight:700;">'+esc(info.veicolo||'Veicolo permuta')+(info.targa?(' \u00b7 '+esc(info.targa)):'')+'</div>'
+      +'<div style="font-size:12px;color:#94a3b8;margin:3px 0 18px;">Ceduto da: '+esc(info.cedente||'\u2014')+'</div>'
+      +'<div style="font-size:18px;font-weight:800;color:#0f172a;line-height:1.35;">Si tratta di un veicolo con IVA a margine?</div>'
+      +'<div style="font-size:12px;color:#94a3b8;margin-top:9px;line-height:1.55;">'+hint+'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:9px;margin-top:20px;">'
+      +'<button type="button" data-pmi="margine" style="padding:14px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">S\u00CC \u2014 IVA a margine (art. 36)</button>'
+      +'<button type="button" data-pmi="esposta" style="padding:14px;border-radius:9px;border:2px solid #ea580c;background:#fff7ed;color:#9a3412;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">NO \u2014 IVA esposta</button>'
+      +'<button type="button" data-pmi="annulla" style="padding:11px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla l\u2019ingresso</button>'
+      +'</div></div></div>';
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', function(ev){
+      var t=ev.target, scelta=null;
+      while(t && t!==wrap){ if(t.getAttribute && t.getAttribute('data-pmi')){ scelta=t.getAttribute('data-pmi'); break; } t=t.parentNode; }
+      if(!scelta) return;
+      try{ wrap.parentNode.removeChild(wrap); }catch(e){}
+      resolve(scelta==='annulla' ? null : scelta);
+    });
+  });
+}
 function pmiConfermaIngresso(cvId){
   if(!confirm('Confermare l\'INGRESSO di questa permuta?\n\nIl veicolo entra nel magazzino (disponibile) e nel registro di carico/scarico.')) return;
   var list=(typeof cvLoad==='function')?cvLoad():[]; var idx=list.findIndex(function(x){return x.id===cvId;}); if(idx<0) return; var cv=list[idx];
@@ -14447,8 +14699,16 @@ function pmiConfermaIngresso(cvId){
     var per=pmLoad().filter(function(pr){ var pt=(pr.targa||'').toLowerCase().replace(/\s/g,''); return (tg&&pt&&pt===tg)||(nm&&(pr.cliente||'').toLowerCase().indexOf(nm)>=0); })[0];
     if(per) periziaId=per.id;
   } }catch(e){}
-  var ivaEsp=confirm('Regime IVA della permuta.\n\nLe permute sono quasi sempre a IVA a MARGINE.\n\nSi tratta invece di un veicolo a IVA ESPOSTA?\n\n• OK = IVA esposta\n• Annulla = IVA a margine');
   var cl=cv.cliente||{};
+  var _sugg=(cl.business && String(cl.piva||'').trim()) ? 'esposta' : 'margine';
+  pmiChiediRegimeIva({
+    veicolo:(pm.modello||'Veicolo permuta'),
+    targa:(pm.targa||''),
+    cedente:(nome || cl.ragSociale || '\u2014'),
+    suggerito:_sugg
+  }).then(function(_scelta){
+  if(!_scelta) return;   // ingresso annullato: non tocco nulla
+  var ivaEsp=(_scelta==='esposta');
   var _cf=(cl.cf||'').toUpperCase();
   var _rag=(nome||'').trim() || (cl.ragSociale||'') || 'Cliente permuta';
   var _fornId='';
@@ -14463,17 +14723,21 @@ function pmiConfermaIngresso(cvId){
     targa:(pm.targa||'').toUpperCase(), colore:(pm.colore||'').toUpperCase(), km:pm.km||'', alimentazione:pm.alimentazione||'', cambio:pm.cambio||'',
     cilindrata:pm.cilindrata||'', potenza:pm.potenza||'', dataImm:pm.dataImm||'', prezzoAcq:pm.prezzoAcq||'', prezzoVen:'', stato:'disponibile',
     note:'Ingresso da permuta'+(nome?(' \u2014 '+nome):''), dataCarico:oggi, origine:'permuta', permutaContrattoId:cv.id,
-    permutaDifetti:(pm.difetti||''), periziaId:periziaId, ivaEsposta:!!ivaEsp, provenienzaVenditore:'privato',
+    permutaDifetti:(pm.difetti||''), periziaId:periziaId, ivaEsposta:!!ivaEsp,
+    provenienzaVenditore: ivaEsp ? 'azienda' : 'privato', regimeIva:_scelta,
     fornitoreNome:_rag, fornitoreId:_fornId, estera:false };
   /* Il depositante della permuta e' il cliente che ha ceduto il veicolo:
      nome, CF/P.IVA e indirizzo entrano subito nel registro e restano fissi. */
   try{ if(typeof regFreezeCarico==='function') regFreezeCarico(auto, cv); }catch(e){}
   if(typeof mzLoad==='function'){ var ml=mzLoad(); ml.push(auto); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(auto); }
-  cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now(); cv.updatedAt=Date.now();
+  cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now();
+  cv.permuta.regimeIva=_scelta; cv.updatedAt=Date.now();
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
   pmiRender();
-  if(typeof tcToastNew==='function') tcToastNew('\u2705 Permuta entrata in magazzino e nel registro',true);
-  try{ if(typeof notifPush==='function') notifPush('Permuta entrata in magazzino: '+((marca||'')+' '+(modello||'')).trim(), '\ud83d\ude97'); }catch(e){}
+  var _reg = ivaEsp ? 'IVA esposta' : 'IVA a margine (art. 36)';
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Permuta entrata in magazzino \u2014 '+_reg,true);
+  try{ if(typeof notifPush==='function') notifPush('Permuta entrata in magazzino ('+_reg+'): '+((marca||'')+' '+(modello||'')).trim(), '\ud83d\ude97'); }catch(e){}
+  });
 }
 function pmiExport(cvId){
   if(!confirm('EXPORT: il veicolo NON entra nel nostro magazzino, viene esportato e rimosso dal contratto.\n\nSe la permuta era conteggiata come pagamento, quell\'importo torner\u00e0 "da incassare".\n\nRester\u00e0 consultabile nel filtro "Esportate". Procedere?')) return;
@@ -15545,19 +15809,64 @@ function cvEmailCaparraCliente(cv, importo){
     +'</div></div>';
   try{ gsPost({ action:'emailCliente', email:cl.email, oggetto:oggetto, html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
 }
+/* Chi spedisce la mail del preventivo:
+     false = ci pensa questo browser (serve il gestionale aperto)
+     true  = ci pensa il cron su Supabase (funziona anche a saracinesca chiusa)
+   Metti true SOLO dopo aver verificato che il cron invia davvero. */
+var CV_MAIL_SERVER = false;
+
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
-  /* La mail parte fra un'ora: la cartella foto va resa leggibile adesso,
-     mentre Drive e' connesso. Se fallisce, la mail parte senza foto. */
-  try{
-    var _tg=(cv.autoSnapshot&&cv.autoSnapshot.targa)||cv.nuovaTarga||'';
-    if(_tg && typeof fotoRendiPubbliche==='function') fotoRendiPubbliche(_tg);
-  }catch(e){}
   try{
     var _h=''; try{ _h=cvMailArricchisci(cv, cvMailPreventivoHtml(cv)); }catch(e){}
     cv.mailProg = { to:cv.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:_h };
   }catch(e){}
+  /* Il PDF si genera adesso, finche' il preventivo e' aperto e i dati sono
+     in memoria: fra un'ora la mail potrebbe partire da un altro dispositivo,
+     dove questo documento non esiste. Finito l'upload su R2 l'indirizzo
+     viene scritto sul record e sincronizzato. */
+  try{ cvPreparaPdfPreventivo(cv); }catch(e){}
+}
+
+/* Genera il PDF del preventivo, lo carica su R2 e ne salva l'indirizzo */
+function cvPreparaPdfPreventivo(cv){
+  if(!cv || !cv.id) return;
+  if(typeof cvBuildHTML!=='function' || typeof eaHtmlToPdf!=='function' || typeof eaR2Upload!=='function') return;
+  var id=cv.id;
+  var tg=String((cv.autoSnapshot&&cv.autoSnapshot.targa)||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  var nomeFile='preventivo-'+(tg||'auto')+'-'+id+'.pdf';
+  var html='';
+  try{ html=cvBuildHTML(cv,'preventivo'); }catch(e){ return; }
+  if(!html) return;
+  eaHtmlToPdf(html)
+    .then(function(blob){ return eaR2Upload(blob,'preventivi',nomeFile); })
+    .then(function(url){
+      if(!url || typeof cvLoad!=='function') return;
+      var l=cvLoad();
+      for(var i=0;i<l.length;i++){
+        if(l[i] && l[i].id===id){
+          l[i].mailPdfUrl=url; l[i].mailPdfNome=nomeFile; l[i].updatedAt=Date.now();
+          /* mailProg e' la busta gia' pronta che il cron spedisce senza dover
+             ricalcolare nulla: va riscritta adesso, perche' solo ora il
+             corpo puo' contenere anche il riquadro del PDF. */
+          try{
+            l[i].mailProg = { to:((l[i].cliente&&l[i].cliente.email)||''),
+                              subject:'Il tuo preventivo \u2014 Europa Auto',
+                              html:cvMailArricchisci(l[i], cvMailPreventivoHtml(l[i])),
+                              pdfUrl:url, pdfNome:nomeFile };
+          }catch(e){
+            if(l[i].mailProg){ l[i].mailProg.pdfUrl=url; l[i].mailProg.pdfNome=nomeFile; }
+          }
+          if(typeof cvSave==='function') cvSave(l);
+          if(typeof supaUpsert==='function') supaUpsert('preventivi', l[i]);
+          break;
+        }
+      }
+    })
+    .catch(function(){
+      try{ if(typeof notifPush==='function') notifPush('PDF del preventivo non generato: fra un\u2019ora la mail partir\u00e0 senza allegato \u2014 '+(tg||'veicolo'), '\u26a0\ufe0f'); }catch(e){}
+    });
 }
 /* ===================== MAIL PREVENTIVO AL CLIENTE =====================
    Non e' una copia del contratto: e' una mail che deve far venire voglia
@@ -15593,13 +15902,8 @@ function eamAuto(p){
       var f=(mz.foto||[])[0];
       if(f && f.url) out.foto=f.url;
     }
-    /* Le foto buone sono quelle del report, su Drive: 27 scatti d'ispezione
-       valgono piu' di una foto qualsiasi. Hanno la precedenza. */
-    var tg=out.targa || (mz && mz.targa) || '';
-    if(tg && typeof fotoPrimaDrive==='function'){
-      var did=fotoPrimaDrive(tg);
-      if(did) out.foto=fotoUrlPubblico(did, 600);
-    }
+    /* La foto viene dal magazzino, cioe' da R2: gli indirizzi di Drive
+       scadevano con la connessione a Google e nella mail restava il buco. */
   }catch(e){}
   return out;
 }
@@ -15862,9 +16166,20 @@ function cvMailArricchisci(p, html){
       var mark='</table>'; var pos=html.lastIndexOf(mark);
       if(pos>0) html=html.slice(0,pos)+repBlocco+html.slice(pos);
     }
+    var _pdf=(p && (p.mailPdfUrl || (p.mailProg && p.mailProg.pdfUrl))) || '';
+    if(_pdf){
+      var pdfBlocco='<tr><td style="padding:8px 24px 0;">'
+        +'<div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:10px;padding:14px 16px;font-family:Segoe UI,Arial,sans-serif;">'
+        +'<div style="font-weight:800;color:#1e40af;font-size:14px;">Il preventivo in PDF</div>'
+        +'<div style="font-size:12.5px;color:#1e40af;margin:3px 0 10px;">Lo trovi allegato a questa mail. Se il tuo programma di posta non lo mostra, puoi scaricarlo da qui.</div>'
+        +'<a href="'+_pdf+'" style="display:inline-block;background:#1a4fa0;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Scarica il preventivo</a>'
+        +'</div></td></tr>';
+      var mk='</table>'; var pz=html.lastIndexOf(mk);
+      if(pz>0) html=html.slice(0,pz)+pdfBlocco+html.slice(pz);
+    }
     /* se manca qualcosa lo si viene a sapere subito, non dal cliente */
-    if(!foto || !rep){
-      var mancanti=[]; if(!foto) mancanti.push('foto'); if(!rep) mancanti.push('report');
+    if(!foto || !rep || !_pdf){
+      var mancanti=[]; if(!foto) mancanti.push('foto'); if(!rep) mancanti.push('report'); if(!_pdf) mancanti.push('PDF');
       try{ if(typeof notifPush==='function') notifPush('Mail preventivo senza '+mancanti.join(' e ')+' \u2014 '+String((p.autoSnapshot&&p.autoSnapshot.targa)||p.autoDesc||''), '\u26a0\ufe0f'); }catch(e){}
     }
   }catch(e){}
@@ -15872,15 +16187,28 @@ function cvMailArricchisci(p, html){
 }
 function cvInviaMailCliente(p){
   if(!(p.cliente&&p.cliente.email) || typeof eaInviaMessaggio!=='function') return;
-  try{
-    var html=cvMailArricchisci(p, cvMailPreventivoHtml(p));
-    eaInviaMessaggio({ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:html });
-    return;
-  }catch(e){}
+  var html='';
+  try{ html=cvMailArricchisci(p, cvMailPreventivoHtml(p)); }catch(e){ return; }
+  var msg={ to:p.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:html };
+  var pdfUrl =(p.mailPdfUrl  || (p.mailProg && p.mailProg.pdfUrl)  || '');
+  var pdfNome=(p.mailPdfNome || (p.mailProg && p.mailProg.pdfNome) || 'preventivo.pdf');
+  var limite=(typeof EA_PDF_MAXALL!=='undefined')?EA_PDF_MAXALL:(6*1024*1024);
+  if(!pdfUrl || typeof eaBlobToBase64!=='function'){ eaInviaMessaggio(msg); return; }
+  /* Il PDF sta su R2: lo si riprende e lo si allega. Se non arriva, la mail
+     parte lo stesso: dentro c'e' comunque il link per scaricarlo. */
+  fetch(pdfUrl)
+    .then(function(r){ return r.ok ? r.blob() : null; })
+    .then(function(b){ return (b && b.size && b.size<=limite) ? eaBlobToBase64(b) : null; })
+    .catch(function(){ return null; })
+    .then(function(b64){
+      if(b64) msg.attachments=[{ filename:pdfNome, content:b64 }];
+      eaInviaMessaggio(msg);
+    });
 }
 // Invia il preventivo via email solo se, trascorsa 1 ora, NON è stato trasformato in proposta d’acquisto
 function cvCheckMailPreventivi(){
   try{
+    if(typeof CV_MAIL_SERVER!=='undefined' && CV_MAIL_SERVER) return;  /* spedisce il cron */
     if(typeof cvLoad!=='function') return;
     var list=cvLoad(), now=Date.now();
     var candidati=list.filter(function(p){
