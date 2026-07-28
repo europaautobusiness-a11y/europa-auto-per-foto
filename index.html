@@ -4488,6 +4488,39 @@ function eaBlocchiPulisci(){
   try{ localStorage.removeItem(EA_BLOCCHI_KEY); console.log('registro azzerato'); }catch(e){}
 }
 
+/* Cronometro: avvolge una funzione globale e annota quando ci mette troppo.
+   Serve a dare un NOME al blocco, invece del generico "qualcosa". */
+var _eaFunzLente = [];
+function eaRegistraLenta(nome, ms){
+  _eaFunzLente.push({ n:nome, d:ms, t:Date.now() });
+  if(_eaFunzLente.length>40) _eaFunzLente.shift();
+  console.warn('\u23f1\ufe0f '+nome+'() ha impiegato '+ms+'ms');
+}
+function eaCrono(nome){
+  try{
+    var f=window[nome];
+    if(typeof f!=='function' || f.__crono) return;
+    var avvolta=function(){
+      var t0=(window.performance&&performance.now)?performance.now():Date.now();
+      try{ return f.apply(this, arguments); }
+      finally{
+        var d=((window.performance&&performance.now)?performance.now():Date.now())-t0;
+        if(d>500) eaRegistraLenta(nome, Math.round(d));
+      }
+    };
+    avvolta.__crono=true;
+    window[nome]=avvolta;
+  }catch(e){}
+}
+/* I sospetti: tutto cio' che gira nella sezione vendite, piu' salvataggio
+   e sincronizzazione, che toccano tutte le sezioni. */
+try{ setTimeout(function(){
+  ['cvVendRender','cvVendBadge','cvVendAutoAvanza','cvVendInit','cvContratti',
+   'cvSaveOra','cvSupaLoad','cvLoad','cvRender','mzRender','eaBadgeRefreshAll',
+   'notifSync','ccSupaLoad','cvCheckMailPreventivi','cvCheckPromemoriaWa'
+  ].forEach(eaCrono);
+}, 3000); }catch(e){}
+
 (function eaSentinella(){
   try{
     /* i "lavori lunghi" sono le operazioni che tengono occupata la pagina:
@@ -4512,24 +4545,36 @@ function eaBlocchiPulisci(){
       if(ritardo<EA_BLOCCO_SOGLIA) return;
       if(document.hidden) return;   /* scheda in secondo piano: il browser rallenta apposta */
 
-      var peggiore=null;
-      for(var i=0;i<_eaLavoriLunghi.length;i++){
-        var L=_eaLavoriLunghi[i];
-        if(L.t>=ora-ritardo-2000 && (!peggiore || L.d>peggiore.d)) peggiore=L;
-      }
       var voce={
         ora:new Date(ora).toLocaleString('it-IT'),
         durata:(ritardo/1000).toFixed(1),
         sezione:eaSezioneAperta(),
-        lavoro:peggiore?(peggiore.n+' '+peggiore.d+'ms'):''
+        lavoro:''
       };
-      console.warn('\u23f8\ufe0f blocco di '+voce.durata+'s \u2014 sezione '+voce.sezione+(voce.lavoro?(' \u2014 '+voce.lavoro):''));
-      try{
-        var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
-        l.push(voce);
-        while(l.length>30) l.shift();
-        localStorage.setItem(EA_BLOCCHI_KEY, JSON.stringify(l));
-      }catch(e){}
+      /* Il browser consegna i "lavori lunghi" subito DOPO questo controllo,
+         non prima: se si guarda adesso il campo resta sempre vuoto.
+         Si aspetta un istante e poi si completa la voce. */
+      var _daQuando=ora-ritardo-3000;
+      setTimeout(function(){
+        try{
+          var peggiore=null, funz=null;
+          for(var i=0;i<_eaLavoriLunghi.length;i++){
+            var L=_eaLavoriLunghi[i];
+            if(L.t>=_daQuando && (!peggiore || L.d>peggiore.d)) peggiore=L;
+          }
+          for(var j=0;j<_eaFunzLente.length;j++){
+            var F=_eaFunzLente[j];
+            if(F.t>=_daQuando && (!funz || F.d>funz.d)) funz=F;
+          }
+          voce.lavoro = funz ? (funz.n+'() '+funz.d+'ms')
+                     : (peggiore ? (peggiore.n+' '+peggiore.d+'ms') : '');
+          console.warn('\u23f8\ufe0f blocco di '+voce.durata+'s \u2014 sezione '+voce.sezione+(voce.lavoro?(' \u2014 '+voce.lavoro):' \u2014 nessuna funzione nostra sospetta'));
+          var l=JSON.parse(localStorage.getItem(EA_BLOCCHI_KEY)||'[]');
+          l.push(voce);
+          while(l.length>30) l.shift();
+          localStorage.setItem(EA_BLOCCHI_KEY, JSON.stringify(l));
+        }catch(e){}
+      }, 300);
     }, 1000);
   }catch(e){}
 })();
