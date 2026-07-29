@@ -13658,10 +13658,7 @@ function mzApriContratto(id){
   if(!l.length){ alert('Questo veicolo non ha nessuna pratica collegata.'); return; }
   var cv=l.filter(function(c){ return c.isContratto; })[0] || l[0];
   /* la scheda veicolo puo' essere stata alzata a 10050: la pratica va sopra */
-  try{
-    var m=document.getElementById('cv-modal');
-    if(m){ if(m.parentNode!==document.body) document.body.appendChild(m); m.style.zIndex='10090'; }
-  }catch(e){}
+  try{ eaPortaSopra(document.getElementById('cv-modal')); }catch(e){}
   try{
     if(typeof cvForm==='function') cvForm(cv.id, true);
     else if(typeof cvVendModifica==='function') cvVendModifica(cv.id);
@@ -14707,6 +14704,8 @@ function mzForm(id){
      gia' si fa col modulo del contratto. */
   if(m && m.parentNode!==document.body){ document.body.appendChild(m); }
   m.innerHTML=h; m.style.display='block';
+  /* se e' stata chiamata da un'altra finestra, sale sopra quella */
+  try{ if(document.getElementById('cv-modal') && document.getElementById('cv-modal').style.display==='block') eaPortaSopra(m); }catch(e){}
   try{ if(typeof mzFotoInit==='function') mzFotoInit(a); }catch(e){}
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
@@ -14716,7 +14715,8 @@ function mzForm(id){
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
 }
-function mzChiudi(){ var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ } }
+function mzChiudi(){ var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
+  try{ var c=document.getElementById('cv-modal'); if(!c || c.style.display!=='block') _eaLivello=10050; }catch(e){} }
 function mzSalva(){
   if(typeof _mzFotoBusy!=='undefined' && _mzFotoBusy){ alert('Caricamento foto ancora in corso: attendi che finisca prima di salvare.'); return; }
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
@@ -15218,7 +15218,7 @@ function clAppuntamenti(c){
    per veicolo — blocca la pagina per decine di secondi. Il risultato resta
    quindi in cassa per qualche secondo e viene buttato appena qualcosa cambia. */
 var _clAggCache=null, _clAggTs=0;
-function clAggregaInvalida(){ _clAggCache=null; }
+function clAggregaInvalida(){ _clAggCache=null; _clIdx=null; _clIdxDa=null; }
 function clAggrega(){
   if(_clAggCache && (Date.now()-_clAggTs)<3000) return _clAggCache;
   var r=clAggregaCalcola();
@@ -15245,7 +15245,19 @@ function clMerge(entry, o){
     indirizzi:(o.indirizzi&&o.indirizzi.length)?o.indirizzi:clIndirizziBase(b),
     preventivi:entry.preventivi||[], contratti:entry.contratti||[] };
 }
-function clFind(key){ var all=clAggrega(); for(var i=0;i<all.length;i++){ if(all[i].key===key) return all[i]; } return null; }
+/* Cercare un cliente scorrendo tutta la lista costava, moltiplicato per il
+   numero di righe di un registro, piu' memoria di quanta il browser ne avesse.
+   Si costruisce un indice per chiave insieme alla lista e si guarda li'. */
+var _clIdx=null, _clIdxDa=null;
+function clFind(key){
+  var all=clAggrega();
+  if(!_clIdx || _clIdxDa!==all){
+    _clIdx={};
+    for(var i=0;i<all.length;i++){ if(all[i] && all[i].key) _clIdx[all[i].key]=all[i]; }
+    _clIdxDa=all;
+  }
+  return _clIdx[key]||null;
+}
 function clInit(){ _clSel=null; clRender(); clSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
 function clSetFiltro(k,v){ _clFiltri[k]=v; clRender();
   if(k==='q'){ var el=document.getElementById('cl-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length, el.value.length); }catch(e){} } }
@@ -18580,6 +18592,9 @@ function regSalva(){
 }
 
 function regStampa(){
+  /* Si prepara una volta sola la lista clienti: dentro il ciclo delle righe
+     verra' solo consultata. Senza questo, ogni riga la ricostruiva da capo. */
+  try{ if(typeof clAggrega==='function') clAggrega(); }catch(e){}
   var autos=regAutos().sort(function(a,b){ return (a.dataCarico||'').localeCompare(b.dataCarico||''); });
   var _mkNo=function(v){ return v?regEsc(v):'<span style="color:#b91c1c;font-weight:bold;">DATO MANCANTE</span>'; };
   var rows=autos.map(function(a){ var f=regForn(a); var sc=a.scarico||{};
@@ -21570,6 +21585,18 @@ function cvSchedaDaContratto(cv){
   m.style.display='block';
 }
 
+/* Le finestre si aprono l'una dall'altra — dal contratto al veicolo, dal
+   veicolo al contratto — e fissare i livelli a mano portava sempre a un caso
+   in cui una finiva sotto l'altra. Qui l'ordine lo decide chi apre per ultimo:
+   ogni apertura prende un livello piu' alto della precedente. */
+var _eaLivello=10050;
+function eaPortaSopra(el){
+  if(!el) return;
+  if(el.parentNode!==document.body) document.body.appendChild(el);
+  _eaLivello+=10;
+  el.style.zIndex=String(_eaLivello);
+}
+
 function cvApriAuto(autoId, riferimento, praticaId){
   /* Non serve essere amministratori per guardare la scheda del veicolo:
      il vincolo rendeva il nome del veicolo un testo morto per i venditori. */
@@ -21672,7 +21699,7 @@ function cvApriAuto(autoId, riferimento, praticaId){
     });
   }catch(e){}
   if(_sopra){
-    try{ var mm=document.getElementById('mz-modal'); if(mm) mm.style.zIndex='10050'; }catch(e){}
+    try{ eaPortaSopra(document.getElementById('mz-modal')); }catch(e){}
     try{ if(typeof mzForm==='function') mzForm(autoId); }catch(e){}
     return;
   }
