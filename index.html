@@ -12084,7 +12084,7 @@ function sinCard(s){
   var html='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;margin-bottom:12px;">';
   html+='<div style="flex:1 1 460px;min-width:300px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
   html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
-  html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+sinEsc(s.nome||'(senza nome)')+'</div>';
+  html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(sinEsc(s.nome||'(senza nome)'), {nome:s.nome}, s.clienteKey)+'</div>';
   html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div>';
   if(s.tipoSinistro) html+='<div style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 10px;">'+sinEsc(s.tipoSinistro)+'</div>';
   var _app=sinAppuntamento(s);
@@ -14185,6 +14185,36 @@ function gsApriVenditaCliente(keyEnc){
     document.body.appendChild(m); }
   m.innerHTML=h; m.style.display='flex';
 }
+/* Il nome del cliente e' il primo posto dove si clicca, ovunque compaia.
+   Questo lo rende un collegamento verso la sua scheda in anagrafica.
+   Se il cliente non e' agganciato si prova a ricavarne la chiave da nome e
+   cognome; se non si trova nemmeno cosi', resta testo normale invece di
+   diventare un pulsante che non porta da nessuna parte. */
+function eaClienteKey(cliente, keyNota){
+  try{
+    if(keyNota) return keyNota;
+    if(!cliente) return '';
+    if(typeof clKeyOf!=='function' || typeof clStore!=='function') return '';
+    var k=clKeyOf(cliente);
+    return (k && clStore()[k]) ? k : '';
+  }catch(e){ return ''; }
+}
+function eaApriCliente(keyEnc){
+  try{
+    if(typeof sidebarNav==='function') sidebarNav('clienti', document.getElementById('si-clienti'));
+    setTimeout(function(){ try{ if(typeof clApri==='function') clApri(keyEnc); }catch(e){} }, 170);
+  }catch(e){}
+}
+/* testo gia' pronto per l'HTML, cliente/chiave per l'aggancio */
+function eaClienteLink(testoHtml, cliente, keyNota, stileExtra){
+  var k=eaClienteKey(cliente, keyNota);
+  if(!k) return testoHtml;
+  return '<span onclick="event.stopPropagation();eaApriCliente(\''+encodeURIComponent(k)+'\')" '
+    +'title="Apri la scheda del cliente in anagrafica" '
+    +'style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;'+(stileExtra||'')+'">'
+    +testoHtml+'</span>';
+}
+
 function gsearchApriCliente(keyEnc){
   var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
   var inp=document.getElementById('gsearch-input'); if(inp) inp.value='';
@@ -14637,7 +14667,13 @@ function mzForm(id){
   if(!(a && a.stato==='venduta')) h+='<button onclick="mzSalvaEVendi()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83e\udd1d Vendita auto \u2014 salva e apri il contratto</button>';
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
-  var m=document.getElementById('mz-modal'); m.innerHTML=h; m.style.display='block';
+  var m=document.getElementById('mz-modal');
+  /* Il contenitore nasce dentro la sezione Magazzino: aprendolo da un'altra
+     sezione l'antenato e' nascosto e il browser non disegna nulla, per quanto
+     in primo piano lo si metta. Si sposta sotto il corpo della pagina, come
+     gia' si fa col modulo del contratto. */
+  if(m && m.parentNode!==document.body){ document.body.appendChild(m); }
+  m.innerHTML=h; m.style.display='block';
   try{ if(typeof mzFotoInit==='function') mzFotoInit(a); }catch(e){}
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
@@ -15558,9 +15594,39 @@ function cvVista(id){
 }
 function cvVistaChiudi(){ var m=document.getElementById('cvVistaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 function cvVistaModifica(id){ cvVistaChiudi(); if(typeof cvForm==='function') cvForm(id); }
+/* Le pratiche create prima che il modulo avesse residenza e codice fiscale
+   hanno quei campi vuoti, anche quando in anagrafica ci sono da sempre.
+   All'apertura si ripescano da li'. Si riempiono SOLO le caselle vuote:
+   quello che e' gia' scritto sulla pratica non si tocca mai, perche' e' il
+   dato valido al momento di quella vendita e potrebbe essere diverso da oggi. */
+function cvRecuperaAnagrafica(cv){
+  try{
+    if(!cv || typeof clStore!=='function') return;
+    cv.cliente=cv.cliente||{};
+    var ov=clStore();
+    var key=cv.clienteKey||'';
+    if(!key && typeof clKeyOf==='function'){ var k2=clKeyOf(cv.cliente); if(k2 && ov[k2]) key=k2; }
+    var e=key?ov[key]:null;
+    if(!e) return;
+    if(!cv.clienteKey) cv.clienteKey=key;
+    var vuoto=function(k){ return !String(cv.cliente[k]||'').trim(); };
+    ['nome','cognome','telefono','email','cf','ragSociale','piva','sdi','sedeLegale'].forEach(function(k){
+      if(vuoto(k) && e[k]) cv.cliente[k]=e[k];
+    });
+    var i0=(e.indirizzi&&e.indirizzi.length)?e.indirizzi[e.indirizzi.length-1]:null;
+    if(i0){
+      ['via','civico','cap','citta','prov'].forEach(function(k){
+        if(vuoto(k) && i0[k]) cv.cliente[k]=i0[k];
+      });
+    }
+    if((cv.cliente.piva||cv.cliente.ragSociale) && !cv.cliente.business) cv.cliente.business=true;
+  }catch(e){}
+}
+
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
   _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Acconto',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
+  cvRecuperaAnagrafica(_cv);
   /* Da Vendite i non amministratori vedono la versione ridotta del contratto.
      La contabilita' invece lavora sulla pratica intera: fatturazione, dati
      anagrafici, importi e documenti. */
@@ -21403,7 +21469,7 @@ function cvVendCard(cv){
     var _admC=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
     var _demoC=(_admC && typeof eaDemoOn==='function' && eaDemoOn())?('<a onclick="event.stopPropagation();cvVendEliminaConsegnato(\''+cv.id+'\')" style="font-size:11px;color:#fff;background:#dc2626;padding:7px 11px;border-radius:7px;cursor:pointer;font-weight:800;white-space:nowrap;">🗑 Elimina</a>'):'';
     return '<div onclick="cvRiepilogo(\''+cv.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvRiepilogo(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvRiepilogo(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)'), cv.cliente, cv.clienteKey)+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
       +'<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'
       +(function(){
         var r=cv.recensione||null;
@@ -21483,7 +21549,7 @@ function cvVendCard(cv){
   /* il rimando a "Vedi dettaglio pagamenti" non serve piu': le righe
      con la conferma stanno adesso direttamente sulla scheda */
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();'+_apriScheda+'" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)')+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();'+_apriScheda+'" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)'), cv.cliente, cv.clienteKey)+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
     +recap+cvFirmaBottone(cv)
     +cvPagPannello(cv)
     +azione+stampe+annulla+demoDel+'</div>';
@@ -22381,6 +22447,7 @@ function cvVendModificaLimitata(id){
   /* Cliente: e' l'altra cosa che chi vende deve poter correggere, perche' un
      numero sbagliato o una mail storta li scopre lui, parlandoci. */
   _cvMod.cliente=_cvMod.cliente||{};
+  try{ if(typeof cvRecuperaAnagrafica==='function') cvRecuperaAnagrafica(_cvMod); }catch(e){}
   var _ci=function(campo,ph,tipo){
     return '<input value="'+cvEsc(_cvMod.cliente[campo]||'')+'" type="'+(tipo||'text')+'" placeholder="'+ph+'" '
       +'oninput="_cvMod.cliente[\''+campo+'\']=this.value" '
