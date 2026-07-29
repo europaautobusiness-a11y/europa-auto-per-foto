@@ -14747,7 +14747,33 @@ function mzSegnaDeleted(id){
   try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert({ id:String(id), deleted:true, updatedAt:Date.now() }); }catch(e){}
 }
 function mzElimina(id){
-  if(!confirm('Eliminare questa auto dal magazzino?')) return;
+  /* Un veicolo venduto NON si elimina. Il registro di carico e scarico legge
+     da questo stesso elenco: cancellare la scheda cancella lo scarico, e quel
+     registro e' un obbligo di legge. Le auto consegnate restano qui con stato
+     "venduta", fuori dai disponibili ma dentro il registro.
+     Resta possibile eliminare una scheda creata per sbaglio o doppia, che di
+     vendite e di scarichi non ne ha. */
+  try{
+    var a=(typeof mzById==='function')?mzById(id):null;
+    var motivi=[];
+    if(a){
+      if(a.scarico && a.scarico.dataScarico) motivi.push('ha gia\u2019 uno scarico registrato del '+String(a.scarico.dataScarico).split('-').reverse().join('/'));
+      if(a.stato==='venduta') motivi.push('risulta venduta');
+      if(typeof cvLoad==='function'){
+        var n=cvLoad().filter(function(c){ return c && c.autoId===id && !c.deleted && !c.annullato; }).length;
+        if(n) motivi.push('e\u2019 collegata a '+n+(n===1?' pratica':' pratiche'));
+      }
+    }
+    if(motivi.length){
+      alert('Questa auto non si pu\u00f2 eliminare: '+motivi.join(', ')+'.\n\n'
+        +'Il registro di carico e scarico legge da qui: cancellando la scheda\n'
+        +'sparirebbe anche lo scarico, e quel registro \u00e8 obbligatorio per legge.\n\n'
+        +'Le auto vendute restano in magazzino con stato \u00abvenduta\u00bb: non compaiono\n'
+        +'fra i disponibili, ma il registro resta completo.');
+      return;
+    }
+  }catch(e){}
+  if(!confirm('Eliminare questa auto dal magazzino?\n\nSi pu\u00f2 fare perch\u00e9 non ha vendite n\u00e9 scarichi collegati.')) return;
   mzSegnaDeleted(id);
   mzSave(mzLoad().filter(function(a){return a.id!==id;}));
   mzChiudi(); mzRender();
@@ -21380,6 +21406,89 @@ function cvDeliberaAnnulla(id){
 /* Scheda del veicolo ricostruita dai dati salvati sul contratto, per quando
    in magazzino non c'e' piu'. E' di sola lettura: sono dati fotografati al
    momento della vendita, non vanno modificati a ritroso. */
+/* Rimette in magazzino un veicolo che non c'e' piu', ricostruendolo dai dati
+   salvati sul contratto. Entra come VENDUTA, quindi non sporca i disponibili,
+   ma torna a esistere: la scheda e' quella vera e il registro di carico e
+   scarico lo ritrova, che e' il motivo serio per cui conviene farlo. */
+/* Ricostruisce la scheda del veicolo dai dati del contratto e la mette
+   nell'elenco in memoria, cosi' la scheda normale la trova e si apre
+   modificabile come tutte le altre. Non scrive niente su disco ne' sul
+   cloud: diventa definitiva solo se si preme "Salva auto". */
+function cvVeicoloDaContratto(cv){
+  try{
+    if(!cv || typeof mzLoad!=='function') return '';
+    var a=cv.autoSnapshot||{};
+    var id=cv.autoId||('mz_'+Date.now());
+    var l=mzLoad();
+    for(var i=0;i<l.length;i++){ if(l[i] && l[i].id===id) return id; }
+    var rec={
+      id:id, marca:a.marca||'', modello:a.modello||'',
+      targa:cv.nuovaTarga||a.targa||'', telaio:a.telaio||'',
+      numero_interno:a.numero_interno||a.numeroInterno||'',
+      dataImm:a.dataImm||a.immatricolazione||'', km:a.km||cv.kmAgg||'',
+      alimentazione:a.alimentazione||'', cambio:a.cambio||'', colore:a.colore||'',
+      cilindrata:a.cilindrata||'', kw:a.kw||a.potenza||'',
+      estera:a.estera===true, ivaEsposta:!!a.ivaEsposta,
+      provenienzaVenditore:a.provenienzaVenditore||'',
+      prezzoAcquisto:a.prezzoAcquisto||'', dataCarico:a.dataCarico||'',
+      stato:'venduta', impegnata:true,
+      ricostruitaDaPratica:cv.id,
+      createdAt:Date.now(), updatedAt:Date.now()
+    };
+    /* Lo scarico va scritto nella forma che il registro si aspetta: causale,
+       data della consegna, destinatario con codice fiscale e indirizzo. Con
+       una data messa nel posto sbagliato il veicolo ricomparirebbe nel
+       registro come ancora a carico, cioe' invenduto. */
+    try{ if(typeof regFreezeScarico==='function') regFreezeScarico(rec, cv, 'Vendita'); }catch(e){}
+    l.push(rec);
+    return id;
+  }catch(e){ return ''; }
+}
+
+function cvRipristinaVeicolo(cv){
+  try{
+    if(!cv || typeof mzLoad!=='function' || typeof mzSave!=='function') return '';
+    var a=cv.autoSnapshot||{};
+    var targa=cv.nuovaTarga||a.targa||'';
+    var descr=((a.marca||'')+' '+(a.modello||'')).trim()+(targa?(' \u00b7 '+targa):'');
+    if(!confirm('La scheda di '+(descr||'questo veicolo')+' non e\u2019 piu\u2019 in magazzino:\n'
+      +'e\u2019 stata eliminata dopo la consegna.\n\n'
+      +'La rimetto in magazzino come VENDUTA, con i dati salvati sul contratto?\n\n'
+      +'Non comparira\u2019 fra i disponibili, ma tornera\u2019 nel registro di carico e scarico.')) return '';
+    var id=cv.autoId||('mz_'+Date.now());
+    var rec={
+      id:id, marca:a.marca||'', modello:a.modello||'', targa:targa, telaio:a.telaio||'',
+      numero_interno:a.numero_interno||a.numeroInterno||'',
+      dataImm:a.dataImm||a.immatricolazione||'', km:a.km||cv.kmAgg||'',
+      alimentazione:a.alimentazione||'', cambio:a.cambio||'', colore:a.colore||'',
+      cilindrata:a.cilindrata||'', kw:a.kw||a.potenza||'',
+      estera:a.estera===true, ivaEsposta:!!a.ivaEsposta,
+      provenienzaVenditore:a.provenienzaVenditore||'',
+      prezzoAcquisto:a.prezzoAcquisto||'', dataCarico:a.dataCarico||'',
+      stato:'venduta', impegnata:true,
+      dataScarico:(function(){ var t=cv.consegnatoTs||cv.updatedAt||Date.now(); var d=new Date(t);
+        return isNaN(d.getTime())?'':(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)); })(),
+      ripristinatoDaPratica:cv.id,
+      createdAt:Date.now(), updatedAt:Date.now()
+    };
+    var l=mzLoad().slice();
+    var i=l.findIndex(function(x){ return x && x.id===id; });
+    if(i>=0) l[i]=Object.assign({}, l[i], rec); else l.push(rec);
+    mzSave(l);
+    try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert(rec); }catch(e){}
+    /* la pratica resta agganciata alla scheda ritrovata */
+    try{
+      if(cv.autoId!==id && typeof cvLoad==='function'){
+        var cl=cvLoad();
+        for(var k=0;k<cl.length;k++){ if(cl[k] && cl[k].id===cv.id){ cl[k].autoId=id; cl[k].updatedAt=Date.now();
+          if(typeof cvSave==='function') cvSave(cl);
+          if(typeof supaUpsert==='function') supaUpsert('preventivi', cl[k]); break; } }
+      }
+    }catch(e){}
+    return id;
+  }catch(e){ return ''; }
+}
+
 function cvSchedaDaContratto(cv){
   var a=(cv&&cv.autoSnapshot)||{};
   var esc=(typeof cvEsc==='function')?cvEsc:function(x){ return String(x==null?'':x); };
@@ -21482,7 +21591,10 @@ function cvApriAuto(autoId, riferimento, praticaId){
   if((!id || (typeof mzById==='function' && !mzById(id))) && praticaId && typeof cvById==='function'){
     try{
       var _p=cvById(praticaId), _a=_p&&_p.autoSnapshot;
-      if(_a && (_a.marca||_a.modello||_a.targa||_a.telaio)){ cvSchedaDaContratto(_p); return; }
+      if(_a && (_a.marca||_a.modello||_a.targa||_a.telaio)){
+        var _nuovo=cvVeicoloDaContratto(_p);
+        if(_nuovo){ id=_nuovo; autoId=_nuovo; }
+      }
     }catch(e){}
   }
   if(typeof mzById==='function' && !mzById(id)){
