@@ -15670,7 +15670,7 @@ function cvForm(id, fromVend){
   h+=lab('Auto'+(_autoLegata?' <span style="text-transform:none;font-weight:700;color:#1a4fa0;">\u00b7 scheda veicolo</span>':''));
   h+='<div style="display:flex;gap:8px;align-items:stretch;">'
     +'<input id="cv_autoQ" type="text" list="cv_autoList" value="'+cvEsc(_cvAutoLabel)+'" placeholder="\ud83d\udd0e Digita marca, modello, targa, telaio o n\u00b0 auto\u2026" oninput="cvAutoScegli()" autocomplete="off" style="flex:1;min-width:0;padding:10px 12px;border:1px solid '+(_autoLegata?'#bfdbfe':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;'+(_autoLegata?'color:#1a4fa0;font-weight:800;background:#f8fbff;':'')+'">'
-    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc(((_cv.autoSnapshot&&_cv.autoSnapshot.targa)||_cv.nuovaTarga||''))+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'):'')
+    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc([(_cv.autoSnapshot&&_cv.autoSnapshot.targa)||'',_cv.nuovaTarga||'',(_cv.autoSnapshot&&_cv.autoSnapshot.telaio)||'',(_cv.autoSnapshot&&(_cv.autoSnapshot.numero_interno||_cv.autoSnapshot.numeroInterno))||''].filter(Boolean).join('|'))+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'):'')
     +'</div>';
   h+='<datalist id="cv_autoList"></datalist>';
   h+='<div id="cv_autoInfo" style="font-size:11px;color:#94a3b8;margin-bottom:4px;"></div>';
@@ -21382,25 +21382,36 @@ function cvApriAuto(autoId, riferimento){
      il vincolo rendeva il nome del veicolo un testo morto per i venditori. */
   var id=autoId||'';
   /* Riserva: se l'identificativo salvato sulla pratica non aggancia piu'
-     nessun veicolo (auto ricreata, importata, targa cambiata) si ritenta
-     per targa o telaio prima di arrendersi. */
+     nessun veicolo si ritenta con ogni riferimento disponibile. Serve
+     soprattutto per le auto d'importazione: sul contratto c'e' la targa
+     italiana nuova, mentre in magazzino il veicolo e' registrato per telaio
+     o numero interno, perche' quando e' entrato la targa non l'aveva ancora.
+     "riferimento" puo' essere un valore singolo o piu' valori separati da |. */
+  var _prov=[];
   if((!id || (typeof mzById==='function' && !mzById(id))) && riferimento && typeof mzLoad==='function'){
     try{
-      var rif=String(riferimento).toLowerCase().replace(/\s+/g,'');
-      var trovato=mzLoad().filter(function(x){
-        if(!x) return false;
-        return [x.targa, x.telaio, x.numero_interno, x.numeroInterno].some(function(v){
-          return v && String(v).toLowerCase().replace(/\s+/g,'')===rif;
-        });
-      })[0];
-      if(trovato) id=trovato.id;
+      var pulisci=function(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,''); };
+      _prov=String(riferimento).split('|').map(pulisci).filter(function(v){ return v.length>=4; });
+      if(_prov.length){
+        var trovato=mzLoad().filter(function(x){
+          if(!x) return false;
+          return [x.targa, x.telaio, x.numero_interno, x.numeroInterno, x.nuovaTarga].some(function(v){
+            var pv=pulisci(v);
+            return pv.length>=4 && _prov.indexOf(pv)>=0;
+          });
+        })[0];
+        if(trovato) id=trovato.id;
+      }
     }catch(e){}
   }
   /* Errori a voce alta: il messaggino in basso puo' finire in una parte di
      pagina nascosta, e da fuori sembra che il pulsante non faccia nulla. */
   if(!id){ alert('Questa pratica non ha un veicolo collegato al magazzino.'); return; }
   if(typeof mzById==='function' && !mzById(id)){
-    alert('Il veicolo collegato a questa pratica non si trova in magazzino.\n\nRiferimento cercato: '+(riferimento||id));
+    alert('Il veicolo collegato a questa pratica non si trova in magazzino.\n\n'
+      +'Riferimenti cercati: '+(String(riferimento||'').split('|').filter(Boolean).join(', ')||id)
+      +'\n\nSuccede quando la scheda del veicolo e\u2019 stata eliminata, oppure quando in magazzino\n'
+      +'e\u2019 registrata con targa, telaio o numero interno diversi da quelli scritti sul contratto.');
     return;
   }
   autoId=id;
@@ -21448,7 +21459,7 @@ function cvVeicoloLink(cv){
      senza onclick il clic scivolava al riquadro sotto e apriva il contratto,
      facendo sembrare sparito il collegamento. Meglio un avviso chiaro. */
   var canClick=true;
-  var attr=' onclick="event.stopPropagation(); cvApriAuto(\''+(autoId||'')+'\',\''+String(targa||a.telaio||'').replace(/'/g,'')+'\')"';
+  var attr=' onclick="event.stopPropagation(); cvApriAuto(\''+(autoId||'')+'\',\''+[targa,a.targa,a.telaio,num].filter(Boolean).join('|').replace(/'/g,'')+'\')"';
   var cur='cursor:pointer;text-decoration:underline;';
   return '<div'+attr+' style="font-size:13px;font-weight:800;color:#1a4fa0;margin-top:3px;'+cur+'"'+(canClick?' title="Apri veicolo in magazzino"':'')+'>'+marcaMod+idHtml+'</div>';
 }
