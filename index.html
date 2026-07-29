@@ -15670,7 +15670,7 @@ function cvForm(id, fromVend){
   h+=lab('Auto'+(_autoLegata?' <span style="text-transform:none;font-weight:700;color:#1a4fa0;">\u00b7 scheda veicolo</span>':''));
   h+='<div style="display:flex;gap:8px;align-items:stretch;">'
     +'<input id="cv_autoQ" type="text" list="cv_autoList" value="'+cvEsc(_cvAutoLabel)+'" placeholder="\ud83d\udd0e Digita marca, modello, targa, telaio o n\u00b0 auto\u2026" oninput="cvAutoScegli()" autocomplete="off" style="flex:1;min-width:0;padding:10px 12px;border:1px solid '+(_autoLegata?'#bfdbfe':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;'+(_autoLegata?'color:#1a4fa0;font-weight:800;background:#f8fbff;':'')+'">'
-    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc([(_cv.autoSnapshot&&_cv.autoSnapshot.targa)||'',_cv.nuovaTarga||'',(_cv.autoSnapshot&&_cv.autoSnapshot.telaio)||'',(_cv.autoSnapshot&&(_cv.autoSnapshot.numero_interno||_cv.autoSnapshot.numeroInterno))||''].filter(Boolean).join('|'))+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'):'')
+    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc([(_cv.autoSnapshot&&_cv.autoSnapshot.targa)||'',_cv.nuovaTarga||'',(_cv.autoSnapshot&&_cv.autoSnapshot.telaio)||'',(_cv.autoSnapshot&&(_cv.autoSnapshot.numero_interno||_cv.autoSnapshot.numeroInterno))||''].filter(Boolean).join('|'))+'\',\''+_cv.id+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'):'')
     +'</div>';
   h+='<datalist id="cv_autoList"></datalist>';
   h+='<div id="cv_autoInfo" style="font-size:11px;color:#94a3b8;margin-bottom:4px;"></div>';
@@ -21377,7 +21377,7 @@ function cvDeliberaAnnulla(id){
   if(typeof cvVendBadge==='function') cvVendBadge();
   if(typeof cvVendRender==='function') cvVendRender();
 }
-function cvApriAuto(autoId, riferimento){
+function cvApriAuto(autoId, riferimento, praticaId){
   /* Non serve essere amministratori per guardare la scheda del veicolo:
      il vincolo rendeva il nome del veicolo un testo morto per i venditori. */
   var id=autoId||'';
@@ -21404,14 +21404,53 @@ function cvApriAuto(autoId, riferimento){
       }
     }catch(e){}
   }
+  /* Ultima spiaggia: ricerca larga. Si guarda dentro tutti i campi di ogni
+     veicolo cercando la targa o il telaio come sottostringa. Prende anche i
+     casi di targa scritta a meta', spazi strani o collegamento rotto fra
+     pratica e scheda. Se il candidato e' uno solo, si offre di ricollegarlo
+     una volta per tutte, cosi' il problema non si ripresenta. */
+  if((!id || (typeof mzById==='function' && !mzById(id))) && _prov.length && typeof mzLoad==='function'){
+    try{
+      var cand=mzLoad().filter(function(x){
+        if(!x) return false;
+        var blob=String((x.targa||'')+' '+(x.telaio||'')+' '+(x.numero_interno||'')+' '+(x.numeroInterno||'')+' '+(x.nuovaTarga||''))
+                 .toLowerCase().replace(/[^a-z0-9]/g,'');
+        return _prov.some(function(v){ return v.length>=5 && blob.indexOf(v)>=0; });
+      });
+      if(cand.length===1){
+        id=cand[0].id;
+        if(praticaId && typeof cvLoad==='function'){
+          var _q='Il collegamento fra questa pratica e la scheda del veicolo si era rotto.\n\n'
+                +'Ho ritrovato: '+((cand[0].marca||'')+' '+(cand[0].modello||'')).trim()+' '+(cand[0].targa||cand[0].telaio||'')+'\n\n'
+                +'Vuoi ricollegarli, cos\u00ec non si ripete?';
+          if(confirm(_q)){
+            var _l=cvLoad();
+            for(var _i=0;_i<_l.length;_i++){
+              if(_l[_i] && _l[_i].id===praticaId){
+                _l[_i].autoId=id; _l[_i].updatedAt=Date.now();
+                if(typeof cvSave==='function') cvSave(_l);
+                if(typeof supaUpsert==='function') supaUpsert('preventivi', _l[_i]);
+                break;
+              }
+            }
+          }
+        }
+      } else if(cand.length>1){
+        alert('In magazzino ci sono '+cand.length+' veicoli che corrispondono a questi riferimenti.\n\nApri il magazzino, scheda «Tutte», e cerca la targa: il collegamento va sistemato a mano.');
+        return;
+      }
+    }catch(e){}
+  }
   /* Errori a voce alta: il messaggino in basso puo' finire in una parte di
      pagina nascosta, e da fuori sembra che il pulsante non faccia nulla. */
   if(!id){ alert('Questa pratica non ha un veicolo collegato al magazzino.'); return; }
   if(typeof mzById==='function' && !mzById(id)){
     alert('Il veicolo collegato a questa pratica non si trova in magazzino.\n\n'
       +'Riferimenti cercati: '+(String(riferimento||'').split('|').filter(Boolean).join(', ')||id)
-      +'\n\nSuccede quando la scheda del veicolo e\u2019 stata eliminata, oppure quando in magazzino\n'
-      +'e\u2019 registrata con targa, telaio o numero interno diversi da quelli scritti sul contratto.');
+      +'\n\nIn magazzino su questo dispositivo ci sono '+((typeof mzLoad==='function')?mzLoad().length:0)+' veicoli in tutto\n'
+      +'(la ricerca guarda l\u2019elenco completo, non solo i disponibili).\n\n'
+      +'Se il numero ti sembra troppo basso, il magazzino non si e\u2019 sincronizzato del tutto:\n'
+      +'ricarica la pagina e riprova. Altrimenti la scheda del veicolo e\u2019 stata eliminata.');
     return;
   }
   autoId=id;
