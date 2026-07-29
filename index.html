@@ -16848,19 +16848,31 @@ function cvContrToggleBiz(){ var b=document.getElementById('ct_biz').checked; va
 function cvTrasformaContrattoFinale(){
   var gv=function(id){ var e=document.getElementById(id); return e?String(e.value).trim():''; };
   var biz=document.getElementById('ct_biz').checked;
+  /* Senza questi dati la fattura non si fa, quindi alla CREAZIONE del
+     contratto restano obbligatori. Ma lo stesso pannello serve anche a
+     correggere un numero di telefono su una pratica vecchia o a completare
+     un preventivo: li' bloccare tutto per un codice fiscale mai inserito
+     e' solo un ostacolo. In quel caso si annota cosa manca e si salva. */
+  var _solo=!!window._cvSoloAnagrafica;
+  var _mancano=[];
+  var _manca=function(campo, avviso){
+    if(_solo){ _mancano.push(campo); return false; }
+    alert(avviso); return true;
+  };
   _cv.cliente=_cv.cliente||{}; _cv.cliente.business=biz;
   if(biz){
     var rag=gv('ct_rag'), piva=gv('ct_piva'), sede=gv('ct_sede'), sdi=gv('ct_sdi');
-    if(!rag){ alert('Inserisci la RAGIONE SOCIALE.'); return; }
-    if(!piva){ alert('Inserisci la P.IVA.'); return; }
-    if(!sede){ alert('Inserisci l\'indirizzo della SEDE LEGALE.'); return; }
-    if(!sdi){ alert('Inserisci il codice SDI per la fatturazione.'); return; }
+    if(!rag  && _manca('ragione sociale','Inserisci la RAGIONE SOCIALE.')) return;
+    if(!piva && _manca('P.IVA','Inserisci la P.IVA.')) return;
+    if(!sede && _manca('sede legale','Inserisci l\'indirizzo della SEDE LEGALE.')) return;
+    if(!sdi  && _manca('codice SDI','Inserisci il codice SDI per la fatturazione.')) return;
     _cv.cliente.ragSociale=rag; _cv.cliente.piva=piva.toUpperCase(); _cv.cliente.sedeLegale=sede; _cv.cliente.sdi=sdi.toUpperCase();
     _cv.cliente.cf=''; _cv.cliente.via=''; _cv.cliente.civico=''; _cv.cliente.cap=''; _cv.cliente.citta='';
   } else {
     var cf=gv('ct_cf'), via=gv('ct_via'), civ=gv('ct_civico'), cap=gv('ct_cap'), citta=gv('ct_citta');
-    if(!cf){ alert('Inserisci il CODICE FISCALE.'); return; }
-    if(!via || !civ || !cap || !citta){ alert('Inserisci indirizzo completo: via, numero civico, CAP e citt\u00E0.'); return; }
+    if(!cf && _manca('codice fiscale','Inserisci il CODICE FISCALE.')) return;
+    if((!via || !civ || !cap || !citta)
+       && _manca('indirizzo completo (via, civico, CAP, citt\u00e0)','Inserisci indirizzo completo: via, numero civico, CAP e citt\u00E0.')) return;
     _cv.cliente.cf=cf.toUpperCase(); _cv.cliente.via=via; _cv.cliente.civico=civ; _cv.cliente.cap=cap; _cv.cliente.citta=citta; _cv.cliente.prov=gv('ct_prov').toUpperCase();
     _cv.cliente.ragSociale=''; _cv.cliente.piva=''; _cv.cliente.sedeLegale=''; _cv.cliente.sdi='';
   }
@@ -16883,6 +16895,16 @@ function cvTrasformaContrattoFinale(){
     cvSave(_l); supaUpsert('preventivi', _cv);
     try{ cvLogRegistra(_pr, _cv, 'modifica'); }catch(e){}
     try{ if(typeof cvModChiudi==='function') cvModChiudi(); else { var _m=document.getElementById('cv-mod-modal'); if(_m) _m.style.display='none'; } }catch(e){}
+    if(_mancano.length){
+      /* non e' un errore: e' un promemoria. Questi dati verranno richiesti
+         comunque quando la pratica diventera' contratto. */
+      try{
+        var _msg='\ud83d\udcbe Dati salvati.\n\nRestano da completare: '+_mancano.join(', ')
+                +'.\nSaranno richiesti al momento di creare il contratto.';
+        if(typeof tcToastNew==='function') tcToastNew('\ud83d\udcbe Salvato \u2014 manca ancora: '+_mancano.join(', '), true);
+        else alert(_msg);
+      }catch(e){}
+    }
     try{ if(typeof cvForm==='function') cvForm(_cv.id); }catch(e){}
     if(typeof tcToastNew==='function') tcToastNew('\u2713 Dati di fatturazione aggiornati', true);
     return;
@@ -21237,7 +21259,7 @@ function cvApriAuto(autoId){
      si torna al contratto con le modifiche ancora li'. */
   var _sopra=false;
   try{
-    ['cv-mod-modal','cvVistaModal'].forEach(function(k){
+    ['cv-modal','cv-mod-modal','cvVistaModal'].forEach(function(k){
       var m=document.getElementById(k);
       if(m && m.style.display && m.style.display!=='none') _sopra=true;
     });
