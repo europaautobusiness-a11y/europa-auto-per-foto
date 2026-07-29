@@ -12184,10 +12184,19 @@ function sinAppuntamento(s){
     var res=window.ccLoad().filter(function(c){
       if(!c || !c.data || c.fatto) return false;
       if(c.categoria==='task') return false;
-      var v=String(c.veicolo||'').toUpperCase().replace(/\s/g,'');
-      var t=String(c.titolo||'').toLowerCase();
-      var okTarga=(tg && v.indexOf(tg)>=0);
-      var okNome=(!tg && nm && t.indexOf(nm)>=0);
+      /* Si guarda la targa OVUNQUE compaia (veicolo, titolo o nota): in
+         calendario capita di scriverla nel titolo invece che nel campo auto. */
+      var blob=String((c.veicolo||'')+' '+(c.titolo||'')+' '+(c.nota||'')).toUpperCase().replace(/\s/g,'');
+      var okTarga=(tg && blob.indexOf(tg)>=0);
+      /* Il nome vale anche quando il sinistro ha la targa: prima no, ed era
+         il caso piu' comune — appuntamento preso col solo nome del cliente.
+         Il confronto e' per parole, cosi' "ZHYRIADA IVAN" trova "Ivan Zhyriada". */
+      var okNome=false;
+      if(nm){
+        var t=String(c.titolo||'').toLowerCase();
+        var parole=nm.split(/[^a-zà-ù0-9]+/).filter(function(p){ return p.length>=3; });
+        okNome = parole.length>0 && parole.every(function(p){ return t.indexOf(p)>=0; });
+      }
       return okTarga || okNome;
     }).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
     if(!res.length) return null;
@@ -13882,7 +13891,18 @@ function mzRender(){
     h+='<div style="flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+mzEsc(a.marca||'')+' '+mzEsc(a.modello||'')+_tgB+_nrB+(a.stato==='venduta'?' <span style="font-size:10px;font-weight:800;background:#fecaca;color:#991b1b;padding:2px 7px;border-radius:10px;vertical-align:middle;">VENDUTA</span>':(a.impegnata?' <span style="font-size:10px;font-weight:800;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:10px;vertical-align:middle;">OPZIONATA</span>':''))+'</div>';
     if(a.allestimento) h+='<div style="font-size:12px;color:#64748b;">'+mzEsc(a.allestimento)+'</div>';
     var regBadges=(a.estera?'<span style="font-size:10px;font-weight:800;background:#eff6ff;color:#1e40af;padding:1px 7px;border-radius:9px;">🌍 ESTERA</span> ':(a.origine==='permuta'?'<span style="font-size:10px;font-weight:800;background:#f5f3ff;color:#6d28d9;padding:1px 7px;border-radius:9px;">🔑 PERMUTA</span> ':''))+(a.ivaEsposta?'<span style="font-size:10px;font-weight:800;background:#fff7ed;color:#9a3412;padding:1px 7px;border-radius:9px;">🧾 I.E.</span>':'<span style="font-size:10px;font-weight:700;background:#f1f5f9;color:#64748b;padding:1px 7px;border-radius:9px;">Art. 36</span>');
-    h+='<div style="margin-top:4px;">'+regBadges+'</div>';
+    /* Doppia chiave e foto a colpo d'occhio: sono le due cose che si va a
+       controllare aprendo la scheda una per una. Un punto colorato e un
+       numero le dicono senza entrare da nessuna parte. */
+    var _dk=(a.doppiaChiave||'');
+    var _dkC={si:'#16a34a', attesa:'#f59e0b', no:'#dc2626'}[_dk]||'';
+    var _dkT={si:'Doppia chiave presente', attesa:'Doppia chiave in arrivo dal fornitore', no:'Doppia chiave non disponibile'}[_dk]||'';
+    var _dkH=_dkC ? ('<span title="'+_dkT+'" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:800;background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;padding:1px 7px;border-radius:9px;">'
+        +'\uD83D\uDD11<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+_dkC+';"></span></span> ') : '';
+    var _nf=(a.foto&&a.foto.length)||0;
+    var _fH='<span title="'+_nf+' foto caricate" style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:9px;'
+      +(_nf?'background:#f1f5f9;color:#64748b;':'background:#fef2f2;color:#991b1b;')+'">\uD83D\uDCF7 '+_nf+'</span>';
+    h+='<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">'+regBadges+' '+_dkH+_fH+'</div>';
     var _cbA=a.cambio?(/autom/i.test(a.cambio)?'Aut':'Man'):'';
     h+='<div style="font-size:13px;color:#475569;margin-top:4px;">'+(_cbA?('<b>'+_cbA+'</b> · '):'')+(a.anno||'—')+' · '+(a.km?((''+a.km).replace(/\B(?=(\d{3})+(?!\d))/g,'.')+' km'):'— km')+'</div>';
     var badges=[]; if(a.alimentazione)badges.push(a.alimentazione); if(a.colore)badges.push(a.colore);
