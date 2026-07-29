@@ -13644,6 +13644,30 @@ function mzSalvaEVendi(){
   if(typeof mzFaiPreventivo==='function') mzFaiPreventivo(id);
 }
 
+/* Dalla scheda del veicolo si torna alla pratica che lo ha venduto.
+   Si apre sopra la scheda: chiudendola si ritrova il veicolo dov'era. */
+function mzPraticheDi(id){
+  try{
+    if(!id || typeof cvLoad!=='function') return [];
+    return cvLoad().filter(function(c){ return c && c.autoId===id && !c.deleted && !c.annullato; })
+      .sort(function(a,b){ return (b.consegnatoTs||b.contrattoTs||b.updatedAt||0)-(a.consegnatoTs||a.contrattoTs||a.updatedAt||0); });
+  }catch(e){ return []; }
+}
+function mzApriContratto(id){
+  var l=mzPraticheDi(id);
+  if(!l.length){ alert('Questo veicolo non ha nessuna pratica collegata.'); return; }
+  var cv=l.filter(function(c){ return c.isContratto; })[0] || l[0];
+  /* la scheda veicolo puo' essere stata alzata a 10050: la pratica va sopra */
+  try{
+    var m=document.getElementById('cv-modal');
+    if(m){ if(m.parentNode!==document.body) document.body.appendChild(m); m.style.zIndex='10090'; }
+  }catch(e){}
+  try{
+    if(typeof cvForm==='function') cvForm(cv.id, true);
+    else if(typeof cvVendModifica==='function') cvVendModifica(cv.id);
+  }catch(e){ alert('Non riesco ad aprire la pratica.'); }
+}
+
 function mzNltCambio(){
   try{
     var el=document.getElementById('mz_nlt'); if(!el) return;
@@ -14654,9 +14678,21 @@ function mzForm(id){
   h+='<div style="margin-top:16px;padding:12px 14px;border:1px solid '+((a&&a.nlt)?'#c7d2fe':'#e2e8f0')+';background:'+((a&&a.nlt)?'#eef2ff':'#f8fafc')+';border-radius:10px;">'
     +'<label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;">'
     +'<input type="checkbox" id="mz_nlt" '+((a&&a.nlt)?'checked':'')+' onchange="mzNltCambio()" style="margin-top:2px;width:17px;height:17px;cursor:pointer;">'
-    +'<span><span style="font-weight:800;font-size:14px;color:#3730a3;">\\ud83d\\udd11 Noleggio a lungo termine</span>'
-    +'<div style="font-size:11.5px;color:#64748b;margin-top:3px;line-height:1.5;">Veicolo preso a noleggio, non di proprieta\\u2019. Non entra nel magazzino n\\u00e9 nel registro di carico e scarico: lo trovi nella scheda <b>Noleggio LT</b>.</div>'
+    +'<span><span style="font-weight:800;font-size:14px;color:#3730a3;">\ud83d\udd11 Noleggio a lungo termine</span>'
+    +'<div style="font-size:11.5px;color:#64748b;margin-top:3px;line-height:1.5;">Veicolo preso a noleggio, non di proprieta\u2019. Non entra nel magazzino n\u00e9 nel registro di carico e scarico: lo trovi nella scheda <b>Noleggio LT</b>.</div>'
     +'</span></label></div>';
+  /* Collegamento verso la pratica: la scheda veicolo e il contratto sono le
+     due facce della stessa vendita, e si passa spesso dall'una all'altra. */
+  (function(){
+    var _pr=(a&&typeof mzPraticheDi==='function')?mzPraticheDi(a.id):[];
+    if(!_pr.length) return;
+    var _c=_pr.filter(function(x){ return x.isContratto; })[0] || _pr[0];
+    var _cl=((_c.cliente&&_c.cliente.cognome)||'')+' '+((_c.cliente&&_c.cliente.nome)||'');
+    h+='<button onclick="mzApriContratto(\''+a.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">'
+      +'\uD83D\uDCC4 Apri '+(_c.isContratto?'il contratto':'il preventivo')
+      +(_cl.trim()?('<span style="display:block;font-weight:600;font-size:11.5px;color:#64748b;margin-top:2px;">'+mzEsc(_cl.trim())+'</span>'):'')
+      +'</button>';
+  })();
   h+='<button onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva auto</button>';
   /* Venduta subito: si salva e si passa al contratto senza rientrare
      nel magazzino a ricercare la stessa auto. Non compare su quelle
@@ -14888,6 +14924,7 @@ function cvLoad(){
 var _cvSaveT=null;
 function cvSave(list){
   _cvMem=list||[]; _cvIdx=null;
+  try{ clAggregaInvalida(); }catch(e){}   /* i clienti dipendono dalle pratiche */
   /* la scrittura su disco e' costosa: la accorpo se arrivano piu' salvataggi ravvicinati */
   if(_cvSaveT) clearTimeout(_cvSaveT);
   _cvSaveT=setTimeout(function(){ _cvSaveT=null; cvSaveOra(_cvMem); }, 400);
@@ -15129,7 +15166,8 @@ function clTab(t){ _clTab=t; clRender(); }
 var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
-function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){} }
+function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){}
+  try{ clAggregaInvalida(); }catch(e){} }
 /* --- anagrafiche sul cloud: prima vivevano solo dentro al browser ----
    NB: la tabella si chiama 'clienti_app' e non 'clienti' perche' su questo
    progetto Supabase esiste gia' una 'clienti' con un altro schema (niente
@@ -15174,7 +15212,20 @@ function clAppuntamenti(c){
   }catch(e2){}
   return out;
 }
+/* Ricostruire questa lista costa caro: ordina tutti i contratti, rilegge
+   l'intera anagrafica dal disco e la fonde riga per riga. Chiamata una volta
+   e' un attimo; chiamata dentro un ciclo — come faceva il registro, una volta
+   per veicolo — blocca la pagina per decine di secondi. Il risultato resta
+   quindi in cassa per qualche secondo e viene buttato appena qualcosa cambia. */
+var _clAggCache=null, _clAggTs=0;
+function clAggregaInvalida(){ _clAggCache=null; }
 function clAggrega(){
+  if(_clAggCache && (Date.now()-_clAggTs)<3000) return _clAggCache;
+  var r=clAggregaCalcola();
+  _clAggCache=r; _clAggTs=Date.now();
+  return r;
+}
+function clAggregaCalcola(){
   var map={}, order=[];
   ((typeof cvLoad==='function')?cvLoad():[]).slice().sort(function(a,b){return (b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0);}).forEach(function(cv){
     var cl=cv.cliente||{}; var key=clKeyOf(cl); if(!key) return;
@@ -18474,7 +18525,9 @@ function regRender(){
   var st=document.getElementById('reg-stat'); if(st) st.innerHTML='📋 '+autos.length+' veicoli · '+venduti+' scaricati · '+(autos.length-venduti)+' a carico';
   if(!list.length){ wrap.innerHTML='<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun veicolo. I veicoli arrivano dal <b>Magazzino → Auto</b>: aggiungi un\'auto e comparirà qui nel registro.</div>'; return; }
   wrap.innerHTML=list.map(function(a){
-    var sc=a.scarico||{}; var scaricato=!!sc.dataScarico; var _dstReg=regDestinatarioDa(a);
+    var sc=a.scarico||{}; var scaricato=!!sc.dataScarico;
+    /* per un veicolo ancora a carico il destinatario non esiste: inutile cercarlo */
+    var _dstReg=scaricato?regDestinatarioDa(a):{nome:'',cf:'',ind:''};
     var idv = a.estera ? ((a.telaio?('Telaio '+a.telaio):'')+(a.numero_interno?(' · n.'+a.numero_interno):'')) : (a.targa?('Targa '+a.targa):(a.telaio?('Telaio '+a.telaio):''));
     return '<div onclick="regForm(\''+a.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:0;margin-bottom:12px;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f0fdf4;border-bottom:1px solid #dcfce7;"><div style="font-weight:800;font-size:14px;color:#0f172a;">'+regEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'(veicolo)')+'</div><div style="font-size:12px;font-weight:700;color:'+(scaricato?'#64748b':'#16a34a')+';">'+(scaricato?'SCARICATO':'A CARICO')+'</div></div>'
