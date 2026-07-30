@@ -15811,7 +15811,7 @@ function cvForm(id, fromVend){
   h+=lab('Auto'+(_autoLegata?' <span style="text-transform:none;font-weight:700;color:#1a4fa0;">\u00b7 scheda veicolo</span>':''));
   h+='<div style="display:flex;gap:8px;align-items:stretch;">'
     +'<input id="cv_autoQ" type="text" list="cv_autoList" value="'+cvEsc(_cvAutoLabel)+'" placeholder="\ud83d\udd0e Digita marca, modello, targa, telaio o n\u00b0 auto\u2026" oninput="cvAutoScegli()" autocomplete="off" style="flex:1;min-width:0;padding:10px 12px;border:1px solid '+(_autoLegata?'#bfdbfe':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;'+(_autoLegata?'color:#1a4fa0;font-weight:800;background:#f8fbff;':'')+'">'
-    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc([(_cv.autoSnapshot&&_cv.autoSnapshot.targa)||'',_cv.nuovaTarga||'',(_cv.autoSnapshot&&_cv.autoSnapshot.telaio)||'',(_cv.autoSnapshot&&(_cv.autoSnapshot.numero_interno||_cv.autoSnapshot.numeroInterno))||''].filter(Boolean).join('|'))+'\',\''+_cv.id+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'):'')
+    +(_autoLegata?('<button type="button" onclick="cvApriAuto(\''+_cv.autoId+'\',\''+cvEsc([(_cv.autoSnapshot&&_cv.autoSnapshot.targa)||'',_cv.nuovaTarga||'',(_cv.autoSnapshot&&_cv.autoSnapshot.telaio)||'',(_cv.autoSnapshot&&(_cv.autoSnapshot.numero_interno||_cv.autoSnapshot.numeroInterno))||''].filter(Boolean).join('|'))+'\',\''+_cv.id+'\')" title="Apri la scheda del veicolo in magazzino" style="flex:0 0 auto;padding:0 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\ude97 Apri</button>'+'<button type="button" onclick="cvCambiaVeicolo(\''+_cv.id+'\')" title="Sostituisci il veicolo di questa pratica" style="flex:0 0 auto;padding:0 12px;border-radius:8px;border:1px solid #b45309;background:#fffbeb;color:#b45309;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;">\ud83d\udd01 Cambia</button>'):'')
     +'</div>';
   h+='<datalist id="cv_autoList"></datalist>';
   h+='<div id="cv_autoInfo" style="font-size:11px;color:#94a3b8;margin-bottom:4px;"></div>';
@@ -21621,9 +21621,49 @@ function cvVeicoloDaContratto(cv){
   try{
     if(!cv || typeof mzLoad!=='function') return '';
     var a=cv.autoSnapshot||{};
-    var id=cv.autoId||('mz_'+Date.now());
     var l=mzLoad();
-    for(var i=0;i<l.length;i++){ if(l[i] && l[i].id===id) return id; }
+    var id=cv.autoId||'';
+    /* Prima si guarda per identificativo... */
+    if(id){ for(var i=0;i<l.length;i++){ if(l[i] && l[i].id===id) return id; } }
+    /* ...e poi per targa, telaio e numero interno. Senza questo secondo giro
+       una scheda registrata sotto un altro identificativo non veniva vista e
+       se ne creava una seconda: due schede della stessa auto, quella vecchia
+       ferma in magazzino col dato sbagliato e quella nuova agganciata al
+       contratto. Meglio ritrovare l'originale e ricollegarcisi. */
+    var pulisci=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
+    var rif=[cv.nuovaTarga, a.targa, a.telaio, a.numero_interno, a.numeroInterno]
+      .map(pulisci).filter(function(v){ return v.length>=5; });
+    if(rif.length){
+      var cand=l.filter(function(x){
+        if(!x) return false;
+        return [x.targa, x.telaio, x.numero_interno, x.numeroInterno].some(function(v){
+          var pv=pulisci(v); return pv.length>=5 && rif.indexOf(pv)>=0;
+        });
+      });
+      /* Una stessa targa puo' comparire piu' volte in modo legittimo: un'auto
+         venduta e poi ricomprata ha due cicli di carico e scarico, quindi due
+         schede distinte. Se i candidati sono piu' di uno non si sceglie a caso:
+         agganciare il ciclo sbagliato falserebbe il registro. */
+      var gia=(cand.length===1)?cand[0]:null;
+      if(gia){
+        /* la pratica si riaggancia alla scheda vera, una volta per tutte */
+        try{
+          if(cv.autoId!==gia.id && typeof cvLoad==='function'){
+            var cl=cvLoad();
+            for(var k=0;k<cl.length;k++){
+              if(cl[k] && cl[k].id===cv.id){
+                cl[k].autoId=gia.id; cl[k].updatedAt=Date.now();
+                if(typeof cvSave==='function') cvSave(cl);
+                if(typeof supaUpsert==='function') supaUpsert('preventivi', cl[k]);
+                break;
+              }
+            }
+          }
+        }catch(e){}
+        return gia.id;
+      }
+    }
+    if(!id) id='mz_'+Date.now();
     var rec={
       id:id, marca:a.marca||'', modello:a.modello||'',
       targa:cv.nuovaTarga||a.targa||'', telaio:a.telaio||'',
@@ -21730,6 +21770,168 @@ function eaPortaSopra(el){
   if(el.parentNode!==document.body) document.body.appendChild(el);
   _eaLivello+=10;
   el.style.zIndex=String(_eaLivello);
+}
+
+/* ============ SOSTITUZIONE DEL VEICOLO SU UNA PRATICA ============
+   Capita di vendere l'auto sbagliata. La tentazione e' rinominare la scheda
+   del veicolo, ma e' l'operazione peggiore: la scheda si porta dietro carico,
+   fornitore, prezzo d'acquisto, telaio e documenti, e rinominandola quella
+   storia finisce attribuita a un'auto che non e' mai stata quella — nel
+   registro risulterebbe caricato un veicolo e scaricato un altro.
+   Qui invece si stacca il veicolo vecchio, che torna disponibile, e si aggancia
+   quello nuovo. Ogni scheda resta con la sua storia. */
+
+function cvCambiaVeicolo(id){
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ alert('Pratica non trovata.'); return; }
+  var att=(cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
+  var attTxt=att?(((att.marca||'')+' '+(att.modello||'')).trim()+(att.targa?(' \u00b7 '+att.targa):(att.telaio?(' \u00b7 '+att.telaio):''))):'\u2014 nessun veicolo collegato \u2014';
+  var libere=[];
+  try{
+    libere=mzLoad().filter(function(a){
+      if(!a || a.nlt) return false;
+      if(a.id===cv.autoId) return false;
+      if(a.stato==='venduta') return false;
+      return !a.impegnata || a.stato==='disponibile';
+    }).sort(function(x,y){ return String((x.marca||'')+(x.modello||'')).localeCompare(String((y.marca||'')+(y.modello||''))); });
+  }catch(e){}
+
+  var m=document.getElementById('cv-cveic-modal');
+  if(!m){ m=document.createElement('div'); m.id='cv-cveic-modal';
+    m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;display:none;';
+    document.body.appendChild(m); }
+  m.innerHTML='<div style="max-width:540px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+    +'<div style="background:#b45309;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+    +'<span style="font-weight:800;">\uD83D\uDD01 Cambia il veicolo della pratica</span>'
+    +'<button onclick="cvCambiaVeicoloChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+    +'<div style="padding:18px 20px;">'
+    +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;">Veicolo attuale</div>'
+    +'<div style="font-size:14px;font-weight:700;color:#0f172a;margin:2px 0 14px;">'+cvEsc(attTxt)+'</div>'
+    +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Nuovo veicolo</div>'
+    +'<input id="cveic-cerca" placeholder="\uD83D\uDD0E Cerca marca, modello, targa o telaio\u2026" oninput="cvCambiaVeicoloFiltra()" autocomplete="off" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;margin-bottom:6px;">'
+    +'<select id="cveic-sel" size="8" style="width:100%;padding:6px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13.5px;box-sizing:border-box;"></select>'
+    +'<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;line-height:1.5;">Il veicolo attuale torna <b>disponibile</b>, il nuovo diventa <b>opzionato</b>. Nessuna scheda viene rinominata: ognuna resta con il suo carico e i suoi documenti.</div>'
+    +'<div id="cveic-esito" style="font-size:12.5px;margin-top:8px;min-height:18px;"></div>'
+    +'<button onclick="cvCambiaVeicoloConferma(\''+id+'\')" style="margin-top:8px;width:100%;padding:13px;border-radius:9px;border:none;background:#b45309;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">\uD83D\uDD01 Sostituisci il veicolo</button>'
+    +'</div></div>';
+  m.style.display='block';
+  try{ if(typeof eaPortaSopra==='function') eaPortaSopra(m); }catch(e){}
+  window._cveicLista=libere;
+  cvCambiaVeicoloFiltra();
+}
+
+function cvCambiaVeicoloFiltra(){
+  try{
+    var q=String((document.getElementById('cveic-cerca')||{}).value||'').toLowerCase().trim();
+    var sel=document.getElementById('cveic-sel'); if(!sel) return;
+    var l=(window._cveicLista||[]).filter(function(a){
+      if(!q) return true;
+      return String((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')+' '+(a.targa||'')+' '+(a.telaio||'')+' '+(a.numero_interno||'')).toLowerCase().indexOf(q)>=0;
+    });
+    sel.innerHTML=l.map(function(a){
+      var et=((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim()
+        +(a.targa?(' \u00b7 '+a.targa):(a.telaio?(' \u00b7 '+a.telaio):''))
+        +(a.stato&&a.stato!=='disponibile'?(' ['+a.stato+']'):'');
+      return '<option value="'+a.id+'">'+cvEsc(et)+'</option>';
+    }).join('') || '<option value="">nessun veicolo trovato</option>';
+  }catch(e){}
+}
+
+function cvCambiaVeicoloChiudi(){
+  var m=document.getElementById('cv-cveic-modal');
+  if(m){ m.style.display='none'; m.innerHTML=''; }
+}
+
+function cvCambiaVeicoloConferma(id){
+  var esito=document.getElementById('cveic-esito');
+  var sel=document.getElementById('cveic-sel');
+  var nuovoId=sel?sel.value:'';
+  if(!nuovoId){ if(esito) esito.innerHTML='<span style="color:#b45309;font-weight:700;">Scegli il veicolo nuovo dall\u2019elenco.</span>'; return; }
+  var lista=cvLoad(), idx=lista.findIndex(function(x){ return x && x.id===id; });
+  if(idx<0){ alert('Pratica non trovata.'); return; }
+  var cv=lista[idx];
+  var vecchioId=cv.autoId||'';
+  var nuovo=(typeof mzById==='function')?mzById(nuovoId):null;
+  if(!nuovo){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Veicolo non trovato.</span>'; return; }
+  var vecchio=(vecchioId && typeof mzById==='function')?mzById(vecchioId):null;
+
+  var dsc=function(a){ return a?(((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' \u00b7 '+a.targa):(a.telaio?(' \u00b7 '+a.telaio):''))):'\u2014'; };
+  if(!confirm('Confermi la sostituzione?\n\nDa:  '+dsc(vecchio)+'\nA:   '+dsc(nuovo)+'\n\nIl primo torna disponibile, il secondo diventa opzionato.')) return;
+
+  try{
+    var ml=mzLoad();
+    /* il vecchio si libera solo se era impegnato da QUESTA pratica */
+    if(vecchioId){
+      var vi=ml.findIndex(function(x){ return x && x.id===vecchioId; });
+      if(vi>=0 && ml[vi].stato!=='venduta'){
+        ml[vi].impegnata=false;
+        if(ml[vi].stato==='opzionata') ml[vi].stato='disponibile';
+        ml[vi].updatedAt=Date.now();
+        if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[vi]);
+      }
+    }
+    var ni=ml.findIndex(function(x){ return x && x.id===nuovoId; });
+    if(ni>=0){
+      ml[ni].impegnata=true;
+      if(ml[ni].stato!=='venduta') ml[ni].stato='opzionata';
+      ml[ni].updatedAt=Date.now();
+      if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[ni]);
+    }
+    if(typeof mzSave==='function') mzSave(ml);
+  }catch(e){}
+
+  var a=nuovo;
+  cv.autoId=a.id;
+  cv.autoDesc=(a.targa?('#'+a.targa+' - '):'')+(a.marca||'')+' '+(a.modello||'');
+  cv.autoSnapshot={ modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(),
+    alimentazione:a.alimentazione, cilindrata:a.cilindrata, potenza:a.potenza, cambio:a.cambio,
+    telaio:a.telaio, targa:a.targa, numeroInterno:a.numero_interno, estera:a.estera,
+    ivaEsposta:!!a.ivaEsposta, dataImm:a.dataImm, colore:a.colore, km:a.km };
+  cv.veicoloCambiatoTs=Date.now();
+  cv.updatedAt=Date.now();
+  lista[idx]=cv;
+  if(typeof cvSave==='function') cvSave(lista);
+  if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+
+  /* Su una pratica gia' venduta la sostituzione va saputa: cambia la fattura,
+     cambia il registro, cambia l'auto che il cliente si porta a casa. */
+  if(cv.isContratto) cvAvvisaCambioVeicolo(cv, vecchio, nuovo);
+
+  try{ if(typeof notifPush==='function') notifPush('Veicolo sostituito su '+(((cv.cliente&&cv.cliente.cognome)||'pratica'))+': '+dsc(vecchio)+' \u2192 '+dsc(nuovo), '\uD83D\uDD01'); }catch(e){}
+  cvCambiaVeicoloChiudi();
+  try{ if(typeof cvForm==='function') cvForm(cv.id, true); }catch(e){}
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+  try{ if(typeof mzRender==='function') mzRender(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDD01 Veicolo sostituito',true);
+}
+
+function cvAvvisaCambioVeicolo(cv, vecchio, nuovo){
+  try{
+    if(typeof eaInviaMessaggio!=='function') return;
+    var dsc=function(a){ return a?(((a.marca||'')+' '+(a.modello||'')).trim()
+      +(a.targa?(' \u00b7 targa '+a.targa):'')+(a.telaio?(' \u00b7 telaio '+a.telaio):'')
+      +(a.numero_interno?(' \u00b7 n\u00b0 '+a.numero_interno):'')):'\u2014'; };
+    var chi=(typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'utente';
+    var cli=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+    var corpo='<p><b>'+cvEsc(chi)+'</b> ha sostituito il veicolo su una pratica gi\u00e0 venduta.</p>'
+      +'<table style="border-collapse:collapse;margin:14px 0;">'
+      +'<tr><td style="padding:4px 16px 4px 0;color:#64748b;font-size:13px;">Cliente</td><td style="padding:4px 0;font-size:14px;font-weight:700;">'+cvEsc(cli||'\u2014')+'</td></tr>'
+      +'<tr><td style="padding:4px 16px 4px 0;color:#64748b;font-size:13px;">Stato pratica</td><td style="padding:4px 0;font-size:14px;font-weight:700;">'+cvEsc(cv.statoVendita||'\u2014')+'</td></tr>'
+      +'</table>'
+      +'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:8px;">'
+      +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#991b1b;">Veicolo tolto</div>'
+      +'<div style="font-size:14px;font-weight:700;color:#0f172a;">'+cvEsc(dsc(vecchio))+'</div></div>'
+      +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;">'
+      +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;">Veicolo messo</div>'
+      +'<div style="font-size:14px;font-weight:700;color:#0f172a;">'+cvEsc(dsc(nuovo))+'</div></div>'
+      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;">Da verificare: fattura, registro di carico e scarico, pratica di immatricolazione e documenti gi\u00e0 allegati.</p>';
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    var ogg='Veicolo sostituito su pratica venduta \u2014 '+(cli||'cliente');
+    /* due invii separati: se una casella rifiuta, l'altra riceve lo stesso */
+    ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
+      try{ eaInviaMessaggio({ to:dest, subject:ogg, html:html }); }catch(e){}
+    });
+  }catch(e){}
 }
 
 function cvApriAuto(autoId, riferimento, praticaId){
