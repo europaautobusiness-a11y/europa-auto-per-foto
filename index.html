@@ -21809,8 +21809,13 @@ function cvSincronizzaImpegno(vecchioId, nuovoId, cv){
       var vi=ml.findIndex(function(x){ return x && x.id===vecchioId; });
       /* un veicolo gia' venduto non si libera: quella e' storia chiusa */
       if(vi>=0 && ml[vi].stato!=='venduta'){
+        /* Solo un CONTRATTO tiene impegnato un veicolo. Un preventivo e' una
+           proposta: la stessa auto puo' averne dieci e resta disponibile
+           finche' qualcuno non firma. Contando anche i preventivi, il veicolo
+           vecchio non si liberava mai. */
         var altre=(typeof cvLoad==='function')?cvLoad().filter(function(c){
-          return c && c.autoId===vecchioId && c.id!==(cv&&cv.id) && !c.annullato && !c.deleted;
+          return c && c.autoId===vecchioId && c.id!==(cv&&cv.id)
+              && c.isContratto && !c.annullato && !c.deleted;
         }):[];
         if(!altre.length){
           ml[vi].impegnata=false;
@@ -21824,18 +21829,20 @@ function cvSincronizzaImpegno(vecchioId, nuovoId, cv){
              voce alta: altrimenti resta opzionato e non si capisce perche'. */
           var _chi=altre.map(function(c){
             return (((c.cliente&&c.cliente.cognome)||'?')+' '+((c.cliente&&c.cliente.nome)||'')).trim()
-              +(c.isContratto?' (contratto)':' (preventivo)');
+              +(c.statoVendita?(' \u2014 '+c.statoVendita):'');
           }).join('\n\u2022 ');
           var _v=ml[vi];
           alert('Il veicolo '+((_v.marca||'')+' '+(_v.modello||'')).trim()
             +((_v.numero_interno)?(' n\u00b0 '+_v.numero_interno):(_v.targa?(' '+_v.targa):''))
-            +'\nresta OPZIONATO perch\u00e9 un\u2019altra pratica lo tiene ancora:\n\n\u2022 '+_chi
-            +'\n\nSe quella pratica non \u00e8 piu\u2019 valida, annullala o cambiale veicolo:\n'
+            +'\nresta OPZIONATO perch\u00e9 un altro CONTRATTO lo tiene ancora:\n\n\u2022 '+_chi
+            +'\n\nSe quel contratto non \u00e8 piu\u2019 valido, annullalo o cambiagli veicolo:\n'
             +'il magazzino si libera da solo.');
         }
       }
     }
-    if(nuovoId){
+    /* Anche in senso opposto: un preventivo non opziona niente. Il veicolo
+       nuovo diventa opzionato solo se la pratica e' un contratto. */
+    if(nuovoId && cv && cv.isContratto){
       var ni=ml.findIndex(function(x){ return x && x.id===nuovoId; });
       if(ni>=0 && ml[ni].stato!=='venduta'){
         ml[ni].impegnata=true;
