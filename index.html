@@ -15310,7 +15310,7 @@ function clFind(key){
   }
   return _clIdx[key]||null;
 }
-function clInit(){ _clSel=null; clRender(); clSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
+function clInit(){ _clSel=null; clRender(); clSupaLoad(); try{ if(typeof ivSupaLoad==='function') ivSupaLoad(); }catch(e){} if(typeof cvSupaLoad==='function') cvSupaLoad(); setTimeout(function(){ var v=document.getElementById('view-clienti'); if(v && v.classList.contains('active') && !_clSel) clRender(); }, 1800); }
 function clSetFiltro(k,v){ _clFiltri[k]=v; clRender();
   if(k==='q'){ var el=document.getElementById('cl-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length, el.value.length); }catch(e){} } }
 }
@@ -15388,6 +15388,34 @@ function clRenderDettaglio(){
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">'+((typeof docPannelloHTML==='function')?docPannelloHTML('cliente', c.key, 'cldoc'):'')+'</div>';
   h+='<div id="cl-doc-pratiche"></div>';
   var docCard=function(titolo, arr, fn){ var s='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;"><div style="font-weight:800;color:#1a4fa0;margin-bottom:6px;">'+titolo+' ('+arr.length+')</div>'; s+= arr.length?arr.map(fn).join(''):'<div style="font-size:13px;color:#94a3b8;">Nessuno.</div>'; return s+'</div>'; };
+  /* Interventi e manutenzioni: lo storico dell'officina su quel cliente.
+     Vale anche come argomento di vendita — quando cambia auto, gli si mostra
+     quanto l'ha tenuta in ordine. */
+  h+=(function(){
+    var iv=(typeof ivDelCliente==='function')?ivDelCliente(c.key, nomeVis):[];
+    var tot=0;
+    iv.forEach(function(x){ try{ tot+=Number((x.fatturaTag&&x.fatturaTag.totale)||0)||0; }catch(e){} });
+    var box='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">'
+      +'<div style="font-weight:800;color:#1a4fa0;">\ud83d\udd27 Interventi e manutenzioni ('+iv.length+')'
+      +(tot?('<span style="font-weight:600;color:#94a3b8;font-size:12px;"> \u00b7 '+(typeof cvEuro==='function'?cvEuro(tot):tot)+' spesi</span>'):'')
+      +'</div>'
+      +'<button onclick="ivNuovo(\''+String(c.key||'').replace(/'/g,'')+'\',\''+String(nomeVis||'').replace(/'/g,'')+'\',\'\')" '
+      +'style="padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">+ Nuovo intervento</button>'
+      +'</div>';
+    if(!iv.length) return box+'<div style="font-size:13px;color:#94a3b8;">Nessun intervento registrato.</div></div>';
+    box+=iv.map(function(x){
+      var f=x.fatturaTag||{};
+      var d=String(x.data||'').split('-'); var dIt=(d.length===3)?(d[2]+'/'+d[1]+'/'+d[0]):(x.data||'');
+      var desc=(f.righe&&f.righe.length&&f.righe[0].desc)?f.righe[0].desc:(x.nota||'Intervento');
+      return '<div onclick="tgApri(\''+x.id+'\')" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:10px;">'
+        +'<div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;color:#0f172a;">'+clEsc(desc)+'</div>'
+        +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(dIt)+(x.veicolo?(' \u00b7 '+clEsc(x.veicolo)):'')
+        +(f.numeroProforma?(' \u00b7 PF '+f.numeroProforma+'/'+(f.annoProforma||'')):'')+'</div></div>'
+        +'<div style="font-weight:800;color:#334155;white-space:nowrap;">'+(f.totale?(typeof cvEuro==='function'?cvEuro(f.totale):f.totale):'\u2014')+'</div></div>';
+    }).join('');
+    return box+'</div>';
+  })();
   h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
   /* Il contratto mostrava solo il modello: targa e numero interno servono per
    riconoscere il veicolo, come gia' avviene sui preventivi. */
@@ -19596,7 +19624,94 @@ function tgNumeroUsato(num, escludiId){
   return usato;
 }
 
+/* ===================== ARCHIVIO INTERVENTI =====================
+   Il documento del tagliando viveva dentro la riga del calendario: era un
+   campo dell'appuntamento, non un documento suo. Per questo si poteva creare
+   solo da li'. Qui gli interventi diventano archivio a se': l'appuntamento,
+   quando c'e', resta collegato ma non e' piu' il contenitore.
+   Cosi' si puo' partire dal cliente, e la sua scheda puo' mostrare lo storico. */
+var IV_KEY='ea_interventi_v1';
+var _ivMem=null;
+function ivLoad(){
+  if(_ivMem) return _ivMem;
+  try{ _ivMem=JSON.parse(localStorage.getItem(IV_KEY)||'[]')||[]; }catch(e){ _ivMem=[]; }
+  return _ivMem;
+}
+function ivSave(l){
+  _ivMem=l||[];
+  try{ localStorage.setItem(IV_KEY, JSON.stringify(_ivMem)); }catch(e){}
+}
+function ivById(id){
+  var l=ivLoad();
+  for(var i=0;i<l.length;i++){ if(l[i] && l[i].id===id) return l[i]; }
+  return null;
+}
+function ivSupaUpsert(rec){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(!sb||!rec||!rec.id) return;
+    sb.from('interventi_app').upsert({ id:String(rec.id), data:rec }).then(function(r){
+      if(r&&r.error) console.log('interventi upsert:', r.error.message);
+    });
+  }catch(e){}
+}
+function ivInit(){ try{ ivSupaLoad(); }catch(e){} }
+function ivSupaLoad(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('interventi_app').select('id,data').then(function(res){
+      if(!res||res.error||!res.data) return;
+      var loc=ivLoad(), mappa={};
+      loc.forEach(function(x){ if(x&&x.id) mappa[x.id]=x; });
+      res.data.forEach(function(r){
+        var d=r&&r.data; if(!d||!d.id) return;
+        var e=mappa[d.id];
+        if(!e || (d.updatedAt||0)>(e.updatedAt||0)) mappa[d.id]=d;
+      });
+      ivSave(Object.keys(mappa).map(function(k){ return mappa[k]; }));
+      try{ if(typeof clRender==='function' && document.getElementById('cl-dettaglio')) clRender(); }catch(e){}
+    });
+  }catch(e){}
+}
+/* chiave cliente in modo uniforme fra calendario, anagrafica e interventi */
+function ivChiaveCliente(nome, key){
+  if(key) return key;
+  return String(nome||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+function ivDelCliente(key, nome){
+  var k=ivChiaveCliente(nome, key);
+  return ivLoad().filter(function(x){
+    if(!x || x.deleted) return false;
+    return ivChiaveCliente(x.cliente, x.clienteKey)===k;
+  }).sort(function(a,b){ return String(b.data||'').localeCompare(String(a.data||'')); });
+}
+/* numerazione proforma separata: non e' una fattura e non deve sembrarlo */
+function ivProssimoNumero(){
+  var anno=new Date().getFullYear(), max=0;
+  ivLoad().forEach(function(x){
+    if(x && x.proforma && x.proforma.anno===anno && x.proforma.numero>max) max=x.proforma.numero;
+  });
+  return { numero:max+1, anno:anno };
+}
+/* Nuovo intervento partendo dal cliente, senza passare da un appuntamento */
+function ivNuovo(clienteKey, nomeCliente, veicolo){
+  var oggi=new Date();
+  var rec={
+    id:'iv_'+Date.now(),
+    clienteKey:clienteKey||'',
+    cliente:nomeCliente||'',
+    veicolo:veicolo||'',
+    data:oggi.getFullYear()+'-'+('0'+(oggi.getMonth()+1)).slice(-2)+'-'+('0'+oggi.getDate()).slice(-2),
+    nota:'', fatturaTag:{},
+    createdAt:Date.now(), updatedAt:Date.now()
+  };
+  var l=ivLoad().slice(); l.push(rec); ivSave(l); ivSupaUpsert(rec);
+  if(typeof tgApri==='function') tgApri(rec.id);
+  return rec.id;
+}
+
 function tgById(id){
+  if(String(id||'').indexOf('iv_')===0) return ivById(id);
   try{ return (typeof ccLoad==='function'?ccLoad():[]).filter(function(c){ return c.id===id; })[0]; }catch(e){ return null; }
 }
 
@@ -19641,9 +19756,16 @@ function tgSetRiga(i, campo, val){
 function tgAddRiga(){ _tgRighe.push({cod:'',desc:'',qta:1,um:'',prezzo:0}); tgSalvaBozza(); tgRender(); }
 function tgDelRiga(i){ _tgRighe.splice(i,1); tgSalvaBozza(); tgRender(); }
 
+/* Salvataggio indipendente dalla provenienza: appuntamento o intervento. */
+function tgListaFonte(){
+  return (String(_tgId||'').indexOf('iv_')===0)
+    ? { list:ivLoad(), salva:ivSave, upsert:(typeof ivSupaUpsert==='function'?ivSupaUpsert:null) }
+    : { list:(typeof ccLoad==='function'?ccLoad():[]), salva:(typeof ccSave==='function'?ccSave:function(){}), upsert:(typeof ccSupaUpsert==='function'?ccSupaUpsert:null) };
+}
 function tgSalvaBozza(){
   try{
-    var list=ccLoad(), i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
+    var _f=tgListaFonte();
+    var list=_f.list, i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
     var f=list[i].fatturaTag||{};
     ['nome','indirizzo','cf','piva','km','targa','telaio','modello','dataImm','pagamento'].forEach(function(k){
       var el=document.getElementById('tg_'+k); if(el) f[k]=el.value.trim();
@@ -19651,7 +19773,7 @@ function tgSalvaBozza(){
     var iv=document.getElementById('tg_ivaPct'); if(iv) f.ivaPct=tgNum(iv.value);
     var nu=document.getElementById('tg_num'); if(nu && nu.value!=='') f.numeroScelto=parseInt(nu.value,10)||'';
     f.righe=_tgRighe;
-    list[i].fatturaTag=f; ccSave(list);
+    list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
   }catch(e){}
 }
 function tgAggiornaTotali(){
@@ -19677,7 +19799,7 @@ function tgRender(){
 
   var h='<div style="max-width:820px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
   h+='<div style="background:#1a4fa0;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
-    +'<span style="font-weight:800;">\uD83D\uDD27 Fattura tagliando</span>'
+    +'<span style="font-weight:800;">\uD83D\uDD27 Proforma intervento</span>'
     +'<button onclick="tgChiudiModal()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
     +'</div>';
   h+='<div style="padding:14px;max-height:74vh;overflow:auto;">';
@@ -19778,11 +19900,11 @@ function tgGenera(){
   var num=(f.numeroScelto!=null && f.numeroScelto!=='')?tgNum(f.numeroScelto):tgNumeroProssimo();
   if(tgNumeroUsato(num,_tgId)){ alert('Il numero '+num+'/'+y+' \u00e8 gi\u00e0 usato: scegline un altro.'); return; }
   if(!confirm('Genero la fattura tagliando n. '+num+'/'+y+' intestata a '+f.nome+'?\n\nTotale \u20ac '+tgEu(t.totale))) return;
-  var list=ccLoad(), i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
+  var _f=tgListaFonte(); var list=_f.list, i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
   f.numero=num; f.anno=y; f.data=new Date().toISOString().slice(0,10);
   f.da=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
   delete f.numeroScelto;
-  list[i].fatturaTag=f; ccSave(list);
+  list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
   try{ ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('\uD83E\uDDFE Fattura tagliando n. '+num+'/'+y+' generata', true);
   tgRender();
@@ -19799,7 +19921,7 @@ function tgAnnulla(id){
   st.push({ numero:f.numero, anno:f.anno, data:f.data, annullataIl:new Date().toISOString().slice(0,10) });
   list[i].fattureTagAnnullate=st;
   delete f.numero; delete f.anno; delete f.data;
-  list[i].fatturaTag=f; ccSave(list);
+  list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
   try{ ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
   tgRender();
@@ -23746,10 +23868,48 @@ function statMarginiHTML(){
      dal periodo scelto per le statistiche: serve a correggere gli errori adesso. */
   var _Pm=periodo('mese');
   var Vmese=tutti.filter(function(cv){ return _in(cv,_Pm); });
-  h+=statControlloProvvHTML(Vmese);
+  /* Il controllo provvigioni sta nella sezione Provvigioni: qui era un doppione */
+  h+=statParcoHTML();
   h+='</div>';
   return h;
 }
+/* Com'e' fatto il parco: non i numeri assoluti, che gia' si vedono in
+   magazzino, ma le proporzioni. Serve a capire su cosa si sta puntando e
+   quanto pesa ogni regime IVA sull'invenduto. */
+function statParcoHTML(){
+  try{
+    if(typeof mzLoad!=='function') return '';
+    var disp=mzLoad().filter(function(a){
+      return a && !a.nlt && a.stato!=='venduta' && a.stato!=='permuta';
+    });
+    var tot=disp.length;
+    if(!tot) return '';
+    var est   = disp.filter(function(a){ return a.estera===true; });
+    var itaIE = disp.filter(function(a){ return a.estera!==true && a.ivaEsposta===true; });
+    var art36 = disp.filter(function(a){ return a.estera!==true && a.ivaEsposta!==true; });
+    var box='background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;';
+    var pc=function(n){ return Math.round(n/tot*1000)/10; };
+    var riga=function(et,n,col,nota){
+      var p=pc(n);
+      return '<div style="margin-bottom:12px;">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13.5px;">'
+        +'<span style="font-weight:700;color:#334155;">'+et+'</span>'
+        +'<span style="font-weight:800;color:'+col+';">'+String(p).replace('.',',')+'% <span style="color:#94a3b8;font-weight:600;font-size:12px;">('+n+')</span></span></div>'
+        +'<div style="height:9px;background:#f1f5f9;border-radius:5px;overflow:hidden;margin-top:4px;">'
+        +'<div style="height:100%;width:'+p+'%;background:'+col+';"></div></div>'
+        +(nota?('<div style="font-size:11px;color:#94a3b8;margin-top:3px;">'+nota+'</div>'):'')
+        +'</div>';
+    };
+    return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Com\u2019\u00e8 fatto il parco</div>'
+      +'<div style="'+box+'">'
+      +'<div style="font-size:12px;color:#94a3b8;margin-bottom:12px;">'+tot+' veicoli disponibili o opzionati. Vendute, permute e noleggi restano fuori.</div>'
+      +riga('\ud83c\udf0d Estere', est.length, '#1e40af', 'Importate, IVA esposta a prezzo netto')
+      +riga('\ud83e\uddfe Italiane IVA esposta', itaIE.length, '#9a3412', 'Aziendali, ex noleggio, ex km 0')
+      +riga('\ud83d\udcc4 Italiane art. 36', art36.length, '#334155', 'Regime del margine: da privati')
+      +'</div>';
+  }catch(e){ return ''; }
+}
+
 function statControlloProvvHTML(V){
   var box='background:#fff;border:1px solid #e2e8f0;border-radius:14px;';
   var out=''; var righe=0;
@@ -23849,6 +24009,32 @@ function statApriPrev(id){
   try{ if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi')); }catch(e){}
   setTimeout(function(){ try{ if(typeof cvVista==='function') cvVista(id); else cvForm(id); }catch(e){} }, 170);
 }
+/* Data del primo preventivo per lo stesso cliente e lo stesso veicolo.
+   Se non ce ne sono di precedenti, resta la data della pratica stessa. */
+function stPrimoPreventivo(cv, tutte){
+  try{
+    if(!cv) return 0;
+    var mio=cv.createdAt||0;
+    var chiave=function(x){
+      var k=String((x&&x.clienteKey)||'').toLowerCase();
+      if(k) return k;
+      return String((((x&&x.cliente&&x.cliente.cognome)||'')+' '+((x&&x.cliente&&x.cliente.nome)||''))).toLowerCase().replace(/[^a-z0-9]/g,'');
+    };
+    var kc=chiave(cv);
+    if(!kc) return mio;
+    var primo=mio;
+    (tutte||[]).forEach(function(x){
+      if(!x || x.id===cv.id || x.annullato || x.deleted) return;
+      if(chiave(x)!==kc) return;
+      /* stesso veicolo: se entrambe le pratiche hanno un'auto, deve coincidere */
+      if(cv.autoId && x.autoId && x.autoId!==cv.autoId) return;
+      var t=x.createdAt||0;
+      if(t && t<primo) primo=t;
+    });
+    return primo;
+  }catch(e){ return (cv&&cv.createdAt)||0; }
+}
+
 function statChiusuraHTML(all, yr){
   try{
     all=all||[];
@@ -23867,7 +24053,12 @@ function statChiusuraHTML(all, yr){
       dg.tot++;
       if(!cv.isContratto) return;
       dg.contratti++;
-      var a=stChTs(cv.createdAt), b=stChTs(cv.contrattoTs);
+      /* Il contratto nasce dal preventivo, quindi createdAt sarebbe la data
+         di QUELLO. Ma quando un cliente torna si fa spesso un preventivo
+         nuovo, e il primo resta indietro come pratica a se': misurando da
+         createdAt il ciclo risultava di zero giorni. Si parte invece dal
+         preventivo piu' vecchio dello stesso cliente sullo stesso veicolo. */
+      var a=stChTs(stPrimoPreventivo(cv, all)), b=stChTs(cv.contrattoTs);
       var d=new Date(b||a||0);
       if(annoSel!==null && d.getFullYear()!==annoSel){ dg.fuoriAnno++; return; }
       if(stChStorico(cv) && cv.dateReali!==true){ dg.storico++; storicoFuori++; return; }
@@ -23879,7 +24070,7 @@ function statChiusuraHTML(all, yr){
     });
 
     var h='<div style="max-width:920px;margin:0 auto;">';
-    h+='<div style="'+box+'">'+tit('Da preventivo a proposta','Giorni impiegati per chiudere. Solo pratiche con date reali: lo storico importato resta fuori.');
+    h+='<div style="'+box+'">'+tit('Da preventivo a proposta','Giorni dal primo preventivo del cliente per quel veicolo fino alla proposta firmata. Solo pratiche con date reali: lo storico importato resta fuori.');
     if(!tutti.length){
       var riga=function(l,v,c){ return v?('<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:12.5px;"><span style="color:#64748b;">'+l+'</span><b style="color:'+(c||'#334155')+';">'+v+'</b></div>'):''; };
       h+='<div style="color:#94a3b8;font-size:13px;margin-bottom:10px;">Nessuna proposta con date utilizzabili in questo periodo. Ecco cosa manca:</div>'
