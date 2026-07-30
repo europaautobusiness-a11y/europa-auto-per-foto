@@ -17485,6 +17485,21 @@ function cvSalva(){
     }
   }catch(e){}
   cvSave(list); supaUpsert('preventivi', _cv);
+  /* Se il veicolo della pratica e' cambiato, il magazzino si allinea da solo:
+     il vecchio torna disponibile, il nuovo diventa opzionato. */
+  try{
+    var _vecchioAuto=_prima?(_prima.autoId||''):'';
+    if((_cv.autoId||'')!==_vecchioAuto){
+      cvSincronizzaImpegno(_vecchioAuto, _cv.autoId||'', _cv);
+      /* avviso a chi fattura, ma solo su una pratica gia' venduta e solo se
+         non e' gia' partito dal pulsante "Cambia" pochi istanti fa */
+      if(_cv.isContratto && (Date.now()-(_cv.veicoloCambiatoTs||0))>60000 && typeof cvAvvisaCambioVeicolo==='function'){
+        var _va=_vecchioAuto?((typeof mzById==='function')?mzById(_vecchioAuto):null):null;
+        var _na=_cv.autoId?((typeof mzById==='function')?mzById(_cv.autoId):null):null;
+        cvAvvisaCambioVeicolo(_cv, _va, _na);
+      }
+    }
+  }catch(e){}
   try{ cvLogRegistra(_prima, _cv, isNew?'creazione':'modifica'); }catch(e){}
   cvChiudi(); cvRender();
   try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
@@ -21781,6 +21796,43 @@ function eaPortaSopra(el){
    Qui invece si stacca il veicolo vecchio, che torna disponibile, e si aggancia
    quello nuovo. Ogni scheda resta con la sua storia. */
 
+/* Allinea il magazzino quando la pratica cambia veicolo, DA QUALUNQUE strada
+   avvenga: dal pulsante "Cambia" o dal selettore dell'auto dentro il modulo.
+   Il selettore nasceva per i preventivi nuovi, dove non c'e' niente da
+   liberare, e lasciava il vecchio veicolo opzionato e il nuovo disponibile. */
+function cvSincronizzaImpegno(vecchioId, nuovoId, cv){
+  try{
+    if(typeof mzLoad!=='function' || typeof mzSave!=='function') return;
+    if(vecchioId===nuovoId) return;
+    var ml=mzLoad(), tocco=false;
+    if(vecchioId){
+      var vi=ml.findIndex(function(x){ return x && x.id===vecchioId; });
+      /* un veicolo gia' venduto non si libera: quella e' storia chiusa */
+      if(vi>=0 && ml[vi].stato!=='venduta'){
+        var altre=(typeof cvLoad==='function')?cvLoad().filter(function(c){
+          return c && c.autoId===vecchioId && c.id!==(cv&&cv.id) && !c.annullato && !c.deleted;
+        }).length:0;
+        if(!altre){   /* se un'altra pratica lo tiene, resta impegnato */
+          ml[vi].impegnata=false;
+          if(ml[vi].stato==='opzionata') ml[vi].stato='disponibile';
+          ml[vi].updatedAt=Date.now(); tocco=true;
+          try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[vi]); }catch(e){}
+        }
+      }
+    }
+    if(nuovoId){
+      var ni=ml.findIndex(function(x){ return x && x.id===nuovoId; });
+      if(ni>=0 && ml[ni].stato!=='venduta'){
+        ml[ni].impegnata=true;
+        if(ml[ni].stato!=='opzionata') ml[ni].stato='opzionata';
+        ml[ni].updatedAt=Date.now(); tocco=true;
+        try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[ni]); }catch(e){}
+      }
+    }
+    if(tocco){ mzSave(ml); try{ if(typeof mzRender==='function') mzRender(); }catch(e){} }
+  }catch(e){}
+}
+
 function cvCambiaVeicolo(id){
   var cv=(typeof cvById==='function')?cvById(id):null;
   if(!cv){ alert('Pratica non trovata.'); return; }
@@ -21858,27 +21910,7 @@ function cvCambiaVeicoloConferma(id){
   var dsc=function(a){ return a?(((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' \u00b7 '+a.targa):(a.telaio?(' \u00b7 '+a.telaio):''))):'\u2014'; };
   if(!confirm('Confermi la sostituzione?\n\nDa:  '+dsc(vecchio)+'\nA:   '+dsc(nuovo)+'\n\nIl primo torna disponibile, il secondo diventa opzionato.')) return;
 
-  try{
-    var ml=mzLoad();
-    /* il vecchio si libera solo se era impegnato da QUESTA pratica */
-    if(vecchioId){
-      var vi=ml.findIndex(function(x){ return x && x.id===vecchioId; });
-      if(vi>=0 && ml[vi].stato!=='venduta'){
-        ml[vi].impegnata=false;
-        if(ml[vi].stato==='opzionata') ml[vi].stato='disponibile';
-        ml[vi].updatedAt=Date.now();
-        if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[vi]);
-      }
-    }
-    var ni=ml.findIndex(function(x){ return x && x.id===nuovoId; });
-    if(ni>=0){
-      ml[ni].impegnata=true;
-      if(ml[ni].stato!=='venduta') ml[ni].stato='opzionata';
-      ml[ni].updatedAt=Date.now();
-      if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[ni]);
-    }
-    if(typeof mzSave==='function') mzSave(ml);
-  }catch(e){}
+  cvSincronizzaImpegno(vecchioId, nuovoId, cv);
 
   var a=nuovo;
   cv.autoId=a.id;
