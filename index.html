@@ -607,7 +607,8 @@ html, body{
         <div class="form-row">
           <div class="fg"><label>Marca <span class="req">*</span></label><input type="text" id="marca" oninput="this.classList.remove('err')" placeholder="es. BMW"></div>
           <div class="fg"><label>Modello <span class="req">*</span></label><input type="text" id="modello" oninput="this.classList.remove('err')" placeholder="es. Serie 3 320d"></div>
-          <div class="fg"><label>Targa / N°Auto / VIN <span class="req">*</span></label><input type="text" id="targa" placeholder="es. AB123CD / VIN / N°Auto" style="text-transform:uppercase" oninput="this.classList.remove('err')"></div>
+          <div class="fg"><label>Targa / VIN <span class="req">*</span></label><input type="text" id="targa" placeholder="es. AB123CD oppure il telaio" style="text-transform:uppercase" oninput="this.classList.remove('err')"></div>
+          <div class="fg"><label>N&deg; auto interno</label><input type="text" id="numeroAuto" placeholder="solo per le auto estere" style="text-transform:uppercase" oninput="this.classList.remove('err')"><span style="font-size:11px;color:#64748b;">Le auto italiane non ce l'hanno: lascia vuoto.</span></div>
         </div>
         <div class="form-row form-row-2">
           <div class="fg"><label>Anno immatricolazione <span class="req">*</span></label><input type="text" id="anno" oninput="this.classList.remove('err')" placeholder="es. 2019"></div>
@@ -5111,6 +5112,11 @@ function confirmReport(){
   const entry = {
     id:             now.getTime(),
     targa, marca, modello,
+    /* Riferimenti stabili del veicolo: la targa puo' cambiare (estera che
+       viene immatricolata), l'identificativo della scheda e il telaio no. */
+    autoId:         (window._repAutoScelta && window._repAutoScelta.id) || '',
+    telaio:         (window._repAutoScelta && window._repAutoScelta.telaio) || '',
+    numeroAuto:     (document.getElementById('numeroAuto') ? document.getElementById('numeroAuto').value.toUpperCase().trim() : ''),
     anno:           document.getElementById('anno').value.trim(),
     km:             document.getElementById('km').value.trim(),
     confirmedDate:  now.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'}),
@@ -15962,11 +15968,18 @@ function repAutoUsa(){
     var set=function(id,v){ var el=document.getElementById(id); if(el && v!=null && v!==''){ el.value=v; el.classList.remove('err'); } };
     set('marca', a.marca);
     set('modello', ((a.modello||'')+' '+(a.allestimento||'')).trim());
-    set('targa', a.targa || a.telaio || a.numero_interno);
+    set('targa', a.targa || a.telaio);
+    set('numeroAuto', a.numero_interno || a.numeroInterno || '');
     set('anno', a.anno || (a.dataImm?String(a.dataImm).slice(0,4):''));
     set('km', a.km);
+    /* Si tiene da parte QUALE veicolo e' stato scelto: finisce sul report e da
+       quel momento il legame e' certo. Prima si salvava solo cio' che era
+       scritto nel campo targa, e su un'auto estera quella scritta cambiava
+       all'immatricolazione: il report non si ritrovava piu'. */
+    window._repAutoScelta={ id:a.id, telaio:a.telaio||'', numeroInterno:a.numero_interno||a.numeroInterno||'', targa:a.targa||'' };
     var info=document.getElementById('rep_autoInfo');
-    if(info) info.innerHTML='<b>\u2713 Dati presi dal magazzino</b> \u2014 correggi pure quello che serve.';
+    if(info) info.innerHTML='<b>\u2713 Dati presi dal magazzino</b> \u2014 correggi pure quello che serve. '
+      +'Il report resta collegato a questa scheda anche dopo l\u2019immatricolazione.';
   }catch(e){}
 }
 /* Se il cliente e' gia' passato da noi, i suoi dati si compilano da soli:
@@ -16771,12 +16784,36 @@ function cvFotoVeicolo(p){
 }
 function cvReportVeicolo(p){
   try{
-    var tg=String((p.autoSnapshot&&p.autoSnapshot.targa)||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-    if(!tg && p.autoId && typeof mzById==='function'){
+    /* Prima si cercava solo per targa: un'auto estera che la targa italiana
+       non l'ha ancora partiva con la ricerca vuota e il report non si trovava
+       mai. Si raccolgono tutti i riferimenti del veicolo — targa, targa nuova,
+       telaio, numero interno — e si confrontano con quello che il perito ha
+       scritto, che su un'estera e' spesso il telaio o il numero interno. */
+    var pulisci=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
+    var rif=[];
+    var agg=function(v){ var x=pulisci(v); if(x.length>=5 && rif.indexOf(x)<0) rif.push(x); };
+    var sn=p.autoSnapshot||{};
+    agg(sn.targa); agg(p.nuovaTarga); agg(sn.telaio);
+    agg(sn.numero_interno); agg(sn.numeroInterno);
+    if(p.autoId && typeof mzById==='function'){
       var a=mzById(p.autoId);
-      if(a) tg=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+      if(a){ agg(a.targa); agg(a.telaio); agg(a.numero_interno); agg(a.numeroInterno); }
     }
-    if(!tg) return null;
+    /* Se il report e' stato creato scegliendo l'auto dal magazzino porta con
+       se' l'identificativo della scheda: quello e' un aggancio certo e viene
+       provato prima di ogni confronto sulle scritte. */
+    var perId=[];
+    try{
+      if(p.autoId){
+        var poolId=[];
+        try{ if(typeof loadSent==='function') poolId=poolId.concat(loadSent()||[]); }catch(e){}
+        try{ if(typeof loadReady==='function') poolId=poolId.concat(loadReady()||[]); }catch(e){}
+        perId=poolId.filter(function(x){ return x && x.autoId && x.autoId===p.autoId; });
+      }
+    }catch(e){}
+    if(perId.length) return perId.filter(function(x){return x.link;})[0] || perId[0];
+
+    if(!rif.length) return null;
     /* Si cerca sia tra i report gia' inviati sia tra quelli pronti: un
        report esiste, quindi va allegato, anche se non e' ancora partito
        verso nessun cliente. E non si pretende piu' il campo link: se manca
@@ -16784,9 +16821,22 @@ function cvReportVeicolo(p){
     var pool=[];
     try{ if(typeof loadSent==='function') pool=pool.concat(loadSent()||[]); }catch(e){}
     try{ if(typeof loadReady==='function') pool=pool.concat(loadReady()||[]); }catch(e){}
-    var trovati=pool.filter(function(x){
-      return x && String(x.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===tg;
+    /* Confronto in due passaggi: prima l'uguaglianza esatta, poi il contenuto
+       uno dentro l'altro — il perito puo' aver scritto il telaio intero dove
+       noi teniamo solo le ultime cifre, o viceversa. */
+    var scritte=function(x){ return [x&&x.targa, x&&x.telaio, x&&x.numeroAuto].map(pulisci).filter(function(v){ return v.length>=5; }); };
+    var esatti=pool.filter(function(x){
+      return scritte(x).some(function(t){ return rif.indexOf(t)>=0; });
     });
+    var trovati=esatti;
+    if(!trovati.length){
+      trovati=pool.filter(function(x){
+        return scritte(x).some(function(t){
+          if(t.length<6) return false;
+          return rif.some(function(r){ return r.length>=6 && (t.indexOf(r)>=0 || r.indexOf(t)>=0); });
+        });
+      });
+    }
     if(!trovati.length) return null;
     /* meglio uno con link, altrimenti il primo */
     return trovati.filter(function(x){return x.link;})[0] || trovati[0];
@@ -17370,9 +17420,24 @@ function cvSalva(){
   var _prima=(idx>=0)?JSON.parse(JSON.stringify(list[idx])):null;
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
+  /* Modificando la pratica, il titolare ha per definizione dato risposta alle
+     richieste in sospeso: si chiudono da sole e il riquadro torna bianco.
+     Nessun pulsante da premere, nessun segnale che resta acceso per mesi. */
+  try{
+    if(typeof cvPuoChiudereRichieste==='function' && cvPuoChiudereRichieste() && !isNew){
+      var _ap=(_cv.richiesteModifica||[]).filter(function(r){ return r && r.aperta; });
+      if(_ap.length){
+        var _chi=(typeof _currentUserName!=='undefined'&&_currentUserName)||'titolare';
+        _ap.forEach(function(r){ r.aperta=false; r.chiusaTs=Date.now(); r.chiusaDa=_chi; });
+        if(idx>=0) list[idx]=_cv;
+        try{ if(typeof tcToastNew==='function') tcToastNew('\u2713 '+_ap.length+(_ap.length===1?' richiesta di modifica chiusa':' richieste di modifica chiuse'),true); }catch(e){}
+      }
+    }
+  }catch(e){}
   cvSave(list); supaUpsert('preventivi', _cv);
   try{ cvLogRegistra(_prima, _cv, isNew?'creazione':'modifica'); }catch(e){}
   cvChiudi(); cvRender();
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Preventivo salvato',true);
 }
 var CV_DEL_KEY='ea_preventivi_deleted_v1';
@@ -21784,6 +21849,141 @@ function cvPagPannello(cv){
   }catch(e){ return ''; }
 }
 
+/* ============ RICHIESTA DI MODIFICA SU UNA PRATICA IN CORSO ============
+   Chi vende non puo' toccare prezzi e condizioni di un contratto gia' fatto,
+   ma e' quello che parla col cliente e scopre cosa va cambiato. Prima lo
+   diceva a voce e si perdeva. Da qui scrive la richiesta, arriva una mail
+   all'amministrazione e resta scritta sulla pratica, con data e nome. */
+var CV_MAIL_AMM='amministrazione@europaautosrl.it';
+
+/* Le richieste le chiude chi le esegue: il titolare. La contabilita' entra
+   nelle pratiche per fatturare e confermare incassi, e non e' detto che abbia
+   fatto la modifica chiesta dal venditore: se chiudesse lei, il segnale
+   sparirebbe senza che nessuno abbia fatto niente. */
+function cvPuoChiudereRichieste(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return false;
+  try{
+    var em=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+    if(typeof CV_MAIL_CONTABILI!=='undefined' && CV_MAIL_CONTABILI.indexOf(em)>=0) return false;
+  }catch(e){}
+  return true;
+}
+function cvRichiesteAperte(cv){
+  try{ return (cv&&cv.richiesteModifica||[]).filter(function(r){ return r && r.aperta; }); }
+  catch(e){ return []; }
+}
+
+function cvPuoChiedereModifica(cv){
+  if(!cv || !cv.isContratto) return false;
+  if(cv.statoVendita==='consegnato' || cv.consegnatoTs) return false;
+  if(cv.annullato || cv.deleted) return false;
+  return !(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+}
+
+function cvRichiestaModifica(id){
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ alert('Pratica non trovata.'); return; }
+  var a=cv.autoSnapshot||{};
+  var cli=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+((cv.nuovaTarga||a.targa)?(' \u00b7 '+(cv.nuovaTarga||a.targa)):'');
+  var aree=[['prezzo','Prezzo o sconto'],['cliente','Dati del cliente'],['permuta','Permuta'],
+            ['finanziamento','Finanziamento o assicurazione'],['consegna','Data di consegna'],
+            ['accessori','Accessori o servizi'],['altro','Altro']];
+  var m=document.getElementById('cv-rmod-modal');
+  if(!m){ m=document.createElement('div'); m.id='cv-rmod-modal';
+    m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;display:none;';
+    document.body.appendChild(m); }
+  m.innerHTML='<div style="max-width:520px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+    +'<span style="font-weight:800;">\u270f\uFE0F Richiesta di modifica</span>'
+    +'<button onclick="cvRichiestaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+    +'<div style="padding:18px 20px;">'
+    +'<div style="font-size:13px;color:#334155;font-weight:700;">'+cvEsc(cli||'Cliente')+'</div>'
+    +'<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;">'+cvEsc(veic||'\u2014')+'</div>'
+    +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:6px;">Cosa va cambiato</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">'
+    + aree.map(function(o){
+        return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;cursor:pointer;">'
+          +'<input type="checkbox" class="rmod-area" value="'+o[1]+'" style="cursor:pointer;">'+o[1]+'</label>';
+      }).join('')
+    +'</div>'
+    +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:6px;">Descrizione</div>'
+    +'<textarea id="rmod-testo" rows="6" placeholder="Scrivi cosa va modificato e perch\u00e9. Pi\u00f9 sei preciso, meno giri servono."'
+    +' style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical;"></textarea>'
+    +'<div id="rmod-esito" style="font-size:12.5px;margin-top:8px;min-height:18px;"></div>'
+    +'<button onclick="cvRichiestaInvia(\''+id+'\')" style="margin-top:8px;width:100%;padding:13px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">\u2709\uFE0F Invia all\u2019amministrazione</button>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-top:8px;line-height:1.5;">La richiesta arriva per mail e resta scritta sulla pratica. Non modifica niente da sola.</div>'
+    +'</div></div>';
+  m.style.display='block';
+  try{ if(typeof eaPortaSopra==='function') eaPortaSopra(m); }catch(e){}
+  try{ document.getElementById('rmod-testo').focus(); }catch(e){}
+}
+
+function cvRichiestaChiudi(){
+  var m=document.getElementById('cv-rmod-modal');
+  if(m){ m.style.display='none'; m.innerHTML=''; }
+}
+
+function cvRichiestaInvia(id){
+  var esito=document.getElementById('rmod-esito');
+  var testo=String((document.getElementById('rmod-testo')||{}).value||'').trim();
+  if(testo.length<10){
+    if(esito) esito.innerHTML='<span style="color:#b45309;font-weight:700;">Scrivi cosa va modificato: bastano due righe, ma servono.</span>';
+    return;
+  }
+  var aree=[];
+  try{
+    var box=document.querySelectorAll('#cv-rmod-modal .rmod-area');
+    for(var i=0;i<box.length;i++){ if(box[i].checked) aree.push(box[i].value); }
+  }catch(e){}
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Pratica non trovata.</span>'; return; }
+
+  var chi=(typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'venditore';
+  var a=cv.autoSnapshot||{};
+  var cli=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+((cv.nuovaTarga||a.targa)?(' \u00b7 '+(cv.nuovaTarga||a.targa)):'');
+  var tot=''; try{ tot=cvEuro(cvCalcola(cv).totaleScontato); }catch(e){}
+
+  /* prima si scrive sulla pratica, poi si spedisce: se la mail non parte la
+     richiesta non va persa, resta agganciata al contratto */
+  try{
+    var l=cvLoad();
+    for(var k=0;k<l.length;k++){
+      if(l[k] && l[k].id===id){
+        l[k].richiesteModifica=(l[k].richiesteModifica||[]).concat([{ts:Date.now(), da:chi, aree:aree, testo:testo, aperta:true}]);
+        l[k].updatedAt=Date.now();
+        if(typeof cvSave==='function') cvSave(l);
+        if(typeof supaUpsert==='function') supaUpsert('preventivi', l[k]);
+        break;
+      }
+    }
+  }catch(e){}
+
+  var righe=function(et,va){ return va?('<tr><td style="padding:4px 16px 4px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+et+'</td><td style="padding:4px 0;font-size:14px;font-weight:700;color:#0f172a;">'+cvEsc(va)+'</td></tr>'):''; };
+  var corpo='<p><b>'+cvEsc(chi)+'</b> chiede una modifica su una pratica non ancora consegnata.</p>'
+    +'<table style="border-collapse:collapse;margin:14px 0;">'
+    + righe('Cliente',cli) + righe('Veicolo',veic) + righe('Totale',tot)
+    + righe('Riguarda',aree.join(', '))
+    +'</table>'
+    +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #1a4fa0;border-radius:8px;padding:13px 15px;font-size:14px;line-height:1.6;white-space:pre-wrap;">'
+    + cvEsc(testo) +'</div>'
+    +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;">La richiesta \u00e8 registrata anche sulla pratica nel gestionale.</p>';
+
+  if(esito) esito.innerHTML='<span style="color:#64748b;">Invio in corso\u2026</span>';
+  try{
+    if(typeof eaInviaMessaggio!=='function') throw new Error('invio non disponibile');
+    eaInviaMessaggio({ to:CV_MAIL_AMM,
+      subject:'Richiesta modifica \u2014 '+(cli||'pratica')+(veic?(' \u00b7 '+veic):''),
+      html:(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo });
+    if(esito) esito.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Richiesta inviata all\u2019amministrazione.</span>';
+    try{ if(typeof notifPush==='function') notifPush('Richiesta modifica da '+chi+' \u2014 '+(cli||'pratica'), '\u270f\uFE0F'); }catch(e){}
+    setTimeout(function(){ cvRichiestaChiudi(); if(typeof cvVendRender==='function') cvVendRender(); }, 1200);
+  }catch(e){
+    if(esito) esito.innerHTML='<span style="color:#b45309;font-weight:700;">La richiesta \u00e8 salvata sulla pratica, ma la mail non \u00e8 partita. Avvisa a voce.</span>';
+  }
+}
+
 function cvVendCard(cv){
   var t=cvCalcola(cv); var a=cv.autoSnapshot||{}; var puo=cvPuoConfermarePagamenti(); var st=cv.statoVendita||'in_attesa_pagamento';
   var targa=cv.nuovaTarga||a.targa||'';
@@ -21828,7 +22028,20 @@ function cvVendCard(cv){
   /* Niente pulsante "Modifica": toccando la scheda si apre gia' il contratto,
      e il veicolo ha il suo collegamento. Un pulsante che rifa' quello che fa
      tutta la scheda e' solo un bersaglio in piu' da sbagliare. */
-  var stampe='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button onclick="event.stopPropagation();cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🖨️ Proposta</button>'+((st==='consegnato')?('<button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
+  var _rmod=(typeof cvPuoChiedereModifica==='function' && cvPuoChiedereModifica(cv))
+    ? '<button onclick="event.stopPropagation();cvRichiestaModifica(\''+cv.id+'\')" style="flex:1 1 100%;padding:9px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">\u270f\ufe0f Richiesta modifica</button>' : '';
+  var _rap=(typeof cvRichiesteAperte==='function')?cvRichiesteAperte(cv):[];
+  var _rapte=_rap.length;
+  /* Il riquadro intero diventa arancione: scorrendo l'elenco si vede da lontano
+     quali pratiche aspettano una mano, senza dover leggere niente. */
+  var _rultima=_rapte?_rap[_rapte-1]:null;
+  var _rbadge=_rapte?('<div style="margin-top:8px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;font-size:12px;color:#9a3412;line-height:1.5;">'
+    +'<b>\\u270f\\ufe0f '+(_rapte===1?'Richiesta di modifica':(_rapte+' richieste di modifica'))+'</b>'
+    +(_rultima&&_rultima.da?(' \\u00b7 '+cvEsc(_rultima.da)):'')
+    +(_rultima&&_rultima.aree&&_rultima.aree.length?('<div style="color:#b45309;font-weight:700;margin-top:2px;">'+cvEsc(_rultima.aree.join(', '))+'</div>'):'')
+    +(_rultima&&_rultima.testo?('<div style="color:#78350f;margin-top:3px;white-space:pre-wrap;">'+cvEsc(String(_rultima.testo).slice(0,220))+((String(_rultima.testo).length>220)?'\\u2026':'')+'</div>'):'')
+    +'</div>'):'';
+  var stampe=_rbadge+'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'+_rmod+'<button onclick="event.stopPropagation();cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🖨️ Proposta</button>'+((st==='consegnato')?('<button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'):'')+cvFatturaBtn(cv)+'</div>';
   var annulla=(_isAdm && st!=='consegnato')?('<div style="text-align:right;margin-top:8px;"><a onclick="event.stopPropagation();cvVendAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">🗑 Annulla contratto (libera l\'auto)</a></div>'):'';
   var demoDel=(_isAdm && st==='consegnato' && typeof eaDemoOn==='function' && eaDemoOn())?('<div style="text-align:right;margin-top:8px;"><a onclick="event.stopPropagation();cvVendEliminaConsegnato(\''+cv.id+'\')" style="display:inline-block;font-size:11px;color:#fff;background:#dc2626;padding:6px 11px;border-radius:7px;cursor:pointer;font-weight:800;">🗑 Elimina veicolo consegnato</a></div>'):'';
   var pagsAll=cvPagIncasso(cv.pagamenti).filter(function(p){return cvNum(p.importo);});
@@ -21870,7 +22083,9 @@ function cvVendCard(cv){
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
   /* il rimando a "Vedi dettaglio pagamenti" non serve piu': le righe
      con la conferma stanno adesso direttamente sulla scheda */
-  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">'
+  /* Riquadro arancione quando c'e' una richiesta aperta: scorrendo l'elenco si
+     capisce da lontano quali pratiche aspettano una mano. */
+  return '<div style="background:'+(_rapte?'#fff7ed':'#fff')+';border:1px solid '+(_rapte?'#fb923c':'#e2e8f0')+';border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,'+(_rapte?'.10':'.04')+');">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();'+_apriScheda+'" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)'), cv.cliente, cv.clienteKey)+'</div>'+cvVeicoloLink(cv)+'</div><div style="display:flex;gap:5px;align-items:center;flex:0 0 auto;">'+firmaTag+'<div '+(_delDaStato?('onclick="event.stopPropagation();cvDeliberaForm(\''+cv.id+'\')" title="Inserisci i dati della delibera"'):'')+' style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:'+sb[0]+';color:'+sb[1]+';white-space:nowrap;'+(_delDaStato?'cursor:pointer;border:1px solid #fdba74;':'')+'">'+sb[2]+(_delDaStato?' \u203a':'')+'</div></div></div>'
     +recap+cvFirmaBottone(cv)
     +cvPagPannello(cv)
