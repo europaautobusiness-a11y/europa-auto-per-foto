@@ -12574,8 +12574,17 @@ function sinFormDocRender(){
       +'</div>';
   }
   if(key){
+    /* Niente seconda casella di caricamento: la carta d'identita' e il libretto
+       vivono nella scheda del cliente, e averne due posti dove metterli
+       significa ritrovarseli meta' di qua e meta' di la'. Qui si mostrano
+       soltanto, con il rimando alla scheda per aggiungerne. */
     h+='<div style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:12px;margin-top:8px;">'
-      +docPannelloHTML('cliente', key, 'sinfdoc', ['carta_identita','libretto','tessera_sanitaria'], 'Carta d\'identit\u00e0 e libretto: sono gli stessi della scheda cliente in anagrafica.', 'Documenti del cliente')
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">'
+      +'<div style="font-weight:800;color:#1a4fa0;font-size:13px;">\ud83d\udcce Documenti del cliente</div>'
+      +'<button type="button" onclick="eaApriCliente(\''+encodeURIComponent(key)+'\')" style="flex:0 0 auto;padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;white-space:nowrap;">Apri la scheda</button>'
+      +'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;margin-bottom:6px;">Carta d\u2019identit\u00e0 e libretto: si caricano nella scheda cliente, qui si consultano soltanto.</div>'
+      +'<div id="sinfdoc-list"></div>'
       +'</div>';
   }
   box.innerHTML=h;
@@ -12860,8 +12869,20 @@ function pvAreaStampa(){
 function pvStampa(){
   var pa=pvAreaStampa();
   pa.innerHTML=pvDocHtml(); pa.style.display='block'; document.body.classList.add('sin-printing');
+  /* Salvando in PDF, il browser propone come nome file il titolo della pagina.
+     Senza questo si ritrovava "Certificazione Stato d'Uso" su ogni preventivo,
+     e in cartella diventavano tutti uguali. */
+  var _tit=document.title;
+  try{
+    var _cl=String(pvVal('pv_cliente')||'').trim().toUpperCase().replace(/[^A-Z0-9 ]/g,'').replace(/\s+/g,' ');
+    var _nu=String(pvVal('pv_num')||'').trim().replace(/[^0-9A-Za-z]/g,'');
+    document.title=('Preventivo'+(_cl?(' '+_cl):'')+(_nu?(' '+_nu):'')).trim();
+  }catch(e){}
   setTimeout(function(){ try{ window.print(); }catch(e){} },200);
-  setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); },1500);
+  setTimeout(function(){
+    pa.style.display='none'; document.body.classList.remove('sin-printing');
+    try{ document.title=_tit; }catch(e){}
+  },1500);
 }
 function pvInviaMail(){
   var cliente=pvVal('pv_cliente'), targa=pvVal('pv_targa'), veicolo=pvVal('pv_veicolo');
@@ -18007,13 +18028,16 @@ function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||
 function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 var DOC_CAT={
-  auto:[['libretto','Libretto / carta di circolazione'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
+  auto:[['libretto','Libretto / carta di circolazione'],['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
   sinistro:[['denuncia','Denuncia sinistro'],['libretto','Libretto veicolo'],['cid','CID / constatazione amichevole'],['foto_danni','Foto danni'],['perizia','Perizia'],['preventivo','Preventivo riparazione'],['cessione','Atto di cessione'],['fattura','Fattura'],['altro','Altro']]
 };
-function docCatLabel(tipo,cat){ var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
+/* Categorie non piu' proponibili ma ancora presenti sui documenti gia'
+   caricati: senza queste etichette quelle righe mostrerebbero il codice. */
+var DOC_CAT_STORICHE={ revisione:'Revisione', foto:'Foto', delibera:'Delibera finanziaria', foto_consegna:'Foto consegna' };
+function docCatLabel(tipo,cat){ if(DOC_CAT_STORICHE[cat]) return DOC_CAT_STORICHE[cat]; var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
 /* Ogni pannello mostra tutte le categorie, raggruppate per destinazione: chi
    carica non deve piu' chiedersi se e' nella schermata giusta. */
 /* Nessuna categoria preselezionata. Prima il menu si apriva gia' su una voce
@@ -18028,16 +18052,19 @@ var DOC_CAT_TUTTE=[
   ['\u2014 Documenti del veicolo \u2014', [
     ['libretto','Libretto / carta di circolazione'], ['libretto_nuovo','Libretto nuovo intestato'],
     ['minivoltura','Minivoltura / cert. propriet\u00e0'], ['coc','COC (conformit\u00e0 import)'],
+    ['libretto_estero','Libretto estero'],
     ['fattura_acquisto','Fattura di acquisto'], ['tagliando','Tagliando / manutenzione'],
-    ['revisione','Revisione'], ['libretto_permuta','Libretto auto in permuta'], ['foto','Foto']]],
+    ['libretto_permuta','Libretto auto in permuta']]],
   ['\u2014 Documenti della vendita \u2014', [
     ['contratto_firmato','Contratto firmato'], ['fattura_vendita','Fattura di vendita'],
-    ['f24','F24'], ['delibera','Delibera finanziaria'],
-    ['doc_finanziamento','Documenti finanziamento'], ['foto_consegna','Foto consegna']]],
+    ['f24','F24'], ['doc_finanziamento','Documenti finanziamento']]],
   ['\u2014 Altro \u2014', [['altro','Altro']]]
 ];
 function docCatOptionsTutte(sel){
+  var _vedi=(typeof docPuoVedereAcquisto==='function')?docPuoVedereAcquisto():true;
   return DOC_CAT_TUTTE.map(function(g){
+    if(!_vedi) g=[g[0], g[1].filter(function(c){ return DOC_CAT_ACQUISTO.indexOf(c[0])<0; })];
+    if(!g[1].length) return '';
     return '<optgroup label="'+docEsc(g[0])+'">'
       + g[1].map(function(c){ return '<option value="'+c[0]+'"'+(sel===c[0]?' selected':'')+'>'+docEsc(c[1])+'</option>'; }).join('')
       + '</optgroup>';
@@ -18259,6 +18286,12 @@ function docCarica(tipo, id, pfx){
   next();
 }
 
+/* Documenti che rivelano quanto e' costata l'auto. */
+var DOC_CAT_ACQUISTO=['fattura_acquisto'];
+function docPuoVedereAcquisto(){
+  try{ return (typeof getCurrentRole==='function' && getCurrentRole()==='admin'); }catch(e){ return false; }
+}
+
 function docListaRender(tipo, id, pfx, soloCat, titolo){
   var c=document.getElementById(pfx+'-list'); if(!c) return;
   /* titolo: quando la lista sta da sola, senza il pannello di caricamento,
@@ -18272,6 +18305,10 @@ function docListaRender(tipo, id, pfx, soloCat, titolo){
     /* soloCat: mostra solo certe categorie (nei sinistri servono carta
        d'identita' e libretto, non tutto l'archivio del cliente). */
     if(soloCat && soloCat.length) list=list.filter(function(d){ return soloCat.indexOf(d.categoria)>=0; });
+    /* Il prezzo d'acquisto e' il margine: chi vende non deve vederlo, altrimenti
+       basta aprire la fattura del fornitore per sapere quanto si guadagna su
+       ogni auto e la trattativa col cliente parte compromessa. */
+    if(!docPuoVedereAcquisto()) list=list.filter(function(d){ return DOC_CAT_ACQUISTO.indexOf(d.categoria)<0; });
     /* Con un titolo esplicito la lista e' un rimando: se non c'e' niente da
        mostrare sparisce, invece di lasciare un riquadro vuoto sulla scheda. */
     if(!list.length){ c.innerHTML=_tit?'':'<div style="font-size:12px;color:#94a3b8;">Nessun documento allegato.</div>'; return; }
@@ -19736,15 +19773,83 @@ function ivProssimoNumero(){
   return { numero:max+1, anno:anno };
 }
 /* Nuovo intervento partendo dal cliente, senza passare da un appuntamento */
+/* Tutti i veicoli comprati da quel cliente, dal piu' recente. Si parte
+   dall'ultimo perche' e' quasi sempre quello che porta in officina, ma chi
+   ne ha due deve poter scegliere senza riscrivere targa e telaio a mano. */
+function ivVeicoliCliente(clienteKey){
+  try{
+    if(!clienteKey || typeof cvLoad!=='function') return [];
+    return cvLoad().filter(function(x){ return x && x.isContratto && x.clienteKey===clienteKey && !x.annullato && !x.deleted; })
+      .sort(function(a,b){ return (b.consegnatoTs||b.contrattoTs||b.updatedAt||0)-(a.consegnatoTs||a.contrattoTs||a.updatedAt||0); })
+      .map(function(c){ return ivDatiVeicolo(c); })
+      .filter(function(v){ return v && (v.targa||v.telaio||v.modello); });
+  }catch(e){ return []; }
+}
+function ivDatiVeicolo(c){
+  try{
+    if(!c) return null;
+    /* la scheda in magazzino e' piu' aggiornata dello scatto sul contratto */
+    var m=(c.autoId && typeof mzById==='function')?mzById(c.autoId):null;
+    var a=c.autoSnapshot||{};
+    return {
+      targa:(c.nuovaTarga || (m&&m.targa) || a.targa || ''),
+      telaio:((m&&m.telaio) || a.telaio || ''),
+      modello:(m?(((m.marca||'')+' '+(m.modello||'')).trim()):(a.modello||'')),
+      dataImm:((m&&m.dataImm) || a.dataImm || ''),
+      km:((m&&m.km) || c.kmAgg || a.km || ''),
+      quando:(c.consegnatoTs||c.contrattoTs||0)
+    };
+  }catch(e){ return null; }
+}
+function ivUltimoVeicolo(clienteKey){
+  var l=ivVeicoliCliente(clienteKey);
+  return l.length?l[0]:null;
+}
+/* Cambio veicolo dal modulo dell'intervento: si sceglie fra quelli che il
+   cliente ha davvero comprato, cosi' targa e telaio non si sbagliano. */
+function ivCambiaVeicolo(){
+  try{
+    var rec=(typeof tgById==='function')?tgById(_tgId):null;
+    if(!rec){ alert('Intervento non trovato.'); return; }
+    var l=ivVeicoliCliente(rec.clienteKey||'');
+    if(!l.length){ alert('Questo cliente non ha veicoli acquistati registrati.\n\nCompila targa e modello a mano.'); return; }
+    var voci=l.map(function(v,i){
+      return (i+1)+') '+((v.modello||'veicolo')+(v.targa?(' \u00b7 '+v.targa):(v.telaio?(' \u00b7 '+v.telaio):'')));
+    }).join('\n');
+    var sc=prompt('Quale veicolo?\n\n'+voci+'\n\nScrivi il numero:','1');
+    if(sc===null) return;
+    var i=parseInt(sc,10)-1;
+    if(isNaN(i) || i<0 || i>=l.length){ alert('Numero non valido.'); return; }
+    var v=l[i];
+    var set=function(k,val){ var el=document.getElementById('tg_'+k); if(el && val!=null) el.value=val; };
+    set('targa', v.targa); set('telaio', v.telaio); set('modello', v.modello); set('dataImm', v.dataImm);
+    if(typeof tgSalvaBozza==='function') tgSalvaBozza();
+    if(typeof tcToastNew==='function') tcToastNew('\ud83d\ude97 Veicolo cambiato: '+((v.modello||'')+' '+(v.targa||'')).trim(), true);
+  }catch(e){}
+}
+
 function ivNuovo(clienteKey, nomeCliente, veicolo){
   var oggi=new Date();
+  /* Anagrafica e veicolo si compilano da soli: in officina l'unica cosa che
+     cambia davvero sono i chilometri e le righe di lavorazione. */
+  var f={};
+  try{
+    var reg=(typeof clStore==='function')?(clStore()[clienteKey]||{}):{};
+    var nome=(reg.business&&reg.ragSociale)?reg.ragSociale:((((reg.cognome||'')+' '+(reg.nome||'')).trim())||nomeCliente||'');
+    var i0=(reg.indirizzi&&reg.indirizzi.length)?reg.indirizzi[reg.indirizzi.length-1]:null;
+    f.nome=nome;
+    f.indirizzo=i0?[[i0.via,i0.civico].filter(Boolean).join(' '), [i0.cap,i0.citta,(i0.prov?('('+i0.prov+')'):'')].filter(Boolean).join(' ')].filter(Boolean).join(', '):'';
+    f.cf=reg.cf||''; f.piva=reg.piva||'';
+    var v=ivUltimoVeicolo(clienteKey);
+    if(v){ f.targa=v.targa; f.telaio=v.telaio; f.modello=v.modello; f.dataImm=v.dataImm; veicolo=veicolo||((v.modello||'')+(v.targa?(' \u00b7 '+v.targa):'')).trim(); }
+  }catch(e){}
   var rec={
     id:'iv_'+Date.now(),
     clienteKey:clienteKey||'',
     cliente:nomeCliente||'',
     veicolo:veicolo||'',
     data:oggi.getFullYear()+'-'+('0'+(oggi.getMonth()+1)).slice(-2)+'-'+('0'+oggi.getDate()).slice(-2),
-    nota:'', fatturaTag:{},
+    nota:'', fatturaTag:f,
     createdAt:Date.now(), updatedAt:Date.now()
   };
   var l=ivLoad().slice(); l.push(rec); ivSave(l); ivSupaUpsert(rec);
@@ -19883,6 +19988,9 @@ function tgRender(){
               : '<span style="font-weight:400;color:#b45309;">\u26a0\ufe0f auto non in magazzino \u2014 completa telaio e immatricolazione</span>')
     + '</div>';
   h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">'
+    +((String(_tgId||'').indexOf('iv_')===0)
+        ? '<div style="flex:1 1 100%;margin-bottom:2px;"><button type="button" onclick="ivCambiaVeicolo()" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;">\ud83d\ude97 Cambia veicolo</button></div>'
+        : '')
     +'<div style="flex:2 1 200px;"><label style="'+lbl+'">Modello</label><input id="tg_modello" style="'+inp+'" value="'+tgEsc(g('modello', v.modello))+'" oninput="tgSalvaBozza()"></div>'
     +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Targa</label><input id="tg_targa" style="'+inp+'" value="'+tgEsc(g('targa', v.targa))+'" oninput="tgSalvaBozza()"></div>'
     +'<div style="flex:2 1 180px;"><label style="'+lbl+'">Num. telaio</label><input id="tg_telaio" style="'+inp+'" value="'+tgEsc(g('telaio', v.telaio))+'" oninput="tgSalvaBozza()"></div>'
