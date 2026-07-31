@@ -21749,7 +21749,11 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
   var _vLim=window._vLim||40, _vTot=list.length;
   var _vPiu=(_vTot>_vLim)?('<div style="text-align:center;padding:14px 0 4px;"><button onclick="window._vLim=(window._vLim||40)+40;cvVendRender();" style="padding:11px 22px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Mostra altre 40 &nbsp;<span style="color:#94a3b8;font-weight:600;">('+(_vTot-_vLim)+' rimanenti)</span></button></div>'):'';
   var _vCnt=(_vTot>_vLim)?('<div style="font-size:12px;color:#94a3b8;font-weight:600;margin-bottom:8px;">'+Math.min(_vLim,_vTot)+' di '+_vTot+'</div>'):'';
-  var body=list.length?(_vCnt+list.slice(0,_vLim).map(cvVendCard).join('')+_vPiu):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
+  /* Quanto resta da incassare in QUESTA fase, su tutti i contratti che ci
+     stanno dentro. E' la domanda che ci si fa aprendo la scheda, e prima
+     bisognava sommare a mente scorrendo le pratiche una per una. */
+  var _tot=cvVendTotaliHTML(list);
+  var body=list.length?(_tot+_vCnt+list.slice(0,_vLim).map(cvVendCard).join('')+_vPiu):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
   wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
 }
 
@@ -22601,6 +22605,49 @@ function cvRichiestaInvia(id){
   }catch(e){
     if(esito) esito.innerHTML='<span style="color:#b45309;font-weight:700;">La richiesta \u00e8 salvata sulla pratica, ma la mail non \u00e8 partita. Avvisa a voce.</span>';
   }
+}
+
+/* Totali della sottosezione: si applica a ogni contratto lo stesso calcolo
+   della sua scheda, poi si somma. Il finanziamento e i bonifici sono separati
+   perche' arrivano da mondi diversi — uno lo delibera la finanziaria, l'altro
+   dipende dal cliente — e la permuta non e' denaro, e' un'auto che entra. */
+function cvVendTotaliHTML(list){
+  try{
+    if(!list || !list.length) return '';
+    if(_cvVendStato==='consegnato') return '';
+    /* Solo il titolare: e' il quadro di cassa dell'azienda, non serve a chi
+       vende e non e' il caso che giri. La contabilita' lo legge dalle sue
+       sezioni, dove il dato e' completo di fatture e scadenze. */
+    if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return '';
+    if(typeof eaEContabilita==='function' && eaEContabilita((typeof _currentUserEmail!=='undefined')?_currentUserEmail:'')) return '';
+    var daInc=0, fin=0, perm=0, nPerm=0;
+    list.forEach(function(cv){
+      try{
+        var t=cvCalcola(cv);
+        var pags=cvPagIncasso(cv.pagamenti).filter(function(p){ return cvNum(p.importo); });
+        var inc=pags.filter(function(p){ return p.confermato; }).reduce(function(s,p){ return s+cvNum(p.importo); },0);
+        var tot=(t.totaleScontato!=null?t.totaleScontato:t.totaleVendita);
+        daInc+=Math.max(0, tot-inc);
+        /* del finanziamento conta solo la parte non ancora incassata */
+        fin+=pags.filter(function(p){ return !p.confermato && (/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'); })
+                 .reduce(function(s,p){ return s+cvNum(p.importo); },0);
+        if(cv.permutaOn && cv.permuta){ var pv=cvNum(cv.permuta.prezzoAcq); if(pv){ perm+=pv; nPerm++; } }
+      }catch(e){}
+    });
+    var altro=Math.max(0, daInc-fin);
+    var voce=function(et,val,col,pic){
+      return '<div style="flex:1 1 150px;min-width:130px;">'
+        +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;">'+et+'</div>'
+        +'<div style="font-size:'+(pic?'15px':'19px')+';font-weight:800;color:'+col+';margin-top:1px;">'+cvEuro(val)+'</div></div>';
+    };
+    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;">'
+      + voce('Da incassare', daInc, '#dc2626')
+      + voce('di cui finanziamento', fin, '#64748b', true)
+      + voce('di cui bonifico e altro', altro, '#64748b', true)
+      + (perm?voce('Permute in entrata'+(nPerm>1?(' ('+nPerm+')'):''), perm, '#166534', true):'')
+      + '<div style="flex:0 0 100%;font-size:11px;color:#94a3b8;">Somma dei '+list.length+(list.length===1?' contratto':' contratti')+' in questa scheda. La permuta \u00e8 valore in entrata, non denaro da incassare.</div>'
+      + '</div>';
+  }catch(e){ return ''; }
 }
 
 function cvVendCard(cv){
