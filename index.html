@@ -6146,8 +6146,35 @@ function pProvvAuto(cv){
     if(cv.origine==='sicom_ap' || cv.deleted) return;
     var reg=pLoadReg()||[];
     var tro=pProvvDiCv(cv.id, reg);
-    /* se Rudy l'ha gia' confermata non la si tocca piu' */
-    if(tro && tro.r.bozza!==true) return;
+    /* La delibera e' la verifica di quello che ha inserito Rudy: se i due
+       divergono vince la delibera, perche' quello e' cio' che la finanziaria
+       ha effettivamente caricato. Prima la riga confermata era intoccabile e
+       restava calcolata su dati smentiti, senza che nessuno lo sapesse.
+       Ora si riallinea e torna in bozza con l'elenco di cosa e' cambiato. */
+    var _giaConf=!!(tro && tro.r.bozza!==true);
+    var _diff=[];
+    if(_giaConf){
+      var _d=(cv.finDelibera && cv.finDelibera.confermata)?cv.finDelibera:null;
+      if(!_d) return;                       /* senza delibera non c'e' nulla da verificare */
+      var _r=tro.r;
+      var _num=function(x){ var n=parseFloat(String(x==null?'':x).replace(',','.')); return isNaN(n)?null:n; };
+      var _cfr=function(et, vecchio, nuovo, suff){
+        var a=_num(vecchio), b=_num(nuovo);
+        if(b===null) return;
+        if(a===null || Math.abs(a-b)>0.009) _diff.push(et+': '+(a===null?'\u2014':a)+(suff||'')+' \u2192 '+b+(suff||''));
+      };
+      _cfr('TAN', _r.tan, _d.tan, '%');
+      _cfr('Commissioni', _r.comm, _d.istruttoria, ' \u20ac');
+      _cfr('Valore veicolo', _r.valore, _d.valoreVeicolo, ' \u20ac');
+      _cfr('Anticipo', _r.acconto, _d.anticipo, ' \u20ac');
+      _cfr('Durata polizza', _r.fiMesi, _d.polizzaMesi, ' mesi');
+      var _fiNuova=P_FI_DA_POLIZZA[String(_d.polizzaTipo||'').toLowerCase()]||'NO';
+      if(String(_r.fi||'NO')!==_fiNuova) _diff.push('Polizza F/I: '+(_r.fi||'NO')+' \u2192 '+_fiNuova);
+      if(String(_r.cpi||'NO')!==String(_d.cpi||'NO')) _diff.push('CPI: '+(_r.cpi||'NO')+' \u2192 '+(_d.cpi||'NO'));
+      if(String(_r.gap||'NO')!==String(_d.gap||'NO')) _diff.push('GAP: '+(_r.gap||'NO')+' \u2192 '+(_d.gap||'NO'));
+      if(String(_r.finanziariaDelibera||'')!==String(_d.finanziaria||'')) _diff.push('Finanziaria: '+(_r.finanziariaDelibera||'\u2014')+' \u2192 '+(_d.finanziaria||'\u2014'));
+      if(!_diff.length) return;             /* la delibera conferma: non si tocca niente */
+    }
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var fin=!!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv));
     var d=(cv.finDelibera && cv.finDelibera.confermata)?cv.finDelibera:null;
@@ -6182,6 +6209,24 @@ function pProvvAuto(cv){
       e.manca=['delibera'];
     }
     e.updatedAt=Date.now();
+    if(_diff.length){
+      /* L'importo non si ricalcola da solo: fra Compass, Deutsche/Avvera e
+         Best gli importi sono diversi a parita' di dati, e quale valga lo
+         sa solo chi ha caricato la pratica. Si riporta in bozza con scritto
+         cosa e' cambiato, cosi' la si riconferma sui numeri giusti. */
+      e.bozza=true;
+      e.riallineataTs=Date.now();
+      e.riallineataDiff=_diff;
+      if(e.manca && e.manca.indexOf('finanziaria')<0) e.manca=e.manca.concat(['finanziaria']);
+      try{
+        if(typeof notifPush==='function')
+          notifPush('Provvigione da rivedere \u2014 '+(e.cliente||'pratica')+': '+_diff.join(' \u00b7 '), '\u26a0\ufe0f');
+      }catch(_n){}
+      try{
+        if(typeof tcToastNew==='function')
+          tcToastNew('\u26a0\ufe0f La delibera smentisce la provvigione: torna in bozza', true);
+      }catch(_t){}
+    }
     if(tro) reg[tro.i]=e; else reg.unshift(e);
     pSaveReg(reg);
     try{ if(typeof pSupaUpsert==='function') pSupaUpsert(e); }catch(_e){}
@@ -17975,7 +18020,7 @@ function cvBuildHTML(c, tipo){
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
-  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:25mm 22mm;}"
+  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:27.5mm 24mm;}"
     +".cvdoc{margin:0;padding:0;font-size:12px;}"
     /* Nessuna riga si spezza fra due pagine: l'interruzione lasciava la voce
        di qua e l'importo di la', sfalsando tutta la colonna dei numeri. */
@@ -21982,6 +22027,7 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
 function cvDeliberaForm(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   window._delibRataManuale=false;
+  setTimeout(function(){ try{ cvDeliberaFinCambia(); }catch(e){} }, 60);
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
   var fromSim=window._delibDaSim||null; window._delibDaSim=null;
@@ -22067,7 +22113,23 @@ function cvDeliberaForm(id){
    +(fromSim?'<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:700;">\u2713 Valori presi dal simulatore</div>':'')
    +'<button onclick="simDaDelibera(\''+cv.id+'\')" style="width:100%;padding:11px;border:1px solid #16a34a;border-radius:9px;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;margin-bottom:6px;">\uD83E\uDDEE Calcola col simulatore (TAN, polizze, rata)</button>'
    +'<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Inserisci i valori <b>effettivamente deliberati</b>. Tutti i campi sono obbligatori.</div>'
-   +'<label style="'+lab+'">Finanziaria *</label><input id="dl_finanziaria" style="'+inp+'" value="'+String(d.finanziaria||cv.finanziaria||'').replace(/"/g,'&quot;')+'" placeholder="es. Compass">'
+   /* Elenco chiuso: la provvigione dipende da QUALE finanziaria ha deliberato,
+      e con un campo libero bastava "Deutsche" invece di "Deutsche Bank" per
+      far saltare il calcolo. Chi non e' in elenco si scrive in "Altra". */
+   +'<label style="'+lab+'">Finanziaria *</label>'
+   +(function(){
+      var att=String(d.finanziaria||cv.finanziaria||'').trim();
+      var noto=CV_FINANZIARIE.some(function(f){ return f.toLowerCase()===att.toLowerCase(); });
+      return '<select id="dl_finanziaria" onchange="cvDeliberaFinCambia()" style="'+inp+'">'
+        +'<option value="">\u2014 scegli la finanziaria \u2014</option>'
+        + CV_FINANZIARIE.map(function(f){
+            return '<option value="'+f+'"'+((noto && f.toLowerCase()===att.toLowerCase())?' selected':'')+'>'+f+'</option>';
+          }).join('')
+        +'<option value="__altra"'+((att&&!noto)?' selected':'')+'>Altra\u2026</option>'
+        +'</select>'
+        +'<input id="dl_finanziariaAltra" style="'+inp+((att&&!noto)?'':'display:none;')+'margin-top:6px;" value="'+(att&&!noto?att.replace(/"/g,'&quot;'):'')+'" placeholder="Nome della finanziaria">'
+        +'<div id="dl_finNota" style="font-size:11.5px;margin-top:4px;line-height:1.5;"></div>';
+    })()
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">TAN % *</label><input id="dl_tan" type="number" step="0.01" style="'+inp+'" value="'+val('tan')+'">'+hint(sim.tan!==''?String(sim.tan).replace('.',','):'','%')+'</div>'
    +'<div style="flex:1;"><label style="'+lab+'">TAEG % *</label><input id="dl_taeg" type="number" step="0.01" style="'+inp+'" value="'+val('taeg')+'">'+hint(sim.taeg!==''?String(sim.taeg).replace('.',','):'','%')+'</div></div>'
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Importo finanziato \u20ac *</label><input id="dl_importo" type="number" step="0.01" style="'+inp+'" value="'+val('importoFinanziato')+'">'+hint(sim.importoFinanziato,' \u20ac')+'</div>'
@@ -22112,6 +22174,43 @@ function cvDeliberaForm(id){
 /* Sblocco esplicito della rata: serve per le finanziarie che il simulatore
    non copre. Resta segnato sulla delibera, cosi' chi guarda i conti sa che
    quel numero non viene da un calcolo. */
+/* Le finanziarie con cui si lavora. Il simulatore oggi copre solo Deutsche
+   Bank: per le altre i valori vanno inseriti a mano finche' non arrivano i
+   rispettivi calcolatori. */
+var CV_FINANZIARIE=['Deutsche Bank','Compass','Agos','Findomestic','Santander'];
+var CV_FIN_CON_SIMULATORE=['Deutsche Bank'];
+
+function cvDeliberaFinSelezionata(){
+  try{
+    var sel=document.getElementById('dl_finanziaria'); if(!sel) return '';
+    if(sel.value==='__altra'){
+      var alt=document.getElementById('dl_finanziariaAltra');
+      return alt?String(alt.value||'').trim():'';
+    }
+    return sel.value||'';
+  }catch(e){ return ''; }
+}
+function cvDeliberaFinCambia(){
+  try{
+    var sel=document.getElementById('dl_finanziaria');
+    var alt=document.getElementById('dl_finanziariaAltra');
+    if(alt) alt.style.display=(sel && sel.value==='__altra')?'':'none';
+    var f=cvDeliberaFinSelezionata();
+    var nota=document.getElementById('dl_finNota');
+    var haSim=CV_FIN_CON_SIMULATORE.some(function(x){ return x.toLowerCase()===String(f).toLowerCase(); });
+    if(nota){
+      nota.innerHTML = !f ? ''
+        : (haSim
+           ? '<span style="color:#166534;font-weight:700;">\u2713 Il simulatore copre questa finanziaria: usa il pulsante verde per rata, TAN e polizze.</span>'
+           : '<span style="color:#b45309;font-weight:700;">\u26a0\ufe0f Per '+f+' il simulatore non c\u2019\u00e8 ancora: i valori vanno inseriti a mano dalla delibera cartacea.</span>');
+    }
+    /* Senza simulatore la rata si sblocca da sola: altrimenti non ci sarebbe
+       modo di inserirla, e il vincolo diventerebbe un vicolo cieco. */
+    var r=document.getElementById('dl_rata');
+    if(r && f && !haSim){ r.readOnly=false; r.style.background='#fff'; r.style.color='#0f172a'; window._delibRataManuale=true; }
+  }catch(e){}
+}
+
 function cvDeliberaSbloccaRata(){
   if(!confirm('La rata si calcola col simulatore, cos\u00ec TAN, polizze e istruttoria restano coerenti\ne la provvigione viene giusta.\n\nScriverla a mano serve solo per le finanziarie che il simulatore non copre.\n\nProcedo?')) return;
   try{
@@ -22142,7 +22241,8 @@ function cvDeliberaSalva(id){
   var g=function(k){ var el=document.getElementById('dl_'+k); return el?el.value.trim():''; };
   var n=function(k){ var x=parseFloat(g(k)); return isNaN(x)?null:x; };
   var mancanti=[];
-  if(!g('finanziaria')) mancanti.push('Finanziaria');
+  var _fin=(typeof cvDeliberaFinSelezionata==='function')?cvDeliberaFinSelezionata():g('finanziaria');
+  if(!_fin) mancanti.push('Finanziaria');
   if(n('tan')===null) mancanti.push('TAN');
   if(n('taeg')===null) mancanti.push('TAEG');
   if(n('importo')===null) mancanti.push('Importo finanziato');
@@ -22154,7 +22254,7 @@ function cvDeliberaSalva(id){
   if(!_daSim && !g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
-  list[i].finDelibera={ confermata:true, finanziaria:g('finanziaria'), tan:n('tan'), taeg:n('taeg'),
+  list[i].finDelibera={ confermata:true, finanziaria:_fin, tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
     polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
     cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'), polizzaMesi:(n('polMesi')||48),
