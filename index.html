@@ -17805,7 +17805,13 @@ function cvBuildHTML(c, tipo){
     try{
       var _soloFin=!c.confrontoOn;   /* senza confronto resta comunque il riepilogo del finanziamento */
       var fp=(c.pagamenti||[]).filter(function(x){ return /finanziament/i.test(x.metodo||'')||/finanziament/i.test(x.tipo||''); })[0];
-      if(!fp) return '';
+      var _dlOk=!!(c.finDelibera && (cvNum(c.finDelibera.rata)||cvNum(c.finDelibera.importoFinanziato)));
+      /* Basta la delibera. Prima serviva per forza una riga di pagamento
+         marcata "finanziamento": se mancava o era scritta in altro modo,
+         l'intero blocco spariva dalla stampa e nessuna correzione alla
+         delibera poteva comparire, per quante volte la si salvasse. */
+      if(!fp && !_dlOk) return '';
+      fp=fp||{};
       /* i dati migliori sono quelli della delibera; in mancanza uso il
          pagamento e, come ultima risorsa, i valori del simulatore. */
       var dl=c.finDelibera||{};
@@ -17939,10 +17945,16 @@ function cvBuildHTML(c, tipo){
       ? ('<ul style="margin:0;padding-left:18px;">'+_voci.map(function(v){ return '<li style="margin:2px 0;">'+cvEsc(v)+'</li>'; }).join('')+'</ul>')
       : cvEsc(cvAssicTesto(c)))+'</div>';
   }
-  if(pagList.length){ doc+='<div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
+  if(pagList.length){
+    /* Il blocco dei pagamenti non si spezza: se non entra nella pagina passa
+       intero a quella dopo. Spezzandolo, la voce restava di qua e l'importo
+       di la', e il documento diventava illeggibile. */
+    doc+='<div style="page-break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
      var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
         .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
-     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML(); }
+     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML();
+    doc+='</div>';   /* chiude il blocco pagamenti che non si spezza */
+  }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
   if(_haPenale){ var _finImp=_finPromoImp; { var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh" style="page-break-after:avoid;">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; doc+=cvFirmaHTML(); } }
   /* La doppia chiave si scrive SOLO se viene consegnata: se non c'e', il
@@ -17965,6 +17977,10 @@ function cvBuildHTML(c, tipo){
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
   var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:25mm 22mm;}"
     +".cvdoc{margin:0;padding:0;font-size:12px;}"
+    /* Nessuna riga si spezza fra due pagine: l'interruzione lasciava la voce
+       di qua e l'importo di la', sfalsando tutta la colonna dei numeri. */
+    +".cvrow,.cvgrid,.cvbox{page-break-inside:avoid;break-inside:avoid;}"
+    +".cvh{page-break-after:avoid;break-after:avoid;}"
     +".cvtop{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a4fa0;padding-bottom:8px;margin-bottom:2px;}"
     +".cvbrand{font-size:19px;font-weight:800;color:#1a4fa0;letter-spacing:.5px;} .cvsmall{font-size:10px;color:#64748b;}"
     +".cvh{font-size:11.5px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #dbe4f0;padding-bottom:2px;margin:10px 0 5px;page-break-after:avoid;}"
@@ -21965,6 +21981,7 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
 
 function cvDeliberaForm(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  window._delibRataManuale=false;
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
   var fromSim=window._delibDaSim||null; window._delibDaSim=null;
@@ -22054,7 +22071,17 @@ function cvDeliberaForm(id){
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">TAN % *</label><input id="dl_tan" type="number" step="0.01" style="'+inp+'" value="'+val('tan')+'">'+hint(sim.tan!==''?String(sim.tan).replace('.',','):'','%')+'</div>'
    +'<div style="flex:1;"><label style="'+lab+'">TAEG % *</label><input id="dl_taeg" type="number" step="0.01" style="'+inp+'" value="'+val('taeg')+'">'+hint(sim.taeg!==''?String(sim.taeg).replace('.',','):'','%')+'</div></div>'
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Importo finanziato \u20ac *</label><input id="dl_importo" type="number" step="0.01" style="'+inp+'" value="'+val('importoFinanziato')+'">'+hint(sim.importoFinanziato,' \u20ac')+'</div>'
-   +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac *</label><input id="dl_rata" type="number" step="0.01" style="'+inp+'" value="'+val('rata')+'">'+hint(sim.rata,' \u20ac')+'</div></div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Rata \u20ac *</label>'
+   /* La rata si calcola col simulatore, non si scrive: digitandola a mano si
+      perde il legame con TAN, polizze e istruttoria, e la provvigione finisce
+      calcolata su numeri che non tornano. Resta possibile sbloccarla, perche'
+      il simulatore e' di Deutsche Bank e con altre finanziarie serve, ma e'
+      un gesto deliberato che rimane scritto sulla delibera. */
+   +'<input id="dl_rata" type="number" step="0.01" style="'+inp+(d.rataManuale?'':'background:#f1f5f9;color:#475569;')+'" value="'+val('rata')+'"'+(d.rataManuale?'':' readonly')+'>'
+   +(d.rataManuale
+      ? '<div style="font-size:10.5px;color:#b45309;font-weight:700;margin-top:2px;">\u270f\ufe0f inserita a mano</div>'
+      : '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Si calcola col simulatore \u2014 <span onclick="cvDeliberaSbloccaRata()" style="color:#1a4fa0;font-weight:700;cursor:pointer;text-decoration:underline;">scrivila a mano</span></div>')
+   +hint(sim.rata,' \u20ac')+'</div></div>'
    +'<div style="display:flex;gap:10px;"><div style="flex:1;"><label style="'+lab+'">Numero rate *</label><input id="dl_durata" type="number" style="'+inp+'" value="'+val('durata')+'">'+hint(sim.durata,'')+'</div>'
    +'<div style="flex:1;"><label style="'+lab+'">Commissioni finanziarie \u20ac *</label><input id="dl_istruttoria" type="number" step="0.01" style="'+inp+'" value="'+val('istruttoria')+'">'+hint(sim.istruttoria,' \u20ac')+'</div></div>'
    +_polBox
@@ -22082,6 +22109,20 @@ function cvDeliberaForm(id){
    +'</div></div>';
   m.innerHTML=h2; m.style.display='flex';
 }
+/* Sblocco esplicito della rata: serve per le finanziarie che il simulatore
+   non copre. Resta segnato sulla delibera, cosi' chi guarda i conti sa che
+   quel numero non viene da un calcolo. */
+function cvDeliberaSbloccaRata(){
+  if(!confirm('La rata si calcola col simulatore, cos\u00ec TAN, polizze e istruttoria restano coerenti\ne la provvigione viene giusta.\n\nScriverla a mano serve solo per le finanziarie che il simulatore non copre.\n\nProcedo?')) return;
+  try{
+    var el=document.getElementById('dl_rata');
+    if(el){ el.readOnly=false; el.style.background='#fff'; el.style.color='#0f172a'; el.focus(); }
+    window._delibRataManuale=true;
+    var av=document.getElementById('dl_rata_nota');
+    if(av) av.innerHTML='<span style="color:#b45309;font-weight:700;">\u270f\ufe0f verr\u00e0 salvata come inserita a mano</span>';
+  }catch(e){}
+}
+
 function cvDeliberaChiudi(){ var m=document.getElementById('cvDeliberaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 /* passa dalla polizza automatica del simulatore all'inserimento a mano
    (finanziaria diversa da Deutsche Bank): riscrive solo il riquadro polizze,
@@ -22119,6 +22160,7 @@ function cvDeliberaSalva(id){
     cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'), polizzaMesi:(n('polMesi')||48),
     valoreVeicolo:n('valore'), anticipo:n('anticipo'),
     note:g('note'),
+    rataManuale:(window._delibRataManuale===true)||undefined,
     /* Correggendo una delibera vecchia la data non deve spostarsi a oggi:
        resta quella in cui la finanziaria ha deliberato davvero. Si tiene
        invece traccia dell'ultima correzione, che e' un'altra informazione. */
