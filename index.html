@@ -6033,6 +6033,67 @@ const PTAB = [
 ];
 const PTAB800 = [[8.5, 99, 0.0013, 0.0015]];
 
+/* ===== CALCOLO DELLA PROVVIGIONE, SENZA SCHERMATA =====
+   Le stesse formule di pCalcola, ma su numeri passati invece che letti dai
+   campi della pagina. Serve per calcolare la provvigione alla conferma della
+   delibera: i dati ci sono gia' tutti li' e non c'e' niente da scegliere a
+   mano — la finanziaria la dice la delibera, e da quella l'importo e' uno solo.
+   Se un giorno cambiano le percentuali, si cambiano qui e valgono per
+   entrambe le strade. */
+function pPercDa(tan, fasciaRate){
+  for (const r of PTAB) {
+    if (tan >= r[0] && tan < r[1]) return fasciaRate === '36-59' ? r[2] : r[3];
+  }
+  const l = PTAB[PTAB.length-1];
+  return fasciaRate === '36-59' ? l[2] : l[3];
+}
+function pProvvDa(d){
+  try{
+    d=d||{};
+    var valore=parseFloat(d.valore)||0, acconto=parseFloat(d.acconto)||0;
+    var comm=parseFloat(d.comm)||0, tan=parseFloat(d.tan)||0;
+    var rateNum=parseInt(d.rate,10)||36;
+    var fascia=(rateNum>=60)?'60+':'36-59';
+    var C15=valore-acconto+comm;
+    var G12=C15*pPercDa(tan, fascia);
+    var cpiConta=(comm>=450 && tan>=8.5);
+    var pCPI=(String(d.cpi||'NO')==='SI' && cpiConta)?C15*0.0012:0;
+    var fi=String(d.fi||'NO');
+    var pFI = fi==='ZURICH'?C15*0.00225 : fi==='UNIPOL'?C15*0.00275
+            : fi==='FIT TO YOU'?C15*0.0025 : fi==='NET'?C15*0.003
+            : fi==='KASKO'?C15*0.0038 : 0;
+    var pGAP=(String(d.gap||'NO')==='SI')?C15*0.0005:0;
+    var G11b=G12+pCPI+pFI;
+    var fiMult=1;
+    if(fi!=='NO'){ var fm=parseInt(d.fiMesi,10)||48; if(fm<=36) fiMult=0.87; else if(fm>=72) fiMult=1.05; }
+    var G11=G11b*fiMult, G11gap=(G11b+pGAP)*fiMult;
+    var usata=(String(d.eta||'nuova')!=='nuova');
+    if(String(d.sotto||'NO')==='SI'){
+      var G11s=(String(d.finanziaria||'').toLowerCase().indexOf('compass')>=0)?G11gap:G11;
+      var bs=usata?G11s*0.75:G11s;
+      return { sottocosto:true, importo:Math.round(bs/2.4), C15:C15 };
+    }
+    var base=usata?G11*0.80:G11, baseGap=usata?G11gap*0.80:G11gap;
+    var rateMult=(rateNum>=60)?1.08:1.0;
+    var compass=baseGap*0.70*rateMult;
+    var dbAvvera=(base*0.70*rateMult)*1.45;
+    var best=dbAvvera*1.15;
+    var bestOk=(rateNum>=60 && tan>=9 && comm>=500 && fi!=='NO' && (parseInt(d.fiMesi,10)||48)>=60);
+    return { compass:Math.round(compass), dbAvvera:Math.round(dbAvvera),
+             best:Math.round(best), bestDisponibile:bestOk, C15:C15 };
+  }catch(e){ return null; }
+}
+/* Dalla finanziaria della delibera all'importo: non e' una scelta, e' una
+   conseguenza. Avvera segue la stessa scheda di Deutsche Bank. */
+function pImportoPerFinanziaria(res, finanziaria){
+  if(!res) return null;
+  if(res.sottocosto) return res.importo;
+  var f=String(finanziaria||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(f.indexOf('compass')>=0) return res.compass;
+  if(f.indexOf('deutsche')>=0 || f==='db' || f.indexOf('avvera')>=0) return res.dbAvvera;
+  return null;   /* finanziaria fuori dalle nostre: non si inventa */
+}
+
 function pPerc(tan) {
   for (const r of PTAB) {
     if (tan >= r[0] && tan < r[1]) return PS.rate === '36-59' ? r[2] : r[3];
@@ -6198,12 +6259,64 @@ function pProvvAuto(cv){
       if(d.valoreVeicolo!=null && d.valoreVeicolo!=='') e.valore=d.valoreVeicolo;
       if(d.anticipo!=null && d.anticipo!=='') e.acconto=d.anticipo;
       e.finanziariaDelibera=d.finanziaria||'';
-      e.provvigione=0;
+      e.rate=d.durata||e.rate;
+      /* Eta' del veicolo: la dice la data di immatricolazione, che c'e'
+         sempre. Senza data e' un'auto non ancora immatricolata, quindi nuova. */
+      (function(){
+        try{
+          var _mz=(cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
+          var _di=(_mz&&_mz.dataImm)||a.dataImm||'';
+          if(!_di){ e.eta='nuova'; return; }
+          var _p=String(_di).split('-');
+          var _dt=(_p.length===3)?new Date(+_p[0],+_p[1]-1,+_p[2]):new Date(_di);
+          if(isNaN(_dt.getTime())){ e.eta=e.eta||'nuova'; return; }
+          var _mesi=(Date.now()-_dt.getTime())/(1000*60*60*24*30.44);
+          e.eta=(_mesi<=6)?'nuova':'usata';
+          e.etaMesi=Math.round(_mesi);
+        }catch(_x){ e.eta=e.eta||'nuova'; }
+      })();
+      /* Sottocosto automatico oltre i 180 giorni di giacenza: un'auto ferma
+         sei mesi si vende a margine ridotto, e la provvigione segue. Rudy puo'
+         comunque metterlo a mano prima, se sa che quella va sottocosto. */
+      (function(){
+        try{
+          if(e.sottoManuale==='SI'){ e.sotto='SI'; return; }
+          var _mz2=(cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
+          var _dc=(_mz2&&_mz2.dataCarico)||'';
+          if(!_dc){ e.sotto=e.sotto||'NO'; return; }
+          var _q=String(_dc).split('-');
+          var _dd=(_q.length===3)?new Date(+_q[0],+_q[1]-1,+_q[2]):new Date(_dc);
+          if(isNaN(_dd.getTime())){ e.sotto=e.sotto||'NO'; return; }
+          var _rif=cv.contrattoTs||cv.consegnatoTs||Date.now();
+          var _gg=Math.floor((_rif-_dd.getTime())/(1000*60*60*24));
+          e.giacenzaGg=_gg;
+          if(_gg>180){ e.sotto='SI'; e.sottoAuto=true; }
+          else e.sotto=e.sotto||'NO';
+        }catch(_x){ e.sotto=e.sotto||'NO'; }
+      })();
+      /* La provvigione si calcola qui: i dati arrivano tutti dalla delibera e
+         la finanziaria pure, quindi non resta nessuna scelta da fare. Prima
+         restava a zero e Rudy doveva rifare a mano un conto gia' determinato. */
+      var _res=(typeof pProvvDa==='function')?pProvvDa({
+        valore:e.valore, acconto:e.acconto, comm:e.comm, tan:e.tan,
+        rate:d.durata, fi:e.fi, fiMesi:e.fiMesi, cpi:e.cpi, gap:e.gap,
+        eta:e.eta, sotto:e.sotto, finanziaria:d.finanziaria
+      }):null;
+      var _imp=(typeof pImportoPerFinanziaria==='function')?pImportoPerFinanziaria(_res, d.finanziaria):null;
+      if(_imp!=null){
+        e.provvigione=_imp; e.provv=_imp;
+        e.finanziaria=cvFinRiconosci(d.finanziaria)||d.finanziaria||'';
+        e.calcolataDaDelibera=true;
+      } else {
+        e.provvigione=0; e.calcolataDaDelibera=false;
+      }
       /* la scelta fra Compass, Deutsche Bank/Avvera e Best cambia l'importo
          e non si puo' dedurre: la fa Rudy */
       var _fd=String(d.finanziaria||'').toLowerCase();
-      var _nota=(_fd.indexOf('compass')>=0 || _fd.indexOf('avvera')>=0 || _fd.indexOf('deutsche')>=0 || _fd.indexOf('db')>=0);
-      e.manca=(_nota?[]:['finanziaria']).concat(e.fonte?[]:['fonte']);
+      /* Manca solo cio' che il gestionale non puo' sapere: la provenienza del
+         cliente. La finanziaria non e' piu' un buco: la dice la delibera. */
+      e.manca=((_imp!=null)?[]:['finanziaria']).concat(e.fonte?[]:['fonte']);
+      if(!e.manca.length) e.bozza=false;
     } else {
       e.tipo='attesa'; e.provvigione=0; e.finanziaria='';
       e.manca=['delibera'];
@@ -22119,7 +22232,9 @@ function cvDeliberaForm(id){
    +'<label style="'+lab+'">Finanziaria *</label>'
    +(function(){
       var att=String(d.finanziaria||cv.finanziaria||'').trim();
-      var noto=CV_FINANZIARIE.some(function(f){ return f.toLowerCase()===att.toLowerCase(); });
+      var _ric=cvFinRiconosci(att);
+      if(_ric) att=_ric;                    /* "DEUTSCHEBANK" diventa "Deutsche Bank" */
+      var noto=!!_ric || CV_FINANZIARIE.some(function(f){ return f.toLowerCase()===att.toLowerCase(); });
       return '<select id="dl_finanziaria" onchange="cvDeliberaFinCambia()" style="'+inp+'">'
         +'<option value="">\u2014 scegli la finanziaria \u2014</option>'
         + CV_FINANZIARIE.map(function(f){
@@ -22177,8 +22292,28 @@ function cvDeliberaForm(id){
 /* Le finanziarie con cui si lavora. Il simulatore oggi copre solo Deutsche
    Bank: per le altre i valori vanno inseriti a mano finche' non arrivano i
    rispettivi calcolatori. */
-var CV_FINANZIARIE=['Deutsche Bank','Compass','Agos','Findomestic','Santander'];
+var CV_FINANZIARIE=['Deutsche Bank','Avvera','Compass','Agos','Findomestic','Santander'];
 var CV_FIN_CON_SIMULATORE=['Deutsche Bank'];
+/* Sulle pratiche il nome e' stato scritto a mano per anni: "DEUTSCHEBANK",
+   "Deutsche", "DB", "Avvera". Il confronto va fatto sul nocciolo del nome,
+   non sulla stringa esatta, altrimenti la stessa finanziaria risulta due
+   cose diverse a seconda di come l'ha digitata chi ha compilato. */
+function cvFinNorm(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+var CV_FIN_ALIAS={ 'deutschebank':'Deutsche Bank', 'deutsche':'Deutsche Bank',
+  'db':'Deutsche Bank',
+  /* Avvera e' una finanziaria a se': nel calcolatore compare accanto a
+     Deutsche Bank sulla stessa scheda, ma sono due societa' diverse e la
+     delibera deve dire quale delle due ha caricato la pratica. */
+  'avvera':'Avvera',
+  'compass':'Compass', 'agos':'Agos', 'agosducato':'Agos',
+  'findomestic':'Findomestic', 'santander':'Santander' };
+function cvFinRiconosci(x){
+  var n=cvFinNorm(x);
+  if(!n) return '';
+  if(CV_FIN_ALIAS[n]) return CV_FIN_ALIAS[n];
+  for(var k in CV_FIN_ALIAS){ if(n.indexOf(k)>=0) return CV_FIN_ALIAS[k]; }
+  return '';
+}
 
 function cvDeliberaFinSelezionata(){
   try{
@@ -22197,7 +22332,8 @@ function cvDeliberaFinCambia(){
     if(alt) alt.style.display=(sel && sel.value==='__altra')?'':'none';
     var f=cvDeliberaFinSelezionata();
     var nota=document.getElementById('dl_finNota');
-    var haSim=CV_FIN_CON_SIMULATORE.some(function(x){ return x.toLowerCase()===String(f).toLowerCase(); });
+    var _rf=cvFinRiconosci(f)||f;
+    var haSim=CV_FIN_CON_SIMULATORE.some(function(x){ return cvFinNorm(x)===cvFinNorm(_rf); });
     if(nota){
       nota.innerHTML = !f ? ''
         : (haSim
