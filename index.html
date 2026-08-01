@@ -11,6 +11,7 @@
 <script src="https://apis.google.com/js/api.js"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
@@ -17657,7 +17658,65 @@ function cvStampaESalva(){
   cvStampaDoc(_cv, 'preventivo');
   if(typeof cvForm==='function') cvForm(_cv.id);
 }
-function cvStampaById(id, tipo){ var p=cvLoad().filter(function(x){return x.id===id;})[0]; if(!p){ alert('Contratto non trovato.'); return; } cvStampaDoc(p, tipo); }
+function cvStampaById(id, tipo){
+  var p=cvLoad().filter(function(x){return x.id===id;})[0];
+  if(!p){ alert('Contratto non trovato.'); return; }
+  /* Se per questo veicolo ci sono moduli da far firmare, la stampa diventa un
+     fascicolo unico invece di tre stampe separate da ricordarsi. */
+  try{
+    var all=(typeof apPerPratica==='function')?apPerPratica(p):[];
+    if(all.length && window.PDFLib){ cvStampaFascicolo(p, tipo, all); return; }
+  }catch(e){}
+  cvStampaDoc(p, tipo);
+}
+
+/* Proposta + allegati in un solo PDF. Se qualcosa non riesce si torna alla
+   stampa normale: meglio la sola proposta che nessuna stampa. */
+function cvStampaFascicolo(cv, tipo, allegati){
+  var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
+  avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
+  var html='';
+  try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
+  if(!html || typeof eaHtmlToPdf!=='function'){ cvStampaDoc(cv, tipo); return; }
+  eaHtmlToPdf(html)
+    .then(function(blob){ return blob.arrayBuffer(); })
+    .then(function(buf){
+      return PDFLib.PDFDocument.create().then(function(out){
+        return PDFLib.PDFDocument.load(buf)
+          .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
+          .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); return out; });
+      });
+    })
+    .then(function(out){
+      /* gli allegati si accodano nell'ordine in cui sono elencati */
+      var seq=Promise.resolve();
+      allegati.forEach(function(a){
+        seq=seq.then(function(){
+          return fetch(a.url).then(function(r){ return r.ok?r.arrayBuffer():null; })
+            .then(function(b){
+              if(!b) { console.log('allegato non scaricato:', a.nome); return; }
+              return PDFLib.PDFDocument.load(b)
+                .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
+                .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); });
+            })
+            .catch(function(){ console.log('allegato saltato:', a.nome); });
+        });
+      });
+      return seq.then(function(){ return out.save(); });
+    })
+    .then(function(bytes){
+      var url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+      var w=window.open(url,'_blank');
+      if(!w){ alert('Consenti le finestre pop-up per stampare il fascicolo.'); return; }
+      avviso('\u2713 Fascicolo pronto: proposta + '+allegati.length+(allegati.length===1?' allegato':' allegati'));
+      setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} }, 60000);
+    })
+    .catch(function(e){
+      console.log('fascicolo non riuscito:', e);
+      alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.');
+      cvStampaDoc(cv, tipo);
+    });
+}
 function cvContrattoFinaleStampa(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var needAssic=!!cv.assicOn;
@@ -18582,6 +18641,121 @@ function diagRicarica(){
   try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
   setTimeout(function(){ if(out) out.innerHTML='\u2705 Ricarica avviata. Riapri Preventivi/Fornitori per vedere i dati. Premi di nuovo \u201cVerifica\u201d per ricontrollare i conteggi.'; }, 500);
 }
+/* ============ DOCUMENTI DA ALLEGARE ALLA PROPOSTA ============
+   Alla firma il cliente riceve, oltre alla proposta, alcuni moduli fissi che
+   cambiano se l'auto e' italiana o d'importazione. Si caricano una volta nei
+   Parametri e da li' in poi ogni proposta esce come fascicolo unico: la
+   proposta diventa PDF, gli allegati le vengono accodati, e si stampa tutto
+   con un comando solo invece di ricordarsi ogni volta quali fogli servono. */
+var AP_KEY='ea_allegati_proposta';
+var _apMem=null;
+function apLoad(){
+  if(_apMem) return _apMem;
+  try{ _apMem=JSON.parse(localStorage.getItem(AP_KEY)||'[]')||[]; }catch(e){ _apMem=[]; }
+  return _apMem;
+}
+function apSave(l){
+  _apMem=l||[];
+  try{ localStorage.setItem(AP_KEY, JSON.stringify(_apMem)); }catch(e){}
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(sb) sb.from('allegati_proposta').upsert({ id:'config', data:{ lista:_apMem, updatedAt:Date.now() } }).then(function(){});
+  }catch(e){}
+}
+function apSupaLoad(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('allegati_proposta').select('id,data').eq('id','config').then(function(r){
+      if(!r||r.error||!r.data||!r.data.length) return;
+      var d=r.data[0].data;
+      if(d && Array.isArray(d.lista)){ _apMem=d.lista; try{ localStorage.setItem(AP_KEY, JSON.stringify(_apMem)); }catch(e){} 
+        try{ if(document.getElementById('par-form') && typeof apRenderLista==='function') apRenderLista(); }catch(e){} }
+    });
+  }catch(e){}
+}
+var AP_GRUPPI=[['sempre','Per tutte le proposte'],['italiana','Solo veicoli italiani'],['estera','Solo veicoli esteri']];
+
+function apPannelloHTML(){
+  return '<div style="margin-top:26px;padding-top:18px;border-top:2px solid #e2e8f0;">'
+    +'<div style="font-weight:800;color:#1a4fa0;font-size:15px;">\uD83D\uDCCE Documenti da allegare alla proposta</div>'
+    +'<div style="font-size:12px;color:#64748b;margin:4px 0 12px;line-height:1.5;">Caricati una volta, vengono accodati a ogni proposta stampata. Il fascicolo esce come PDF unico, gia\u2019 nell\u2019ordine giusto.</div>'
+    +'<div id="ap-lista"></div>'
+    +'<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
+    +'<select id="ap-gruppo" style="padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;">'
+    + AP_GRUPPI.map(function(g){ return '<option value="'+g[0]+'">'+g[1]+'</option>'; }).join('')
+    +'</select>'
+    +'<input type="file" id="ap-file" accept="application/pdf" style="font-family:inherit;font-size:13px;">'
+    +'<button type="button" onclick="apCarica()" style="padding:9px 14px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Carica</button>'
+    +'</div>'
+    +'<div id="ap-esito" style="font-size:12.5px;margin-top:8px;min-height:18px;"></div>'
+    +'</div>';
+}
+
+function apRenderLista(){
+  var c=document.getElementById('ap-lista'); if(!c) return;
+  var l=apLoad();
+  c.innerHTML=AP_GRUPPI.map(function(g){
+    var voci=l.filter(function(x){ return x && x.gruppo===g[0]; });
+    return '<div style="margin-bottom:10px;">'
+      +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">'+g[1]+'</div>'
+      +(voci.length?voci.map(function(x){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:'+(x.attivo===false?'#f8fafc':'#fff')+';">'
+          +'<input type="checkbox" '+(x.attivo===false?'':'checked')+' onchange="apAttiva(\''+x.id+'\',this.checked)" title="Allega alle proposte" style="cursor:pointer;">'
+          +'<div style="flex:1;min-width:0;font-size:13px;'+(x.attivo===false?'color:#94a3b8;':'')+'">'+fnEsc(x.nome||'documento.pdf')+'</div>'
+          +'<a href="'+(x.url||'#')+'" target="_blank" style="flex:0 0 auto;font-size:12px;font-weight:700;color:#1a4fa0;text-decoration:none;">apri</a>'
+          +'<button type="button" onclick="apElimina(\''+x.id+'\')" style="flex:0 0 auto;padding:4px 8px;border-radius:6px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;font-family:inherit;font-size:11px;font-weight:800;cursor:pointer;">togli</button>'
+          +'</div>';
+      }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun documento.</div>')
+      +'</div>';
+  }).join('');
+}
+
+function apCarica(){
+  var es=document.getElementById('ap-esito');
+  var fi=document.getElementById('ap-file');
+  var gr=(document.getElementById('ap-gruppo')||{}).value||'sempre';
+  var f=fi&&fi.files&&fi.files[0];
+  if(!f){ if(es) es.innerHTML='<span style="color:#b45309;font-weight:700;">Scegli un file PDF.</span>'; return; }
+  if(!/pdf$/i.test(f.name||'')){ if(es) es.innerHTML='<span style="color:#b45309;font-weight:700;">Serve un PDF: gli altri formati non si possono accodare.</span>'; return; }
+  if(es) es.innerHTML='<span style="color:#64748b;">Carico\u2026</span>';
+  eaR2Upload(f, 'allegati-proposta', Date.now()+'-'+String(f.name).replace(/[^\w.\-]/g,'_'))
+    .then(function(url){
+      var l=apLoad().slice();
+      l.push({ id:'ap_'+Date.now(), gruppo:gr, nome:f.name, url:url, attivo:true, ts:Date.now() });
+      apSave(l); apRenderLista();
+      if(fi) fi.value='';
+      if(es) es.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Caricato.</span>';
+    })
+    .catch(function(e){
+      if(es) es.innerHTML='<span style="color:#b91c1c;font-weight:700;">Caricamento non riuscito: '+((e&&e.message)||e)+'</span>';
+    });
+}
+function apAttiva(id, on){
+  var l=apLoad().slice();
+  for(var i=0;i<l.length;i++){ if(l[i].id===id) l[i].attivo=!!on; }
+  apSave(l); apRenderLista();
+}
+function apElimina(id){
+  var l=apLoad(), v=l.filter(function(x){ return x.id===id; })[0];
+  if(!confirm('Togliere "'+((v&&v.nome)||'questo documento')+'" dagli allegati?\n\nLe proposte gia\u2019 stampate non cambiano.')) return;
+  apSave(l.filter(function(x){ return x.id!==id; })); apRenderLista();
+}
+
+/* Allegati che spettano a una pratica, nell'ordine: prima i comuni, poi
+   quelli legati alla provenienza del veicolo. */
+function apPerPratica(cv){
+  try{
+    var a=(cv&&cv.autoSnapshot)||{};
+    var estera=(a.estera===true);
+    if(!estera && cv && cv.autoId && typeof mzById==='function'){
+      var m=mzById(cv.autoId); if(m) estera=(m.estera===true);
+    }
+    var gruppo=estera?'estera':'italiana';
+    return apLoad().filter(function(x){
+      return x && x.attivo!==false && x.url && (x.gruppo==='sempre' || x.gruppo===gruppo);
+    });
+  }catch(e){ return []; }
+}
 function parInit(){
   var p=parLoad(); var el=document.getElementById('par-form'); if(!el) return;
   var lab=function(t){ return '<label style="display:block;font-size:12px;font-weight:700;color:#334155;margin:14px 0 4px;">'+t+'</label>'; };
@@ -18623,7 +18797,9 @@ function parInit(){
   h+='</div>';
   h+='<div id="diag-out" style="margin-top:10px;font-size:13px;color:#334155;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px;min-height:20px;">Premi \u201cVerifica sincronizzazione\u201d per controllare.</div>';
   h+='</div>';
+  h+=apPannelloHTML();
   el.innerHTML=h;
+  try{ apRenderLista(); apSupaLoad(); }catch(e){}
 }
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
