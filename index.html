@@ -1199,7 +1199,7 @@ html, body{
       </div>
 
 
-      <div class="card-bd"><div id="pRegContainer" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><div id="pRegistro"><div style="text-align:center;padding:60px 20px;color:#6b6b6b;font-size:14px;">&#9203; Caricamento...</div></div></div></div>
+      <div class="card-bd"><div id="pVerBtnWrap" style="margin-bottom:10px;"></div><div id="pRegContainer" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><div id="pRegistro"><div style="text-align:center;padding:60px 20px;color:#6b6b6b;font-size:14px;">&#9203; Caricamento...</div></div></div></div>
     </div>
 
   </div>
@@ -7390,8 +7390,96 @@ function pRenderFinStats() {
 }
 
 
+/* ===== VERIFICA DI UN MESE CHIUSO =====
+   A mese finito conviene ricontrollare tutte le provvigioni prima di pagarle:
+   qui si rifa' il calcolo su ogni riga e si confronta con quello registrato.
+   Non riscrive niente da solo — mostra gli scostamenti e lascia decidere. */
+function pVerificaMeseApri(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')){ alert('Riservato all\u2019amministratore.'); return; }
+  var oggi=new Date();
+  var prec=new Date(oggi.getFullYear(), oggi.getMonth()-1, 1);
+  var def=prec.getFullYear()+'-'+String(prec.getMonth()+1).padStart(2,'0');
+  var mesi=[];
+  for(var k=0;k<14;k++){
+    var d=new Date(oggi.getFullYear(), oggi.getMonth()-k, 1);
+    mesi.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
+  }
+  var m=document.getElementById('pVerModal');
+  if(!m){ m=document.createElement('div'); m.id='pVerModal';
+    m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
+    document.body.appendChild(m); }
+  m.innerHTML='<div style="max-width:900px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+    +'<span style="font-weight:800;">\ud83d\udd0e Verifica provvigioni del mese</span>'
+    +'<button onclick="pVerificaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+    +'<div style="padding:18px 20px;">'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">'
+    +'<select id="pVerMese" style="padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">'
+    + mesi.map(function(x){ return '<option value="'+x+'"'+(x===def?' selected':'')+'>'+(typeof pGetMeseLabel==='function'?pGetMeseLabel(x):x)+'</option>'; }).join('')
+    +'</select>'
+    +'<button onclick="pVerificaEsegui()" style="padding:9px 15px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Ricalcola e confronta</button>'
+    +'</div><div id="pVerOut" style="font-size:13px;color:#64748b;">Scegli il mese e premi Ricalcola.</div>'
+    +'</div></div>';
+  m.style.display='block';
+}
+function pVerificaChiudi(){ var m=document.getElementById('pVerModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+
+function pVerificaEsegui(){
+  var out=document.getElementById('pVerOut'); if(!out) return;
+  var mese=(document.getElementById('pVerMese')||{}).value||'';
+  var reg=(typeof pLoadReg==='function')?(pLoadReg()||[]):[];
+  var righe=reg.filter(function(r){ return r && String(r.mese||'')===mese; });
+  if(!righe.length){ out.innerHTML='<span style="color:#94a3b8;">Nessuna provvigione registrata in questo mese.</span>'; return; }
+  var eur=function(n){ return (typeof cvEuro==='function')?cvEuro(n):(Math.round(n)+' \u20ac'); };
+  var totReg=0, totRic=0, diff=0, senza=0;
+  var corpo=righe.map(function(r){
+    var reg1=parseFloat(r.provvigione)||0; totReg+=reg1;
+    var res=(typeof pProvvDa==='function')?pProvvDa({
+      valore:r.valore, acconto:r.acconto, comm:r.comm, tan:r.tan, rate:r.rate,
+      fi:r.fi, fiMesi:r.fiMesi, cpi:r.cpi, gap:r.gap, eta:r.eta, sotto:r.sotto,
+      finanziaria:r.finanziaria||r.finanziariaDelibera
+    }):null;
+    var ric=(typeof pImportoPerFinanziaria==='function')?pImportoPerFinanziaria(res, r.finanziaria||r.finanziariaDelibera):null;
+    if(r.tipo==='noFin'){ ric=25; }
+    if(ric==null){ senza++; }
+    else { totRic+=ric; }
+    var sc=(ric==null)?null:Math.round(ric-reg1);
+    if(sc!==null && Math.abs(sc)>=1) diff++;
+    var col=(sc===null)?'#94a3b8':(Math.abs(sc)<1?'#16a34a':'#dc2626');
+    return '<tr style="border-bottom:1px solid #f1f5f9;">'
+      +'<td style="padding:7px 8px;font-weight:700;">'+((typeof cvEsc==='function')?cvEsc(r.cliente||'\u2014'):(r.cliente||'\u2014'))+'</td>'
+      +'<td style="padding:7px 8px;color:#64748b;">'+((typeof cvEsc==='function')?cvEsc(r.finanziaria||r.finanziariaDelibera||'\u2014'):'')+'</td>'
+      +'<td style="padding:7px 8px;text-align:right;">'+eur(reg1)+'</td>'
+      +'<td style="padding:7px 8px;text-align:right;">'+((ric==null)?'\u2014':eur(ric))+'</td>'
+      +'<td style="padding:7px 8px;text-align:right;font-weight:800;color:'+col+';">'
+      +((sc===null)?'non calcolabile':((sc>0?'+':'')+sc+' \u20ac'))+'</td></tr>';
+  }).join('');
+  out.innerHTML='<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:13px;">'
+    +'<div><b>'+righe.length+'</b> provvigioni</div>'
+    +'<div>registrate: <b>'+eur(totReg)+'</b></div>'
+    +'<div>ricalcolate: <b>'+eur(totRic)+'</b></div>'
+    +'<div style="color:'+(diff?'#dc2626':'#16a34a')+';font-weight:800;">'+(diff?(diff+' da controllare'):'tutte coincidono')+'</div>'
+    +(senza?('<div style="color:#94a3b8;">'+senza+' non calcolabili</div>'):'')
+    +'</div>'
+    +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+    +'<thead><tr style="background:#f8fafc;text-align:left;">'
+    +'<th style="padding:7px 8px;">Cliente</th><th style="padding:7px 8px;">Finanziaria</th>'
+    +'<th style="padding:7px 8px;text-align:right;">Registrata</th>'
+    +'<th style="padding:7px 8px;text-align:right;">Ricalcolata</th>'
+    +'<th style="padding:7px 8px;text-align:right;">Scostamento</th></tr></thead><tbody>'
+    +corpo+'</tbody></table></div>'
+    +'<div style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;">Il ricalcolo non modifica niente: serve a controllare prima di pagare. Le righe senza finanziaria riconosciuta non si possono ricalcolare.</div>';
+}
+
 function pRenderReg() {
   try{ pVenditeRender(); }catch(e){}
+  /* Il controllo di fine mese lo fa il titolare: e' un'operazione di
+     verifica dei conti, non parte del lavoro di chi vende. */
+  try{
+    var _vb=document.getElementById('pVerBtnWrap');
+    if(_vb) _vb.innerHTML=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
+      ? '<button onclick="pVerificaMeseApri()" style="padding:9px 15px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udd0e Verifica un mese chiuso</button>' : '';
+  }catch(e){}
   var tuttiReg = pLoadReg();
   // Aggiorna cache solo se non è già stata popolata da Sheets (che ha più dati)
   if (_pRegCache.length === 0 || _pRegCache.length <= tuttiReg.length) {
@@ -18107,7 +18195,10 @@ function cvBuildHTML(c, tipo){
     /* Il blocco dei pagamenti non si spezza: se non entra nella pagina passa
        intero a quella dopo. Spezzandolo, la voce restava di qua e l'importo
        di la', e il documento diventava illeggibile. */
-    doc+='<div style="page-break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
+    /* Blocco indivisibile: display:block esplicito perche' senza di quello
+       alcuni browser ignorano il divieto di spezzatura, e break-inside oltre a
+       page-break-inside perche' i due sono riconosciuti da motori diversi. */
+    doc+='<div class="nospezza" style="display:block;page-break-inside:avoid;break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
      var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
         .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
      return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML();
@@ -18138,6 +18229,9 @@ function cvBuildHTML(c, tipo){
     /* Nessuna riga si spezza fra due pagine: l'interruzione lasciava la voce
        di qua e l'importo di la', sfalsando tutta la colonna dei numeri. */
     +".cvrow,.cvgrid,.cvbox{page-break-inside:avoid;break-inside:avoid;}"
+    +".nospezza{page-break-inside:avoid!important;break-inside:avoid!important;}"
+    +".cvfirme,.cvfirma{page-break-inside:avoid;break-inside:avoid;}"
+    +"p,div{orphans:3;widows:3;}"
     +".cvh{page-break-after:avoid;break-after:avoid;}"
     +".cvtop{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a4fa0;padding-bottom:8px;margin-bottom:2px;}"
     +".cvbrand{font-size:19px;font-weight:800;color:#1a4fa0;letter-spacing:.5px;} .cvsmall{font-size:10px;color:#64748b;}"
@@ -22338,7 +22432,8 @@ function cvDeliberaFinCambia(){
       nota.innerHTML = !f ? ''
         : (haSim
            ? '<span style="color:#166534;font-weight:700;">\u2713 Il simulatore copre questa finanziaria: usa il pulsante verde per rata, TAN e polizze.</span>'
-           : '<span style="color:#b45309;font-weight:700;">\u26a0\ufe0f Per '+f+' il simulatore non c\u2019\u00e8 ancora: i valori vanno inseriti a mano dalla delibera cartacea.</span>');
+           : '<span style="color:#b45309;font-weight:700;">\u26a0\ufe0f Per '+f+' non abbiamo il simulatore.</span>'
+           +'<span style="color:#7c2d12;"> Copia qui sotto i valori dalla delibera cartacea: TAN, TAEG, importo finanziato, rata, numero rate, commissioni, tipo di polizza e premio. Sono tutti obbligatori, e da questi si calcola la provvigione.</span>');
     }
     /* Senza simulatore la rata si sblocca da sola: altrimenti non ci sarebbe
        modo di inserirla, e il vincolo diventerebbe un vicolo cieco. */
