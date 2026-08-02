@@ -24836,10 +24836,15 @@ var CF_MESI={A:1,B:2,C:3,D:4,E:5,H:6,L:7,M:8,P:9,R:10,S:11,T:12};
 /* Elenco delle pratiche di una fascia d'eta'. Un margine negativo su tre auto
    non dice niente finche' non si vede quali sono: da qui si arriva alla
    pratica e si capisce cosa e' successo su quella vendita. */
-function stFasciaApri(idsEnc, titolo){
-  /* Margini e perdite per fascia sono dati d'azienda: chi vende non deve
-     sapere quanto si guadagna su ogni cliente. */
-  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+/* Pratiche finanziate di una categoria. A differenza delle fasce d'eta',
+   questo elenco lo vede anche chi vende: mostra la SUA provvigione, non il
+   margine dell'azienda. */
+function stFinVedi(idsEnc, titolo){ stFasciaApri(idsEnc, titolo, true); }
+
+function stFasciaApri(idsEnc, titolo, senzaMargine){
+  var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  /* Margini e perdite sono dati d'azienda: senza il flag, solo amministratore */
+  if(!_adm && !senzaMargine) return;
   try{
     var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
     if(!ids.length) return;
@@ -24857,7 +24862,9 @@ function stFasciaApri(idsEnc, titolo){
       +'<button onclick="stFasciaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
       +'<div style="padding:14px 18px;">'
       + righe.map(function(cv){
-          var mg=stMargine(cv)||0;
+          var mg;
+          if(_adm && !senzaMargine){ mg=stMargine(cv)||0; }
+          else { var _r=(typeof stProvvDi==='function')?stProvvDi(cv):null; mg=_r?(stNum(_r.provvigione)||0):0; }
           var a=cv.autoSnapshot||{};
           var cl=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
           return '<div onclick="stFasciaVai(\''+cv.id+'\')" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;">'
@@ -24865,7 +24872,9 @@ function stFasciaApri(idsEnc, titolo){
             +'<div style="font-size:11.5px;color:#94a3b8;">'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'\u2014')+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+'</div></div>'
             +'<div style="font-weight:800;white-space:nowrap;color:'+(mg<0?'#dc2626':'#166534')+';">'+stEu(mg)+'</div></div>';
         }).join('')
-      +'<div style="font-size:11.5px;color:#94a3b8;margin-top:10px;">Ordinate dal margine peggiore. Tocca una riga per aprire la pratica.</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;margin-top:10px;">'
+      +((_adm&&!senzaMargine)?'Ordinate dal margine peggiore.':'Importo: la provvigione della pratica.')
+      +' Tocca una riga per aprirla.</div>'
       +'</div></div>';
     m.style.display='block';
   }catch(e){}
@@ -25006,7 +25015,9 @@ function statMarginiHTML(){
       var r=(typeof stProvvDi==='function')?stProvvDi(cv):null;
       return r?(stNum(r.provvigione)||0):0;
     });
-    return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,tot:g.length?((m+pr)/g.length):0};
+    return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,
+            tot:g.length?((m+pr)/g.length):0,
+            ids:gf.map(function(cv){ return cv.id; })};   /* per il pulsante "vedi" */
   });
   var _fattBy={}, _nBy={};
   [0,1,2].forEach(function(i){ var g=V.filter(function(cv){ return stCat(cv)===i; });
@@ -25028,15 +25039,21 @@ function statMarginiHTML(){
        +'<td style="'+td+'text-align:right;font-weight:900;color:'+c.col+';">'+stM(a.media, (_nBy[a.i]?_fattBy[a.i]/_nBy[a.i]:0))+'</td></tr>';
    }).join('')+'</tbody></table></div>';
 
+  var _admFin=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
   h+='<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">Finanziamenti \u2014 quali auto rendono di pi\u00f9</div>'
    +'<div style="'+box+'padding:0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr>'
-   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Finanziate</th><th style="'+th+'text-align:right;">Provvigioni</th><th style="'+th+'text-align:right;">Margine+provv. per auto</th></tr></thead><tbody>'
+   +'<th style="'+th+'">Tipo veicolo</th><th style="'+th+'text-align:right;">Finanziate</th><th style="'+th+'text-align:right;">Provvigioni</th>'
+   +(_admFin?('<th style="'+th+'text-align:right;">Margine+provv. per auto</th>'):'')
+   +'<th style="'+th+'"></th></tr></thead><tbody>'
    +agg.map(function(a){ var c=ST_CAT[a.i];
      return '<tr><td style="'+td+'"><div style="font-weight:800;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:3px;background:'+c.col+';"></span>'+c.nome
        +((a===bestFin&&a.n)?'<span style="font-size:10px;font-weight:800;background:#ecfdf5;color:#16a34a;border-radius:99px;padding:2px 8px;">pi\u00f9 redditizia</span>':'')+'</div></td>'
        +'<td style="'+td+'text-align:right;font-weight:700;">'+a.nf+' / '+a.n+'</td>'
        +'<td style="'+td+'text-align:right;font-weight:700;color:#7c3aed;">'+stEu(a.provv)+'</td>'
-       +'<td style="'+td+'text-align:right;font-weight:900;">'+stEu(a.tot)+'</td></tr>';
+       +(_admFin?('<td style="'+td+'text-align:right;font-weight:900;">'+stEu(a.tot)+'</td>'):'')
+       +'<td style="'+td+'text-align:right;">'+((a.ids&&a.ids.length)
+          ? ('<button onclick="stFinVedi(\''+encodeURIComponent(JSON.stringify(a.ids))+'\',\''+c.nome.replace(/'/g,'')+'\')" style="padding:4px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">vedi</button>')
+          : '')+'</td></tr>';
    }).join('')+'</tbody></table></div>';
 
   /* ---- Rotazione: quanto vende una categoria rispetto a quanto pesa in magazzino ---- */
@@ -25119,6 +25136,10 @@ function statMarginiHTML(){
    chi vende puo' agire davvero: qui si vede, in vendite e in euro, cosa
    cambierebbe alzandolo del 10 o del 15 per cento. La provvigione media viene
    dagli ultimi tre mesi realmente incassati, non da una stima. */
+function fcPeriodo(v){
+  window._fcPeriodo=v;
+  try{ if(typeof statInit==='function') statInit(); else if(typeof statRender==='function') statRender(); }catch(e){}
+}
 function statProvvMediaUltimi3(){
   try{
     var reg=(typeof pLoadReg==='function')?(pLoadReg()||[]):[];
@@ -25135,7 +25156,19 @@ function statProvvMediaUltimi3(){
 }
 function statPrevisioneHTML(tutti, P){
   try{
-    var inP=function(cv){ try{ return _in(cv,P); }catch(e){ return true; } };
+    /* Periodo proprio: su tutto lo storico la conversione media non dice
+       niente: dentro ci sono anni con condizioni diverse. Di norma si guarda
+       l'anno in corso, e si puo' stringere sull'ultimo trimestre o mese. */
+    var per=window._fcPeriodo||'anno';
+    var oggi=new Date(), da=null;
+    if(per==='anno')          da=new Date(oggi.getFullYear(),0,1).getTime();
+    else if(per==='trimestre'){ var t=new Date(oggi); t.setMonth(t.getMonth()-3); da=t.getTime(); }
+    else if(per==='mese')     { var u=new Date(oggi); u.setMonth(u.getMonth()-1); da=u.getTime(); }
+    var inP=function(cv){
+      if(per==='tutto') return true;
+      var q=cv.createdAt||cv.contrattoTs||0;
+      return q && q>=da;
+    };
     /* Serve l'elenco COMPLETO delle pratiche: quello passato qui contiene solo
        i contratti, e la conversione risultava sempre del 100%. */
     var fonte=(typeof cvLoad==='function')?cvLoad():(tutti||[]);
@@ -25165,7 +25198,12 @@ function statPrevisioneHTML(tutti, P){
           : '<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;">Provvigione non calcolabile: servono provvigioni negli ultimi 3 mesi.</div>')
         +'</div>';
     };
-    return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">\ud83d\udd2e Forecaster</div>'
+    var opz=[['anno','Anno in corso'],['trimestre','Ultimo trimestre'],['mese','Ultimo mese'],['tutto','Tutto lo storico']];
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:22px 0 8px;">'
+      +'<span style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">\ud83d\udd2e Forecaster</span>'
+      +'<select onchange="fcPeriodo(this.value)" style="padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12.5px;">'
+      + opz.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===per?' selected':'')+'>'+o[1]+'</option>'; }).join('')
+      +'</select></div>'
       +'<div style="'+box+'">'
       +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">'
       +'Nel periodo: <b>'+prev.length+'</b> preventivi, <b>'+chiusi.length+'</b> chiusi \u2014 tasso di conversione <b>'+pc(tasso)+'</b>.'
