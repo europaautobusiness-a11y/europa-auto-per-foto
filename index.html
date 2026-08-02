@@ -22677,10 +22677,27 @@ function cvDeliberaFinCambia(){
            : '<span style="color:#b45309;font-weight:700;">\u26a0\ufe0f Per '+f+' non abbiamo il simulatore.</span>'
            +'<span style="color:#7c2d12;"> Copia qui sotto i valori dalla delibera cartacea: TAN, TAEG, importo finanziato, rata, numero rate, commissioni, tipo di polizza e premio. Sono tutti obbligatori, e da questi si calcola la provvigione.</span>');
     }
-    /* Senza simulatore la rata si sblocca da sola: altrimenti non ci sarebbe
-       modo di inserirla, e il vincolo diventerebbe un vicolo cieco. */
-    var r=document.getElementById('dl_rata');
-    if(r && f && !haSim){ r.readOnly=false; r.style.background='#fff'; r.style.color='#0f172a'; window._delibRataManuale=true; }
+    /* Con il simulatore i valori li calcola lui: TAN, TAEG, importo, rata,
+       rate, commissioni e polizze restano bloccati. Scriverli a mano
+       significherebbe avere una delibera che non corrisponde a nessun calcolo,
+       e da li' esce anche la provvigione. Senza simulatore si sbloccano tutti,
+       altrimenti non ci sarebbe modo di compilarla. */
+    var _campi=['tan','taeg','importo','rata','durata','istruttoria','polizze'];
+    _campi.forEach(function(k){
+      var el=document.getElementById('dl_'+k); if(!el) return;
+      if(f && haSim){
+        el.readOnly=true; el.style.background='#f1f5f9'; el.style.color='#475569'; el.style.cursor='not-allowed';
+      } else if(f){
+        el.readOnly=false; el.style.background='#fff'; el.style.color='#0f172a'; el.style.cursor='';
+      }
+    });
+    if(f && haSim){
+      window._delibRataManuale=false;   /* col simulatore non e' piu' a mano */
+      var _nm=document.querySelector('#dl_rata ~ div');
+      if(_nm && /a mano/i.test(_nm.textContent||'')) _nm.innerHTML='<span style="font-size:10.5px;color:#94a3b8;">Calcolata dal simulatore</span>';
+    } else if(f){
+      window._delibRataManuale=true;
+    }
   }catch(e){}
 }
 
@@ -25080,12 +25097,72 @@ function statMarginiHTML(){
   var Vmese=tutti.filter(function(cv){ return _in(cv,_Pm); });
   /* Il controllo provvigioni sta nella sezione Provvigioni: qui era un doppione */
   h+=statParcoHTML();
+  h+=statPrevisioneHTML(tutti, P);
   h+='</div>';
   return h;
 }
 /* Com'e' fatto il parco: non i numeri assoluti, che gia' si vedono in
    magazzino, ma le proporzioni. Serve a capire su cosa si sta puntando e
    quanto pesa ogni regime IVA sull'invenduto. */
+/* Quanto varrebbe chiudere di piu'. Il tasso di conversione e' la leva su cui
+   chi vende puo' agire davvero: qui si vede, in vendite e in euro, cosa
+   cambierebbe alzandolo del 10 o del 15 per cento. La provvigione media viene
+   dagli ultimi tre mesi realmente incassati, non da una stima. */
+function statProvvMediaUltimi3(){
+  try{
+    var reg=(typeof pLoadReg==='function')?(pLoadReg()||[]):[];
+    var oggi=new Date(), mesi=[];
+    for(var k=1;k<=3;k++){
+      var d=new Date(oggi.getFullYear(), oggi.getMonth()-k, 1);
+      mesi.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
+    }
+    var righe=reg.filter(function(r){ return r && mesi.indexOf(String(r.mese||''))>=0 && parseFloat(r.provvigione); });
+    if(!righe.length) return null;
+    var tot=righe.reduce(function(a,r){ return a+(parseFloat(r.provvigione)||0); },0);
+    return { media:tot/righe.length, n:righe.length, tot:tot, mesi:mesi };
+  }catch(e){ return null; }
+}
+function statPrevisioneHTML(tutti, P){
+  try{
+    var inP=function(cv){ try{ return _in(cv,P); }catch(e){ return true; } };
+    var prev=tutti.filter(function(cv){ return cv && !cv.annullato && !cv.deleted && inP(cv); });
+    var chiusi=prev.filter(function(cv){ return cv && cv.isContratto; });
+    if(prev.length<5) return '';
+    var tasso=chiusi.length/prev.length;
+    var m=statProvvMediaUltimi3();
+    var box='background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;';
+    var pc=function(x){ return String(Math.round(x*1000)/10).replace('.',',')+'%'; };
+    var eur=function(n){ return (typeof stEu==='function')?stEu(n):(Math.round(n)+' \u20ac'); };
+    /* Punti percentuali, non aumento relativo: da 26% si va a 36% e a 41%,
+       non a 28,6%. E' cosi' che si ragiona su un tasso di conversione. */
+    var scen=function(punti,col){
+      var nuovo=tasso+punti;
+      if(nuovo>1) nuovo=1;
+      var vendite=Math.round(prev.length*nuovo)-chiusi.length;
+      if(vendite<0) vendite=0;
+      var euroTot=m?(vendite*m.media):null;
+      return '<div style="flex:1 1 220px;min-width:200px;background:#f8fafc;border:1px solid '+col+';border-radius:10px;padding:13px 15px;">'
+        +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;">Conversione +'+Math.round(punti*100)+' punti</div>'
+        +'<div style="font-size:13px;color:#334155;margin-top:2px;">da '+pc(tasso)+' a <b>'+pc(nuovo)+'</b></div>'
+        +'<div style="font-size:26px;font-weight:900;color:'+col+';margin-top:6px;">+'+vendite+'</div>'
+        +'<div style="font-size:12px;color:#64748b;">'+(vendite===1?'vendita in piu\u2019':'vendite in piu\u2019')+' nel periodo</div>'
+        +(euroTot!=null
+          ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:13px;color:#334155;">Provvigione in pi\u00f9<div style="font-size:20px;font-weight:900;color:#166534;">'+eur(euroTot)+'</div></div>'
+          : '<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;">Provvigione non calcolabile: servono provvigioni negli ultimi 3 mesi.</div>')
+        +'</div>';
+    };
+    return '<div style="font-weight:800;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;">\ud83d\udd2e Forecaster</div>'
+      +'<div style="'+box+'">'
+      +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">'
+      +'Nel periodo: <b>'+prev.length+'</b> preventivi, <b>'+chiusi.length+'</b> chiusi \u2014 tasso di conversione <b>'+pc(tasso)+'</b>.'
+      +(m?(' Provvigione media delle ultime '+m.n+' pratiche: <b>'+eur(m.media)+'</b>.'):'')
+      +'</div>'
+      +'<div style="display:flex;gap:12px;flex-wrap:wrap;">'+scen(0.10,'#1a4fa0')+scen(0.15,'#166534')+'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:10px;line-height:1.5;">Il calcolo tiene fermi i preventivi e alza solo la quota di quelli che si chiudono. La provvigione media \u00e8 quella reale degli ultimi tre mesi, non una stima.</div>'
+      +'</div>';
+  }catch(e){ return ''; }
+}
+
 function statParcoHTML(){
   try{
     if(typeof mzLoad!=='function') return '';
