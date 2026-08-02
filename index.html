@@ -5486,6 +5486,7 @@ function renderReady(filter){
         <button class="arc-btn arc-btn-blue" data-readyid="${r.id}" onclick="downloadReadyPDF(${r.id})">⬇ Scarica e Invia</button>
         ${r.link ? `<button class="arc-btn" onclick="reportProntoCopia(${r.id})" title="${r.link}" style="background:#16a34a;border-color:#16a34a;color:#fff;">🔗 Copia link</button><button class="arc-btn" onclick="reportProntoApri(${r.id})" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534;">👁 Apri</button>` : `<button class="arc-btn" onclick="reportProntoGenera(${r.id})" style="background:#fff7ed;border-color:#fed7aa;color:#b45309;">🔗 Genera link</button>`}
         <button class="arc-btn" onclick="editReady(${r.id})">✏️ Modifica</button>
+        <button class="arc-btn" onclick="reportDuplica(${r.id})" title="Copia questo report su un altro veicolo" style="background:#7c3aed;border-color:#7c3aed;color:#fff;">⧉ Duplica</button>
         <button class="arc-btn" onclick="downloadGalleryDirect('${r.targa}','${r.marca||''}','${r.modello||''}')" style="background:#1a4fa0;border-color:#1a4fa0;color:white;min-width:70px;">📸 <span id="fotobtn-${r.targa}">${fotoCountInline(r.targa)}</span></button>
         <button class="arc-btn arc-btn-red" onclick="deleteReady(${r.id})">🗑 Elimina</button>
       </div>
@@ -5564,6 +5565,67 @@ function reportProntoApri(id){
   var r=(loadReady()||[]).filter(function(x){return String(x.id)===String(id);})[0];
   if(r && r.link) window.open(r.link,'_blank');
 }
+/* Duplica un report su un altro veicolo. Le valutazioni sono spesso identiche
+   fra auto dello stesso lotto: rifarle da zero e' tempo perso. Si copiano
+   punteggi, note e ispettore, si cambiano i dati del veicolo. */
+function reportDuplica(id){
+  try{
+    var lista=loadReady()||[];
+    var orig=lista.filter(function(x){ return String(x.id)===String(id); })[0];
+    if(!orig){ alert('Report non trovato.'); return; }
+    if(typeof mzLoad!=='function'){ alert('Magazzino non disponibile.'); return; }
+    var auto=mzLoad().filter(function(a){
+      return a && !a.nlt && a.stato!=='venduta';
+    }).sort(function(x,y){ return String((x.marca||'')+(x.modello||'')).localeCompare(String((y.marca||'')+(y.modello||''))); });
+    if(!auto.length){ alert('Nessun veicolo disponibile in magazzino.'); return; }
+    var q=prompt('Duplico il report di '+((orig.marca||'')+' '+(orig.modello||'')).trim()+'.\n\n'
+      +'Scrivi marca, modello, targa o numero interno del veicolo nuovo:','');
+    if(q===null) return;
+    q=String(q).toLowerCase().trim();
+    if(!q) return;
+    var tro=auto.filter(function(a){
+      return String((a.marca||'')+' '+(a.modello||'')+' '+(a.targa||'')+' '+(a.telaio||'')+' '+(a.numero_interno||'')).toLowerCase().indexOf(q)>=0;
+    });
+    if(!tro.length){ alert('Nessun veicolo trovato con "'+q+'".'); return; }
+    var scelta=tro[0];
+    if(tro.length>1){
+      var el=tro.slice(0,9).map(function(a,i){
+        return (i+1)+') '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' \u00b7 '+a.targa):(a.numero_interno?(' \u00b7 n\u00b0 '+a.numero_interno):''));
+      }).join('\n');
+      var sc=prompt('Quale veicolo?\n\n'+el+'\n\nScrivi il numero:','1');
+      if(sc===null) return;
+      var i2=parseInt(sc,10)-1;
+      if(isNaN(i2)||i2<0||i2>=tro.length){ alert('Numero non valido.'); return; }
+      scelta=tro[i2];
+    }
+    /* copia profonda: punteggi e note restano, i dati del veicolo cambiano */
+    var nuovo=JSON.parse(JSON.stringify(orig));
+    nuovo.id=Date.now();
+    nuovo.marca=scelta.marca||'';
+    nuovo.modello=scelta.modello||'';
+    nuovo.targa=scelta.targa||scelta.telaio||'';
+    nuovo.telaio=scelta.telaio||'';
+    nuovo.numeroAuto=scelta.numero_interno||scelta.numeroInterno||'';
+    nuovo.autoId=scelta.id||'';
+    /* Km vuoti di proposito: quelli in magazzino sono spesso quelli del
+       carico, e su un report vanno letti dal contachilometri al momento
+       dell'ispezione. Meglio un campo vuoto che un numero vecchio copiato. */
+    nuovo.km='';
+    nuovo.anno=scelta.anno||(scelta.dataImm?String(scelta.dataImm).slice(0,4):'');
+    /* il collegamento pubblico e la data di invio appartengono all'originale */
+    nuovo.link=''; nuovo.sentDate=''; nuovo.duplicatoDa=orig.id;
+    var now=new Date();
+    nuovo.confirmedDate=now.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'});
+    nuovo.confirmedTime=now.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+    lista.unshift(nuovo);
+    saveReady(lista);
+    if(typeof renderReady==='function') renderReady();
+    alert('\u2713 Report duplicato su '+((scelta.marca||'')+' '+(scelta.modello||'')).trim()
+      +'.\n\nI chilometri sono da inserire: aprilo con Modifica.\n'
+      +'Controlla anche foto e valutazioni, perche\u2019 i punteggi sono quelli del report di partenza.');
+  }catch(e){ alert('Duplicazione non riuscita.'); }
+}
+
 function reportProntoGenera(id){
   var r=(loadReady()||[]).filter(function(x){return String(x.id)===String(id);})[0];
   if(!r){ alert('Report non trovato.'); return; }
@@ -24650,6 +24712,47 @@ function stProvvDi(cv){
 /* Eta' del cliente ricavata dal codice fiscale: posizioni 7-8 anno,
    9 mese (lettera), 11-12 giorno (>40 per le donne). */
 var CF_MESI={A:1,B:2,C:3,D:4,E:5,H:6,L:7,M:8,P:9,R:10,S:11,T:12};
+/* Elenco delle pratiche di una fascia d'eta'. Un margine negativo su tre auto
+   non dice niente finche' non si vede quali sono: da qui si arriva alla
+   pratica e si capisce cosa e' successo su quella vendita. */
+function stFasciaApri(idsEnc, titolo){
+  try{
+    var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
+    if(!ids.length) return;
+    var tutte=(typeof cvLoad==='function')?cvLoad():[];
+    var righe=ids.map(function(id){ return tutte.filter(function(x){ return x&&x.id===id; })[0]; })
+      .filter(Boolean)
+      .sort(function(a,b){ return (stMargine(a)||0)-(stMargine(b)||0); });   /* i peggiori in cima */
+    var m=document.getElementById('stFasciaModal');
+    if(!m){ m=document.createElement('div'); m.id='stFasciaModal';
+      m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
+      document.body.appendChild(m); }
+    m.innerHTML='<div style="max-width:620px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+      +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+      +'<span style="font-weight:800;">Clienti '+titolo+'</span>'
+      +'<button onclick="stFasciaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+      +'<div style="padding:14px 18px;">'
+      + righe.map(function(cv){
+          var mg=stMargine(cv)||0;
+          var a=cv.autoSnapshot||{};
+          var cl=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
+          return '<div onclick="stFasciaVai(\''+cv.id+'\')" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;">'
+            +'<div style="min-width:0;"><div style="font-weight:700;font-size:13.5px;">'+cvEsc(cl)+'</div>'
+            +'<div style="font-size:11.5px;color:#94a3b8;">'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'\u2014')+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+'</div></div>'
+            +'<div style="font-weight:800;white-space:nowrap;color:'+(mg<0?'#dc2626':'#166534')+';">'+stEu(mg)+'</div></div>';
+        }).join('')
+      +'<div style="font-size:11.5px;color:#94a3b8;margin-top:10px;">Ordinate dal margine peggiore. Tocca una riga per aprire la pratica.</div>'
+      +'</div></div>';
+    m.style.display='block';
+  }catch(e){}
+}
+function stFasciaChiudi(){ var m=document.getElementById('stFasciaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+function stFasciaVai(id){
+  stFasciaChiudi();
+  try{ if(typeof sidebarNav==='function') sidebarNav('vendite', document.getElementById('si-vendite')); }catch(e){}
+  setTimeout(function(){ try{ if(typeof cvVendModifica==='function') cvVendModifica(id); }catch(e){} }, 200);
+}
+
 function stEtaDaCF(cf){
   try{
     cf=String(cf||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -24716,11 +24819,27 @@ function statMarginiHTML(){
   }
   var marg=somma(V,stMargine), margPrec=somma(Vprec,stMargine);
   var ivaM=somma(V,stIvaMargine);
-  /* Le provvigioni si sommano DAL REGISTRO, per data. Prima si partiva dai
-     contratti venduti e per ognuno si cercava la provvigione abbinandola per
-     nome cliente e modello: bastava un nome scritto diversamente e quella
-     provvigione spariva dal totale. Il registro e' la fonte, non il contratto. */
-  var provv=stProvvPeriodo(P);
+  /* Provvigione dell'AZIENDA, non quella di Rudy. Il registro provvigioni
+     contiene la quota del venditore, molto piu' bassa: qui serve quello che
+     la finanziaria riconosce a noi, che il simulatore calcola e che resta
+     salvato sulla delibera. Solo Deutsche Bank, perche' per le altre
+     finanziarie quel calcolo non esiste. */
+  var stProvvAzienda=function(cv){
+    try{
+      var d=cv&&cv.finDelibera;
+      if(!d||!d.confermata) return null;
+      var f=(typeof cvFinRiconosci==='function')?(cvFinRiconosci(d.finanziaria)||d.finanziaria):d.finanziaria;
+      if(String(f||'').toLowerCase().indexOf('deutsche')<0) return null;
+      var v=parseFloat(d.provvAzienda);
+      return (isNaN(v)||!v)?null:v;
+    }catch(e){ return null; }
+  };
+  var provv=0, provvSenza=0;
+  V.forEach(function(cv){
+    var v=stProvvAzienda(cv);
+    if(v===null){ if(cv&&cv.finDelibera&&cv.finDelibera.confermata) provvSenza++; }
+    else provv+=v;
+  });
   var delta=(margPrec>0)?((marg-margPrec)/margPrec*100):null;
   var senzaAcq=tutti.filter(function(cv){ return _in(cv,P) && stMargine(cv)==null; }).length;
 
@@ -24755,7 +24874,7 @@ function statMarginiHTML(){
     var g=V.filter(function(cv){ return stCat(cv)===i; });
     var m=somma(g,stMargine);
     var gf=g.filter(function(cv){ return !!stProvvDi(cv); });
-    var pr=somma(g,function(cv){ var r=stProvvDi(cv); return r?(stNum(r.provvigione)||0):0; });
+    var pr=somma(g,function(cv){ var v=stProvvAzienda(cv); return v||0; });
     return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,tot:g.length?((m+pr)/g.length):0};
   });
   var _fattBy={}, _nBy={};
@@ -24827,8 +24946,9 @@ function statMarginiHTML(){
     for(var i=0;i<FASCE.length;i++){
       if(e>=FASCE[i][0] && e<=FASCE[i][1]){
         var k=FASCE[i][2];
-        byF[k]=byF[k]||{n:0,marg:0,fatt:0};
+        byF[k]=byF[k]||{n:0,marg:0,fatt:0,ids:[]};
         byF[k].n++; byF[k].marg+=(stMargine(cv)||0); byF[k].fatt=(byF[k].fatt||0)+(stNum(cv.prezzoVendita)||0);
+        byF[k].ids.push(cv.id);   /* per poter aprire le pratiche della fascia */
         break;
       }
     }
@@ -24842,7 +24962,7 @@ function statMarginiHTML(){
      +'<th style="'+th+'">Fascia d\'et\u00e0</th><th style="'+th+'text-align:right;">Auto vendute</th><th style="'+th+'text-align:right;"'+(_isAdmSt?'>Margine':'>Margine %')+'</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
      +FASCE.map(function(f){ var d=byF[f[2]]; if(!d||!d.n) return '';
         var med=d.marg/d.n; var _fattFascia=d.fatt||0;
-        return '<tr><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni</div>'
+        return '<tr onclick="stFasciaApri(\''+encodeURIComponent(JSON.stringify(d.ids||[]))+'\',\''+f[2]+' anni\')" style="cursor:pointer;"><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni <span style="font-weight:600;color:#94a3b8;font-size:11px;">\u203a vedi</span></div>'
           +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:5px;max-width:190px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,med)/maxMed*100)+'%;background:#1a4fa0;"></i></div></td>'
           +'<td style="'+td+'text-align:right;font-weight:700;">'+d.n+'</td>'
           +'<td style="'+td+'text-align:right;font-weight:700;">'+stM(d.marg, _fattFascia)+'</td>'
