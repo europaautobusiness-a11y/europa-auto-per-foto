@@ -24837,6 +24837,9 @@ var CF_MESI={A:1,B:2,C:3,D:4,E:5,H:6,L:7,M:8,P:9,R:10,S:11,T:12};
    non dice niente finche' non si vede quali sono: da qui si arriva alla
    pratica e si capisce cosa e' successo su quella vendita. */
 function stFasciaApri(idsEnc, titolo){
+  /* Margini e perdite per fascia sono dati d'azienda: chi vende non deve
+     sapere quanto si guadagna su ogni cliente. */
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   try{
     var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
     if(!ids.length) return;
@@ -24995,7 +24998,14 @@ function statMarginiHTML(){
     var g=V.filter(function(cv){ return stCat(cv)===i; });
     var m=somma(g,stMargine);
     var gf=g.filter(function(cv){ return !!stProvvDi(cv); });
-    var pr=somma(g,function(cv){ var v=stProvvAzienda(cv); return v||0; });
+    /* Chi vende vede la propria provvigione, non quella dell'azienda: e' il
+       numero che lo riguarda e su cui puo' ragionare. */
+    var _adm2=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+    var pr=somma(g,function(cv){
+      if(_adm2) return stProvvAzienda(cv)||0;
+      var r=(typeof stProvvDi==='function')?stProvvDi(cv):null;
+      return r?(stNum(r.provvigione)||0):0;
+    });
     return {i:i,n:g.length,marg:m,media:g.length?m/g.length:0,nf:gf.length,provv:pr,tot:g.length?((m+pr)/g.length):0};
   });
   var _fattBy={}, _nBy={};
@@ -25083,7 +25093,8 @@ function statMarginiHTML(){
      +'<th style="'+th+'">Fascia d\'et\u00e0</th><th style="'+th+'text-align:right;">Auto vendute</th><th style="'+th+'text-align:right;"'+(_isAdmSt?'>Margine':'>Margine %')+'</th><th style="'+th+'text-align:right;">Media</th></tr></thead><tbody>'
      +FASCE.map(function(f){ var d=byF[f[2]]; if(!d||!d.n) return '';
         var med=d.marg/d.n; var _fattFascia=d.fatt||0;
-        return '<tr onclick="stFasciaApri(\''+encodeURIComponent(JSON.stringify(d.ids||[]))+'\',\''+f[2]+' anni\')" style="cursor:pointer;"><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni <span style="font-weight:600;color:#94a3b8;font-size:11px;">\u203a vedi</span></div>'
+        var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+        return '<tr'+(_adm?(' onclick="stFasciaApri(\''+encodeURIComponent(JSON.stringify(d.ids||[]))+'\',\''+f[2]+' anni\')" style="cursor:pointer;"'):'')+'><td style="'+td+'"><div style="font-weight:800;">'+f[2]+' anni'+(_adm?' <span style="font-weight:600;color:#94a3b8;font-size:11px;">\u203a vedi</span>':'')+'</div>'
           +'<div style="height:6px;background:#eef2f7;border-radius:99px;margin-top:5px;max-width:190px;"><i style="display:block;height:100%;border-radius:99px;width:'+Math.round(Math.max(0,med)/maxMed*100)+'%;background:#1a4fa0;"></i></div></td>'
           +'<td style="'+td+'text-align:right;font-weight:700;">'+d.n+'</td>'
           +'<td style="'+td+'text-align:right;font-weight:700;">'+stM(d.marg, _fattFascia)+'</td>'
@@ -25125,7 +25136,10 @@ function statProvvMediaUltimi3(){
 function statPrevisioneHTML(tutti, P){
   try{
     var inP=function(cv){ try{ return _in(cv,P); }catch(e){ return true; } };
-    var prev=tutti.filter(function(cv){ return cv && !cv.annullato && !cv.deleted && inP(cv); });
+    /* Serve l'elenco COMPLETO delle pratiche: quello passato qui contiene solo
+       i contratti, e la conversione risultava sempre del 100%. */
+    var fonte=(typeof cvLoad==='function')?cvLoad():(tutti||[]);
+    var prev=fonte.filter(function(cv){ return cv && !cv.annullato && !cv.deleted && inP(cv); });
     var chiusi=prev.filter(function(cv){ return cv && cv.isContratto; });
     if(prev.length<5) return '';
     var tasso=chiusi.length/prev.length;
