@@ -4850,6 +4850,12 @@ function reportCaricaLink(rec, html, dove){
     }).catch(function(){});
   }catch(e){}
 }
+/* Caricamento dal cloud all'avvio, una volta sola per sessione: i report
+   fatti su un altro dispositivo compaiono senza premere niente. */
+var _rpCaricato=false;
+function rpInit(){ if(_rpCaricato) return; _rpCaricato=true; try{ rpSupaCarica(); }catch(e){} }
+try{ setTimeout(rpInit, 2500); }catch(e){}
+
 function updateCounts(){
   try{
     const readyData = JSON.parse(localStorage.getItem(READY_KEY)||'[]');
@@ -4868,15 +4874,58 @@ function updateCounts(){
   }catch(e){ console.warn('updateCounts error:', e); }
 }
 
+/* ===== REPORT SU SUPABASE =====
+   I report sono l'ultimo pezzo rimasto su Google Sheets. Si scrive su
+   entrambi finche' non e' certo che la sincronizzazione regga su tutti i
+   dispositivi: Sheets resta come rete di sicurezza, e si stacca dopo.
+   Le due liste stanno in una riga sola per tipo, come per gli allegati. */
+function rpSupaSalva(chiave, dati){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(!sb) return;
+    sb.from('report_app').upsert({ id:chiave, data:{ lista:dati, updatedAt:Date.now() } })
+      .then(function(r){ if(r&&r.error) console.log('report upsert:', r.error.message); });
+  }catch(e){}
+}
+function rpSupaCarica(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('report_app').select('id,data').then(function(r){
+      if(!r||r.error||!r.data) return;
+      r.data.forEach(function(row){
+        var d=row&&row.data; if(!d||!Array.isArray(d.lista)) return;
+        var chiave=(row.id==='pronti')?READY_KEY:((row.id==='inviati')?SENT_KEY:null);
+        if(!chiave) return;
+        /* si fondono per identificativo, tenendo il piu' recente: cosi' un
+           report fatto su un altro dispositivo non sovrascrive quello locale */
+        var loc=[]; try{ loc=JSON.parse(localStorage.getItem(chiave)||'[]')||[]; }catch(e){}
+        var mappa={};
+        loc.forEach(function(x){ if(x&&x.id!=null) mappa[x.id]=x; });
+        d.lista.forEach(function(x){
+          if(!x||x.id==null) return;
+          var e=mappa[x.id];
+          if(!e || (x.id||0)>(e.id||0) || (x.link && !e.link)) mappa[x.id]=x;
+        });
+        var uniti=Object.keys(mappa).map(function(k){ return mappa[k]; })
+          .sort(function(a,b){ return (b.id||0)-(a.id||0); });
+        try{ localStorage.setItem(chiave, JSON.stringify(uniti)); }catch(e){}
+      });
+      try{ if(typeof updateCounts==='function') updateCounts(); }catch(e){}
+    });
+  }catch(e){}
+}
+
 function saveReady(d){
   localStorage.setItem(READY_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportPronti', d); // salva anche su Sheets
+  rpSupaSalva('pronti', d);
+  gsSave('ReportPronti', d); // Sheets resta finche' non stacchiamo Google
 }
 function saveSent(d){
   localStorage.setItem(SENT_KEY, JSON.stringify(d));
   updateCounts();
-  gsSave('ReportInviati', d); // salva anche su Sheets
+  rpSupaSalva('inviati', d);
+  gsSave('ReportInviati', d);
 }
 
 // Carica da Sheets e aggiorna localStorage (chiamato all'avvio)
@@ -6396,9 +6445,17 @@ function pVenditeRender(){
       var auto=((a.marca||'')+' '+(a.modello||'')).trim()||String(cv.autoDesc||'\u2014');
       var fin=!!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv));
       var deliberata=!!(cv.finDelibera && cv.finDelibera.confermata);
-      var tag = !fin ? '<span style="background:#dcfce7;color:#166534;border-radius:20px;padding:2px 7px;font-size:10px;font-weight:800;">25 \u20ac</span>'
-              : (deliberata ? '<span style="background:#e0e7ff;color:#3730a3;border-radius:20px;padding:2px 7px;font-size:10px;font-weight:800;">deliberata</span>'
-                            : '<span style="background:#fff7ed;color:#9a3412;border-radius:20px;padding:2px 7px;font-size:10px;font-weight:800;">manca delibera</span>');
+      /* "deliberata" diceva solo che il documento esiste, e faceva sembrare la
+         pratica sistemata mentre la provvigione era ancora da finire. Conta
+         invece se la riga nel registro e' completa: quelle no vanno chiuse
+         prima della fine del mese, perche' dopo arrivano quelle nuove. */
+      var _rp=(typeof pProvvDiCv==='function')?pProvvDiCv(cv.id):null;
+      var _completa=!!(_rp && _rp.r && _rp.r.bozza!==true);
+      var _pill=function(bg,col,txt){ return '<span style="background:'+bg+';color:'+col+';border-radius:20px;padding:2px 7px;font-size:10px;font-weight:800;white-space:nowrap;">'+txt+'</span>'; };
+      var tag = _completa ? _pill('#dcfce7','#166534','\u2713 completata')
+              : !fin      ? _pill('#dcfce7','#166534','25 \u20ac')
+              : deliberata? _pill('#fff7ed','#9a3412','da completare')
+                          : _pill('#fef2f2','#991b1b','manca delibera');
       h+='<div onclick="pCaricaVendita(\''+cv.id+'\')" style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;">'
         +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(nome)+'</div>'
         +'<div style="font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(auto)+'</div></div>'+tag+'</div>';
@@ -17909,11 +17966,7 @@ function cvStampaById(id, tipo){
   if(!p){ alert('Contratto non trovato.'); return; }
   /* Se per questo veicolo ci sono moduli da far firmare, la stampa diventa un
      fascicolo unico invece di tre stampe separate da ricordarsi. */
-  try{
-    var all=(typeof apPerPratica==='function')?apPerPratica(p):[];
-    if(all.length && window.PDFLib){ cvStampaFascicolo(p, tipo, all); return; }
-  }catch(e){}
-  cvStampaDoc(p, tipo);
+  cvStampaDoc(p, tipo);   /* il fascicolo lo decide cvStampaDoc */
 }
 
 /* Proposta + allegati in un solo PDF. Se qualcosa non riesce si torna alla
@@ -17923,7 +17976,11 @@ function cvStampaFascicolo(cv, tipo, allegati){
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
-  if(!html || typeof eaHtmlToPdf!=='function'){ cvStampaDoc(cv, tipo); return; }
+  if(!html || typeof eaHtmlToPdf!=='function'){
+    window._cvFascicoloInCorso=true;
+    try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
+    return;
+  }
   eaHtmlToPdf(html)
     .then(function(blob){ return blob.arrayBuffer(); })
     .then(function(buf){
@@ -17960,7 +18017,8 @@ function cvStampaFascicolo(cv, tipo, allegati){
     .catch(function(e){
       console.log('fascicolo non riuscito:', e);
       alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.');
-      cvStampaDoc(cv, tipo);
+      window._cvFascicoloInCorso=true;      /* evita di rientrare all'infinito */
+      try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
     });
 }
 function cvContrattoFinaleStampa(id){
@@ -18362,6 +18420,18 @@ function cvFatturaHTML(c){
   return html;
 }
 function cvStampaDoc(c, tipo){
+  /* Gli allegati si controllano QUI e non nei singoli pulsanti: la stampa
+     parte da tre punti diversi (scheda vendite, modulo del contratto, menu)
+     e mettendo il controllo in uno solo gli altri due lo saltavano. */
+  if(tipo!=='fattura' && !window._cvFascicoloInCorso){
+    try{
+      var _all=(typeof apPerPratica==='function')?apPerPratica(c):[];
+      if(_all.length){
+        if(window.PDFLib){ cvStampaFascicolo(c, tipo, _all); return; }
+        console.log('allegati presenti ma libreria PDF non caricata: stampo la sola proposta');
+      }
+    }catch(e){}
+  }
   var html=(tipo==='fattura' && typeof cvFatturaHTML==='function')?cvFatturaHTML(c):cvBuildHTML(c, tipo);
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
@@ -21500,6 +21570,11 @@ function simUsaNellaDelibera(){
     var valore=parseFloat((simEl('sim_C10')||{}).value)||0;
     var anticipo=parseFloat((simEl('sim_C11')||{}).value)||0;
     window._delibDaSim={
+      /* Provvigione dell'AZIENDA, cella I24 del modello della finanziaria:
+         e' quella che il simulatore mostra in viola. Fin qui restava solo a
+         schermo e si perdeva chiudendo la finestra, mentre e' il dato che
+         dice quanto rende davvero un finanziamento. */
+      provvAzienda:im('I24'),
       tan:pc(simNum(simGet('I9'))), taeg:pc(simNum(simGet('I10'))),
       istruttoria:im('C12'), polizze:(im('C21')+im('C24')+im('D26')),
       rata:Math.round(rata*100)/100,
@@ -22234,6 +22309,7 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
 function cvDeliberaForm(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   window._delibRataManuale=false;
+  try{ if(window._delibDaSim && window._delibDaSim.provvAzienda!=null) window._delibDaSimProvv=window._delibDaSim.provvAzienda; }catch(e){}
   setTimeout(function(){ try{ cvDeliberaFinCambia(); }catch(e){} }, 60);
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
@@ -22492,6 +22568,10 @@ function cvDeliberaSalva(id){
     valoreVeicolo:n('valore'), anticipo:n('anticipo'),
     note:g('note'),
     rataManuale:(window._delibRataManuale===true)||undefined,
+    /* provvigione azienda: quella appena calcolata dal simulatore, oppure
+       quella gia' salvata se la delibera viene solo ritoccata */
+    provvAzienda:((window._delibDaSimProvv!=null)?window._delibDaSimProvv
+                  :((list[i].finDelibera&&list[i].finDelibera.provvAzienda)||null)),
     /* Correggendo una delibera vecchia la data non deve spostarsi a oggi:
        resta quella in cui la finanziaria ha deliberato davvero. Si tiene
        invece traccia dell'ultima correzione, che e' un'altra informazione. */
@@ -24664,7 +24744,7 @@ function statMarginiHTML(){
     +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto'+(_isAdmSt?'':' %')+'</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stM(V.length?marg/V.length:0, V.length?_fattTot/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
     +'<div style="'+box+'border-left:4px solid #7c3aed;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stEu(provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">dal registro provvigioni</div></div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">Deutsche Bank, dal simulatore'+(provvSenza?(' \u00b7 '+provvSenza+' senza calcolo'):'')+'</div></div>'
     +'<div style="'+box+'border-left:4px solid #d97706;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni'+(_isAdmSt?'':' %')+'</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stM(marg+provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>'
     +'</div>';
