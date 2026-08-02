@@ -7590,12 +7590,98 @@ function pVerificaEsegui(){
     +'<div style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;">Il ricalcolo non modifica niente: serve a controllare prima di pagare. Le righe senza finanziaria riconosciuta non si possono ricalcolare.</div>';
 }
 
+/* Tutte le condizioni con cui e' stata calcolata una provvigione. Riaprendo
+   un mese passato la tabella mostra solo alcune colonne, e per capire perche'
+   un importo e' quello bisogna vedere l'intero ragionamento: valore, anticipo,
+   TAN, commissioni, polizza, durata, CPI, GAP, eta' del veicolo, sottocosto,
+   finanziaria. Qui c'e' tutto, insieme al ricalcolo fatto adesso. */
+/* Cambio del mese mostrato. Il registro locale contiene tutti i mesi: si
+   cambia solo cio' che si guarda, nessun dato viene toccato o riscritto. */
+function pMeseCambia(m){
+  window._pMeseVisto = m || null;
+  try{ pRenderReg(); }catch(e){}
+  try{ pAggStats(); }catch(e){}
+  try{ pRenderFonteChart(); }catch(e){}
+  try{ pRenderFinStats(); }catch(e){}
+}
+
+function pDettaglio(id){
+  try{
+    var reg=pLoadReg()||[];
+    var r=reg.filter(function(x){ return String(x.id)===String(id); })[0];
+    if(!r){ alert('Riga non trovata.'); return; }
+    var eur=function(n){ var v=parseFloat(n); return isNaN(v)?'\u2014':(typeof cvEuro==='function'?cvEuro(v):(Math.round(v)+' \u20ac')); };
+    var val=function(x,suf){ return (x===null||x===undefined||x==='')?'\u2014':(x+(suf||'')); };
+    var riga=function(et,va,forte){
+      return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #f1f5f9;'
+        +(forte?'font-weight:800;':'')+'"><span style="color:#64748b;">'+et+'</span><span style="text-align:right;">'+va+'</span></div>';
+    };
+    var res=(typeof pProvvDa==='function')?pProvvDa({
+      valore:r.valore, acconto:r.acconto, comm:r.comm, tan:r.tan, rate:r.rate,
+      fi:r.fi, fiMesi:r.fiMesi, cpi:r.cpi, gap:r.gap, eta:r.eta, sotto:r.sotto,
+      finanziaria:r.finanziaria||r.finanziariaDelibera
+    }):null;
+    var ric=(typeof pImportoPerFinanziaria==='function')?pImportoPerFinanziaria(res, r.finanziaria||r.finanziariaDelibera):null;
+    if(r.tipo==='noFin') ric=25;
+    var salvata=parseFloat(r.provvigione)||0;
+    var scarto=(ric==null)?null:Math.round(ric-salvata);
+
+    var m=document.getElementById('pDettModal');
+    if(!m){ m=document.createElement('div'); m.id='pDettModal';
+      m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
+      document.body.appendChild(m); }
+    m.innerHTML='<div style="max-width:520px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+      +'<div style="background:#1e2d3d;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+      +'<span style="font-weight:800;">'+((typeof docEsc==='function')?docEsc(r.cliente||'\u2014'):(r.cliente||''))+'</span>'
+      +'<button onclick="pDettaglioChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+      +'<div style="padding:16px 20px;font-size:13px;">'
+      +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin-bottom:4px;">La pratica</div>'
+      + riga('Veicolo', val([r.marca,r.modello].filter(Boolean).join(' ')))
+      + riga('Data', val(r.data)) + riga('Mese', val(r.mese))
+      + riga('Provenienza cliente', val(r.fonte))
+      + riga('Finanziaria', val(r.finanziaria||r.finanziariaDelibera))
+      +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:14px 0 4px;">Le condizioni</div>'
+      + riga('Valore del veicolo', eur(r.valore))
+      + riga('Anticipo', eur(r.acconto))
+      + riga('Commissioni finanziarie', eur(r.comm))
+      + riga('TAN', val(r.tan,'%'))
+      + riga('Numero rate', val(r.rate))
+      + riga('Polizza F/I', val(r.fi))
+      + riga('Durata polizza', val(r.fiMesi,' mesi'))
+      + riga('CPI', val(r.cpi)) + riga('GAP', val(r.gap))
+      + riga('Et\u00e0 veicolo', val(r.eta)+(r.etaMesi?(' ('+r.etaMesi+' mesi)'):''))
+      + riga('Sottocosto', val(r.sotto)+(r.sottoAuto?' (automatico oltre 180 gg)':''))
+      + (r.giacenzaGg?riga('Giacenza a contratto', r.giacenzaGg+' giorni'):'')
+      +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:14px 0 4px;">Il risultato</div>'
+      + (res&&res.C15!=null?riga('Base di calcolo (C15)', eur(res.C15)):'')
+      + riga('Provvigione registrata', eur(salvata), true)
+      + riga('Ricalcolata adesso', (ric==null?'non calcolabile':eur(ric)))
+      + (scarto===null?'':riga('Scostamento',
+          '<span style="color:'+(Math.abs(scarto)<1?'#16a34a':'#dc2626')+';font-weight:800;">'
+          +(Math.abs(scarto)<1?'nessuno':((scarto>0?'+':'')+scarto+' \u20ac'))+'</span>'))
+      + (r.riallineataDiff&&r.riallineataDiff.length
+          ? '<div style="margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;font-size:12px;color:#9a3412;">'
+            +'<b>Riallineata alla delibera:</b><br>'+r.riallineataDiff.join('<br>')+'</div>'
+          : '')
+      +'</div></div>';
+    m.style.display='block';
+  }catch(e){ alert('Dettaglio non disponibile.'); }
+}
+function pDettaglioChiudi(){ var m=document.getElementById('pDettModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+
 function pRenderReg() {
   try{ pVenditeRender(); }catch(e){}
   /* Il controllo di fine mese lo fa il titolare: e' un'operazione di
      verifica dei conti, non parte del lavoro di chi vende. */
   try{
     var _vb=document.getElementById('pVerBtnWrap');
+    if(_vb && !document.getElementById('pMeseSel')){
+      var _w=document.createElement('div');
+      _w.style.cssText='display:none;margin-bottom:10px;';
+      _w.innerHTML='<span style="font-size:12px;color:#64748b;font-weight:700;margin-right:8px;">Mese:</span>'
+        +'<select id="pMeseSel" onchange="pMeseCambia(this.value)" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;"></select>';
+      _vb.parentNode.insertBefore(_w, _vb);
+    }
     if(_vb) _vb.innerHTML=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
       ? '<button onclick="pVerificaMeseApri()" style="padding:9px 15px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udd0e Verifica un mese chiuso</button>' : '';
   }catch(e){}
@@ -7604,9 +7690,26 @@ function pRenderReg() {
   if (_pRegCache.length === 0 || _pRegCache.length <= tuttiReg.length) {
     _pRegCache = tuttiReg;
   }
-  var meseCorrente = pGetMese();
-  // Prova prima con il mese corrente, se vuoto mostra tutti
+  /* Il mese mostrato non e' per forza quello corrente: dal selettore si puo'
+     riaprire un mese chiuso e vederlo esattamente com'era, con Dettaglio e
+     Modifica funzionanti. I dati ci sono tutti in locale, arrivano da
+     provvigioni_app: erano solo nascosti dal filtro. */
+  var meseCorrente = window._pMeseVisto || pGetMese();
   var reg = tuttiReg.filter(function(r){ return r.mese === meseCorrente; });
+  try{
+    var _sel=document.getElementById('pMeseSel');
+    if(_sel){
+      var _mesi={}; tuttiReg.forEach(function(r){ if(r&&r.mese) _mesi[r.mese]=(_mesi[r.mese]||0)+1; });
+      var _att=pGetMese(); _mesi[_att]=_mesi[_att]||0;
+      var _lista=Object.keys(_mesi).sort().reverse();
+      _sel.innerHTML=_lista.map(function(m){
+        return '<option value="'+m+'"'+(m===meseCorrente?' selected':'')+'>'
+          +(pGetMeseLabel(m)||m)+' \u00b7 '+_mesi[m]+(_mesi[m]===1?' provvigione':' provvigioni')
+          +(m===_att?'  (mese in corso)':'')+'</option>';
+      }).join('');
+      _sel.parentNode.style.display='';
+    }
+  }catch(e){}
   // Nessun fallback — mostra solo il mese correntetto
   var el  = document.getElementById('pRegistro');
   if (!el) {
@@ -7644,7 +7747,8 @@ function pRenderReg() {
     var cl    = r.cliente||r.auto||'—';
     var ve    = [r.marca,r.modello].filter(Boolean).join(' ')||'';
     var clCell= '<strong>'+cl+'</strong>'+(r._bad||'')+(ve?'<br><span style="font-size:11px;color:#6b6b6b;">'+ve+'</span>':'');
-    var btnM  = '<button onclick="pModifica('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#9998; Modifica</button>';
+    var btnM  = '<button onclick="pDettaglio('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #64748b;color:#475569;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#128269; Dettaglio</button>'
+              + '<button onclick="pModifica('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#9998; Modifica</button>';
     var btnD  = '<button onclick="pElimina('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #e74c3c;color:#e74c3c;font-size:11px;cursor:pointer;white-space:nowrap;">&#10005;</button>';
     var polizzaC = (r.fi && r.fi !== 'NO') ? r.fi : '—';
     var durataC = r.fiMesi ? r.fiMesi + ' mesi' : '—';
