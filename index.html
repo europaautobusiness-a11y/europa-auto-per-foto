@@ -18482,7 +18482,8 @@ function cvBuildHTML(c, tipo){
   }
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
-  if((_cond||_clausolaPermuta) && !_cvDetailView){ doc+='<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')+cvEsc(_cond)+'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+  if((_cond||_clausolaPermuta) && !_cvDetailView){ doc+='<div class="saltapagina" style="page-break-before:always;break-before:page;"></div>'
+    +'<div class="cvh" style="margin-top:0;">Condizioni contrattuali</div><div class="cvbox" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;">'+(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')+cvEsc(_cond)+'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -23953,9 +23954,37 @@ function mzSupaLoad(){
   try{ _pagina(0); }catch(e){ if(typeof mzRender==='function') mzRender(); }
   function _fine(res){
     if(!res||res.error){ if(typeof mzRender==='function') mzRender(); return; }
-    var byId={}, onDb={}; (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id && d.deleted!==true && !(_mzDeleted&&_mzDeleted[d.id])){ byId[d.id]=d; onDb[d.id]=true; } });
+    /* Le lapidi vanno raccolte MENTRE si legge: un veicolo eliminato altrove
+       veniva scartato dal cloud, ma la riga sotto lo rimetteva dentro perche'
+       era ancora nell'elenco locale di chi non l'aveva cancellato lui — e lo
+       ricaricava pure su Supabase. Chi eliminava lo vedeva sparire, gli altri
+       no. Ora l'eliminazione fatta da uno vale per tutti. */
+    var byId={}, onDb={}, tomb={};
+    (res.data||[]).forEach(function(r){
+      var d=r&&r.data;
+      if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+      if(!d||!d.id) return;
+      if(d.deleted===true){ tomb[d.id]=true; return; }
+      if(_mzDeleted&&_mzDeleted[d.id]) return;
+      byId[d.id]=d; onDb[d.id]=true;
+    });
+    /* la lapide letta dal cloud si annota anche in locale, cosi' vale
+       anche ai prossimi avvii senza dover rileggere tutto */
+    try{
+      var _nuove=Object.keys(tomb).filter(function(k){ return !_mzDeleted[k]; });
+      if(_nuove.length){
+        _nuove.forEach(function(k){ _mzDeleted[k]=true; });
+        localStorage.setItem(MZ_DEL_KEY, JSON.stringify(Object.keys(_mzDeleted).slice(-800)));
+      }
+    }catch(e){}
     var locals=mzLoad(), localOnly=[];
-    locals.forEach(function(r){ if(r&&r.id&&!byId[r.id]&&!(_mzDeleted&&_mzDeleted[r.id])){ byId[r.id]=r; localOnly.push(r); } });
+    locals.forEach(function(r){
+      if(!r||!r.id) return;
+      if(byId[r.id]) return;
+      if(tomb[r.id]) return;                      /* eliminato da un altro utente */
+      if(_mzDeleted&&_mzDeleted[r.id]) return;
+      byId[r.id]=r; localOnly.push(r);
+    });
     mzSave(Object.keys(byId).map(function(k){return byId[k];}));
     localOnly.forEach(function(r){ mzSupaUpsert(r); });
     if(typeof mzRender==='function') mzRender();
