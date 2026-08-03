@@ -15304,6 +15304,55 @@ function mzForm(id){
 }
 function mzChiudi(){ var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
   try{ var c=document.getElementById('cv-modal'); if(!c || c.style.display!=='block') _eaLivello=10050; }catch(e){} }
+/* "Disponibile" e "impegnata" sono due cose distinte, e il filtro dei
+   disponibili le guarda entrambe: mettere lo stato a mano senza spegnere
+   l'impegno non produceva nessun effetto visibile. */
+/* Allineamento generale: un veicolo con una pratica viva e' opzionato, uno
+   senza e' disponibile. Gira dopo ogni sincronizzazione, cosi' tutti vedono
+   la stessa cosa senza che nessuno debba aprire le schede.
+   Le vendute e le permute non si toccano mai: quelle appartengono al registro
+   di carico e scarico. */
+function mzAllineaStati(){
+  try{
+    if(typeof cvLoad!=='function') return;
+    var prat=cvLoad().filter(function(x){ return x && !x.deleted && !x.annullato; });
+    /* Se le pratiche non sono ancora in memoria ogni veicolo sembrerebbe
+       libero e si liberebbe l'intero magazzino: senza contratti non si tocca
+       niente. E' la protezione piu' importante di questa funzione. */
+    if(!prat.length) return;
+    var tenuti={};
+    prat.forEach(function(x){ if(x.autoId) tenuti[x.autoId]=true; });
+    var l=mzLoad(), cambi=0;
+    l.forEach(function(a){
+      if(!a || !a.id || a.nlt) return;
+      if(a.stato==='venduta' || a.stato==='permuta') return;
+      if(a.scarico && a.scarico.dataScarico) return;     /* gia' scaricato */
+      var deve = tenuti[a.id] ? 'opzionata' : 'disponibile';
+      var impDeve = !!tenuti[a.id];
+      if(a.stato!==deve || !!a.impegnata!==impDeve){
+        a.stato=deve; a.impegnata=impDeve;
+        if(!impDeve) delete a.impegnataDa;
+        a.updatedAt=Date.now(); cambi++;
+        try{ mzSupaUpsert(a); }catch(e){}
+      }
+    });
+    if(cambi){
+      mzSave(l);
+      console.log('magazzino: allineati '+cambi+' veicoli fra stato e impegno');
+      if(typeof mzRender==='function') mzRender();
+    }
+  }catch(e){}
+}
+
+function mzAllineaImpegno(a){
+  try{
+    if(!a) return a;
+    if(a.stato==='disponibile') a.impegnata=false;
+    if(a.stato==='opzionata')   a.impegnata=true;
+  }catch(e){}
+  return a;
+}
+
 function mzSalva(){
   if(typeof _mzFotoBusy!=='undefined' && _mzFotoBusy){ alert('Caricamento foto ancora in corso: attendi che finisca prima di salvare.'); return; }
   /* Targa di partenza: serve a capire se con questo salvataggio un'auto estera
@@ -15356,6 +15405,7 @@ function mzSalva(){
   a.nlt = (function(){ var el=document.getElementById('mz_nlt'); return !!(el && el.checked); })();
   a.targa=(a.targa||'').toUpperCase(); a.updatedAt=Date.now();
   a.foto = (typeof _mzFoto!=='undefined' && Array.isArray(_mzFoto)) ? _mzFoto.slice() : (a.foto||[]);
+  if(typeof mzAllineaImpegno==='function') mzAllineaImpegno(a);
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
   mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a);
@@ -18130,7 +18180,17 @@ function cvSegnaDeleted(id){
      copie locali degli altri dispositivi e il record non "risorge" */
   try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', { id:id, deleted:true, updatedAt:Date.now() }); }catch(e){}
 }
-function cvElimina(id){ if(!confirm('Eliminare definitivamente questo preventivo?')) return; var _cvp=cvLoad().filter(function(x){return x.id===id;})[0]; if(_cvp) cvEliminaPeriziaPermuta(_cvp); cvSegnaDeleted(id); cvSave(cvLoad().filter(function(x){return x.id!==id;})); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
+function cvElimina(id){
+  if(!confirm('Eliminare definitivamente questo preventivo?')) return;
+  var _cvp=cvLoad().filter(function(x){return x.id===id;})[0];
+  if(_cvp) cvEliminaPeriziaPermuta(_cvp);
+  /* Il veicolo torna libero: eliminando la pratica restava impegnato e
+     spariva dai disponibili senza che nessun contratto lo tenesse. */
+  try{
+    if(_cvp && _cvp.autoId && typeof cvSincronizzaImpegno==='function')
+      cvSincronizzaImpegno(_cvp.autoId, '', _cvp);
+  }catch(e){}
+  cvSegnaDeleted(id); cvSave(cvLoad().filter(function(x){return x.id!==id;})); cvChiudi(); if(typeof cvRender==='function') cvRender(); if(typeof cvVendBadge==='function') cvVendBadge(); if(typeof tcToastNew==='function') tcToastNew('🗑 Preventivo eliminato',true); }
 
 function cvStampa(tipo){
   cvSync();
@@ -24004,6 +24064,7 @@ function mzSupaLoad(){
     });
     mzSave(Object.keys(byId).map(function(k){return byId[k];}));
     localOnly.forEach(function(r){ mzSupaUpsert(r); });
+    try{ mzAllineaStati(); }catch(e){}
     if(typeof mzRender==='function') mzRender();
     var pr=document.getElementById('mz-pan-reg'); if(pr && pr.style.display!=='none' && typeof regRender==='function') regRender();
   }
