@@ -18172,7 +18172,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
   var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var html='';
-  try{ html=cvDoppiaCopia(cvBuildHTML(cv, tipo||'preventivo')); }catch(e){}
+  try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
   if(!html || typeof eaHtmlToPdf!=='function'){
     window._cvFascicoloInCorso=true;
     try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
@@ -18181,10 +18181,17 @@ function cvStampaFascicolo(cv, tipo, allegati){
   eaHtmlToPdf(html)
     .then(function(blob){ return blob.arrayBuffer(); })
     .then(function(buf){
+      /* Il documento si genera una volta e le sue pagine si accodano DUE
+         volte: una copia per il cliente, una per la concessionaria. Duplicare
+         invece l'HTML non funzionava, perche' la conversione in PDF disegna
+         tutto come un'unica immagine lunga e i salti pagina spariscono. */
       return PDFLib.PDFDocument.create().then(function(out){
-        return PDFLib.PDFDocument.load(buf)
-          .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
-          .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); return out; });
+        return PDFLib.PDFDocument.load(buf).then(function(d){
+          var idx=d.getPageIndices();
+          return out.copyPages(d, idx)
+            .then(function(pg1){ pg1.forEach(function(p){ out.addPage(p); }); return out.copyPages(d, idx); })
+            .then(function(pg2){ pg2.forEach(function(p){ out.addPage(p); }); return out; });
+        });
       });
     })
     .then(function(out){
@@ -18479,8 +18486,8 @@ function cvBuildHTML(c, tipo){
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
-  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:10mm 8mm;}"
-    +".cvdoc{margin:0;padding:16mm 15mm;font-size:12px;}"
+  var css="*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;} body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;} @page{size:A4;margin:8mm 6mm;}"
+    +".cvdoc{margin:0;padding:6mm 5mm;font-size:12px;}"
     /* Il margine sta DENTRO il documento, non nel foglio: la generazione PDF
        (proposta con allegati) disegna la pagina come immagine e i margini di
        stampa non li vede. Cosi' proposta e contratto escono identici da
