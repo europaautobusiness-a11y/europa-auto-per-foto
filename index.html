@@ -14278,6 +14278,16 @@ function mzRenderFiltri(){
     return '<button onclick="mzFiltro(\''+o[0]+'\')" style="padding:7px 12px;border-radius:20px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+o[1]+'</button>';
   }).join('');
 }
+function mzCapitaleMostra(el){
+  try{
+    var c=window._mzCapitale||0, senza=window._mzCapitaleSenza||0;
+    el.innerHTML='capitale immobilizzato: <b>'+mzEuro(c)+'</b>'
+      +(senza?('<span style="color:#94a3b8;font-weight:600;"> \u00b7 '+senza+' senza prezzo d\u2019acquisto</span>'):'');
+    el.onclick=function(){ if(typeof mzRender==='function') mzRender(); };   /* si richiude */
+    el.title='Tocca per richiudere';
+  }catch(e){}
+}
+
 function mzFiltro(s){ _mzFiltro=s; window._mzLim=60; mzRenderFiltri(); mzRender(); }
 
 function mzExportInventario(cat){
@@ -14379,7 +14389,26 @@ function mzRender(){
     +'<span style="background:#fff7ed;color:#9a3412;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🧾 '+nAzIE+' aziendali I.E.</span>'
     +'<span style="background:#eff6ff;color:#1e40af;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">🌍 '+nEst+' estere</span>'
     +'<span style="background:#f1f5f9;color:#334155;font-weight:800;padding:5px 10px;border-radius:20px;font-size:12px;">📄 '+nArt36+' art. 36</span>'
-    +'<span style="color:#94a3b8;font-weight:600;font-size:11.5px;">su '+all.length+' in archivio</span>'+'</div><div>'+disp.length+' disponibili · valore magazzino (vendita): <b>'+mzEuro(valore)+'</b></div>';
+    +'<span style="color:#94a3b8;font-weight:600;font-size:11.5px;">su '+all.length+' in archivio</span>'+'</div><div>'+disp.length+' disponibili'
+    /* Capitale immobilizzato: il totale di cio' che quelle auto sono costate.
+       E' il numero piu' sensibile del gestionale — chiunque passi accanto allo
+       schermo lo leggerebbe — quindi resta coperto e si scopre al tocco. */
+    + (function(){
+        try{
+          if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return '';
+          if(typeof eaEContabilita==='function' && eaEContabilita((typeof _currentUserEmail!=='undefined')?_currentUserEmail:'')) return '';
+          var cap=0, senza=0;
+          disp.forEach(function(a){
+            var p=parseFloat(String((a&&a.prezzoAcquisto)||'').replace(',','.'));
+            if(isNaN(p)||!p) senza++; else cap+=p;
+          });
+          window._mzCapitale=cap; window._mzCapitaleSenza=senza;
+          return ' \u00b7 <span onclick="mzCapitaleMostra(this)" title="Tocca per scoprire"'
+            +' style="cursor:pointer;user-select:none;">capitale immobilizzato: '
+            +'<b style="letter-spacing:2px;">\u2022\u2022\u2022\u2022\u2022\u2022</b></span>';
+        }catch(e){ return ''; }
+      })()
+    +'</div>';
   var list=all.filter(function(a){
     if(_mzFiltro==='disponibile'){ if(!(a.stato==='disponibile' && !a.impegnata)) return false; }
     else if(_mzFiltro==='opzionata'){ if(!((a.impegnata||a.stato==='prenotata') && a.stato!=='venduta')) return false; }
@@ -18141,7 +18170,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
   var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var html='';
-  try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
+  try{ html=cvDoppiaCopia(cvBuildHTML(cv, tipo||'preventivo')); }catch(e){}
   if(!html || typeof eaHtmlToPdf!=='function'){
     window._cvFascicoloInCorso=true;
     try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
@@ -18585,11 +18614,35 @@ function cvFatturaHTML(c){
     +'</body></html>';
   return html;
 }
+/* Doppia copia: una resta al cliente, una alla concessionaria. Si duplica il
+   contenuto del documento con un salto pagina in mezzo, non gli allegati:
+   quelli si firmano una volta sola. */
+function cvDoppiaCopia(html){
+  try{
+    var i=html.indexOf('<body'); if(i<0) return html;
+    var a=html.indexOf('>', i); if(a<0) return html;
+    var f=html.lastIndexOf('</body>'); if(f<0 || f<=a) return html;
+    var testa=html.slice(0,a+1), corpo=html.slice(a+1,f), coda=html.slice(f);
+    var eti=function(t){
+      return '<div style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;'
+        +'text-align:right;margin-bottom:4px;">'+t+'</div>';
+    };
+    return testa
+      + eti('Copia per il cliente') + corpo
+      + '<div style="page-break-before:always;break-before:page;"></div>'
+      + eti('Copia per la concessionaria') + corpo
+      + coda;
+  }catch(e){ return html; }
+}
+
 function cvStampaDoc(c, tipo){
   /* Gli allegati si controllano QUI e non nei singoli pulsanti: la stampa
      parte da tre punti diversi (scheda vendite, modulo del contratto, menu)
      e mettendo il controllo in uno solo gli altri due lo saltavano. */
-  if(tipo!=='fattura' && !window._cvFascicoloInCorso){
+  /* Gli allegati sono i moduli da far firmare alla PROPOSTA: alla consegna il
+     cliente li ha gia' firmati, e ristamparglieli confonde. Fuori quindi dal
+     contratto finale e dalla fattura. */
+  if(tipo!=='fattura' && tipo!=='finale' && !window._cvFascicoloInCorso){
     try{
       var _all=(typeof apPerPratica==='function')?apPerPratica(c):[];
       if(_all.length){
@@ -18599,6 +18652,8 @@ function cvStampaDoc(c, tipo){
     }catch(e){}
   }
   var html=(tipo==='fattura' && typeof cvFatturaHTML==='function')?cvFatturaHTML(c):cvBuildHTML(c, tipo);
+  /* la fattura no: quella e' un documento fiscale unico */
+  if(tipo!=='fattura') html=cvDoppiaCopia(html);
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
