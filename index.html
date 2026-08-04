@@ -6490,6 +6490,15 @@ function pVenditeAperte(){
       out.push({cv:cv, ts:t, bozza:b?b.r:null});
     });
     out.sort(function(a,b){ return b.ts-a.ts; });
+    /* Scattato il mese si riparte da zero: l'elenco mostra solo le vendite del
+       mese in corso. Quelle vecchie non spariscono in silenzio — sono soldi di
+       chi vende — ma restano contate a parte e si riaprono dal selettore mese
+       del registro. */
+    var mc=(typeof pGetMese==='function')?pGetMese():'';
+    var _mese=function(t){ var d=new Date(t); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+    var correnti=out.filter(function(x){ return _mese(x.ts)===mc; });
+    window._pArretrate=out.length-correnti.length;
+    out=correnti;
   }catch(e){}
   return out.slice(0,12);
 }
@@ -6500,7 +6509,12 @@ function pVenditeRender(){
     if(!list.length){ box.style.display='none'; box.innerHTML=''; return; }
     var h='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:11px 12px;">'
       +'<div style="font-size:12px;font-weight:800;color:#1e40af;">Provvigioni da completare ('+list.length+')</div>'
-      +'<div style="font-size:11px;color:#64748b;margin:2px 0 8px;">Le righe esistono gi\u00e0 nel registro con cliente e auto. Tocca per finirle.</div>';
+      +'<div style="font-size:11px;color:#64748b;margin:2px 0 8px;">Le righe esistono gi\u00e0 nel registro con cliente e auto. Tocca per finirle.</div>'
+      +((window._pArretrate>0)
+         ? ('<div style="font-size:11.5px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:7px 9px;margin-bottom:8px;">\u26a0\ufe0f '
+            +window._pArretrate+(window._pArretrate===1?' provvigione di mesi precedenti \u00e8 rimasta':' provvigioni di mesi precedenti sono rimaste')
+            +' da completare. Si riaprono dal selettore del mese, qui sopra.</div>')
+         : '');
     list.forEach(function(x){
       var cv=x.cv, cl=cv.cliente||{}, a=cv.autoSnapshot||{};
       var nome=((cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()))||'(cliente)';
@@ -18765,7 +18779,10 @@ function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||
 function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 var DOC_CAT={
-  auto:[['libretto','Libretto / carta di circolazione'],['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
+  /* "Libretto / carta di circolazione" tolto dalla tendina: c'era anche
+     "Libretto nuovo intestato" e i due si confondevano. I documenti gia'
+     archiviati in quella categoria restano leggibili tramite DOC_CAT_STORICHE. */
+  auto:[['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
@@ -18773,7 +18790,7 @@ var DOC_CAT={
 };
 /* Categorie non piu' proponibili ma ancora presenti sui documenti gia'
    caricati: senza queste etichette quelle righe mostrerebbero il codice. */
-var DOC_CAT_STORICHE={ revisione:'Revisione', foto:'Foto', delibera:'Delibera finanziaria', foto_consegna:'Foto consegna' };
+var DOC_CAT_STORICHE={ revisione:'Revisione', foto:'Foto', delibera:'Delibera finanziaria', foto_consegna:'Foto consegna', libretto:'Libretto / carta di circolazione' };
 function docCatLabel(tipo,cat){ if(DOC_CAT_STORICHE[cat]) return DOC_CAT_STORICHE[cat]; var a=DOC_CAT[tipo]||[]; for(var i=0;i<a.length;i++){ if(a[i][0]===cat) return a[i][1]; } return cat||'—'; }
 /* Ogni pannello mostra tutte le categorie, raggruppate per destinazione: chi
    carica non deve piu' chiedersi se e' nella schermata giusta. */
@@ -19026,7 +19043,14 @@ function docCarica(tipo, id, pfx){
 /* Documenti che rivelano quanto e' costata l'auto. */
 var DOC_CAT_ACQUISTO=['fattura_acquisto'];
 function docPuoVedereAcquisto(){
-  try{ return (typeof getCurrentRole==='function' && getCurrentRole()==='admin'); }catch(e){ return false; }
+  /* La fattura d'acquisto serve alla contabilita' tanto quanto al titolare:
+     e' il documento su cui si registra il costo del veicolo. Resta nascosta
+     a chi vende, perche' da li' si legge il margine. */
+  try{
+    if(typeof getCurrentRole==='function' && getCurrentRole()==='admin') return true;
+    if(typeof eaIsContabilita==='function' && eaIsContabilita()) return true;
+    return false;
+  }catch(e){ return false; }
 }
 
 function docListaRender(tipo, id, pfx, soloCat, titolo){
