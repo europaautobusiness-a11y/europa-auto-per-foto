@@ -16307,7 +16307,13 @@ function cvCalcola(c){
   var extra=(c.costiExtra||[]).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var sconto=(c.scontoOn?cvNum(c.scontoImporto):0);
   var permVal=(c.permutaOn && c.permuta)?cvNum(c.permuta.prezzoAcq):0;
+  /* La minivoltura di norma e' il costo fisso dei Parametri, ma su alcune
+     pratiche il costo reale e' diverso: il titolare puo' forzarlo, come gia'
+     avviene per il passaggio di proprieta'. */
   var minivolt=(c.permutaOn && c.permuta && cvNum(c.permuta.prezzoAcq)>0)?cvNum((typeof parLoad==='function'?(parLoad().minivoltura):200)||200):0;
+  if(c.minivolturaForzata && cvNum(c.minivoltura)>=0 && c.permutaOn && c.permuta && cvNum(c.permuta.prezzoAcq)>0){
+    minivolt=cvNum(c.minivoltura);
+  }
   var iva104=0, imponibile104=0, veicolo=prezzo;
   if(c.legge104On){ var lordo104=Math.max(0, prezzo - sconto); imponibile104=Math.round(lordo104/1.22*100)/100; iva104=Math.round(imponibile104*0.04*100)/100; veicolo=Math.round((imponibile104+iva104)*100)/100; }
   var totaleVendita=veicolo+passaggio+gar+assic+extra+minivolt-permVal;
@@ -16557,6 +16563,36 @@ function cvForm(id, fromVend){
         +'</div>';
     }
     return s;
+  })();
+  /* Minivoltura: stessa logica del passaggio. Di norma e' il costo fisso dei
+     Parametri, ma su alcune pratiche il costo vero e' diverso e il titolare
+     deve poterlo scrivere. Compare solo con la permuta attiva, perche' senza
+     permuta la voce non esiste. */
+  h+=(function(){
+    var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+    var _mvF=!!_cv.minivolturaForzata;
+    var _def=(typeof parLoad==='function'?(parLoad().minivoltura):200)||200;
+    var _val=cvEsc(_cv.minivoltura==null?'':_cv.minivoltura);
+    var _open=(_adm&&_mvF);
+    var _st='width:100%;padding:11px;border:1px solid '+(_open?'#f59e0b':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:'+(_open?'#fffbeb':'#eef2f7')+';color:#334155;font-weight:'+(_open?'700':'400')+';';
+    var s='<div id="cv-minivolt-wrap" style="display:'+(_cv.permutaOn?'block':'none')+';">'
+      +lab('Minivoltura \u20ac (costo fisso dai Parametri)')
+      +'<input id="cv_minivoltura" type="number" step="0.01" value="'+(_open?_val:(_mvF?_val:_def))+'" '+(_open?'oninput="cvLive()"':'readonly')+' style="'+_st+'">';
+    if(_adm){
+      s+='<label style="display:flex;align-items:center;gap:9px;margin:7px 0 2px;font-size:13px;cursor:pointer;color:#92400e;font-weight:700;">'
+        +'<input type="checkbox" id="cv_minivolturaForza" '+(_mvF?'checked':'')+' onchange="cvMinivolturaForzaToggle()" style="width:19px;height:19px;">'
+        +'\uD83D\uDD13 Forza importo (amministratore)</label>'
+        +'<div style="font-size:11px;color:'+(_mvF?'#92400e':'#94a3b8')+';margin-top:2px;">'
+        +(_mvF?'Importo forzato a mano: il costo fisso dei Parametri non lo sovrascrive pi\u00f9.'
+              :'Preso dai Parametri ('+_def+' \u20ac). Spunta per inserirlo a mano su questa pratica.')
+        +'</div>';
+    } else {
+      s+='<div style="font-size:11px;color:#94a3b8;margin-top:3px;">'
+        +(_mvF?'Importo impostato dall\u2019amministrazione. Non modificabile.'
+              :'Costo fisso dai Parametri. Non modificabile dal venditore.')
+        +'</div>';
+    }
+    return s+'</div>';
   })();
   h+=tog('cv_legge104On',_cv.legge104On,'Legge 104');
   h+=tog('cv_scontoOn',_cv.scontoOn,'Sconto');
@@ -16824,6 +16860,30 @@ function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof 
 function cvAutoNum(c){ var n=(c&&c.autoSnapshot&&c.autoSnapshot.numeroInterno)||''; if(!n && c && c.autoId && typeof mzById==='function'){ var a=mzById(c.autoId); if(a) n=a.numero_interno||''; } return n?String(n):''; }
 function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; if(_cv && _cv.passaggioForzato){ if(typeof cvLive==='function') cvLive(); return; } var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
 /* Sblocco/riblocco del campo passaggio: solo amministratore. */
+/* Sblocco della minivoltura, riservato al titolare. Togliendo la spunta si
+   torna al costo fisso dei Parametri, cosi' l'eccezione non resta appiccicata
+   alla pratica per dimenticanza. */
+function cvMinivolturaForzaToggle(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  var ck=document.getElementById('cv_minivolturaForza'), mv=document.getElementById('cv_minivoltura');
+  if(!mv) return;
+  var on=!!(ck&&ck.checked);
+  if(typeof _cv!=='undefined' && _cv) _cv.minivolturaForzata=on;
+  if(on){
+    mv.readOnly=false; mv.style.background='#fffbeb'; mv.style.border='1px solid #f59e0b';
+    mv.style.fontWeight='700'; mv.focus();
+  } else {
+    mv.readOnly=true; mv.style.background='#eef2f7'; mv.style.border='1px solid #cbd5e1';
+    mv.style.fontWeight='400';
+    try{
+      var def=(typeof parLoad==='function'?(parLoad().minivoltura):200)||200;
+      mv.value=def;
+      if(typeof _cv!=='undefined' && _cv) _cv.minivoltura=def;
+    }catch(e){}
+  }
+  if(typeof cvLive==='function') cvLive();
+}
+
 function cvPassaggioForzaToggle(){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   var ck=document.getElementById('cv_passaggioForza'), pa=document.getElementById('cv_passaggio');
@@ -16980,6 +17040,8 @@ function cvSync(){
   if(_cv.cliente.piva || _cv.cliente.ragSociale) _cv.cliente.business=true;
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   var _pf=document.getElementById('cv_passaggioForza'); if(_pf) _cv.passaggioForzato=!!_pf.checked;
+  var _mf=document.getElementById('cv_minivolturaForza'); if(_mf) _cv.minivolturaForzata=!!_mf.checked;
+  if(document.getElementById('cv_minivoltura')) _cv.minivoltura=g('cv_minivoltura');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
   _cv.assicOn=ck('cv_assicOn'); _cv.assicImporto=g('cv_assicImporto'); _cv.assicMesi=g('cv_assicMesi'); _cv.assicDettaglio=g('cv_assicDett');
   var _pt=document.getElementById('cv_polizzaTipo'); if(_pt) _cv.polizzaTipo=_pt.value;
@@ -17143,6 +17205,12 @@ function cvLive(){
     h+=r('Saldo dovuto',t.saldoDovuto,true);
   }
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
+  /* La minivoltura si vede solo con la permuta attiva: senza permuta quella
+     voce non esiste e un campo vuoto confonderebbe. */
+  try{
+    var _mw=document.getElementById('cv-minivolt-wrap');
+    if(_mw){ var _po=document.getElementById('cv_permutaOn'); _mw.style.display=(_po&&_po.checked)?'block':'none'; }
+  }catch(e){}
 }
 var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le risposte inviate a questo indirizzo non verranno gestite.';
 function eaMailEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -18804,7 +18872,10 @@ var DOC_CAT_TUTTE=[
     ['carta_identita',"Carta d'identit\u00e0"], ['tessera_sanitaria','Tessera sanitaria / CF'],
     ['patente','Patente'], ['busta_paga','Busta paga']]],
   ['\u2014 Documenti del veicolo \u2014', [
-    ['libretto','Libretto / carta di circolazione'], ['libretto_nuovo','Libretto nuovo intestato'],
+    /* Solo "Libretto nuovo intestato": i due si confondevano e il vecchio
+       "Libretto / carta di circolazione" non serve piu'. I documenti gia'
+       archiviati con quella categoria restano leggibili. */
+    ['libretto_nuovo','Libretto nuovo intestato'],
     ['minivoltura','Minivoltura / cert. propriet\u00e0'], ['coc','COC (conformit\u00e0 import)'],
     ['libretto_estero','Libretto estero'],
     ['fattura_acquisto','Fattura di acquisto'], ['tagliando','Tagliando / manutenzione'],
