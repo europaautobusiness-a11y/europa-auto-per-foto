@@ -16666,7 +16666,10 @@ function cvForm(id, fromVend){
   h+='</div><div class="cvcol-dx">';
   h+='<div id="cv-riepilogo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;"></div>';
   if(fromVend && _cv.isContratto){
-    h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('pratica', _cv.id, 'cvdoc')+'</div>';
+    /* Un solo riquadro documenti: ce n'erano due, uno qui e uno piu' sotto,
+       e facevano la stessa identica cosa — dove finisce il documento lo
+       decide la categoria scelta nella tendina, non da quale casella lo
+       carichi. Averne due era solo una scelta in piu' da sbagliare. */
     h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa proposta d’acquisto</button>';
     h+='<button onclick="cvDatiFatturazione()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🧾 Dati anagrafici e fatturazione</button>';
@@ -18041,7 +18044,8 @@ function cvTrasformaContrattoFinale(){
   if(typeof tcToastNew==='function') tcToastNew('Trasformato in contratto \u2014 in attesa pagamento',true);
   try{ if(typeof notifPush==='function') notifPush('Nuovo proposta d’acquisto: '+(((_cv.cliente&&_cv.cliente.cognome)||'')+' '+((_cv.cliente&&_cv.cliente.nome)||'')).trim()+' \u2014 in attesa pagamento', '\ud83d\udcc4'); }catch(e){}
 }
-function cvValidaAssic(){ if(_cv && _cv.assicOn && (!_cv.assicMesi || Number(_cv.assicMesi)<=0)){ alert('Hai selezionato l\'assicurazione: inserisci i MESI di durata assicurativa prima di procedere.'); return false; } return true; }
+function cvValidaAssic(){
+  if(typeof cvEImportata==='function' && cvEImportata(_cv)) return true; if(_cv && _cv.assicOn && (!_cv.assicMesi || Number(_cv.assicMesi)<=0)){ alert('Hai selezionato l\'assicurazione: inserisci i MESI di durata assicurativa prima di procedere.'); return false; } return true; }
 function cvAssicToggle(){
   var ck=document.getElementById('cv_assicOn'), box=document.getElementById('cv-assic-box'), imp=document.getElementById('cv_assicImporto');
   var on=!!(ck&&ck.checked);
@@ -18049,7 +18053,23 @@ function cvAssicToggle(){
   if(on && imp && (imp.value===''||imp.value==null)) imp.value='0';
   if(typeof cvLive==='function') cvLive();
 }
+/* Riconosce le pratiche arrivate dall'importazione: il loro identificativo
+   comincia con "sicom_", oppure portano il segno dell'origine. */
+function cvEImportata(cv){
+  try{
+    if(!cv) return false;
+    if(/^sicom_/i.test(String(cv.id||''))) return true;
+    return !!(cv.importata || cv.daSicom || cv.origine==='sicom');
+  }catch(e){ return false; }
+}
+
 function cvValidaPromo(){
+  /* Sulle pratiche importate i controlli non si applicano: sono vendite gia'
+     concluse nel vecchio gestionale, con dati incompleti per come sono state
+     esportate. Chiedere di completarle bloccherebbe il salvataggio di una
+     correzione qualsiasi — un indirizzo, un recapito — su centinaia di
+     pratiche che non si toccheranno mai piu'. */
+  if(cvEImportata(_cv)) return true;
   var pags=((_cv&&_cv.pagamenti)||[]);
   var badFin=pags.some(function(p){ var isFin=/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'; return isFin && (!p.importo || cvNum(p.importo)<=0); });
   if(badFin){ alert('Hai selezionato un Finanziamento: inserisci l\'IMPORTO del finanziamento (non pu\u00f2 restare vuoto) prima di procedere.'); return false; }
@@ -18060,6 +18080,7 @@ function cvValidaPromo(){
   return true;
 }
 function cvValidaPermuta(){
+  if(typeof cvEImportata==='function' && cvEImportata(_cv)) return true;
   if(!_cv || !_cv.permutaOn) return true;
   var pm=_cv.permuta||{};
   var req=[['modello','Modello'],['alimentazione','Alimentazione'],['cambio','Tipologia cambio'],['colore','Colore'],['prezzoAcq','Prezzo di acquisto'],['cilindrata','Cilindrata'],['potenza','Potenza (kW)'],['dataImm','Data immatricolazione'],['targa','Targa'],['km','Km']];
@@ -18871,6 +18892,7 @@ var DOC_CAT={
   /* "Libretto / carta di circolazione" tolto dalla tendina: c'era anche
      "Libretto nuovo intestato" e i due si confondevano. I documenti gia'
      archiviati in quella categoria restano leggibili tramite DOC_CAT_STORICHE. */
+  intervento:[['fattura_intervento','Fattura dell\u2019intervento']],
   auto:[['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
@@ -19021,6 +19043,7 @@ var DOC_DEST={
   carta_identita:'cliente', tessera_sanitaria:'cliente', patente:'cliente',
   busta_paga:'cliente', doc_cliente:'cliente', codice_fiscale:'cliente',
   /* veicolo */
+  fattura_intervento:'intervento',
   libretto:'auto', libretto_nuovo:'auto', minivoltura:'auto', coc:'auto',
   fattura_acquisto:'auto', tagliando:'auto', revisione:'auto', foto:'auto',
   libretto_permuta:'auto',
@@ -20951,6 +20974,17 @@ function tgRender(){
     +'<button onclick="tgChiudiModal()" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
     +'</div>';
   h+='<div style="padding:14px;max-height:74vh;overflow:auto;">';
+
+  /* La fattura vera dell'intervento: la proforma la genera il gestionale, la
+     fattura la emettete voi al cliente e si carica qui. Sta dentro
+     l'intervento e non fra i documenti sparsi del veicolo, cosi' aprendo la
+     lavorazione si trova subito il documento che la certifica. */
+  if(typeof docPannelloHTML==='function' && String(_tgId||'').indexOf('iv_')===0){
+    h+='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-bottom:12px;background:#f8fafc;">'
+      +docPannelloHTML('intervento', _tgId, 'ivdoc_'+_tgId, ['fattura_intervento'],
+        'La fattura emessa al cliente per questo intervento.', 'Fattura dell\u2019intervento', true)
+      +'</div>';
+  }
 
   if(f.numero){
     h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;">'
