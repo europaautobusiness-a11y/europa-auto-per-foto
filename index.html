@@ -4645,7 +4645,10 @@ function eaCanvasToPdfBlob(canvas){
       ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c2.width,c2.height);
       ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
       if(!primo) pdf.addPage();
-      pdf.addImage(c2.toDataURL('image/jpeg',0.92),'JPEG',mg,mg,iw, h*iw/canvas.width);
+      /* PNG e non JPEG: la compressione JPEG sgrana i bordi delle lettere, e
+         su un contratto stampato la differenza si vede a occhio nudo. Il file
+         pesa di piu', ma un contratto si stampa una volta sola. */
+      pdf.addImage(c2.toDataURL('image/png'),'PNG',mg,mg,iw, h*iw/canvas.width);
       primo=false; y+=h;
     }
   }
@@ -4656,7 +4659,7 @@ function eaCanvasToPdfBlob(canvas){
 function eaElementoToPdf(el, scala){
   if(!eaPdfLibsOk()) return Promise.reject(new Error('Librerie PDF non caricate'));
   if(!el) return Promise.reject(new Error('Elemento non trovato'));
-  return window.html2canvas(el, {scale: scala||2, useCORS:true, backgroundColor:'#ffffff', logging:false})
+  return window.html2canvas(el, {scale: scala||3, useCORS:true, backgroundColor:'#ffffff', logging:false})
     .then(function(c){ return eaCanvasToPdfBlob(c); });
 }
 
@@ -4677,7 +4680,10 @@ function eaHtmlToPdf(html){
           var body = d.body;
           var alt = Math.max(body.scrollHeight, 1400);
           ifr.style.height = alt+'px';
-          window.html2canvas(body, {scale:2, useCORS:true, backgroundColor:'#ffffff', logging:false,
+          window./* scala 3: il documento viene disegnato a risoluzione una volta e mezza
+               superiore prima di entrare nel PDF. Su un contratto il testo
+               piccolo passa da sgranato a nitido. */
+            html2canvas(body, {scale:3, useCORS:true, backgroundColor:'#ffffff', logging:false,
             windowWidth: EA_PDF_LARG, width: EA_PDF_LARG, height: alt})
             .then(function(c){ var b=eaCanvasToPdfBlob(c); pulisci(); resolve(b); })
             .catch(function(e){ pulisci(); reject(e); });
@@ -17455,6 +17461,10 @@ function cvLive(){
     h+=r('Saldo dovuto',t.saldoDovuto,true);
   }
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
+  /* Scelto il PROMO fra i metodi di pagamento, la polizza si attiva subito:
+     cosi' il venditore la vede diventare obbligatoria mentre compila, non al
+     momento di salvare. */
+  try{ if(typeof cvPromoAssicura==='function') cvPromoAssicura(); }catch(e){}
   /* La minivoltura si vede solo con la permuta attiva: senza permuta quella
      voce non esiste e un campo vuoto confonderebbe. */
   try{
@@ -18271,7 +18281,37 @@ function cvTrasformaContrattoFinale(){
   try{ if(typeof notifPush==='function') notifPush('Nuovo proposta d’acquisto: '+(((_cv.cliente&&_cv.cliente.cognome)||'')+' '+((_cv.cliente&&_cv.cliente.nome)||'')).trim()+' \u2014 in attesa pagamento', '\ud83d\udcc4'); }catch(e){}
 }
 function cvValidaAssic(){
-  if(typeof cvEImportata==='function' && cvEImportata(_cv)) return true; if(_cv && _cv.assicOn && (!_cv.assicMesi || Number(_cv.assicMesi)<=0)){ alert('Hai selezionato l\'assicurazione: inserisci i MESI di durata assicurativa prima di procedere.'); return false; } return true; }
+  if(typeof cvEImportata==='function' && cvEImportata(_cv)) return true;
+  /* Con il PROMO la polizza non e' facoltativa: senza, lo sconto non spetta
+     e la penale in contratto non avrebbe fondamento. */
+  try{
+    var _promo=((_cv&&_cv.pagamenti)||[]).some(function(p){ return /finanziamento\s*promo/i.test(p.metodo||''); });
+    if(_promo && !(_cv&&_cv.assicOn)){
+      alert('Il finanziamento PROMO comprende la polizza assicurativa.\n\nAttiva l\u2019assicurazione e indica i mesi di durata: lo sconto promo e la penale per estinzione anticipata si fondano su quella.');
+      return false;
+    }
+  }catch(e){} if(_cv && _cv.assicOn && (!_cv.assicMesi || Number(_cv.assicMesi)<=0)){ alert('Hai selezionato l\'assicurazione: inserisci i MESI di durata assicurativa prima di procedere.'); return false; } return true; }
+/* Il finanziamento PROMO comprende la polizza: e' la condizione stessa dello
+   sconto, ed e' cio' su cui si fonda la penale per estinzione anticipata.
+   Sceglierlo senza spuntare l'assicurazione produceva contratti incoerenti,
+   quindi la spunta si accende da sola e il riquadro si apre. */
+function cvPromoAssicura(){
+  try{
+    var promo=(document.querySelectorAll('select[id^="cv_pm_metodo"]').length)
+      ? [].some.call(document.querySelectorAll('select[id^="cv_pm_metodo"]'), function(s){ return /finanziamento\s*promo/i.test(s.value||''); })
+      : ((_cv&&_cv.pagamenti)||[]).some(function(p){ return /finanziamento\s*promo/i.test(p.metodo||''); });
+    if(!promo) return;
+    var ck=document.getElementById('cv_assicOn');
+    if(ck && !ck.checked){
+      ck.checked=true;
+      if(typeof _cv!=='undefined' && _cv) _cv.assicOn=true;
+      if(typeof cvAssicToggle==='function') cvAssicToggle();
+      if(typeof tcToastNew==='function')
+        tcToastNew('\ud83d\udee1\ufe0f Finanziamento PROMO: la polizza \u00e8 obbligatoria, l\u2019ho attivata', true);
+    }
+  }catch(e){}
+}
+
 function cvAssicToggle(){
   var ck=document.getElementById('cv_assicOn'), box=document.getElementById('cv-assic-box'), imp=document.getElementById('cv_assicImporto');
   var on=!!(ck&&ck.checked);
@@ -18861,7 +18901,13 @@ function cvBuildHTML(c, tipo){
      Si guarda adesso perche' decide dove finisce la firma successiva. */
   var _finPromo=(c.pagamenti||[]).filter(function(p){return /finanziamento\s*promo/i.test(p.metodo||'');});
   var _finPromoImp=_finPromo.reduce(function(s,p){return s+cvNum(p.importo);},0);
-  var _haPenale=(isFinale && _finPromoImp>0 && !!c.assicOn);
+  /* La penale dipende dal finanziamento PROMO con polizza, non dalla spunta:
+     su molte pratiche la polizza e' dentro il finanziamento o dichiarata nella
+     delibera senza che assicOn sia stato messo, e il blocco spariva. */
+  var _polizzaCe = !!c.assicOn
+    || (!!c.compagniaAssic && String(c.compagniaAssic).trim()!=='')
+    || !!(c.finDelibera && c.finDelibera.confermata && (cvNum(c.finDelibera.polizze)>0 || (c.finDelibera.polizzaTipo && c.finDelibera.polizzaTipo!=='nessuna')));
+  var _haPenale=(isFinale && _finPromoImp>0 && _polizzaCe);
   /* La polizza c'e' anche quando assicOn non e' stato spuntato ma il costo
      e' dentro il finanziamento o dentro la delibera. */
   var _haAssic=!!(c.assicOn || cvNum(c.assicImporto)>0 || (c.finDelibera && cvNum(c.finDelibera.polizze)>0));
@@ -18884,7 +18930,7 @@ function cvBuildHTML(c, tipo){
        alcuni browser ignorano il divieto di spezzatura, e break-inside oltre a
        page-break-inside perche' i due sono riconosciuti da motori diversi. */
     doc+='<div class="nospezza" style="display:block;page-break-inside:avoid;break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvEsc(x.metodo||'')+(function(){ /* TAN e TAEG non vanno mai in stampa */
-     var _n=String(x.note||'').replace(/TAN\s*[\d.,]*\s*%/ig,'').replace(/TAEG\s*[\d.,]*\s*%/ig,'')
+     var _n=String(x.note||'').replace(/TAN\s*[\d.,\u2013\u2014\-]*\s*%?/ig,'').replace(/TAEG\s*[\d.,\u2013\u2014\-]*\s*%?/ig,'')
         .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
      return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML();
     doc+='</div>';   /* chiude il blocco pagamenti che non si spezza */
@@ -18937,7 +18983,7 @@ function cvBuildHTML(c, tipo){
     +".cvbrand{font-size:19px;font-weight:800;color:#1a4fa0;letter-spacing:.5px;} .cvsmall{font-size:10px;color:#64748b;}"
     +".cvh{font-size:11.5px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #dbe4f0;padding-bottom:2px;margin:10px 0 5px;page-break-after:avoid;}"
     +".cvgrid{display:flex;flex-wrap:wrap;gap:8px 24px;} .cvfield{min-width:150px;} .cvfield .l{font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;} .cvfield .v{font-size:12.5px;font-weight:700;color:#0f172a;}"
-    +".cvrow{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid #f1f5f9;font-size:12px;page-break-inside:avoid;} .cvrow .amt{font-weight:600;white-space:nowrap;padding-left:14px;}"
+    +".cvrow{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid #f1f5f9;font-size:12px;page-break-inside:avoid;} .cvrow .amt{font-weight:600;white-space:nowrap;padding-left:14px;} .cvrow.sub .amt,.cvrow.tot .amt{font-weight:800;}"
     +".cvrow.sub{font-weight:800;} .cvrow.neg .amt{color:#b91c1c;} .cvrow.tot{border-top:2px solid #1a4fa0;border-bottom:none;font-weight:800;font-size:13.5px;color:#1a4fa0;margin-top:3px;padding-top:7px;}"
     +".cvbox{background:#f8fafc;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.4;white-space:pre-line;page-break-inside:avoid;}"
     +".cvsign{display:flex;justify-content:space-between;gap:30px;margin-top:18px;page-break-inside:avoid;} .cvsign .s{flex:1;text-align:center;font-size:11px;color:#475569;} .cvsign .s .line{height:36px;border-bottom:1px solid #334155;margin-bottom:4px;} .cvaccept{margin-top:10px;font-size:9.5px;color:#475569;line-height:1.4;page-break-inside:avoid;} .cvacc-ul{margin:4px 0 0;padding-left:18px;} .cvacc-ul li{margin:1px 0;} .cvsellertop{text-align:right;font-size:10px;color:#475569;margin:6px 0 2px;} .cvsellertop .ln{display:inline-block;width:180px;border-bottom:1px solid #334155;height:14px;vertical-align:bottom;margin-left:6px;} .cvpb{height:8px;} .cvfoot{margin-top:26px;padding:6px 0 0;background:#fff;display:flex;justify-content:space-between;gap:50px;page-break-inside:avoid;} .cvfoot .fs{flex:1;text-align:center;font-size:10px;color:#334155;} .cvfoot .fs .fl{height:24px;border-bottom:1px solid #334155;margin-bottom:3px;}";
@@ -24778,6 +24824,19 @@ function notifPulisci(){
 }
 function notifPush(testo, icon, extra){
   try{
+    /* Niente doppioni: la stessa identica notifica non si ripete. Un avviso
+       gia' mostrato non diventa piu' utile ripetendolo — diventa rumore, e
+       chi lo riceve smette di leggerli tutti. Fanno eccezione i promemoria a
+       ripetizione (extra.ripetibile), che devono tornare a ogni giro. */
+    if(!(extra && extra.ripetibile)){
+      var _t=String(testo||'').trim();
+      var _gia=(notifLoad()||[]).some(function(x){
+        if(!x || String(x.testo||'').trim()!==_t) return false;
+        /* stesso testo entro le 24 ore: e' la stessa segnalazione */
+        return (Date.now()-(x.ts||0)) < 86400000;
+      });
+      if(_gia) return;
+    }
     var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
     if(extra && typeof extra==='object'){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra,k)) n[k]=extra[k]; } }
     var list=notifLoad(); list.push(n); notifSave(list);
