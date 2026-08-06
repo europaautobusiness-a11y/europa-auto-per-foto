@@ -379,6 +379,8 @@ var LOGO_URL='logo.png';  /* file del logo accanto a vetrina.html (o URL complet
 /* Solo campi pubblici: prezzo di acquisto, note interne e fornitori NON vengono mai mostrati. */
 var CAMPI_PUBBLICI=['marca','modello','allestimento','anno','km','colore','alimentazione','cambio','cilindrata','potenza','dataImm','targa','prezzoVen','listino','stato','ivaEsposta','estera','foto','dotazioni','etichetta','online','onlineTs','updatedAt','createdAt'];
 
+var VETRINA_VER='2026-08-06b';
+var VETRINA_DIAG={};
 var AUTO=[];      /* tutte le auto pubblicabili */
 var VISTA=[];     /* dopo filtri/ordinamento */
 
@@ -437,33 +439,89 @@ function normalizza(raw){
   if(raw.online!==undefined) a.online=(raw.online===true||raw.online==='true'||raw.online===1||raw.online==='1');
   return a;
 }
-function pubblicabile(a, controllaOnline){
+/* Restituisce il motivo per cui un'auto NON esce in vetrina, stringa vuota se
+   esce. Serve alla diagnosi: prima la pagina restava vuota senza dire perche'. */
+function motivoScarto(a, controllaOnline){
   /* Lo decide il titolare dalla sezione "Auto online": senza interruttore
-     acceso l'auto non compare, anche se ha prezzo e foto. Prima usciva tutto
-     cio' che aveva un prezzo, senza che nessuno l'avesse scelto.
+     acceso l'auto non compare, anche se ha prezzo e foto.
      Se pero' la sorgente non espone proprio il campo (la vista pubblica
-     restituisce gia' solo le auto scelte), filtrarci sopra svuotava la vetrina
-     intera: in quel caso il controllo si salta. */
-  if(controllaOnline!==false && a.online!==true) return false;
+     restituisce gia' solo le auto scelte), filtrarci sopra svuoterebbe la
+     vetrina intera: in quel caso il controllo si salta. */
+  if(controllaOnline!==false && a.online!==true) return 'non messa in vetrina';
   var st=a.stato||'disponibile';
-  return (st==='disponibile'||st==='prenotata'||st==='opzionata') && a.marca && a.modello && num(a.prezzoVen)!=null;
+  if(!(st==='disponibile'||st==='prenotata'||st==='opzionata')) return 'stato: '+st;
+  if(!a.marca||!a.modello) return 'marca o modello mancanti';
+  if(num(a.prezzoVen)==null) return 'prezzo mancante';
+  return '';
 }
+function pubblicabile(a, controllaOnline){ return !motivoScarto(a, controllaOnline); }
 
 function carica(){
   skeleton();
-  /* 1° tentativo: vista pubblica "vetrina" (consigliata). Fallback: tabella magazzino. */
+  VETRINA_DIAG={versione:VETRINA_VER, fonte:'', letti:0, conOnline:0, pubblicate:0, scarti:{}, errore:''};
+  var perMagazzino=function(){
+    return sbGet('/rest/v1/magazzino?select=id,data').then(function(rows){
+      VETRINA_DIAG.fonte='magazzino';
+      return rows;
+    });
+  };
   sbGet('/rest/v1/vetrina?select=*')
-    .catch(function(){ return sbGet('/rest/v1/magazzino?select=id,data').then(function(rows){
-      return rows.map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
-    }); })
     .then(function(rows){
-      var haOnline=rows.some(function(r){ return r && r.online!==undefined; });
-      AUTO=rows.map(normalizza).filter(function(a){ return pubblicabile(a, haOnline); });
+      VETRINA_DIAG.fonte='vetrina';
+      /* La vista pubblica puo' esistere ma essere vuota o non contenere i
+         campi che servono: restituisce 200 e quindi il vecchio ripiego non
+         scattava mai: la pagina restava vuota. Qui si controlla il contenuto,
+         non solo che la chiamata sia andata a buon fine. */
+      var utile=rows.some(function(r){ return r && (r.marca || (r.data && r.data.marca)); });
+      if(!rows.length || !utile) return perMagazzino();
+      return rows;
+    })
+    .catch(perMagazzino)
+    .then(function(rows){
+      /* le righe possono arrivare come {id,data:{...}} oppure gia' piatte */
+      var piatte=rows.map(function(r){
+        if(r && r.data && typeof r.data==='object'){ var d=r.data; d.id=d.id||r.id; return d; }
+        return r||{};
+      });
+      VETRINA_DIAG.letti=piatte.length;
+      var haOnline=piatte.some(function(r){ return r && r.online!==undefined; });
+      VETRINA_DIAG.campoOnline=haOnline;
+      var norm=piatte.map(normalizza);
+      VETRINA_DIAG.conOnline=norm.filter(function(a){ return a.online===true; }).length;
+      AUTO=norm.filter(function(a){
+        var m=motivoScarto(a, haOnline);
+        if(m){ VETRINA_DIAG.scarti[m]=(VETRINA_DIAG.scarti[m]||0)+1; return false; }
+        return true;
+      });
+      VETRINA_DIAG.pubblicate=AUTO.length;
+      try{ console.log('VETRINA', JSON.stringify(VETRINA_DIAG)); }catch(e){}
       popolaFiltri(); applica(); apriDaHash();
       var el=document.getElementById('hero-sub');
       if(el&&AUTO.length) el.innerHTML='<b>'+AUTO.length+' auto</b> selezionate e garantite, a Paderno Dugnano e Bovisio Masciago.';
     })
-    .catch(function(){ erroreRete(); });
+    .catch(function(e){
+      VETRINA_DIAG.errore=String((e&&e.message)||e);
+      try{ console.log('VETRINA errore', VETRINA_DIAG.errore); }catch(_e){}
+      erroreRete();
+    });
+}
+/* Pannello di controllo: si apre aggiungendo ?debug=1 all'indirizzo del sito.
+   Dice quante auto sono state lette e perche' le altre non escono. */
+function vetrinaDebugHTML(){
+  var d=VETRINA_DIAG||{};
+  var righe='';
+  Object.keys(d.scarti||{}).forEach(function(k){ righe+='<div>'+esc(k)+': <b>'+d.scarti[k]+'</b></div>'; });
+  return '<div class="msg" style="text-align:left;font-size:13px;line-height:1.6;">'
+    +'<h3>Diagnosi vetrina</h3>'
+    +'<div>versione file: <b>'+esc(d.versione||'?')+'</b></div>'
+    +'<div>sorgente dati: <b>'+esc(d.fonte||'—')+'</b></div>'
+    +'<div>righe lette: <b>'+(d.letti||0)+'</b></div>'
+    +'<div>campo "online" presente: <b>'+(d.campoOnline?'sì':'no')+'</b></div>'
+    +'<div>auto con online = true: <b>'+(d.conOnline||0)+'</b></div>'
+    +'<div>auto pubblicate: <b>'+(d.pubblicate||0)+'</b></div>'
+    +(righe?('<div style="margin-top:8px;"><b>Scartate perché:</b>'+righe+'</div>'):'')
+    +(d.errore?('<div style="margin-top:8px;color:#b91c1c;">errore: '+esc(d.errore)+'</div>'):'')
+    +'</div>';
 }
 function sbGet(path){
   return fetch(SB_URL+path,{headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY}})
@@ -533,7 +591,12 @@ function targaHTML(a){
 function render(){
   var g=document.getElementById('grid');
   document.getElementById('tcount').innerHTML=VISTA.length?('<b>'+VISTA.length+'</b> auto disponibili'):'';
-  if(!AUTO.length){ g.innerHTML='<div class="msg"><div class="ico">🚗</div><h3>Nessuna auto pubblicata al momento</h3>Torna a trovarci: il parco auto si aggiorna ogni settimana.</div>'; return; }
+  if(!AUTO.length){
+    var dbg=(String(location.search||'').indexOf('debug')>=0);
+    g.innerHTML = dbg ? vetrinaDebugHTML()
+      : '<div class="msg"><div class="ico">🚗</div><h3>Nessuna auto pubblicata al momento</h3>Torna a trovarci: il parco auto si aggiorna ogni settimana.</div>';
+    return;
+  }
   if(!VISTA.length){ g.innerHTML='<div class="msg"><div class="ico">🔍</div><h3>Nessuna auto con questi filtri</h3>Prova ad allargare la ricerca.<br><button onclick="resetFiltri()">Azzera i filtri</button></div>'; return; }
   g.innerHTML=VISTA.map(function(a){
     var cov=a.foto.length?('<img src="'+esc(a.foto[0].url)+'" alt="'+esc(a.marca+' '+a.modello)+'" loading="lazy">'):'<div class="noimg"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14a2 2 0 0 1 2 2v3h-2m-14-5a2 2 0 0 0-2 2v3h2m0 0a2 2 0 1 0 4 0m-4 0h4m6 0a2 2 0 1 0 4 0m-4 0h4"/></svg>Foto in arrivo</div>';
