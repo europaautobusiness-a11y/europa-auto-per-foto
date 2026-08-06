@@ -14498,9 +14498,37 @@ function mzSyncVendute(){
     cvs.forEach(function(cv){
       var i=-1;
       if(cv.autoId) i=ml.findIndex(function(x){ return x.id===cv.autoId; });
-      if(i<0){ var tg=norm(cv.nuovaTarga||(cv.autoSnapshot&&cv.autoSnapshot.targa)); if(tg) i=ml.findIndex(function(x){ return norm(x.targa)===tg; }); }
-      if(i<0){ var tl=norm(cv.autoSnapshot&&cv.autoSnapshot.telaio); if(tl) i=ml.findIndex(function(x){ return norm(x.telaio)===tl; }); }
+      /* Il ripiego su targa e telaio serve ai contratti vecchi che il
+         collegamento non ce l'hanno. Ma un'auto venduta e ricomprata ha DUE
+         schede con la stessa targa: cercando alla cieca si marcava venduta
+         quella nuova, ancora in piazzale. Quindi il ripiego vale solo quando
+         di schede con quella targa ce n'e' una sola, e non e' gia' rientrata
+         con un carico successivo alla consegna del contratto. */
+      if(i<0){
+        var tg=norm(cv.nuovaTarga||(cv.autoSnapshot&&cv.autoSnapshot.targa));
+        if(tg){
+          var cand=[]; ml.forEach(function(x,ix){ if(norm(x.targa)===tg) cand.push(ix); });
+          if(cand.length===1) i=cand[0];
+        }
+      }
+      if(i<0){
+        var tl=norm(cv.autoSnapshot&&cv.autoSnapshot.telaio);
+        if(tl){
+          var cand2=[]; ml.forEach(function(x,ix){ if(norm(x.telaio)===tl) cand2.push(ix); });
+          if(cand2.length===1) i=cand2[0];
+        }
+      }
       if(i<0) return;
+      /* Ricomprata dopo la vendita: il carico e' successivo alla consegna,
+         quindi quella scheda e' un passaggio nuovo e non va toccata. */
+      try{
+        var _dc=String(ml[i].dataCarico||'');
+        if(_dc && cv.consegnatoTs){
+          var _p=_dc.split('-');
+          var _t=(_p.length===3)?new Date(+_p[0],+_p[1]-1,+_p[2]).getTime():Date.parse(_dc);
+          if(_t && _t > cv.consegnatoTs) return;
+        }
+      }catch(_e){}
       if(ml[i].stato!=='venduta'){ ml[i].stato='venduta'; ml[i].impegnata=true; ml[i].updatedAt=Date.now(); fixed.push(ml[i]); }
     });
     if(fixed.length){ mzSave(ml); if(typeof mzSupaUpsert==='function') fixed.forEach(function(a){ try{ mzSupaUpsert(a); }catch(e){} }); }
