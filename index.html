@@ -4625,7 +4625,7 @@ function eaPdfLibsOk(){
   return !!(window.jspdf && window.jspdf.jsPDF && window.html2canvas);
 }
 
-function eaCanvasToPdfBlob(canvas){
+function eaCanvasToPdfBlob(canvas, tagli){
   var JsPDF = window.jspdf.jsPDF;
   var pdf = new JsPDF('p','mm','a4');
   var pw=210, ph=297, mg=6;
@@ -4636,9 +4636,28 @@ function eaCanvasToPdfBlob(canvas){
     pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',mg,mg,iw,ih);
   } else {
     var pxPag = Math.floor(canvas.width * pageH / iw);
+    /* Una pagina non si accorcia oltre questo: meglio un blocco tagliato che
+       mezzo foglio bianco a ogni pagina. */
+    var minPag = Math.floor(pxPag*0.30);
     var y=0, primo=true;
     while(y < canvas.height){
       var h = Math.min(pxPag, canvas.height - y);
+      /* Il taglio non cade mai dentro un blocco (riga di pagamento, riquadro,
+         firme): se ci finirebbe, la pagina si chiude prima e il blocco passa
+         intero a quella dopo. Prima si tagliava a pixel ciechi e l'ultima voce
+         dei pagamenti restava spezzata a meta'. */
+      if(tagli && tagli.length && (y+h) < canvas.height){
+        var cut=y+h, mosso=true, giri=0;
+        while(mosso && giri++ < 400){
+          mosso=false;
+          for(var _t=0;_t<tagli.length;_t++){
+            var b=tagli[_t];
+            if(!b || (b.b-b.a) > pxPag) continue;   /* piu' alto di una pagina: si taglia per forza */
+            if(cut > b.a+1 && cut < b.b-1){ cut=Math.floor(b.a); mosso=true; }
+          }
+        }
+        if(cut < y+h && (cut-y) >= minPag) h=cut-y;
+      }
       var c2 = document.createElement('canvas');
       c2.width = canvas.width; c2.height = h;
       var ctx = c2.getContext('2d');
@@ -4680,12 +4699,27 @@ function eaHtmlToPdf(html){
           var body = d.body;
           var alt = Math.max(body.scrollHeight, 1400);
           ifr.style.height = alt+'px';
+          /* Dove NON si puo' tagliare la pagina: si misurano qui, sul documento
+             gia' impaginato, perche' dopo html2canvas restano solo pixel. */
+          var blocchi=[];
+          try{
+            var _bt=body.getBoundingClientRect().top;
+            var _els=d.querySelectorAll('.nospezza,.cvrow,.cvbox,.cvsign,.cvaccept,.cvfoot,.cvgrid,.cvtop,.cvcond>div');
+            for(var _i=0;_i<_els.length;_i++){
+              var _r=_els[_i].getBoundingClientRect();
+              if(_r.height>0) blocchi.push({a:_r.top-_bt, b:_r.bottom-_bt});
+            }
+          }catch(_e){}
           window./* scala 3: il documento viene disegnato a risoluzione una volta e mezza
                superiore prima di entrare nel PDF. Su un contratto il testo
                piccolo passa da sgranato a nitido. */
             html2canvas(body, {scale:3, useCORS:true, backgroundColor:'#ffffff', logging:false,
             windowWidth: EA_PDF_LARG, width: EA_PDF_LARG, height: alt})
-            .then(function(c){ var b=eaCanvasToPdfBlob(c); pulisci(); resolve(b); })
+            .then(function(c){
+              var k=(alt>0)?(c.height/alt):1;
+              var tagli=blocchi.map(function(b){ return {a:b.a*k, b:b.b*k}; });
+              var b=eaCanvasToPdfBlob(c, tagli); pulisci(); resolve(b);
+            })
             .catch(function(e){ pulisci(); reject(e); });
         }catch(e){ pulisci(); reject(e); }
       }, 1000);
@@ -10288,6 +10322,51 @@ function tcPermCodice(cat){
 // Dipendenti che NON usano l'app: colonne fisse nel file riepilogo (ore da compilare a mano)
 var DIPENDENTI_EXTRA = ['Renato'];
 
+/* ===== Ore da mettere nel riepilogo per il commercialista =====
+   Valgono SOLO nel file scaricato: dentro l'app le timbrature restano quelle
+   vere, cosi' non si perde traccia di cosa e' stato realmente timbrato.
+   - 'max'   : tetto alle ore (la pausa non timbrata non va pagata)
+   - 'fisse' : ore per giorno della settimana (0 = domenica ... 6 = sabato),
+               scritte anche quando la timbratura non c'e'.
+   'chi' accetta email esatte (con la chiocciola) o pezzi di nome. */
+var TC_ORE_RIEPILOGO = [
+  { chi:['arianna','ariannapresta80@gmail.com','contabilitaeuropaauto@gmail.com'],
+    max: 6*60,
+    nota:'pausa di 30 minuti non timbrata' },
+  { chi:['renato'],
+    fisse:{1:5*60, 2:5*60, 3:5*60, 4:5*60, 5:5*60, 6:5*60} },
+  /* Davide titolare: solo la sua mail, per non prendere anche Davide Basso */
+  { chi:['europaautobusiness@gmail.com'],
+    fisse:{1:7*60, 2:7*60, 3:7*60, 4:7*60, 5:7*60, 6:5*60} }
+];
+function tcRegolaRiepilogo(email, nome){
+  try{
+    var e=String(email||'').toLowerCase().trim();
+    var n=String(nome||'').toLowerCase().trim();
+    for(var i=0;i<TC_ORE_RIEPILOGO.length;i++){
+      var r=TC_ORE_RIEPILOGO[i];
+      for(var j=0;j<r.chi.length;j++){
+        var k=String(r.chi[j]).toLowerCase();
+        if(k.indexOf('@')>=0){ if(e && e===k) return r; }
+        else if(n && n.indexOf(k)>=0) return r;
+      }
+    }
+  }catch(e){}
+  return null;
+}
+/* min = minuti calcolati dalle timbrature; pc = codice ferie/permesso del giorno. */
+function tcMinutiRiepilogo(email, nome, dow, min, pc){
+  var r=tcRegolaRiepilogo(email, nome);
+  if(!r) return min;
+  if(r.fisse){
+    if(dow===0) return 0;                          /* domenica: riposo */
+    if(pc && pc!=='/') return 0;                   /* ferie o permesso: niente ore */
+    return r.fisse[dow]||0;
+  }
+  if(r.max!=null && min>r.max) return r.max;
+  return min;
+}
+
 // Riepilogo mensile in stile "FOGLIO PRESENZE" (per il commercialista)
 function tcScaricaRiepilogoCSV(){
   var mese=_tcAdminMese||tcGetMese();
@@ -10312,26 +10391,34 @@ function tcScaricaRiepilogoCSV(){
   extra.forEach(function(){ r2.push(tcCsvCell('ORE')); r2.push(tcCsvCell('PERM/FERIE')); });
   righe.push(r2);
   var tot={}; cols.forEach(function(d){tot[d.email]=0;});
+  var totExtra={};
   for(var g=1; g<=giorni; g++){
     var dataStr=mese+'-'+String(g).padStart(2,'0');
     var dow=new Date(anno,mIdx,g).getDay();
     var riga=[tcCsvCell('GIORNO '+g), tcCsvCell(sett[dow])];
     cols.forEach(function(d){
       var r=map[d.email+'|'+dataStr];
-      var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0; if(min) tot[d.email]+=min;
+      var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0;
       var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
       var pc=tcPermCodice(perm);
       if(!pc && dow===0) pc='/';
+      min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
+      if(min) tot[d.email]+=min;
       riga.push(tcCsvCell(min?tcOreDecimali(min):''));
       riga.push(tcCsvCell(pc));
     });
-    // colonne extra (vuote, da compilare a mano; "/" la domenica)
-    extra.forEach(function(){ riga.push(tcCsvCell('')); riga.push(tcCsvCell(dow===0?'/':'')); });
+    extra.forEach(function(nome){
+      var pce=(dow===0?'/':'');
+      var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+      if(mine) totExtra[nome]=(totExtra[nome]||0)+mine;
+      riga.push(tcCsvCell(mine?tcOreDecimali(mine):''));
+      riga.push(tcCsvCell(pce));
+    });
     righe.push(riga);
   }
   var rt=[tcCsvCell('TOTALE ORE'),tcCsvCell('')];
   cols.forEach(function(d){ rt.push(tcCsvCell(tot[d.email]?tcOreDecimali(tot[d.email]):'0')); rt.push(tcCsvCell('')); });
-  extra.forEach(function(){ rt.push(tcCsvCell('')); rt.push(tcCsvCell('')); });
+  extra.forEach(function(nome){ rt.push(tcCsvCell(totExtra[nome]?tcOreDecimali(totExtra[nome]):'')); rt.push(tcCsvCell('')); });
   righe.push(rt);
   righe.push([tcCsvCell('')]);
   righe.push([tcCsvCell('LEGENDA')]);
@@ -10374,6 +10461,7 @@ function tcScaricaRiepilogoXLS(){
   H+='</tr>';
   // giorni
   var tot={}; cols.forEach(function(d){tot[d.email]=0;});
+  var totExtra={};
   for(var g=1; g<=giorni; g++){
     var dataStr=mese+'-'+String(g).padStart(2,'0');
     var dow=new Date(anno,mIdx,g).getDay();
@@ -10381,18 +10469,25 @@ function tcScaricaRiepilogoXLS(){
     H+='<tr style="'+bg+'"><td style="font-weight:bold;text-align:left;">GIORNO '+g+'</td><td style="text-align:left;'+(dow===0||dow===6?'color:#b91c1c;':'')+'">'+sett[dow]+'</td>';
     cols.forEach(function(d){
       var r=map[d.email+'|'+dataStr];
-      var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0; if(min) tot[d.email]+=min;
+      var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0;
       var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
       var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
+      min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
+      if(min) tot[d.email]+=min;
       H+='<td>'+(min?esc(tcOreDecimali(min)):'')+'</td><td>'+esc(pc)+'</td>';
     });
-    extra.forEach(function(){ H+='<td></td><td>'+(dow===0?'/':'')+'</td>'; });
+    extra.forEach(function(nome){
+      var pce=(dow===0?'/':'');
+      var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+      if(mine) totExtra[nome]=(totExtra[nome]||0)+mine;
+      H+='<td>'+(mine?esc(tcOreDecimali(mine)):'')+'</td><td>'+pce+'</td>';
+    });
     H+='</tr>';
   }
   // totale
   H+='<tr style="font-weight:bold;background:#dbe5f1;"><td style="text-align:left;">TOTALE ORE</td><td></td>';
   cols.forEach(function(d){ H+='<td>'+(tot[d.email]?esc(tcOreDecimali(tot[d.email])):'0')+'</td><td></td>'; });
-  extra.forEach(function(){ H+='<td></td><td></td>'; });
+  extra.forEach(function(nome){ H+='<td>'+(totExtra[nome]?esc(tcOreDecimali(totExtra[nome])):'')+'</td><td></td>'; });
   H+='</tr>';
   // legenda
   H+='<tr><td colspan="'+nCols+'"></td></tr>';
@@ -19454,8 +19549,10 @@ function cvStampaDoc(c, tipo){
      e mettendo il controllo in uno solo gli altri due lo saltavano. */
   /* Gli allegati sono i moduli da far firmare alla PROPOSTA: alla consegna il
      cliente li ha gia' firmati, e ristamparglieli confonde. Fuori quindi dal
-     contratto finale e dalla fattura. */
-  if(tipo!=='fattura' && tipo!=='finale' && !window._cvFascicoloInCorso){
+     contratto finale e dalla fattura.
+     Fuori anche dal PREVENTIVO: li' si sta ancora trattando, non c'e' niente
+     da firmare, e i moduli allungavano un documento che deve restare corto. */
+  if(tipo!=='fattura' && tipo!=='finale' && tipo!=='preventivo' && !window._cvFascicoloInCorso){
     try{
       var _all=(typeof apPerPratica==='function')?apPerPratica(c):[];
       if(_all.length){
