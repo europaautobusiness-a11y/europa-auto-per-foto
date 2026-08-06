@@ -16696,7 +16696,15 @@ function cvRecuperaAnagrafica(cv){
     if(!e) return;
     if(!cv.clienteKey) cv.clienteKey=key;
     var vuoto=function(k){ return !String(cv.cliente[k]||'').trim(); };
+    /* Campo mai compilato e campo svuotato apposta non sono la stessa cosa.
+       La stessa persona compra oggi con la partita IVA e domani da privato:
+       togliendola dalla pratica deve restare tolta, ma nell'anagrafica del
+       cliente deve rimanere, perche' la volta dopo servira' di nuovo.
+       In cvSvuotati la pratica tiene l'elenco di cio' che e' stato tolto
+       di proposito, e su quei campi l'anagrafica non interviene piu'. */
+    var _tolti=(cv.cliente.cvSvuotati||[]);
     ['nome','cognome','telefono','email','telefono2','email2','cf','ragSociale','piva','sdi','sedeLegale'].forEach(function(k){
+      if(_tolti.indexOf(k)>=0) return;
       if(vuoto(k) && e[k]) cv.cliente[k]=e[k];
     });
     var i0=(e.indirizzi&&e.indirizzi.length)?e.indirizzi[e.indirizzi.length-1]:null;
@@ -16706,6 +16714,8 @@ function cvRecuperaAnagrafica(cv){
       });
     }
     if((cv.cliente.piva||cv.cliente.ragSociale) && !cv.cliente.business) cv.cliente.business=true;
+    /* tolte entrambe, la pratica torna a essere un acquisto da privato */
+    if(!String(cv.cliente.piva||'').trim() && !String(cv.cliente.ragSociale||'').trim()) cv.cliente.business=false;
   }catch(e){}
 }
 
@@ -17299,6 +17309,20 @@ function cvSync(){
     ragSociale:g('cv_ragSociale'), piva:(g('cv_piva')||'').toUpperCase(),
     sedeLegale:g('cv_sedeLegale'), sdi:(g('cv_sdi')||'').toUpperCase()
   });
+  /* Si annota quali campi sono stati lasciati vuoti di proposito: sono quelli
+     che l'anagrafica del cliente non dovra' piu' riempire su questa pratica.
+     E' cosi' che la stessa persona puo' comprare una volta con la partita IVA
+     e una volta da privato, senza perdere il dato in anagrafica. */
+  try{
+    var _campi=['nome','cognome','telefono','email','telefono2','email2','cf','ragSociale','piva','sdi','sedeLegale'];
+    var _vuoti=[];
+    _campi.forEach(function(k){
+      var el=document.getElementById('cv_'+({telefono:'tel',telefono2:'tel2'}[k]||k));
+      if(!el) return;                                   /* campo non a video: non si tocca */
+      if(!String(el.value||'').trim()) _vuoti.push(k);
+    });
+    _cv.cliente.cvSvuotati=_vuoti;
+  }catch(e){}
   /* azienda o privato lo dicono i dati stessi: se c'e' la partita IVA il
      cliente e' un'azienda, senza bisogno di una spunta da ricordarsi */
   if(_cv.cliente.piva || _cv.cliente.ragSociale) _cv.cliente.business=true;
