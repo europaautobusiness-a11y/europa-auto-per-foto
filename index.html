@@ -13528,8 +13528,9 @@ function pmInit(){ pmDedup(); pmRender(); pmSupaLoad(); pmLoadDaSheets(); }
 var _pmTab='ingresso', _pmQ='';
 function pmSetTab(t){ _pmTab=t; pmRender(); }
 function pmSetQ(v){ _pmQ=String(v||''); pmRender(); var el=document.getElementById('pm-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} } }
-/* Una perizia e' conclusa quando la permuta e' entrata in magazzino o e' stata esportata. */
-function pmConclusa(p){
+/* Una perizia si chiude da sola quando la permuta entra in magazzino o viene
+   esportata. Questa parte non si puo' annullare a mano: e' un fatto avvenuto. */
+function pmConclusaAuto(p){
   try{
     if(p && (p.permutaStato==='entrata' || p.permutaStato==='esportata' || p.magazzinoId)) return true;
     var cvs=(typeof cvLoad==='function')?cvLoad():[];
@@ -13540,6 +13541,53 @@ function pmConclusa(p){
     }
   }catch(e){}
   return false;
+}
+/* Conclusa = entrata/esportata davvero, oppure chiusa a mano perche' quel
+   veicolo non arrivera' mai (trattativa saltata, cliente sparito). */
+function pmConclusa(p){
+  if(p && p.conclusaManuale===true) return true;
+  return pmConclusaAuto(p);
+}
+/* Timbra la perizia collegata quando la permuta viene gestita nel contratto,
+   cosi' sparisce da "In ingresso" senza che nessuno debba ricordarsene. */
+function pmMarcaDaContratto(periziaId, stato, magazzinoId){
+  try{
+    if(!periziaId || typeof pmLoad!=='function') return;
+    var l=pmLoad(), i=l.findIndex(function(x){ return x && x.id===periziaId; });
+    if(i<0) return;
+    l[i].permutaStato=stato;
+    if(magazzinoId) l[i].magazzinoId=magazzinoId;
+    l[i].conclusaTs=l[i].conclusaTs||Date.now();
+    l[i].updatedAt=Date.now();
+    pmSave(l);
+    if(typeof pmPush==='function') pmPush(l[i]);
+    try{ if(typeof pmRender==='function') pmRender(); }catch(e){}
+  }catch(e){}
+}
+/* Chiusura a mano dalla lista. */
+function pmChiudiPerizia(id){
+  var p=(typeof pmById==='function')?pmById(id):null; if(!p) return;
+  var motivo=prompt('Concludere questa perizia?\n\nScrivi il motivo (resta scritto nella scheda):', 'Veicolo non ritirato');
+  if(motivo===null) return;
+  var l=pmLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  l[i].conclusaManuale=true;
+  l[i].conclusaMotivo=String(motivo||'').trim();
+  l[i].conclusaTs=Date.now();
+  l[i].updatedAt=Date.now();
+  pmSave(l);
+  if(typeof pmPush==='function') pmPush(l[i]);
+  pmRender();
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Perizia conclusa',true);
+}
+function pmRiapriPerizia(id){
+  var l=pmLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  if(pmConclusaAuto(l[i])){ alert('Questa permuta \u00e8 gi\u00e0 entrata in magazzino (o esportata): non pu\u00f2 tornare in ingresso.'); return; }
+  l[i].conclusaManuale=false; l[i].conclusaMotivo=''; l[i].conclusaTs=null;
+  l[i].updatedAt=Date.now();
+  pmSave(l);
+  if(typeof pmPush==='function') pmPush(l[i]);
+  pmRender();
+  if(typeof tcToastNew==='function') tcToastNew('\u21a9\ufe0f Perizia riaperta',true);
 }
 function pmRender(){
   var wrap=document.getElementById('pm-lista'); if(!wrap) return;
@@ -13561,8 +13609,22 @@ function pmRender(){
     h+='<div onclick="pmApri(\''+p.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+pmEsc(p.cliente||'(cliente senza nome)')+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+pmEsc(p.modello||'—')+(p.targa?(' · '+pmEsc(p.targa)):'')+'</div>';
     h+='<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(p.valutazione?('💶 € '+pmEsc(p.valutazione)+' · '):'')+(firmato?('<span style="color:#16a34a;font-weight:700;">✅ Firmato</span>'+(p.firmaTs?(' <span style="color:#64748b;font-weight:600;">il '+pmFmtDataOra(p.firmaTs)+'</span>'):'')):'<span style="color:#d97706;font-weight:700;">✍️ Da firmare</span>')+'</div>'+((!firmato && p.linkTs)?('<div style="font-size:11px;color:#0891b2;margin-top:3px;">🔗 Link inviato il '+pmFmtDataOra(p.linkTs)+(p.promemoriaInviatoAt?(' · 🔔 promemoria inviato'):'')+'</div>'):'')+'</div>';
+    h+='<div style="display:flex;flex-direction:column;gap:6px;flex:0 0 auto;align-items:stretch;">';
     h+='<button onclick="pmApri(\''+p.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Apri</button>';
-    h+='</div></div>';
+    if(_pmTab!=='concluse'){
+      h+='<button onclick="pmChiudiPerizia(\''+p.id+'\')" title="Toglila da In ingresso: il veicolo non verr\u00e0 ritirato" style="padding:6px 12px;border-radius:6px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">\u2705 Concludi</button>';
+    } else if(p.conclusaManuale===true && !pmConclusaAuto(p)){
+      h+='<button onclick="pmRiapriPerizia(\''+p.id+'\')" title="Rimettila tra quelle in ingresso" style="padding:6px 12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">\u21a9\ufe0f Riapri</button>';
+    }
+    h+='</div>';
+    h+='</div>';
+    if(_pmTab==='concluse'){
+      var _mot = pmConclusaAuto(p)
+        ? ('\ud83d\ude97 '+((p.permutaStato==='esportata')?'Permuta esportata':'Entrata in magazzino'))
+        : ('\u2705 Conclusa'+(p.conclusaMotivo?(' \u00b7 '+pmEsc(p.conclusaMotivo)):''));
+      h+='<div style="font-size:11px;color:#64748b;margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;">'+_mot+(p.conclusaTs?(' \u00b7 '+pmFmtDataOra(p.conclusaTs)):'')+'</div>';
+    }
+    h+='</div>';
   });
   wrap.innerHTML=h;
 }
@@ -15925,6 +15987,92 @@ function pmiEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/<
 function pmiInit(){ pmiRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 function pmiFiltro(f){ _pmiFiltro=f; pmiRender(); }
 function pmiHasData(pm){ return !!(pm && (pm.modello||pm.targa||pm.prezzoAcq||pm.telaio)); }
+/* Cerca in magazzino il veicolo di questa permuta gia' entrato.
+   Serve ai contratti arrivati con l'importazione: il veicolo era gia' tra le
+   disponibili ma il contratto non lo sapeva, cosi' la permuta restava "da
+   gestire" e premendo Conferma ingresso si creava una seconda scheda. */
+function pmiGiaInMagazzino(cv, ml){
+  try{
+    if(!cv || typeof mzLoad!=='function') return null;
+    var pm=cv.permuta||{}; if(!pmiHasData(pm)) return null;
+    ml = ml || mzLoad();
+    var perContratto=ml.filter(function(a){ return a && a.permutaContrattoId===cv.id; })[0];
+    if(perContratto) return perContratto;
+    var norm=function(t){ return String(t==null?'':t).toUpperCase().replace(/[\s\-\.]/g,''); };
+    var tg=norm(pm.targa), tl=norm(pm.telaio);
+    if(!tg && !tl) return null;
+    var rif=cv.contrattoTs||cv.createdAt||0;
+    var quando=function(a){
+      var t=0;
+      try{ var d=String(a.dataCarico||'').split('-'); if(d.length===3) t=new Date(+d[0],+d[1]-1,+d[2]).getTime(); }catch(e){}
+      return t || a.createdAt || 0;
+    };
+    var trovato=null;
+    ml.forEach(function(a){
+      if(!a || trovato) return;
+      if(cv.autoId && a.id===cv.autoId) return;          /* e' l'auto venduta, non la permuta */
+      var stesso=(tg && norm(a.targa)===tg) || (tl && norm(a.telaio)===tl);
+      if(!stesso) return;
+      if(a.origine==='permuta'){ trovato=a; return; }
+      /* Stessa targa ma di un'altra epoca: e' un veicolo che avevamo venduto
+         tempo fa, non questa permuta. Si guarda la data di carico. */
+      if(!rif){ trovato=a; return; }
+      if(quando(a) >= (rif - 45*86400000)) trovato=a;
+    });
+    return trovato;
+  }catch(e){ return null; }
+}
+/* Allinea da sola le permute che risultano gia' a magazzino: passano tra le
+   "Entrate" senza che nessuno debba ricordarsi di premere niente. */
+function pmiSyncEntrate(){
+  try{
+    if(typeof cvLoad!=='function' || typeof mzLoad!=='function') return 0;
+    var list=cvLoad(), ml=mzLoad(), cambiati=[];
+    list.forEach(function(cv){
+      var pm=cv&&cv.permuta; if(!pmiHasData(pm)) return;
+      if(!cv.isContratto || cv.permutaOn===false) return;
+      if(pm.permutaStato && pm.permutaStato!=='da_gestire') return;
+      if(cv.origine==='sicom' || cv.origine==='sicom_prev') return;
+      var auto=pmiGiaInMagazzino(cv, ml); if(!auto) return;
+      pm.permutaStato='entrata';
+      pm.magazzinoId=auto.id;
+      pm.entrataTs=pm.entrataTs||auto.createdAt||Date.now();
+      if(!pm.regimeIva) pm.regimeIva=auto.ivaEsposta?'esposta':'margine';
+      cv.updatedAt=Date.now();
+      cambiati.push(cv);
+      try{ if(typeof pmMarcaDaContratto==='function') pmMarcaDaContratto(pm.periziaId, 'entrata', auto.id); }catch(e){}
+    });
+    if(cambiati.length){
+      cvSave(list);
+      if(typeof supaUpsert==='function') cambiati.forEach(function(cv){ try{ supaUpsert('preventivi', cv); }catch(e){} });
+    }
+    return cambiati.length;
+  }catch(e){ return 0; }
+}
+/* Segnalazione a mano, per i casi che il controllo automatico non riesce a
+   collegare (targa scritta diversa, veicolo gia' rivenduto, ecc.). */
+function pmiSegnaGiaEntrata(cvId){
+  var list=(typeof cvLoad==='function')?cvLoad():[];
+  var i=list.findIndex(function(x){ return x.id===cvId; }); if(i<0) return;
+  var cv=list[i];
+  var auto=pmiGiaInMagazzino(cv);
+  var msg = auto
+    ? ('Il veicolo risulta gi\u00e0 a magazzino:\n\n'+(((auto.marca||'')+' '+(auto.modello||'')).trim()+(auto.targa?(' \u00b7 '+auto.targa):''))+'\n\nSegno questa permuta come GI\u00c0 ENTRATA? Non verr\u00e0 creata nessuna scheda nuova.')
+    : 'Segnare questa permuta come GI\u00c0 ENTRATA in magazzino?\n\nNon verr\u00e0 creata nessuna scheda e non verr\u00e0 toccato il registro di carico.\nUsalo solo se il veicolo \u00e8 gi\u00e0 in archivio.';
+  if(!confirm(msg)) return;
+  cv.permuta=cv.permuta||{};
+  cv.permuta.permutaStato='entrata';
+  if(auto){ cv.permuta.magazzinoId=auto.id; if(!cv.permuta.regimeIva) cv.permuta.regimeIva=auto.ivaEsposta?'esposta':'margine'; }
+  cv.permuta.entrataTs=cv.permuta.entrataTs||Date.now();
+  cv.permuta.ingressoManuale=true;
+  cv.updatedAt=Date.now();
+  cvSave(list);
+  if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  try{ if(typeof pmMarcaDaContratto==='function') pmMarcaDaContratto(cv.permuta.periziaId, 'entrata', auto?auto.id:null); }catch(e){}
+  try{ pmiRender(); }catch(e){}
+  try{ if(typeof mzRender==='function') mzRender(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Permuta segnata come gi\u00e0 entrata',true);
+}
 function pmiList(){
   var out=[]; ((typeof cvLoad==='function')?cvLoad():[]).forEach(function(cv){
     var pm=cv.permuta; if(!pmiHasData(pm)) return;
@@ -15939,12 +16087,14 @@ function pmiList(){
   return out;
 }
 function pmiCardsHTML(){
+  try{ pmiSyncEntrate(); }catch(e){}
   var list=pmiList();
   if(!list.length) return '';
   return list.map(pmiCard).join('');
 }
 function pmiRender(){
   var wrap=document.getElementById('pmi-lista'); if(!wrap) return;
+  try{ pmiSyncEntrate(); }catch(e){}
   var fb=document.getElementById('pmi-filtri');
   if(fb){ var opts=[['da_gestire','Da gestire'],['entrata','Entrate'],['esportata','Esportate']];
     fb.innerHTML=opts.map(function(o){ var on=_pmiFiltro===o[0]; return '<button onclick="pmiFiltro(\''+o[0]+'\')" style="padding:7px 12px;border-radius:20px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+o[1]+'</button>'; }).join('');
@@ -15965,6 +16115,7 @@ function pmiCard(cv){
       azioni='<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">'
         +'<button onclick="pmiConfermaIngresso(\''+cv.id+'\')" style="flex:1;min-width:150px;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Conferma ingresso</button>'
         +'<button onclick="pmiExport(\''+cv.id+'\')" style="flex:1;min-width:120px;padding:11px;border-radius:8px;border:1px solid #dc2626;background:#fff;color:#dc2626;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udce4 Export</button>'
+        +'<button onclick="pmiSegnaGiaEntrata(\''+cv.id+'\')" title="Il veicolo \u00e8 gi\u00e0 tra le disponibili: toglila da qui senza creare una seconda scheda" style="flex:1;min-width:150px;padding:11px;border-radius:8px;border:1px solid #64748b;background:#f8fafc;color:#475569;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udd17 Gi\u00e0 a magazzino</button>'
         +'</div>';
     } else if(stato==='entrata'){
       var _rg = pm.regimeIva ? ('<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:9px;margin-left:6px;'+(pm.regimeIva==='esposta'?'background:#fff7ed;color:#9a3412;':'background:#f1f5f9;color:#475569;')+'">'+(pm.regimeIva==='esposta'?'\ud83e\uddfe IVA ESPOSTA':'Art. 36 \u2014 MARGINE')+'</span>') : '';
@@ -16029,6 +16180,24 @@ function pmiConfermaIngresso(cvId){
   if(!confirm('Confermare l\'INGRESSO di questa permuta?\n\nIl veicolo entra nel magazzino (disponibile) e nel registro di carico/scarico.')) return;
   var list=(typeof cvLoad==='function')?cvLoad():[]; var idx=list.findIndex(function(x){return x.id===cvId;}); if(idx<0) return; var cv=list[idx];
   var pm=cv.permuta||{};
+  /* Il veicolo c'e' gia': una seconda scheda vorrebbe dire doppio carico nel
+     registro e doppio valore di magazzino. Si collega e basta. */
+  var _gia=pmiGiaInMagazzino(cv);
+  if(_gia){
+    alert('Questa permuta risulta GI\u00c0 in magazzino:\n\n'+(((_gia.marca||'')+' '+(_gia.modello||'')).trim()+(_gia.targa?(' \u00b7 '+_gia.targa):''))+'\n\nNon viene creata una seconda scheda: la permuta passa tra le \u00ab Entrate \u00bb.');
+    cv.permuta=cv.permuta||{};
+    cv.permuta.permutaStato='entrata';
+    cv.permuta.magazzinoId=_gia.id;
+    cv.permuta.entrataTs=cv.permuta.entrataTs||Date.now();
+    if(!cv.permuta.regimeIva) cv.permuta.regimeIva=_gia.ivaEsposta?'esposta':'margine';
+    cv.updatedAt=Date.now();
+    cvSave(list);
+    if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+    try{ if(typeof pmMarcaDaContratto==='function') pmMarcaDaContratto(cv.permuta.periziaId, 'entrata', _gia.id); }catch(e){}
+    try{ pmiRender(); }catch(e){}
+    try{ if(typeof mzRender==='function') mzRender(); }catch(e){}
+    return;
+  }
   var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
   var full=(pm.modello||'').trim(); var sp=full.indexOf(' '); var marca=sp>0?full.slice(0,sp):full; var modello=sp>0?full.slice(sp+1):'';
   var oggi=new Date().toISOString().slice(0,10);
@@ -16070,6 +16239,10 @@ function pmiConfermaIngresso(cvId){
   if(typeof mzLoad==='function'){ var ml=mzLoad(); ml.push(auto); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(auto); }
   cv.permuta.permutaStato='entrata'; cv.permuta.magazzinoId=auto.id; cv.permuta.entrataTs=Date.now();
   cv.permuta.regimeIva=_scelta; cv.updatedAt=Date.now();
+  /* Il veicolo e' entrato: la perizia non ha piu' niente da fare in
+     "In ingresso" e ci si sposta da sola tra le concluse. */
+  if(periziaId) cv.permuta.periziaId=periziaId;
+  try{ pmMarcaDaContratto(periziaId||cv.permuta.periziaId, 'entrata', auto.id); }catch(e){}
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
   pmiRender();
   /* La stessa lista compare anche nella scheda Permute del magazzino: senza
@@ -16086,6 +16259,7 @@ function pmiExport(cvId){
   var list=(typeof cvLoad==='function')?cvLoad():[]; var idx=list.findIndex(function(x){return x.id===cvId;}); if(idx<0) return; var cv=list[idx];
   cv.permuta=cv.permuta||{}; cv.permuta.permutaStato='esportata'; cv.permuta.esportataTs=Date.now();
   cv.permutaOn=false;
+  try{ pmMarcaDaContratto(cv.permuta.periziaId, 'esportata', null); }catch(e){}
   var rimosso=0;
   if(cv.pagamenti){ cv.pagamenti=cv.pagamenti.filter(function(p){ if(/permuta/i.test(p.metodo||'')){ rimosso+=cvNum(p.importo); return false; } return true; }); }
   /* Il valore riconosciuto per la permuta resta dovuto: diventa un pagamento
