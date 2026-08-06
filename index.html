@@ -14460,31 +14460,103 @@ function mzCapitaleMostra(el){
 
 function mzFiltro(s){ _mzFiltro=s; window._mzLim=60; mzRenderFiltri(); mzRender(); }
 
+/* SheetJS solo quando serve davvero (l'export rimanenze). Non tira dentro
+   HyperFormula come simLoadLibs: qui servono solo le celle. */
+function mzLoadXlsx(cb){
+  if(typeof XLSX!=='undefined'){ cb(true); return; }
+  try{
+    var sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload=function(){ cb(typeof XLSX!=='undefined'); };
+    sc.onerror=function(){ cb(false); };
+    document.head.appendChild(sc);
+  }catch(e){ cb(false); }
+}
+function mzScaricaBlob(blob,nome){
+  var url=URL.createObjectURL(blob);
+  var el=document.createElement('a'); el.href=url; el.download=nome;
+  document.body.appendChild(el); el.click(); document.body.removeChild(el);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+}
 function mzExportInventario(cat){
   if(!mzPuoPrezzoAcq()){ alert('Export riservato ad amministratore e contabilità.'); return; }
   var all=(typeof mzLoad==='function')?mzLoad():[];
   var rows=all.filter(function(a){
-    if(a&&a.nlt) return false;   /* non e' merce nostra: fuori dall'inventario */
+    if(!a || a.nlt) return false;                                  /* noleggio LT: non e' merce nostra */
+    if(!(a.stato==='disponibile' && !a.impegnata)) return false;   /* rimanenze = solo la giacenza reale */
     if(cat==='estere') return a.estera===true;
     if(cat==='aziendali') return a.estera!==true && a.ivaEsposta===true;
-    return a.estera!==true && a.ivaEsposta!==true; // art36 (margine)
+    return a.estera!==true && a.ivaEsposta!==true;                 /* art.36 (margine) */
   });
-  var idCol = (cat==='estere') ? 'Telaio' : 'Targa';
-  var idVal = function(a){ return (cat==='estere') ? (a.telaio||'') : (a.targa||''); };
-  var lines=[['Quantità','Marca','Modello',idCol,'Prezzo acquisto']];
-  rows.forEach(function(a){ lines.push([1,(a.marca||''),(a.modello||''),idVal(a),(a.prezzoAcq||'')]); });
-  var totPrezzo=rows.reduce(function(s,a){var n=parseFloat(a.prezzoAcq);return s+(isNaN(n)?0:n);},0);
-  lines.push([]); lines.push([rows.length,'TOTALE','','',Math.round(totPrezzo*100)/100]);
-  var csv=lines.map(function(r){ return r.map(function(c){ var s=String(c==null?'':c); if(/[";\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"'; return s; }).join(';'); }).join('\r\n');
-  var nomi={aziendali:'Aziendali_IVA_esposta',estere:'Estere',art36:'Art36_margine'};
-  try{
-    var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
-    var url=URL.createObjectURL(blob);
-    var el=document.createElement('a'); el.href=url; el.download='Inventario_'+(nomi[cat]||cat)+'_'+new Date().toISOString().slice(0,10)+'.csv';
-    document.body.appendChild(el); el.click(); document.body.removeChild(el);
-    setTimeout(function(){ URL.revokeObjectURL(url); },1500);
-    if(typeof tcToastNew==='function') tcToastNew('⬇️ Inventario '+((nomi[cat]||cat).replace(/_/g,' '))+' scaricato ('+rows.length+' veicoli)',true);
-  }catch(e){ alert('Errore export: '+e); }
+  if(!rows.length){ alert('Nessun veicolo disponibile in questa categoria.'); return; }
+  rows.sort(function(x,y){
+    return (((x.marca||'')+' '+(x.modello||'')).trim()).localeCompare(((y.marca||'')+' '+(y.modello||'')).trim(),'it');
+  });
+
+  var titoli={aziendali:'IVA ESPOSTA',estere:'ESTERE',art36:'ART. 36'};
+  var nomi={aziendali:'IVA_esposta',estere:'Estere',art36:'Art36'};
+  var d=new Date(), z=function(n){ return (n<10?'0':'')+n; };
+  var dataIt=z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear();
+  var dataFile=d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());
+  var nomeFile='Rimanenze_'+(nomi[cat]||cat)+'_'+dataFile;
+
+  var desc=function(a){
+    var id=(cat==='estere')
+      ? ((a.telaio||'')?('TELAIO '+String(a.telaio)):'')
+      : ((a.targa||'')?('TARGA '+String(a.targa)):'');
+    return ((a.marca||'')+' '+(a.modello||'')+' '+id).replace(/\s+/g,' ').trim().toUpperCase();
+  };
+  var prezzo=function(a){ var n=parseFloat(a.prezzoAcq); return isNaN(n)?0:n; };
+  var tot=Math.round(rows.reduce(function(s,a){ return s+prezzo(a); },0)*100)/100;
+
+  var aoa=[];
+  aoa.push(['']);
+  aoa.push(['RIMANENZE FINALI AL '+dataIt+' '+(titoli[cat]||'')]);
+  aoa.push(['']);
+  aoa.push(['']);
+  aoa.push(['Quantità','Merce - Materia Prima - Servizi in corso di esecuzione','Costo Unitario','Totale Costo in €']);
+  rows.forEach(function(a){ aoa.push([1, desc(a), '', prezzo(a)]); });
+  aoa.push(['']);
+  aoa.push(['','Totale Rimanenze al '+dataIt,'',tot]);
+
+  var fine=function(){
+    if(typeof tcToastNew==='function')
+      tcToastNew('⬇️ Rimanenze '+(titoli[cat]||cat)+' · '+rows.length+' veicoli · '+tot.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €',true);
+  };
+  /* Ripiego se la libreria non si carica (offline): stesso identico foglio in CSV. */
+  var salvaCsv=function(){
+    try{
+      var csv=aoa.map(function(r){
+        return r.map(function(c){
+          var s=(typeof c==='number')?String(c).replace('.',','):String(c==null?'':c);
+          if(/[";\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
+          return s;
+        }).join(';');
+      }).join('\r\n');
+      mzScaricaBlob(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}), nomeFile+'.csv');
+      fine();
+    }catch(e){ alert('Errore export: '+e); }
+  };
+
+  mzLoadXlsx(function(ok){
+    if(!ok){ salvaCsv(); return; }
+    try{
+      var ws=XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols']=[{wch:10},{wch:58},{wch:14},{wch:18}];
+      ws['!merges']=[{s:{r:1,c:0},e:{r:1,c:3}}];
+      var rng=XLSX.utils.decode_range(ws['!ref']);
+      for(var R=5;R<=rng.e.r;R++){
+        var cq=ws[XLSX.utils.encode_cell({r:R,c:0})];
+        if(cq && typeof cq.v==='number') cq.z='0.00';
+        var cp=ws[XLSX.utils.encode_cell({r:R,c:3})];
+        if(cp && typeof cp.v==='number') cp.z='#,##0.00\\ "€"';
+      }
+      var wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,'RIMANENZE_FINALI');
+      XLSX.writeFile(wb,nomeFile+'.xlsx');
+      fine();
+    }catch(e){ salvaCsv(); }
+  });
 }
 function mzSyncVendute(){
   /* Self-healing: ogni contratto CONSEGNATO deve avere la sua auto marcata 'venduta'.
