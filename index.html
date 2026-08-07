@@ -21703,6 +21703,36 @@ function ivNuovo(clienteKey, nomeCliente, veicolo){
   return rec.id;
 }
 
+/* Un intervento aperto per sbaglio, o con la proforma gia' generata su dati
+   sbagliati, deve poter sparire. Non si cancella davvero la riga: si mette
+   la lapide (deleted) e la si manda anche al cloud, altrimenti un altro
+   dispositivo con la copia vecchia la rimanderebbe su. */
+function ivElimina(id){
+  var rec=ivById(id);
+  if(!rec){ alert('Intervento non trovato.'); return; }
+  var f=rec.fatturaTag||{};
+  var che=(rec.cliente||'')+(rec.veicolo?(' \u00b7 '+rec.veicolo):'');
+  var msg='Eliminare questo intervento?\n\n'+che;
+  if(f.numero){
+    msg+='\n\n\u26a0\ufe0f La proforma n. '+f.numero+'/'+f.anno+' e\' gia\' stata generata.'
+      +'\nEliminando l\'intervento sparisce anche quella, e il numero '+f.numero+' resta saltato nella serie.';
+  }
+  msg+='\n\nL\'operazione non si annulla.';
+  if(!confirm(msg)) return;
+
+  var l=ivLoad().slice(), i=l.findIndex(function(x){ return x && x.id===id; });
+  if(i<0) return;
+  l[i].deleted=true;
+  l[i].deletedAt=Date.now();
+  l[i].updatedAt=Date.now();
+  ivSave(l);
+  try{ ivSupaUpsert(l[i]); }catch(e){}
+
+  try{ if(typeof tgChiudiModal==='function') tgChiudiModal(); }catch(e){}
+  try{ if(typeof clRender==='function' && document.getElementById('cl-dettaglio')) clRender(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\ud83d\uddd1\ufe0f Intervento eliminato',true);
+}
+
 function tgById(id){
   if(String(id||'').indexOf('iv_')===0) return ivById(id);
   try{ return (typeof ccLoad==='function'?ccLoad():[]).filter(function(c){ return c.id===id; })[0]; }catch(e){ return null; }
@@ -21890,6 +21920,11 @@ function tgRender(){
   h+='</div>';
   h+='<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
     +'<button onclick="tgChiudiModal()" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    /* Solo sugli interventi veri: un appuntamento si cancella dal calendario,
+       non da qui. */
+    + (String(_tgId||'').indexOf('iv_')===0
+        ? '<button onclick="ivElimina(\''+_tgId+'\')" title="Elimina l\'intero intervento" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-weight:700;cursor:pointer;">\ud83d\uddd1\ufe0f Elimina</button>'
+        : '')
     + (f.numero ? '' : '<button onclick="tgGenera()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\uD83E\uDDFE Genera fattura</button>')
     +'</div></div>';
   m.innerHTML=h;
@@ -21965,7 +22000,7 @@ function tgStampa(id){
   +'.lab{font-size:6.5px;font-weight:bold;display:block;color:#000;} .big{font-weight:bold;font-size:11px;}'
   +'.nob td{border:none;} .c{text-align:center;} .r{text-align:right;}'
   +'.hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;}'
-  +'.az{font-size:13px;font-weight:bold;} .azs{font-size:8px;font-weight:normal;line-height:1.4;}'
+  +'.az{font-size:17px;font-weight:bold;} .azs{font-size:10.5px;font-weight:normal;line-height:1.5;}'
   +'.ft{font-size:6.5px;margin-top:8px;line-height:1.5;border-top:1px solid #999;padding-top:4px;}'
   +'html{height:100%;} body{margin:0;}'
   +'.foglio{display:flex;flex-direction:column;min-height:275mm;}'
@@ -21993,8 +22028,8 @@ function tgStampa(id){
   +'<div style="font-size:16px;margin-bottom:6px;">Fattura proforma</div>'
   +'<table class="nob" style="width:auto;"><tr><td style="padding-right:22px;"><span class="lab">Data documento</span><span class="big">'+E((f.data||'').split('-').reverse().join('/'))+'</span></td>'
   +'<td><span class="lab">Documento Nr.</span><span class="big">'+E(f.numero)+'/'+E(f.anno)+'</span></td></tr></table>'
-  +'<div style="margin-top:8px;font-size:8px;">Spettabile</div>'
-  +'<div class="big">'+E(f.nome||'')+'</div><div style="font-size:9px;">'+E(f.indirizzo||'')+'</div>'
+  +'<div style="margin-top:8px;font-size:9px;">Spettabile</div>'
+  +'<div class="big" style="font-size:14px;">'+E(f.nome||'')+'</div><div style="font-size:11px;line-height:1.4;">'+E(f.indirizzo||'')+'</div>'
   +'</div></div>'
   +'<table><tr><td colspan="3"><span class="lab">Num. Telaio</span>'+E(f.telaio||'')+'</td>'
   +'<td colspan="2"><span class="lab">Modello</span>'+E(f.modello||'')+'</td>'
@@ -27745,6 +27780,37 @@ function crmAssBase(cv){
   var t=+(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0);
   return (t>946684800000)?t:0;    /* successiva al 01/01/2000 */
 }
+/* La scadenza polizza e' calcolata dalla consegna piu' i mesi di durata:
+   il mese ci azzecca, il giorno preciso quasi mai (decorrenza reale,
+   sospensioni, frazionamenti). Scriverlo al cliente e' un modo per farsi
+   correggere. Al mese e all'anno invece si crede. */
+var CRM_MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+function crmMeseAnno(ts){
+  if(!ts) return '\u2014';
+  var d=new Date(ts);
+  if(isNaN(d.getTime())) return '\u2014';
+  return CRM_MESI[d.getMonth()]+' '+d.getFullYear();
+}
+
+/* Stesso testo del WhatsApp, mandato per email a chi il telefono non ce l'ha
+   o preferisce cosi'. */
+function crmMailSend(email, tab, nome, extra, oggetto){
+  if(!email){ alert('Questo contatto non ha un indirizzo email.'); return; }
+  var d={ nome:(String(nome||'').split(' ')[0])||String(nome||''), auto:extra||'', scadenza:extra||'' };
+  var tmpl=(typeof waMsgGet==='function')?waMsgGet(tab):'';
+  var testo=(typeof waFill==='function')?waFill(tmpl,d):tmpl;
+  if(!String(testo||'').trim()){ alert('Il messaggio per questa sezione e\' vuoto: scrivilo nel riquadro qui sopra e salvalo.'); return; }
+  var corpo=testo+'\n\n\u2014\nEuropa Auto S.r.l.\nVia Nigra 4, Paderno Dugnano (MI)\nTel. 02 9181820';
+  window.open('mailto:'+encodeURIComponent(email)
+    +'?subject='+encodeURIComponent(oggetto||'Europa Auto')
+    +'&body='+encodeURIComponent(corpo), '_blank');
+}
+function crmMailBtn(email, tab, nome, extra, oggetto, label){
+  if(!email) return '';
+  var jq=function(x){ return "'"+String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
+  return '<button onclick="crmMailSend('+jq(email)+','+jq(tab)+','+jq(nome)+','+jq(extra)+','+jq(oggetto)+')" style="margin-top:8px;margin-right:8px;padding:8px 12px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\u2709\ufe0f '+(label||'Email')+'</button>';
+}
+
 function crmRenderAssic(){
   var edit=crmWaEditor('assicurazioni','Messaggio rinnovo assicurazione WhatsApp','{nome} {scadenza}');
   var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.assicOn && x.statoVendita==='consegnato';});
@@ -27781,8 +27847,9 @@ function crmRenderAssic(){
   ass.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var scad=cv._gg<40;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(scad?'border-left:4px solid #d97706;':'')+'">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div></div>'
-      +'<div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Scadenza</div><div style="font-weight:800;color:'+(scad?'#d97706':'#1a4fa0')+';">'+crmDMY(cv._scad)+'</div><div style="font-size:11px;color:'+(cv._gg<0?'#dc2626':'#94a3b8')+';">'+(cv._gg<0?'scaduta':('tra '+cv._gg+' gg'))+'</div></div></div>'
-      +crmWaBtn((cl.telefono||''),'assicurazioni',(cl.nome||''),crmDMY(cv._scad),'Ricorda rinnovo')
+      +'<div style="text-align:right;"><div style="font-size:11px;color:#94a3b8;">Scadenza</div><div style="font-weight:800;color:'+(scad?'#d97706':'#1a4fa0')+';">'+crmMeseAnno(cv._scad)+'</div><div style="font-size:11px;color:'+(cv._gg<0?'#dc2626':'#94a3b8')+';">'+(cv._gg<0?'scaduta':('tra '+cv._gg+' gg'))+'</div><div style="font-size:10px;color:#cbd5e1;">stimata dal '+crmDMY(cv._scad)+'</div></div></div>'
+      +crmWaBtn((cl.telefono||''),'assicurazioni',(cl.nome||''),crmMeseAnno(cv._scad),'Ricorda rinnovo')
+      +crmMailBtn((cl.email||''),'assicurazioni',(cl.nome||''),crmMeseAnno(cv._scad),'Rinnovo polizza \u2014 Europa Auto','Email')
       +'</div>';
   });
   return h;
