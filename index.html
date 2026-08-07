@@ -11793,11 +11793,51 @@ document.addEventListener('DOMContentLoaded',function(){
     }catch(e){}
   }
   function ccProprietario(autoId){ ccIdxProprietari(); var p=_ccProp&&_ccProp[autoId]; return p?p.nome:''; }
+  /* Come compare un veicolo nell'elenco: "MARCA MODELLO - TARGA \u00b7 PROPRIETARIO". */
+  function ccEtichettaAuto(a){
+    var lab=((a.marca||'')+' '+(a.modello||'')).trim()
+      +(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):'')));
+    var pr=ccProprietario(a.id); if(pr) lab+=' \u00b7 '+pr;
+    return lab;
+  }
+  /* Le vendute restano cercabili solo se consegnate da noi: servono per i tagliandi. */
+  function ccVeicoliUtili(){
+    try{
+      if(typeof mzLoad!=='function') return [];
+      ccIdxProprietari();
+      return mzLoad().filter(function(a){
+        if(!a) return false;
+        if(a.stato!=='venduta') return true;
+        return !!ccProprietario(a.id);
+      });
+    }catch(e){ return []; }
+  }
+  /* "ROSSI MARIO" e "Mario Rossi" sono la stessa persona: si confronta per
+     parole, non lettera per lettera. */
+  function ccStessoNome(a,b){
+    var pulisci=function(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9\u00e0-\u00ff ]/g,' ').replace(/\s+/g,' ').trim().split(' ').filter(Boolean).sort().join(' '); };
+    var pa=pulisci(a), pb=pulisci(b);
+    return !!pa && pa===pb;
+  }
+  /* Le auto intestate a quel cliente, i contratti prima dei preventivi. */
+  function ccAutoDelCliente(nome){
+    var out=[];
+    try{
+      if(!nome) return out;
+      ccIdxProprietari();
+      ccVeicoliUtili().forEach(function(a){
+        var pr=_ccProp&&_ccProp[a.id];
+        if(pr && pr.nome && ccStessoNome(pr.nome, nome)) out.push({auto:a, contratto:!!pr.contratto});
+      });
+      out.sort(function(x,y){ return (y.contratto?1:0)-(x.contratto?1:0); });
+    }catch(e){}
+    return out.map(function(o){ return o.auto; });
+  }
   function ccPopolaSuggerimenti(){
     try{
       try{ ccNotaSugg(); }catch(e){}
       var vl=document.getElementById('cc-veicoli-list');
-      if(vl && typeof mzLoad==='function'){ ccIdxProprietari(); vl.innerHTML=mzLoad().filter(function(a){ if(!a) return false; if(a.stato!=='venduta') return true; /* le vendute restano cercabili se sono state consegnate da noi: servono per i tagliandi */ return !!ccProprietario(a.id); }).map(function(a){ var lab=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):''))); var _pr=ccProprietario(a.id); if(_pr) lab+=' \u00b7 '+_pr; return '<option value="'+ccEsc(lab)+'"></option>'; }).join(''); }
+      if(vl && typeof mzLoad==='function'){ ccIdxProprietari(); vl.innerHTML=ccVeicoliUtili().map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a))+'"></option>'; }).join(''); }
       var cl=document.getElementById('cc-clienti-list');
       if(cl && typeof clAggrega==='function'){ var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join(''); }
     }catch(e){}
@@ -11808,7 +11848,34 @@ document.addEventListener('DOMContentLoaded',function(){
       var lista=clAggrega();
       var match=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim()===v; })[0];
       if(!match){ var pref=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim().indexOf(v)===0; }); if(pref.length===1) match=pref[0]; }
-      if(match){ var c=(match.cliente)?match.cliente:match; var em=document.getElementById('cc-email'), te=document.getElementById('cc-tel'); if(em && c.email) em.value=c.email; if(te && (c.telefono||c.tel)) te.value=(c.telefono||c.tel); }
+      if(match){
+        var c=(match.cliente)?match.cliente:match;
+        var em=document.getElementById('cc-email'), te=document.getElementById('cc-tel');
+        if(em && c.email) em.value=c.email;
+        if(te && (c.telefono||c.tel)) te.value=(c.telefono||c.tel);
+        /* Scelto il cliente si tira su anche la sua auto: prima bisognava
+           ricordarsi targa e modello e riscriverli a mano nel campo sopra. */
+        try{
+          var auto=ccAutoDelCliente(ccNomeCliente(match));
+          if(auto.length){
+            var ve=document.getElementById('cc-veicolo');
+            var vl=document.getElementById('cc-veicoli-list');
+            /* Le sue auto in cima all'elenco, tutte le altre restano sotto:
+               niente viene tolto, cambia solo l'ordine. */
+            if(vl){
+              var suoi={}; auto.forEach(function(a){ suoi[a.id]=1; });
+              var resto=ccVeicoliUtili().filter(function(a){ return !suoi[a.id]; });
+              vl.innerHTML=auto.concat(resto).map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a))+'"></option>'; }).join('');
+            }
+            /* Una sola auto: si compila da sola. Piu' di una: si lascia
+               scegliere, senza sovrascrivere quello che e' gia' scritto. */
+            if(ve && !String(ve.value||'').trim()){
+              if(auto.length===1) ve.value=ccEtichettaAuto(auto[0]);
+              else ve.placeholder=auto.length+' auto del cliente \u2014 tocca qui';
+            }
+          }
+        }catch(_e){}
+      }
     }catch(e){}
   }
   var _ccEditId = null;
@@ -12865,7 +12932,21 @@ function sinPanelSoldi(s, st){
   if(hasConc){
     var ric=!!s.dataRicezione;
     html+='<div style="padding:10px 12px;background:'+(ric?'#f0fdf4':'#f8fafc')+';'+(hasIntegr?'border-bottom:1px solid #eef2f7;':'')+'">';
-    html+='<div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:#64748b;">CONCORDATO</span><span style="font-size:17px;font-weight:800;color:#15803d;">€ '+sinFmtEuro(s.importoConcordato)+'</span></div>';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+      +'<span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:#64748b;">CONCORDATO</span>'
+      +'<span style="display:flex;align-items:center;gap:6px;">'
+      +'<span style="font-size:17px;font-weight:800;color:#15803d;">€ '+sinFmtEuro(s.importoConcordato)+'</span>'
+      +'<button onclick="sinModificaConcordato(\''+s.id+'\')" title="Correggi l\'importo: l\'assicurazione ha liquidato meno per franchigia o scoperto" style="flex:0 0 auto;padding:3px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">✏️</button>'
+      +'</span></div>';
+    /* Se l'importo e' stato corretto si tiene sotto gli occhi da dove si
+       partiva e quanto ha trattenuto l'assicurazione. */
+    var _prec=(s.storicoConcordato&&s.storicoConcordato.length)?s.storicoConcordato[0].importo:null;
+    if(_prec!=null){
+      var _dif=(parseFloat(s.importoConcordato)||0)-(parseFloat(_prec)||0);
+      html+='<div style="font-size:11px;color:#94a3b8;margin-top:4px;">concordato iniziale € '+sinFmtEuro(_prec)
+        +' · <b style="color:'+(_dif<0?'#b91c1c':'#15803d')+';">'+(_dif<0?'−':'+')+' € '+sinFmtEuro(Math.abs(_dif))+'</b>'
+        +(s.concordatoMotivo?(' · '+sinEsc(s.concordatoMotivo)):'')+'</div>';
+    }
     html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;"><span style="font-size:12px;font-weight:700;color:'+(ric?'#16a34a':'#94a3b8')+';">'+(ric?'✅ Ricevuto il':'Ricevuto il')+'</span>'+dInput('dataRicezione',s.dataRicezione)+'</div>';
     html+=fcBottone(s);
     html+='</div>';
@@ -12887,6 +12968,46 @@ function sinPanelSoldi(s, st){
   return html;
 }
 
+/* L'importo concordato col perito non e' l'ultima parola: l'assicurazione
+   applica scoperti e franchigie e liquida meno. Prima il campo spariva appena
+   la pratica passava al saldo e non c'era piu' modo di correggerlo. */
+function sinModificaConcordato(id){
+  var list=sinLoad(); var idx=list.findIndex(function(x){ return x.id===id; }); if(idx<0) return;
+  var s=list[idx];
+  var attuale=(s.importoConcordato!=null && s.importoConcordato!=='')?s.importoConcordato:'';
+  var msg='Importo concordato attuale: \u20ac '+sinFmtEuro(attuale)
+    +'\n\nScrivi il nuovo importo, cio\u00e8 quello effettivamente liquidato dall\'assicurazione.';
+  if(s.fatturaCarr && s.fatturaCarr.numero){
+    msg+='\n\n\u26a0\ufe0f La fattura n. '+s.fatturaCarr.numero+'/'+s.fatturaCarr.anno
+      +' \u00e8 gi\u00e0 stata emessa su questo importo: dopo la modifica va annullata e rigenerata.';
+  }
+  var v=prompt(msg, String(attuale));
+  if(v===null) return;
+  var n=sinLeggiImporto(v);
+  if(n==null || n<=0){ alert('Importo non valido.'); return; }
+  var motivo=prompt('Motivo della differenza (facoltativo):', s.concordatoMotivo||'Franchigia / scoperto assicurazione');
+  if(motivo===null) motivo=s.concordatoMotivo||'';
+  var prec=sinLeggiImporto(s.importoConcordato);
+  if(prec!=null && prec===n && String(motivo)===String(s.concordatoMotivo||'')) return;
+  s.storicoConcordato=s.storicoConcordato||[];
+  /* Il primo elemento resta sempre l'importo di partenza. */
+  if(prec!=null) s.storicoConcordato.push({importo:prec, ts:Date.now()});
+  s.importoConcordato=n;
+  s.concordatoMotivo=String(motivo||'').trim();
+  s.concordatoModificatoAt=Date.now();
+  sinSave(list); if(typeof sinPush==='function') sinPush(s);
+  if(typeof sinRender==='function') sinRender();
+  if(typeof tcToastNew==='function') tcToastNew('\u270f\ufe0f Concordato aggiornato a \u20ac '+sinFmtEuro(n),true);
+}
+/* Accetta sia 1234.56 sia 1.234,56 sia "1234,56 \u20ac". */
+function sinLeggiImporto(v){
+  if(v==null || v==='') return null;
+  var t=String(v).replace(/[\s\u20ac]/g,'');
+  if(t.indexOf(',')>=0 && t.indexOf('.')>=0) t=t.replace(/\./g,'').replace(',','.');
+  else if(t.indexOf(',')>=0) t=t.replace(',','.');
+  var n=parseFloat(t);
+  return isNaN(n)?null:Math.round(n*100)/100;
+}
 function sinVedePreventivo(){ try{ return getCurrentRole()!=='staff'; }catch(e){ return true; } }
 
 function sinNuovo(){ sinForm(null); }
