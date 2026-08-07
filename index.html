@@ -27191,6 +27191,273 @@ function crmWaBtn(tel, tab, nome, extra, label){
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   return '<button onclick="crmWaSend('+jq(tel)+','+jq(tab)+','+jq(nome)+','+jq(extra)+')" style="margin-top:8px;margin-right:8px;padding:8px 12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\ud83d\udcac '+(label||'WhatsApp')+'</button>';
 }
+/* ===================== OFFERTA PACCHETTO MANUTENZIONE =====================
+   Al cliente non si dice mai quanto costa il pacchetto: si mostra soltanto
+   di quanto cambia la rata. Lo sconto del 15% resta uno strumento interno,
+   serve a dare un motivo per decidere adesso.
+   Vale solo sui preventivi con finanziamento: il pacchetto entra
+   nell'importo finanziato e si spalma sulle rate.
+   ATTENZIONE: le stesse fasce sono scritte anche in vetrina.html. Se
+   cambiano i prezzi vanno cambiati in tutti e due i posti, altrimenti il
+   sito promette una rata e il contratto ne fa un'altra. */
+var PACC_FASCE = [
+  { max:1199, prezzo:1000 },
+  { max:1500, prezzo:1300 },
+  { max:2000, prezzo:1500 }
+];
+var PACC_SCONTO = 0.15;   /* sconto applicato solo in fase di chiusura */
+var PACC_ANNI   = 4;
+
+function paccPrezzo(cc){
+  var n = parseFloat(cc); if(!(n > 0)) return 0;
+  for(var i=0;i<PACC_FASCE.length;i++){ if(n <= PACC_FASCE[i].max) return PACC_FASCE[i].prezzo; }
+  return 0;   /* oltre 2000 cc il pacchetto non si fa */
+}
+
+/* Il tasso vero della pratica, ricavato dalla rata che il cliente ha gia'.
+   Meglio del TAN scritto nella nota: comprende spese e polizze incorporate,
+   quindi la rata che gli scriviamo e' quella che firmera' davvero. */
+function paccTassoMensile(capitale, nRate, rata){
+  var C=parseFloat(capitale), n=parseInt(nRate,10), R=parseFloat(rata);
+  if(!(C>0) || !(n>0) || !(R>0)) return null;
+  if(R*n <= C) return 0;                 /* tasso zero o dati incoerenti */
+  var rataCon=function(i){ return i<=0 ? C/n : C*i/(1-Math.pow(1+i,-n)); };
+  var lo=0, hi=0.05;                      /* fino al 5% al mese: abbondante */
+  for(var k=0;k<80;k++){
+    var mid=(lo+hi)/2;
+    if(rataCon(mid) < R) lo=mid; else hi=mid;
+  }
+  return (lo+hi)/2;
+}
+
+function paccDeltaRata(importo, nRate, i){
+  var n=parseInt(nRate,10); if(!(n>0)) return 0;
+  if(!(i>0)) return importo/n;
+  return importo * i / (1 - Math.pow(1+i,-n));
+}
+
+/* Il sabato successivo: la condizione non deve mai scadere di domenica,
+   quando siete chiusi e il cliente non puo' fare niente. */
+function paccScadenzaSabato(){
+  var d=new Date(); d.setHours(19,0,0,0);
+  var giorni=(6 - d.getDay() + 7) % 7;
+  if(giorni < 3) giorni += 7;            /* almeno tre giorni pieni */
+  d.setDate(d.getDate()+giorni);
+  return d;
+}
+
+/* Il preventivo giusto su cui fare l'offerta: aperto, non ancora contratto,
+   con un finanziamento gia' impostato. */
+function paccPreventivo(chiave){
+  try{
+    var l=(typeof cvLoad==='function')?cvLoad():[];
+    var buoni=l.filter(function(cv){
+      if(!cv || cv.isContratto || cv.statoVendita) return false;
+      if(cv.origine==='sicom' || cv.origine==='sicom_prev' || cv.origine==='sicom_ap') return false;
+      if(chiave && typeof crmKey==='function' && crmKey(cv.cliente||{})!==chiave) return false;
+      return !!(typeof eamRata==='function' && eamRata(cv));
+    });
+    buoni.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    return buoni[0]||null;
+  }catch(e){ return null; }
+}
+
+function paccCilindrata(cv){
+  var cc=0;
+  try{
+    cc=parseFloat((cv.autoSnapshot&&cv.autoSnapshot.cilindrata)||0);
+    if(!(cc>0) && cv.autoId && typeof mzLoad==='function'){
+      var a=mzLoad().filter(function(x){ return x && x.id===cv.autoId; })[0];
+      if(a) cc=parseFloat(a.cilindrata||0);
+    }
+  }catch(e){}
+  return cc>0?cc:0;
+}
+
+function paccEuro(n){
+  try{ return Number(n||0).toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0})+' \u20ac'; }
+  catch(e){ return String(Math.round(n||0))+' \u20ac'; }
+}
+
+function crmOffertaPacchetto(chiave, nome, tel){
+  var cv=paccPreventivo(chiave);
+  if(!cv){ alert('Nessun preventivo aperto con finanziamento per questo cliente.\n\nL\'offerta pacchetto si appoggia alla rata: senza finanziamento non c\'\u00e8 rata da ricalcolare.'); return; }
+
+  var cc=paccCilindrata(cv);
+  var pieno=paccPrezzo(cc);
+  if(!pieno){
+    alert(cc ? ('Cilindrata '+cc+' cc: sopra i 2000 cc il pacchetto non viene proposto.')
+             : 'Cilindrata non indicata sulla scheda dell\'auto: senza quella non so quale fascia applicare.');
+    return;
+  }
+
+  var fin=eamRata(cv);
+  var pg=(cv.pagamenti||[]).filter(function(x){ return (x.tipo==='Finanziamento')||/finanziamento/i.test(x.metodo||''); })[0]||{};
+  var capitale=parseFloat(pg.importo||0);
+  var i=paccTassoMensile(capitale, fin.rate, fin.rata);
+  var stimato=(i===null);
+  if(i===null){
+    /* Senza capitale non si ricava il tasso: si prova col TAN della nota,
+       altrimenti si divide e basta, avvisando. */
+    var tan=parseFloat(String(fin.tan||'').replace(',','.'));
+    i = (tan>0) ? (tan/100/12) : 0;
+  }
+
+  var scontato=Math.round(pieno*(1-PACC_SCONTO));
+  var delta=paccDeltaRata(scontato, fin.rate, i);
+  var rataDopo=fin.rata+delta;
+  var scad=paccScadenzaSabato();
+  var scadStr=('0'+scad.getDate()).slice(-2)+'/'+('0'+(scad.getMonth()+1)).slice(-2);
+
+  var arr=function(n){ return Math.round(n); };
+  var conferma='OFFERTA PACCHETTO MANUTENZIONE '+PACC_ANNI+' ANNI\n'
+    +'\nCliente: '+(nome||'')+'\nAuto: '+(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'')+' \u00b7 '+cc+' cc'
+    +'\n\nRata attuale:        '+arr(fin.rata)+' \u20ac su '+fin.rate+' rate'
+    +'\nRata col pacchetto:  '+arr(rataDopo)+' \u20ac   (+'+arr(delta)+' \u20ac al mese)'
+    +'\n\n--- solo per te, non finisce nel messaggio ---'
+    +'\nPacchetto a listino: '+paccEuro(pieno)
+    +'\nApplicato scontato:  '+paccEuro(scontato)+'  (\u221215%)'
+    +'\nMargine ceduto:      '+paccEuro(pieno-scontato)
+    +(stimato?'\n\n\u26a0 Importo finanziato non indicato sul pagamento: la rata e\' stimata.':'')
+    +'\n\nScadenza offerta: sabato '+scadStr
+    +'\n\nInvio il messaggio a '+(tel||'—')+'?';
+  if(!confirm(conferma)) return;
+
+  var primo=String(nome||'').trim().split(' ')[0]||'';
+  var auto=(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'la vettura');
+  var testo='Buongiorno '+primo+', per '+auto+' che ha valutato le riserviamo il pacchetto manutenzione '
+    +PACC_ANNI+' anni. La rata passa da '+arr(fin.rata)+' a circa '+arr(rataDopo)
+    +' \u20ac al mese e per '+PACC_ANNI+' anni non pensa pi\u00f9 ai tagliandi. '
+    +'Condizione valida fino a sabato '+scadStr+'. Europa Auto';
+
+  /* Resta scritto cosa e' stato proposto: fra tre settimane nessuno se lo
+     ricorda, e il cliente invece si'. */
+  try{
+    var l=cvLoad(), k=l.findIndex(function(x){ return x.id===cv.id; });
+    if(k>=0){
+      l[k].offertaPacchetto={ ts:Date.now(), cc:cc, pieno:pieno, scontato:scontato,
+        rataPrima:Math.round(fin.rata*100)/100, rataDopo:Math.round(rataDopo*100)/100,
+        scadenza:scad.getTime() };
+      l[k].updatedAt=Date.now();
+      cvSave(l);
+      if(typeof supaUpsert==='function') supaUpsert('preventivi', l[k]);
+    }
+  }catch(e){}
+
+  var t=(typeof crmWa==='function')?crmWa(tel):'';
+  if(t) window.open('https://wa.me/'+t+'?text='+encodeURIComponent(testo), '_blank');
+  else alert('Questo contatto non ha un numero di telefono.\n\nTesto pronto da copiare:\n\n'+testo);
+}
+
+/* ===================== LE OFFERTE DI CHIUSURA =====================
+   Se ne propone UNA sola: tre insieme fanno perdere forza a tutte e tre e
+   il cliente si mette a scegliere invece di decidere.
+   Per aggiungerne una basta una riga qui sotto:
+     id       codice interno
+     nome     come compare nel selettore
+     costo    quanto ti costa DAVVERO (lo vedi solo tu, mai al cliente)
+     serveFin true se ha senso solo con un finanziamento in corso
+     testo    funzione che scrive il messaggio; d = { primo, auto, scadStr } */
+var CRM_OFFERTE = [
+  { id:'tagliando', nome:'\uD83D\uDD27 Primo tagliando incluso',
+    costo:'ricambi + officina tua',
+    serveFin:false,
+    testo:function(d){ return 'Buongiorno '+d.primo+', per '+d.auto+' che ha valutato le riserviamo il primo tagliando incluso. '
+      +'Condizione valida fino a sabato '+d.scadStr+'. Europa Auto'; } },
+
+  { id:'pacchetto', nome:'\uD83D\uDCC5 Pacchetto manutenzione 4 anni (sulla rata)',
+    costo:'15% di sconto sul pacchetto',
+    serveFin:true,
+    testo:null },   /* lo scrive crmOffertaPacchetto: serve il ricalcolo rata */
+
+  { id:'carburante', nome:'\u26FD 100 \u20ac di carburante inclusi',
+    costo:'100 \u20ac secchi',
+    serveFin:false,
+    testo:function(d){ return 'Buongiorno '+d.primo+', per '+d.auto+' che ha valutato le riserviamo 100 \u20ac di carburante inclusi con l\'acquisto. '
+      +'Condizione valida fino a sabato '+d.scadStr+'. Europa Auto'; } }
+];
+
+function crmOffertaScegli(chiave, nome, tel){
+  var scad=paccScadenzaSabato();
+  var scadStr=('0'+scad.getDate()).slice(-2)+'/'+('0'+(scad.getMonth()+1)).slice(-2);
+  var cv=paccPreventivo(chiave);
+  var haFin=!!cv;
+
+  var esc=(typeof crmEsc==='function')?crmEsc:function(x){ return String(x==null?'':x); };
+  var vecchio=document.getElementById('crm-off-modal'); if(vecchio) vecchio.remove();
+
+  var righe='';
+  CRM_OFFERTE.forEach(function(o){
+    var ok=(!o.serveFin || haFin);
+    righe+='<button '+(ok?('onclick="crmOffertaInvia(\''+o.id+'\',\''+String(chiave).replace(/\'/g,"")+'\','+JSON.stringify(nome||'')+','+JSON.stringify(tel||'')+')"'):'disabled')
+      +' style="display:block;width:100%;text-align:left;margin-bottom:8px;padding:12px 14px;border-radius:10px;border:1px solid '+(ok?'#cbd5e1':'#e2e8f0')+';background:'+(ok?'#fff':'#f8fafc')+';cursor:'+(ok?'pointer':'not-allowed')+';font-family:inherit;">'
+      +'<div style="font-size:14px;font-weight:800;color:'+(ok?'#0f172a':'#cbd5e1')+';">'+o.nome+'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">ti costa: '+esc(o.costo)
+      +(ok?'':' \u00b7 serve un preventivo con finanziamento')+'</div></button>';
+  });
+
+  var d=document.createElement('div');
+  d.id='crm-off-modal';
+  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    +'<div style="font-size:16px;font-weight:900;color:#0f172a;">Quale offerta a '+esc(nome||'questo cliente')+'?</div>'
+    +'<div style="font-size:12px;color:#64748b;margin:4px 0 14px;">Una sola, non tutte. Scadenza: sabato '+scadStr+'</div>'
+    +righe
+    +'<button onclick="document.getElementById(\'crm-off-modal\').remove()" style="width:100%;margin-top:6px;padding:10px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla</button>'
+    +'</div>';
+  d.addEventListener('click', function(ev){ if(ev.target===d) d.remove(); });
+  document.body.appendChild(d);
+}
+
+function crmOffertaInvia(id, chiave, nome, tel){
+  var m=document.getElementById('crm-off-modal'); if(m) m.remove();
+  if(id==='pacchetto'){ crmOffertaPacchetto(chiave, nome, tel); return; }
+
+  var o=CRM_OFFERTE.filter(function(x){ return x.id===id; })[0];
+  if(!o || !o.testo) return;
+
+  var cv=paccPreventivo(chiave);
+  var auto=(cv && (cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello))) || 'la vettura';
+  var scad=paccScadenzaSabato();
+  var scadStr=('0'+scad.getDate()).slice(-2)+'/'+('0'+(scad.getMonth()+1)).slice(-2);
+  var primo=String(nome||'').trim().split(' ')[0]||'';
+  var testo=o.testo({ primo:primo, auto:auto, scadStr:scadStr });
+
+  if(!confirm(o.nome+'\n\nA: '+(nome||'')+' \u00b7 '+(tel||'—')
+    +'\nTi costa: '+o.costo+'\nScade: sabato '+scadStr
+    +'\n\n--- messaggio ---\n'+testo+'\n\nInvio?')) return;
+
+  /* Resta scritto cosa e' stato promesso: fra tre settimane nessuno se lo
+     ricorda, il cliente invece si'. */
+  try{
+    if(cv){
+      var l=cvLoad(), k=l.findIndex(function(x){ return x.id===cv.id; });
+      if(k>=0){
+        l[k].offertaFatta={ id:id, nome:o.nome, ts:Date.now(), scadenza:scad.getTime() };
+        l[k].updatedAt=Date.now();
+        cvSave(l);
+        if(typeof supaUpsert==='function') supaUpsert('preventivi', l[k]);
+      }
+    }
+  }catch(e){}
+
+  var t=(typeof crmWa==='function')?crmWa(tel):'';
+  if(t) window.open('https://wa.me/'+t+'?text='+encodeURIComponent(testo), '_blank');
+  else alert('Nessun numero di telefono.\n\nTesto pronto da copiare:\n\n'+testo);
+}
+
+function crmOffScegliBtn(chiave, nome, tel){
+  if(!tel) return '';
+  var jq=function(x){ return "'"+String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'"; };
+  return '<button onclick="crmOffertaScegli('+jq(chiave)+','+jq(nome)+','+jq(tel)+')" title="Scegli una sola offerta di chiusura" style="margin-top:8px;margin-left:8px;padding:8px 12px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\uD83C\uDF81 Offerta di chiusura</button>';
+}
+
+function crmPaccBtn(chiave, nome, tel){
+  if(!tel) return '';
+  var jq=function(x){ return "'"+String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'"; };
+  return '<button onclick="crmOffertaPacchetto('+jq(chiave)+','+jq(nome)+','+jq(tel)+')" title="Ricalcola la rata col pacchetto manutenzione e propone l\'offerta" style="margin-top:8px;margin-left:8px;padding:8px 12px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\uD83D\uDD27 Offerta pacchetto (rata)</button>';
+}
+
 function crmOffBtn(nome,tel,email,auto){ return '<button onclick="crmOfferta('+JSON.stringify(nome||'')+','+JSON.stringify(tel||'')+','+JSON.stringify(email||'')+','+JSON.stringify(auto||'')+')" style="margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🎁 Offerta manutenzione (WhatsApp)</button>'; }
 var CRM_AVCOL=['#1a4fa0','#0891b2','#7c3aed','#16a34a','#d97706','#dc2626','#0f766e','#be185d'];
 function crmAvatarColor(seed){ var s=String(seed||''); var n=0; for(var i=0;i<s.length;i++){ n=(n*31+s.charCodeAt(i))>>>0; } return CRM_AVCOL[n%CRM_AVCOL.length]; }
@@ -27383,7 +27650,7 @@ function crmRenderLead(){
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1;min-width:180px;display:flex;gap:10px;align-items:flex-start;">'+crmAvatar(l.nome,l.cognome)+'<div style="min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.telefono?('📞 '+crmEsc(l.telefono)):'')+(l.email?('  ✉️ '+crmEsc(l.email)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:3px;">🚗 '+crmEsc(l.auto||'—')+' · '+l.nPrev+' preventivo/i</div></div></div>'
       +'<select onchange="crmSetStato(\''+l.key+'\',this.value)" style="height:38px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-weight:700;color:'+(col[l._stato]||'#334155')+';">'+CRM_STATI.map(function(s){return '<option'+(l._stato===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
       +'<textarea onchange="crmSetNote(\''+l.key+'\',this.value)" placeholder="Note / promemoria…" style="width:100%;margin-top:8px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:44px;box-sizing:border-box;">'+crmEsc(rec.note||'')+'</textarea>'
-      +crmFonteSelect(l.key,rec.fonte)+crmAttivitaHTML(l.key,rec)+'<div>'+crmWaBtn(l.telefono,'preventivi',l.nome,l.auto,'WhatsApp')+crmOffBtn(l.nome,l.telefono,l.email,l.auto)+'</div>'
+      +crmFonteSelect(l.key,rec.fonte)+crmAttivitaHTML(l.key,rec)+'<div>'+crmWaBtn(l.telefono,'preventivi',l.nome,l.auto,'WhatsApp')+crmOffScegliBtn(l.key,((l.nome||'')+' '+(l.cognome||'')).trim(),l.telefono)+'</div>'
       +'</div>';
   });
   return h;
