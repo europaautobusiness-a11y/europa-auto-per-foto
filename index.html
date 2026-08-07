@@ -4713,7 +4713,11 @@ function eaHtmlToPdf(html){
           window./* scala 3: il documento viene disegnato a risoluzione una volta e mezza
                superiore prima di entrare nel PDF. Su un contratto il testo
                piccolo passa da sgranato a nitido. */
-            html2canvas(body, {scale:3, useCORS:true, backgroundColor:'#ffffff', logging:false,
+            /* Era a 3: nove volte i pixel di una pagina normale, ed e' quello
+               che rendeva lenta la stampa della proposta. A 2 il documento
+               resta nitido in stampa (circa 300 dpi su A4) e il disegno
+               impiega meno della meta' del tempo. */
+            html2canvas(body, {scale:2, useCORS:true, backgroundColor:'#ffffff', logging:false,
             windowWidth: EA_PDF_LARG, width: EA_PDF_LARG, height: alt})
             .then(function(c){
               var k=(alt>0)?(c.height/alt):1;
@@ -27628,9 +27632,14 @@ function crmArchCercaVecchia(){
 }
 function crmRender(){
   var wrap=document.getElementById('view-crm'); if(!wrap) return;
-  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['lead','Contatti','\ud83d\udc64'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  /* La scheda Contatti ripescava ogni cliente mai passato di qui, storico
+     importato compreso: migliaia di schede da disegnare a ogni apertura,
+     per un elenco che nessuno usava. La ricerca dei clienti sta gia' nella
+     barra in alto e nella sezione Clienti. */
+  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  if(_crmTab==='lead') _crmTab='pipeline';   /* chi ci era rimasto dentro */
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='pipeline' ? crmRenderKanban() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderLead())));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderKanban()));
   wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
@@ -27655,6 +27664,38 @@ function crmRenderLead(){
   });
   return h;
 }
+/* Province da cui un cliente torna davvero in officina per un tagliando.
+   Le sedi sono Paderno Dugnano e Bovisio Masciago: chi sta a Bari non fa
+   400 km per un cambio olio, e mandargli il promemoria e' solo rumore.
+   Per allargare o stringere la zona basta togliere o aggiungere una sigla. */
+var CRM_PROV_ZONA = ['MI','MB','CO','LC','VA','BG','PV','NO','LO','CR'];
+
+function crmProvCliente(cl){
+  cl=cl||{};
+  var p=String(cl.prov||'').trim().toUpperCase();
+  if(p) return p;
+  /* Sui contratti importati la provincia spesso manca: si prova a
+     recuperarla dall'anagrafica del cliente. */
+  try{
+    if(typeof clLoad==='function'){
+      var k=(typeof crmKey==='function')?crmKey(cl):'';
+      var c=clLoad().filter(function(x){ return x && typeof crmKey==='function' && crmKey(x)===k; })[0];
+      if(c){
+        if(c.prov) return String(c.prov).trim().toUpperCase();
+        var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
+        if(ind.length && ind[ind.length-1].prov) return String(ind[ind.length-1].prov).trim().toUpperCase();
+      }
+    }
+  }catch(e){}
+  return '';
+}
+function crmInZona(prov){
+  if(!prov) return true;   /* provincia sconosciuta: nel dubbio si mostra */
+  return CRM_PROV_ZONA.indexOf(prov) >= 0;
+}
+var _crmConsZona = false;   /* true = nasconde chi e' fuori zona */
+function crmConsZonaToggle(){ _crmConsZona=!_crmConsZona; if(typeof crmRender==='function') crmRender(); }
+
 function crmRenderConsegnate(){
   /* Qui interessa solo chi e' arrivato al momento giusto per la proposta:
      consegne di circa 11 mesi fa, mostrate per una finestra di 30 giorni. */
@@ -27664,10 +27705,28 @@ function crmRenderConsegnate(){
   var cons=tutte.filter(function(x){ var t=+(x.consegnatoTs||0); return t && t>=_da && t<=_a; })
                 .sort(function(a,b){return (a.consegnatoTs||0)-(b.consegnatoTs||0);});
   if(!cons.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna consegna in scadenza.<div style="font-size:12px;margin-top:6px;">Qui compaiono le auto consegnate circa 11 mesi fa, per 30 giorni: e\u0301 il momento giusto per proporre tagliando e rinnovo polizza.<br>Consegne totali in archivio: '+tutte.length+'.</div></div>';
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:12px;"><b>'+cons.length+'</b> da contattare adesso \u00b7 consegnate tra 11 e 12 mesi fa \u00b7 archivio totale '+tutte.length+' consegne</div>';
+  var _fuori=cons.filter(function(cv){ return !crmInZona(crmProvCliente(cv.cliente||{})); }).length;
+  if(_crmConsZona) cons=cons.filter(function(cv){ return crmInZona(crmProvCliente(cv.cliente||{})); });
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:6px;"><b>'+cons.length+'</b> da contattare adesso \u00b7 consegnate tra 11 e 12 mesi fa \u00b7 archivio totale '+tutte.length+' consegne</div>';
+  if(_fuori){
+    h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+      +'<span>\ud83d\udccd '+_fuori+' fuori zona</span>'
+      +'<button onclick="crmConsZonaToggle()" style="padding:5px 10px;border-radius:7px;border:1px solid #cbd5e1;background:'+(_crmConsZona?'#0f766e':'#fff')+';color:'+(_crmConsZona?'#fff':'#475569')+';font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">'
+      +(_crmConsZona?'Mostra tutti':'Nascondi fuori zona')+'</button></div>';
+  } else { h=h.replace('margin-bottom:6px','margin-bottom:12px'); }
   cons.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var mesi=crmMesiDa(cv.consegnatoTs); var tag=mesi>=11;
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(tag?'border-left:4px solid #d97706;':'')+'">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div>'
+      +(function(){
+          var _pv=crmProvCliente(cl);
+          var _citta=String(cl.citta||'').trim();
+          if(!_pv && !_citta) return '<div style="font-size:12px;color:#cbd5e1;margin-top:2px;">\ud83d\udccd residenza non indicata</div>';
+          var _in=crmInZona(_pv);
+          return '<div style="font-size:12px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
+            +'\ud83d\udccd '+crmEsc(_citta||'\u2014')+(_pv?(' ('+crmEsc(_pv)+')'):'')
+            +(_in?'':' \u00b7 fuori zona')+'</div>';
+        })()
+      +'</div>'
       +(tag?'<div style="font-size:11px;font-weight:800;color:#92400e;background:#fef3c7;padding:5px 9px;border-radius:20px;height:fit-content;white-space:nowrap;">🔔 Tempo tagliando</div>':'')+'</div>'
       +crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''))
       +'</div>';
