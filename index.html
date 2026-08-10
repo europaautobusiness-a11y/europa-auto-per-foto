@@ -1803,7 +1803,10 @@
             <input type="number" id="saReferenceSpread" step="0.01" inputmode="decimal" placeholder="es. 4237.50">
           </div>
           <div id="saComparisonOutput" style="font-size:11px;color:var(--text-faint);margin-top:6px;"></div>
-          <button type="button" class="btn secondary" id="saOpenReverseCalc" style="margin-top:8px;font-size:12px;padding:6px 12px;display:none;">
+          <button type="button" class="btn secondary" id="saApplyPointPrice" style="margin-top:8px;font-size:12px;padding:6px 12px;display:none;">
+            🎯 Applica Point Price calcolato al form
+          </button>
+          <button type="button" class="btn secondary" id="saOpenReverseCalc" style="margin-top:8px;margin-left:6px;font-size:12px;padding:6px 12px;display:none;">
             🧮 Calcola prezzi per spread target
           </button>
           
@@ -1929,17 +1932,21 @@
 
     <div id="output"></div>
 
-    <!-- Card "Prezzi di Uscita Reali" RIMOSSA dal form Pianifica: i prezzi di uscita si inseriscono dal modale Chiudi (tab Trade). Elementi hidden mantenuti solo per retrocompatibilità con il resto del codice. -->
-    <div id="exitCard" style="display:none !important;" hidden>
-      <div id="exitFieldsCalendar" style="display:none;">
-        <input type="number" id="nearExitPrice" step="0.01">
-        <input type="number" id="farExitPrice" step="0.01">
+    <!-- Card "Prezzi di Uscita Reali" RIMOSSA dal form Pianifica: i prezzi di uscita si inseriscono dal modale Chiudi (tab Trade) -->
+    <div class="card exit-section" id="exitCard" style="display:none !important;" hidden>
+      <div class="card-title">Prezzi di Uscita Reali</div>
+      <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;">
+        Inserisci i prezzi quando esci dall'operazione.
+      </p>
+      <div class="row" id="exitFieldsCalendar">
+        <div class="field"><label>Near Uscita ($)</label><input type="number" id="nearExitPrice" step="0.01" inputmode="decimal" placeholder="0.00"></div>
+        <div class="field"><label>Far Uscita ($)</label><input type="number" id="farExitPrice" step="0.01" inputmode="decimal" placeholder="0.00"></div>
       </div>
-      <div id="exitFieldsInter" style="display:none;">
-        <input type="number" id="legAExitPrice" step="0.01">
-        <input type="number" id="legBExitPrice" step="0.01">
+      <div class="row" id="exitFieldsInter" style="display:none;">
+        <div class="field"><label>A Uscita ($)</label><input type="number" id="legAExitPrice" step="0.01" inputmode="decimal" placeholder="0.00"></div>
+        <div class="field"><label>B Uscita ($)</label><input type="number" id="legBExitPrice" step="0.01" inputmode="decimal" placeholder="0.00"></div>
       </div>
-      <button id="calcPnlBtn" style="display:none;">Calcola P&amp;L</button>
+      <button class="btn secondary" id="calcPnlBtn" style="margin-top: 8px;">Calcola P&amp;L</button>
       <div id="pnlOutput"></div>
     </div>
 
@@ -2746,44 +2753,7 @@ spreadType.addEventListener('change', () => {
 
 let lastResult = null;
 let editingId = null; // se non-null, sto modificando un trade esistente
-let globalCapital = null; // capitale conto IB INIZIALE, salvato in settings
-let _cachedTrades = []; // cache dei trade per calcoli sincroni (aggiornata da renderReminders e altri loader)
-
-// ============================================================
-// CAPITALE ATTUALE (DINAMICO): iniziale + Σ P&L reali dei trade CHIUSI
-// ============================================================
-// Il capitale iniziale in Settings resta come "punto di partenza".
-// Tutti i calcoli percentuali (margine %, cushion, rischio) usano
-// questa funzione per avere sempre il capitale aggiornato ai P&L realizzati.
-// NOTA: usa _cachedTrades (array in memoria) per essere sincrona.
-// La cache si aggiorna quando i trade vengono caricati da IndexedDB/Firebase.
-function getCurrentCapital() {
-  if (!globalCapital) return null;
-  if (!Array.isArray(_cachedTrades) || _cachedTrades.length === 0) return globalCapital;
-  const accountCurr = (typeof currencyCode !== 'undefined' && currencyCode) ? currencyCode : 'EUR';
-  const rate = (typeof currentExchangeRate !== 'undefined' && currentExchangeRate && currentExchangeRate.rate) ? currentExchangeRate.rate : 1.14;
-  let cumulativePnl = 0;
-  for (const t of _cachedTrades) {
-    if (!t || t.status !== 'closed') continue;
-    if (t.pnlReal === null || t.pnlReal === undefined || isNaN(t.pnlReal)) continue;
-    let pnl = parseFloat(t.pnlReal);
-    const pnlCurr = t.pnlRealCurrency || accountCurr;
-    // Conversione se il P&L è in una valuta diversa dal conto
-    if (pnlCurr !== accountCurr) {
-      if (pnlCurr === 'USD' && accountCurr === 'EUR') pnl = pnl / rate;
-      else if (pnlCurr === 'EUR' && accountCurr === 'USD') pnl = pnl * rate;
-    }
-    cumulativePnl += pnl;
-  }
-  return globalCapital + cumulativePnl;
-}
-
-// P&L realizzato cumulativo (senza il capitale iniziale)
-function getRealizedPnl() {
-  const cur = getCurrentCapital();
-  if (cur === null || globalCapital === null) return 0;
-  return cur - globalCapital;
-}
+let globalCapital = null; // capitale conto IB, salvato in settings
 // 💱 SEPARAZIONE VALUTE:
 // - PRICE_SYMBOL/PRICE_CURRENCY: valuta dei PREZZI degli strumenti (CME futures = SEMPRE USD)
 // - currencyCode/currencySymbol: valuta del CONTO IBKR dell'utente (per P&L globale e statistiche)
@@ -2946,27 +2916,8 @@ function updateCapitalUI() {
   const v = document.getElementById('globalCapitalValue');
   const ref = document.getElementById('capitalRef');
   if (globalCapital && globalCapital > 0) {
-    const currentCap = getCurrentCapital();
-    const realizedPnl = getRealizedPnl();
-    const hasPnl = Math.abs(realizedPnl) > 0.01;
-    
-    if (hasPnl) {
-      // Mostro il capitale attuale (con P&L) + breakdown
-      const pnlColor = realizedPnl >= 0 ? 'var(--green)' : 'var(--red)';
-      const pnlSign = realizedPnl >= 0 ? '+' : '';
-      v.innerHTML = `
-        <div>${fmtCur(currentCap, 0)}</div>
-        <div style="font-size:11px;font-weight:400;color:var(--text-faint);margin-top:4px;">
-          Iniziale ${fmtCur(globalCapital, 0)} · 
-          P&L realizzato <span style="color:${pnlColor};font-weight:700;">${pnlSign}${fmtCur(realizedPnl, 0)}</span>
-        </div>
-      `;
-      if (ref) ref.innerHTML = `Capitale attuale: <strong style="color:var(--green);">${fmtCur(currentCap, 0)}</strong> (iniziale ${fmtCur(globalCapital, 0)} + P&L ${pnlSign}${fmtCur(realizedPnl, 0)})`;
-    } else {
-      // Nessun P&L realizzato: solo capitale iniziale
-      v.textContent = fmtCur(globalCapital, 0);
-      if (ref) ref.innerHTML = `Capitale impostato: <strong style="color:var(--green);">${fmtCur(globalCapital, 0)}</strong> (modifica in Impostazioni)`;
-    }
+    v.textContent = fmtCur(globalCapital, 0);
+    if (ref) ref.innerHTML = `Capitale impostato: <strong style="color:var(--green);">${fmtCur(globalCapital, 0)}</strong> (modifica in Impostazioni)`;
   } else {
     v.textContent = '— non impostato —';
     if (ref) ref.innerHTML = `⚠️ <span style="color:var(--amber);">Capitale non impostato</span> — vai in Impostazioni per impostarlo`;
@@ -3109,38 +3060,8 @@ let updateSeasonAlgoPanel = function() {
   }
   
   const { spreadUsd, valueA, valueB } = result;
-  const samePointVal = specA.pointVal === specB.pointVal;
-  
-  if (samePointVal) {
-    // Spread standard (stesso pointVal): mostro il calcolo classico
-    const rawSpread = priceA - priceB;
-    const pnlPerPoint = specA.pointVal;
-    auto.innerHTML = `
-      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;">
-        <div style="color:var(--text-faint);font-size:10px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">
-          Spread standard (stesso point value)
-        </div>
-        <div>Prezzo <strong style="color:var(--text);">${uA}</strong>: <span style="color:var(--green);">${priceA}</span></div>
-        <div>Prezzo <strong style="color:var(--text);">${uB}</strong>: <span style="color:var(--red);">${priceB}</span></div>
-        <div>Spread raw: <strong style="color:var(--text);">${(rawSpread>=0?'+':'')}${rawSpread.toFixed(4)}</strong></div>
-        <div style="border-top:1px dashed var(--border);margin-top:4px;padding-top:4px;font-weight:700;">
-          Valore in $: <span style="color:${rawSpread>=0?'var(--green)':'var(--red)'};font-size:14px;">${rawSpread>=0?'+':''}$${(rawSpread * pnlPerPoint).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
-        </div>
-        <div style="font-size:11px;color:var(--text-faint);margin-top:6px;line-height:1.5;">
-          💡 Le due gambe hanno lo stesso Point Price ($${pnlPerPoint}). Usa <strong>modalità classica</strong>: inserisci target/stop come prezzi raw (es. ${(priceA + (priceA-priceB)*0.5).toFixed(2)}) e Point Price = <strong>${pnlPerPoint}</strong>.
-        </div>
-      </div>
-    `;
-    comp.innerHTML = '';
-    return;
-  }
-  
-  // Cross-multiplier (es. valute): mostro la formula SA in dollari
   auto.innerHTML = `
     <div style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;">
-      <div style="color:var(--blue);font-size:10px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">
-        Spread cross-multiplier (formula SeasonAlgo)
-      </div>
       <div>Valore <strong style="color:var(--text);">${uA}</strong>: ${priceA} × $${specA.pointVal.toLocaleString('en-US')} = <span style="color:var(--green);">$${valueA.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
       <div>Valore <strong style="color:var(--text);">${uB}</strong>: ${priceB} × $${specB.pointVal.toLocaleString('en-US')} = <span style="color:var(--red);">$${valueB.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
       <div style="border-top:1px dashed var(--border);margin-top:4px;padding-top:4px;font-weight:700;">
@@ -3182,8 +3103,24 @@ let updateSeasonAlgoPanel = function() {
     comp.innerHTML = '';
   }
   
-  // Il vecchio pulsante "Applica Point Price" è stato RIMOSSO: ora la modalità SA automatica
-  // forza il Point Price a 1 e usa direttamente lo spread in dollari.
+  // Calcola il Point Price consigliato: quello che, moltiplicato per lo spread raw (priceA - priceB),
+  // darebbe il valore SA. Utile per replicare SA con il tuo sistema esistente.
+  const rawSpread = priceA - priceB;
+  if (Math.abs(rawSpread) > 0.0001 && applyBtn) {
+    const suggestedPP = spreadUsd / rawSpread;
+    applyBtn.textContent = `🎯 Applica Point Price = ${Math.round(suggestedPP)} al form`;
+    applyBtn.style.display = 'inline-block';
+    applyBtn.onclick = () => {
+      const ppEl = document.getElementById('pointPrice');
+      if (ppEl) {
+        ppEl.value = Math.round(suggestedPP);
+        ppEl.dispatchEvent(new Event('input', { bubbles: true }));
+        showToast(`✓ Point Price impostato a ${Math.round(suggestedPP)} (calcolato da SeasonAlgo)`);
+      }
+    };
+  } else if (applyBtn) {
+    applyBtn.style.display = 'none';
+  }
 };
 
 // Attacco listener a tutti i campi che influenzano il pannello SA
@@ -3327,12 +3264,14 @@ updateSeasonAlgoPanel = function() {
   const priceB = parseFloat(document.getElementById('legBPrice')?.value);
   const isInterMarket = document.getElementById('spreadType')?.value === 'intercommodity';
   const hasValidSpecs = CONTRACT_SPECS[uA] && CONTRACT_SPECS[uB];
-  const hasDifferentPointVal = hasValidSpecs && (CONTRACT_SPECS[uA].pointVal !== CONTRACT_SPECS[uB].pointVal);
-  const saModeActive = isInterMarket && hasDifferentPointVal && !isNaN(priceA) && !isNaN(priceB);
+  const saModeActive = isInterMarket && hasValidSpecs && !isNaN(priceA) && !isNaN(priceB);
   
   if (reverseBtn) {
     reverseBtn.style.display = saModeActive ? 'inline-block' : 'none';
   }
+  // In modalità SA il Point Price è forzato a 1 → nascondo il pulsante "Applica Point Price"
+  const applyPPBtn = document.getElementById('saApplyPointPrice');
+  if (applyPPBtn && saModeActive) applyPPBtn.style.display = 'none';
   
   // ═══ Aggiorna label/placeholder/hint dei campi in base alla modalità ═══
   const ppLabel = document.getElementById('pointPriceLabel');
@@ -3478,9 +3417,9 @@ function compute() {
   }
 
   // ═══ MODALITÀ "DOLLARI SEASONALGO" per Inter-Commodity ═══
-  // Si attiva SOLO quando le due gambe hanno contract size (pointVal) DIVERSI
-  // → tipico dei cross-currency (6B/6J, 6E/6J...) dove la formula standard non basta
-  // Per spread con stesso pointVal (ZC/ZW, CL/BZ...) usiamo il comportamento classico
+  // Se siamo su Inter-Commodity e i due sottostanti sono nel database delle contract size,
+  // usiamo la formula SeasonAlgo: spread in dollari = (priceA × sizeA) - (priceB × sizeB)
+  // Point Price forzato a 1 → target/stop si inseriscono già in dollari SA
   let usingSAMode = false;
   let spreadPrice = null;
   if (!isCal && !isNaN(p1) && !isNaN(p2)) {
@@ -3488,17 +3427,18 @@ function compute() {
     const uB_check = document.getElementById('legBUnderlying')?.value;
     const specA_c = CONTRACT_SPECS[uA_check];
     const specB_c = CONTRACT_SPECS[uB_check];
-    if (specA_c && specB_c && specA_c.pointVal !== specB_c.pointVal) {
-      // Modalità SA attiva solo per spread cross-multiplier (es. cross-currency)
+    if (specA_c && specB_c) {
+      // Modalità SA attiva
       usingSAMode = true;
       spreadPrice = (p1 * specA_c.pointVal) - (p2 * specB_c.pointVal);
+      // Forzo point price a 1 (i valori sono già in dollari)
       pointPrice = 1;
       const ppEl = document.getElementById('pointPrice');
       if (ppEl && parseFloat(ppEl.value) !== 1) {
         ppEl.value = 1;
       }
     } else {
-      // Modalità classica: spread grezzo dai prezzi, point price come inserito dall'utente
+      // Fallback vecchia modalità: spread grezzo dai prezzi
       spreadPrice = p1 - p2;
     }
   } else if (!isNaN(p1) && !isNaN(p2)) {
@@ -3552,7 +3492,7 @@ function compute() {
     const exitDateTarget = document.getElementById('exitDateTarget').value;
     const targetSpread = parseFloat(document.getElementById('targetSpread').value);
     const stopSpread = parseFloat(document.getElementById('stopSpread').value);
-    const capital = getCurrentCapital(); // capitale dinamico: iniziale + P&L realizzati
+    const capital = globalCapital; // dal settings globale
     const spanMargin = parseFloat(document.getElementById('spanMargin').value);
     const maintenanceMargin = parseFloat(document.getElementById('maintenanceMargin').value);
     const riskPct = parseFloat(document.getElementById('riskPct').value) || 2;
@@ -3614,8 +3554,7 @@ function compute() {
     status: document.getElementById('tradeStatus').value || 'planned'
   };
 
-  // exitCard rimossa dalla Pianifica: sempre nascosta. I prezzi di uscita si inseriscono dal modale Chiudi.
-  exitCard.style.display = 'none';
+  exitCard.style.display = (spreadPrice !== null) ? 'block' : 'none';
   reminderCard.style.display = 'block';
   document.getElementById('pnlOutput').innerHTML = '';
 }
@@ -4328,7 +4267,7 @@ document.getElementById('runRiskBtn').addEventListener('click', async () => {
   }
 
   // Stress test scenarios
-  const cap = getCurrentCapital() || 0;
+  const cap = globalCapital || 0;
   const scenarios = [
     { name: '🟢 Stress lieve: -10% sui trade aperti', mult: 0.10 },
     { name: '🟡 Stress medio: -25% sui trade aperti', mult: 0.25 },
@@ -5004,9 +4943,7 @@ function getUrgency(days) {
 async function loadTrades() {
   try {
     const items = await dbGetAll();
-    const sorted = items.sort((a,b) => new Date(a.entryDeadline) - new Date(b.entryDeadline));
-    _cachedTrades = sorted; // Aggiorna cache centrale per getCurrentCapital()
-    return sorted;
+    return items.sort((a,b) => new Date(a.entryDeadline) - new Date(b.entryDeadline));
   } catch (e) { return []; }
 }
 
@@ -5060,7 +4997,7 @@ async function renderRiskDashboard() {
   // ⚠️ IMPORTANTE: SPAN margins vengono inseriti dall'utente nella valuta del suo conto IBKR
   // (EUR per conto base EUR italiano, USD per conto base USD).
   // Quindi capitale e margini sono nella stessa valuta = nessuna conversione per le percentuali!
-  const cap = getCurrentCapital() || 0; // in currencyCode (es. EUR) - dinamico con P&L realizzati
+  const cap = globalCapital || 0; // in currencyCode (es. EUR)
   const accountCurr = currencyCode || 'EUR';
   const accountSymb = currencySymbol || '€';
   const rate = currentExchangeRate?.rate || 1.14; // EUR → USD
@@ -5198,7 +5135,6 @@ async function renderReminders() {
   await renderRiskDashboard();
   const list = document.getElementById('remindersList');
   const items = await loadTrades();
-  _cachedTrades = items; // Aggiorna cache per getCurrentCapital()
 
   // Aggiorna contatori filtri
   const counts = {
@@ -5895,7 +5831,6 @@ function attachQuickCloseHandlers() {
     closeQuickCloseModal();
     await renderReminders();
     await updateBadge();
-    updateCapitalUI(); // Aggiorna capitale attuale con il nuovo P&L
     if (!isNaN(realPnl)) {
       const sign = realPnl >= 0 ? '+' : '';
       const symb = realPnlCurrency === 'EUR' ? '€' : '$';
@@ -5936,7 +5871,6 @@ function attachQuickCloseHandlers() {
     closeQuickCloseModal();
     await renderReminders();
     await updateBadge();
-    updateCapitalUI(); // Aggiorna capitale attuale con il nuovo P&L
     // Mostra preferibilmente il P&L reale, altrimenti quello stimato
     const finalPnl = hasReal ? realPnl : t.pnl;
     const sign = finalPnl >= 0 ? '+' : '';
@@ -5993,7 +5927,7 @@ function openDetailsModal(r) {
                            r.entryDate, r.exitDateTarget, r.targetSpread, r.stopSpread);
     payoff = buildPayoffChart(action, spreadPrice, qty, pointPrice);
     projection = buildProjection(action, spreadPrice, qty, pointPrice, r.targetSpread, r.stopSpread);
-    marginRisk = buildMarginRisk(action, spreadPrice, qty, pointPrice, r.stopSpread, getCurrentCapital(), r.spanMargin, r.maintenanceMargin, r.riskPct || 2);
+    marginRisk = buildMarginRisk(action, spreadPrice, qty, pointPrice, r.stopSpread, globalCapital, r.spanMargin, r.maintenanceMargin, r.riskPct || 2);
   }
 
   // P&L reale se ci sono prezzi di uscita
