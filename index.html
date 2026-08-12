@@ -471,8 +471,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Vendite</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-vendite" onclick="cvVendGo('in_attesa_pagamento');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#129534;</span><span class="si-label"> In attesa pagamento</span><span class="si-badge" id="vb-pag" style="display:none;">0</span></button>
-    <button class="sidebar-item" onclick="cvVendGo('in_attesa_delibera');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127974;</span><span class="si-label"> In attesa di delibera</span><span class="si-badge" id="vb-del" style="display:none;">0</span></button>
-    <button class="sidebar-item" onclick="cvVendGo('in_attesa_firma');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128394;</span><span class="si-label"> In attesa firma digitale</span><span class="si-badge" id="vb-firma" style="display:none;">0</span></button>
+    <button class="sidebar-item" onclick="cvVendGo('in_attesa_delibera');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127974;</span><span class="si-label"> In attesa di finanziamento</span><span class="si-badge" id="vb-del" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('in_attesa_immatricolazione');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128203;</span><span class="si-label"> In att. immatricolazione</span><span class="si-badge" id="vb-imm" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('da_consegnare');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Da consegnare</span><span class="si-badge" id="vb-cons" style="display:none;">0</span></button>
     <button class="sidebar-item" onclick="cvVendGo('consegnato');sidebarSetActive(this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Consegnate</span></button>
@@ -20580,10 +20579,25 @@ function regDatiCliente(cv){
     var _v=[cl.via,cl.civico].filter(Boolean).join(' ').trim();
     out.ind=[_v,cl.cap,cl.citta,(cl.prov?('('+cl.prov+')'):'')].filter(Boolean).join(' ').trim();
     var an=null;
-    try{ if(cv.clienteKey && typeof clFind==='function') an=clFind(cv.clienteKey); }catch(e){}
+    try{
+      if(typeof clFind==='function'){
+        /* Sui contratti importati da SICOM il collegamento all'anagrafica non
+           c'e': senza chiave la scheda cliente non veniva mai letta e il
+           registro restava con i dati vecchi del contratto, per sempre.
+           Si ricava la chiave dal nome, come fa l'anagrafica stessa. */
+        var _k=cv.clienteKey || ((typeof clKeyOf==='function')?clKeyOf(cl):'');
+        if(_k) an=clFind(_k);
+      }
+    }catch(e){}
     if(an){
       if(!out.nome) out.nome=(an.business&&an.ragSociale)?an.ragSociale:(((an.cognome||'')+' '+(an.nome||'')).trim());
-      if(!out.cf) out.cf=(an.business?(an.piva||an.cf):(an.cf||an.piva))||'';
+      /* Il codice fiscale scritto sul contratto e' una fotografia del giorno
+         della firma. Se in anagrafica ce n'e' uno, quello e' il dato tenuto
+         aggiornato: nel registro comanda lui, altrimenti correggere la scheda
+         cliente non servirebbe a niente. */
+      var _anCf=(an.business?(an.piva||an.cf):(an.cf||an.piva))||'';
+      if(_anCf) out.cf=_anCf;
+      if(!out.cf) out.cf=_anCf;
       if(!out.ind){ var ii=(an.indirizzi&&an.indirizzi.length)?an.indirizzi[an.indirizzi.length-1]:null; if(ii) out.ind=[ii.via,ii.civico,ii.cap,ii.citta,(ii.prov?('('+ii.prov+')'):'')].filter(Boolean).join(' ').trim(); }
     }
   }catch(e){}
@@ -20634,6 +20648,10 @@ function regFornNome(a){
 
 function regRender(){
   var wrap=document.getElementById('reg-lista'); if(!wrap) return;
+  /* La lista clienti e' memorizzata per non ricostruirla a ogni riga: va
+     svuotata qui, altrimenti una correzione appena fatta sulla scheda
+     cliente non si vede finche' non si ricarica la pagina. */
+  try{ if(typeof clAggregaInvalida==='function') clAggregaInvalida(); }catch(e){}
   var q=((document.getElementById('reg-cerca')||{}).value||'').toLowerCase().trim();
   var autos=regAutos().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
   var list=autos.filter(function(a){ if(!q)return true; return (((a.marca||'')+' '+(a.modello||'')+' '+(a.targa||'')+' '+(a.telaio||'')+' '+(a.fornitoreNome||'')).toLowerCase()).indexOf(q)>=0; });
@@ -20700,6 +20718,7 @@ function regAnno(v){ var m=String(v||'').match(/^(\d{4})/); return m?m[1]:''; }
 function regStampa(){
   /* Si prepara una volta sola la lista clienti: dentro il ciclo delle righe
      verra' solo consultata. Senza questo, ogni riga la ricostruiva da capo. */
+  try{ if(typeof clAggregaInvalida==='function') clAggregaInvalida(); }catch(e){}
   try{ if(typeof clAggrega==='function') clAggrega(); }catch(e){}
   var tutti=regAutos();
 
@@ -20797,7 +20816,14 @@ function cvDatiSimulati(cv){
            importoFinanziato:(f.importoFinanziato!=null?f.importoFinanziato:(p?p.importo:'')),
            rata:(f.rata||(p?p.importoRata:'')||''), durata:(f.durata||(p?p.rate:'')||'') };
 }
-var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_delibera','In attesa di delibera'],['in_attesa_firma','In attesa firma digitale'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
+/* Delibera e firma digitale erano due schede separate, ma sono due caselle
+   della stessa attesa: finche' la finanziaria non ha deliberato E il cliente
+   non ha firmato, la pratica e' ferma. Una sola scheda, e dentro si vede a
+   colpo d'occhio cosa manca. Lo stato 'in_attesa_firma' resta valido sui
+   contratti gia' salvati e viene mostrato qui dentro. */
+var CV_STATI=[['in_attesa_pagamento','In attesa pagamento'],['in_attesa_delibera','In attesa di finanziamento'],['in_attesa_immatricolazione','In att. immatricolazione'],['da_consegnare','Da consegnare'],['consegnato','Consegnate']];
+/* Gli stati che finiscono nella scheda "In attesa di finanziamento". */
+function cvStatiFin(st){ return st==='in_attesa_delibera' || st==='in_attesa_firma'; }
 /* Manca la firma del finanziamento? Solo i contratti finanziati possono
    mancarla: gli altri non hanno niente da firmare. */
 function cvFirmaMancante(cv){
@@ -20811,7 +20837,9 @@ var _cvVendStato='in_attesa_pagamento';
 function cvVendData(ts){ if(!ts) return ''; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || eaIsContabilita(e) || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
-function cvVendGo(stato){ window._vLim=40; _cvVendStato=stato||'in_attesa_pagamento'; sidebarNav('vendite'); }
+function cvVendGo(stato){ window._vLim=40; _cvVendStato=stato||'in_attesa_pagamento';
+  if(_cvVendStato==='in_attesa_firma') _cvVendStato='in_attesa_delibera';   /* scheda unificata */
+  sidebarNav('vendite'); }
 function cvVendAvanzaStato(cv){
   if(!cv || !cv.isContratto) return false;
   var st=cv.statoVendita||'in_attesa_pagamento';
@@ -20850,7 +20878,7 @@ function cvVendAutoAvanza(){
     return changed.length>0;
   }catch(e){ return false; }
 }
-function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_delibera:0,in_attesa_firma:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-del',cnt.in_attesa_delibera); set('vb-firma',cnt.in_attesa_firma); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
+function cvVendBadge(){ try{ cvVendAutoAvanza(); var all=(typeof cvContratti==='function')?cvContratti():[]; var cnt={in_attesa_pagamento:0,in_attesa_delibera:0,in_attesa_firma:0,in_attesa_immatricolazione:0,da_consegnare:0}; all.forEach(function(x){ var s=x.statoVendita||'in_attesa_pagamento'; if(cnt[s]!=null) cnt[s]++; }); var set=function(id,n){ var el=document.getElementById(id); if(el){ el.textContent=n; el.style.display=n>0?'':'none'; } }; set('vb-pag',cnt.in_attesa_pagamento); set('vb-del',cnt.in_attesa_delibera+cnt.in_attesa_firma); set('vb-imm',cnt.in_attesa_immatricolazione); set('vb-cons',cnt.da_consegnare); }catch(e){} }
 function cvVendInit(){ cvVendRender(); if(typeof cvSupaLoad==='function') cvSupaLoad(); }
 
 /* ===================== FIRMA DIGITALE DEL CONTRATTO =====================
@@ -23672,14 +23700,25 @@ function cvFatturaBtn(cv){
   if(!_puo) return '';
   return '<button onclick="cvFatturaGenera(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83e\uddfe Genera fattura</button>';
 }
+/* Nella scheda unica, cosa manca a questa pratica. */
+function cvCosaMancaFin(cv){
+  try{
+    var finanziata=(typeof cvHaFinanziamento==='function') && cvHaFinanziamento(cv);
+    if(!finanziata) return '';
+    var deliberaOk=!!(cv.finDelibera && cv.finDelibera.confermata);
+    if(!deliberaOk) return 'delibera';
+    if(typeof cvFirmaMancante==='function' && cvFirmaMancante(cv)) return 'firma';
+  }catch(e){}
+  return '';
+}
 function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!wrap) return;
   cvVendAutoAvanza();
   if(typeof cvVendBadge==='function') cvVendBadge();
   var all=cvContratti();
   var _tabList=CV_STATI;
-  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===s[0];}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
+  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'+_tabList.map(function(s){ var on=_cvVendStato===s[0]; var n=all.filter(function(x){var _s=(x.statoVendita||'in_attesa_pagamento'); return s[0]==='in_attesa_delibera'?cvStatiFin(_s):(_s===s[0]);}).length; return '<button onclick="_cvVendStato=\''+s[0]+'\';cvVendRender()" style="padding:8px 12px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">'+s[1]+' ('+n+')</button>'; }).join('')+'</div>';
   if(!cvPuoConfermarePagamenti()){ tabs+='<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">Solo Amministrazione e Contabilità possono confermare i pagamenti.</div>'; }
-  var list=all.filter(function(x){return (x.statoVendita||'in_attesa_pagamento')===_cvVendStato;}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
+  var list=all.filter(function(x){var _s=(x.statoVendita||'in_attesa_pagamento'); return _cvVendStato==='in_attesa_delibera'?cvStatiFin(_s):(_s===_cvVendStato);}).sort(function(a,b){ if(_cvVendStato==='consegnato') return (b.consegnatoTs||0)-(a.consegnatoTs||0); return (b.contrattoTs||0)-(a.contrattoTs||0); });
   var _vLim=window._vLim||40, _vTot=list.length;
   var _vPiu=(_vTot>_vLim)?('<div style="text-align:center;padding:14px 0 4px;"><button onclick="window._vLim=(window._vLim||40)+40;cvVendRender();" style="padding:11px 22px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Mostra altre 40 &nbsp;<span style="color:#94a3b8;font-weight:600;">('+(_vTot-_vLim)+' rimanenti)</span></button></div>'):'';
   var _vCnt=(_vTot>_vLim)?('<div style="font-size:12px;color:#94a3b8;font-weight:600;margin-bottom:8px;">'+Math.min(_vLim,_vTot)+' di '+_vTot+'</div>'):'';
@@ -23687,7 +23726,13 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
      stanno dentro. E' la domanda che ci si fa aprendo la scheda, e prima
      bisognava sommare a mente scorrendo le pratiche una per una. */
   var _tot=cvVendTotaliHTML(list);
-  var body=list.length?(_tot+_vCnt+list.slice(0,_vLim).map(cvVendCard).join('')+_vPiu):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di delibera. \u2705':'Nessun contratto in questo stato.')+'</div>';
+  /* Nella scheda unica le pratiche si ordinano per cosa manca: prima quelle
+     ferme in banca, poi quelle che aspettano solo la firma del cliente. */
+  if(_cvVendStato==='in_attesa_delibera'){
+    var _peso=function(cv){ var m=cvCosaMancaFin(cv); return m==='delibera'?0:(m==='firma'?1:2); };
+    list=list.slice().sort(function(a,b){ return _peso(a)-_peso(b); });
+  }
+  var body=list.length?(_tot+_vCnt+list.slice(0,_vLim).map(cvVendCard).join('')+_vPiu):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di finanziamento. \u2705':'Nessun contratto in questo stato.')+'</div>';
   wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
 }
 
