@@ -3748,6 +3748,26 @@ async function welcomeLogin() {
   if (btn) { btn.textContent = 'Connessione in corso…'; btn.disabled = true; }
   if (err) err.style.display = 'none';
 
+  /* Un solo passaggio: si va su Google tramite Supabase e si torna qui con
+     l'identita' gia' riconosciuta anche dal database. Le autorizzazioni
+     chieste sono le stesse di prima, quindi Gmail continua a funzionare. */
+  try{
+    var sb = sbClient();
+    if (sb && sb.auth && sb.auth.signInWithOAuth) {
+      sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: location.origin + location.pathname,
+          scopes: 'email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+          queryParams: { prompt: 'select_account', access_type: 'online' }
+        }
+      });
+      return;   /* la pagina sta per cambiare: si ferma qui */
+    }
+  }catch(e){}
+  /* Se Supabase non risponde si prosegue con il vecchio accesso Google:
+     meglio entrare senza protezione che restare fuori. */
+
   // Aspetta che Google sia caricato
   let attempts = 0;
   while ((typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) && attempts < 20) {
@@ -9276,6 +9296,9 @@ function fetchUserEmailAndSetRole(token) {
   }).then(function(r){ return r.json(); }).then(function(info){
     if (info && info.email) {
       setCurrentUser(info.email);
+      /* Entrati nel gestionale: si guarda se c'e' anche l'accesso al
+         database, quello che fa funzionare le regole di sicurezza. */
+      try{ setTimeout(function(){ eaSbControllaSessione(function(ok){ if(ok) eaSbVerificaEmail(); }); }, 1200); }catch(e){}
       var _resolved = eaNomeDaMail(info.email);
       var _prefix = info.email.split('@')[0];
       var displayName = (_resolved === _prefix && info.name) ? info.name : _resolved;
@@ -9323,6 +9346,8 @@ function disconnettiUtente() {
   _driveTokenExpiry = 0;
   _currentUserEmail = null;
   _currentUserRole = null;
+  try{ if(typeof eaSbEsci==='function') eaSbEsci(); }catch(e){}
+  try{ sessionStorage.removeItem('ea_gtoken'); }catch(e){}
   var sInfo = document.getElementById('sidebar-user-info');
   if (sInfo) sInfo.style.display = 'none';
   var loginDisplay = document.getElementById('login-email-display');
@@ -19741,6 +19766,141 @@ var SB_URL='https://jasrectyddshjizpxiia.supabase.co';
 var SB_KEY='sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var _sb=null;
 function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||!supabase.createClient) return null; _sb=supabase.createClient(SB_URL, SB_KEY); return _sb; }catch(e){ return null; } }
+/* ===================== ACCESSO AL DATABASE =====================
+   L'accesso con Google fa entrare nel gestionale, ma Supabase non lo sapeva:
+   riceveva solo la chiave scritta nel file, uguale per tutti. Con le regole
+   RLS attive il database ha bisogno di sapere CHI sta chiedendo i dati.
+   Qui si apre una seconda sessione, quella verso Supabase, che viaggia
+   insieme a ogni richiesta. Non sostituisce l'accesso Google: lo affianca. */
+var _eaSbSessione = null;
+
+function eaSbSessioneAttiva(){ return !!_eaSbSessione; }
+
+/* Chiede a Supabase se c'e' gia' una sessione valida salvata dal browser.
+   Se c'e', non si chiede piu' niente a nessuno. */
+function eaSbControllaSessione(cb){
+  var sb=sbClient();
+  if(!sb || !sb.auth){ if(cb) cb(false); return; }
+  try{
+    sb.auth.getSession().then(function(r){
+      _eaSbSessione = (r && r.data && r.data.session) ? r.data.session : null;
+      try{ eaSbAggiornaAvviso(); }catch(e){}
+      if(cb) cb(!!_eaSbSessione);
+    }, function(){ if(cb) cb(false); });
+  }catch(e){ if(cb) cb(false); }
+}
+
+/* Avvia l'accesso a Supabase. Porta su Google e torna qui: la pagina si
+   ricarica, ed e' normale. Da quel momento la sessione resta salvata per
+   giorni e non viene piu' chiesto niente. */
+function eaSbEntra(){
+  var sb=sbClient();
+  if(!sb || !sb.auth){ alert('Database non raggiungibile in questo momento.'); return; }
+  try{
+    var dove = location.origin + location.pathname;
+    sb.auth.signInWithOAuth({
+      provider:'google',
+      options:{ redirectTo: dove, queryParams:{ prompt:'select_account' } }
+    });
+  }catch(e){ alert('Non riesco ad avviare l\'accesso al database: '+((e&&e.message)||e)); }
+}
+
+function eaSbEsci(){
+  var sb=sbClient();
+  try{ if(sb&&sb.auth) sb.auth.signOut(); }catch(e){}
+  _eaSbSessione=null;
+  try{ eaSbAggiornaAvviso(); }catch(e){}
+}
+
+/* Striscia in alto quando l'accesso al database manca. Non blocca il lavoro:
+   finche' le regole RLS non sono attive su tutte le tabelle il gestionale
+   funziona lo stesso, ma su quelle gia' chiuse i dati non arriverebbero. */
+function eaSbAggiornaAvviso(){
+  /* Con l'accesso unico non c'e' piu' niente da collegare a parte: chi e'
+     entrato ha gia' anche la sessione del database. */
+  if(true) return;
+  var id='ea-sb-avviso';
+  var vecchio=document.getElementById(id);
+  if(_eaSbSessione){ if(vecchio) vecchio.remove(); return; }
+  /* Non si mostra a chi non e' ancora entrato nel gestionale. */
+  if(typeof _currentUserEmail==='undefined' || !_currentUserEmail) return;
+  if(vecchio) return;
+  var d=document.createElement('div');
+  d.id=id;
+  d.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99998;background:#fef3c7;border-bottom:1px solid #fcd34d;color:#92400e;padding:9px 14px;font-family:inherit;font-size:13px;display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap;';
+  d.innerHTML='<span>\ud83d\udd12 Accesso al database non collegato: alcune sezioni potrebbero restare vuote.</span>'
+    +'<button onclick="eaSbEntra()" style="padding:6px 12px;border-radius:7px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">Collega ora</button>'
+    +'<button onclick="document.getElementById(\''+id+'\').remove()" style="padding:6px 10px;border-radius:7px;border:1px solid #fcd34d;background:#fff;color:#92400e;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Pi\u00f9 tardi</button>';
+  document.body.appendChild(d);
+}
+
+/* Se l'email di Supabase e' diversa da quella del gestionale, i ruoli non
+   corrisponderebbero: meglio accorgersene subito. */
+function eaSbVerificaEmail(){
+  try{
+    if(!_eaSbSessione || !_eaSbSessione.user) return;
+    var a=String(_eaSbSessione.user.email||'').toLowerCase().trim();
+    var b=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase().trim();
+    if(a && b && a!==b){
+      alert('Attenzione: nel gestionale sei entrato come '+b+', ma al database risulti '+a+'.\n\n'
+        +'I permessi seguono l\'indirizzo del database. Se non e\' quello giusto, esci e rientra.');
+    }
+  }catch(e){}
+}
+
+/* Al ritorno da Google: si legge la sessione e si fa entrare la persona,
+   senza chiederle piu' niente. */
+function eaSbEntrataCompletata(sess){
+  try{
+    if(!sess || !sess.user || !sess.user.email) return false;
+    /* Il permesso per Gmail arriva insieme alla sessione: si conserva
+       perche' le funzioni dei permessi e delle firme lo usano. */
+    if(sess.provider_token){
+      try{
+        _driveAccessToken = sess.provider_token;
+        _driveTokenExpiry = Date.now() + 55*60*1000;
+        sessionStorage.setItem('ea_gtoken', sess.provider_token);
+      }catch(e){}
+    } else {
+      /* Dopo un semplice ricaricamento il permesso Gmail non viene
+         ripassato: si riprende quello messo da parte all'accesso. */
+      try{
+        var t=sessionStorage.getItem('ea_gtoken');
+        if(t){ _driveAccessToken=t; _driveTokenExpiry=Date.now()+30*60*1000; }
+      }catch(e){}
+    }
+    if(typeof hideWelcomeScreen==='function') hideWelcomeScreen();
+    if(typeof setCurrentUser==='function') setCurrentUser(sess.user.email);
+    try{ localStorage.setItem('ea_last_login','1'); }catch(e){}
+    return true;
+  }catch(e){ return false; }
+}
+
+try{
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(function(){
+      eaSbControllaSessione(function(ok){
+        if(ok){ eaSbEntrataCompletata(_eaSbSessione); }
+      });
+    }, 900);
+  });
+  /* Il token scade e si rinnova da solo: qui si tiene aggiornata la copia. */
+  setTimeout(function(){
+    try{
+      var sb=sbClient();
+      if(sb && sb.auth && sb.auth.onAuthStateChange){
+        sb.auth.onAuthStateChange(function(_ev, sess){
+          _eaSbSessione = sess || null;
+          try{ eaSbAggiornaAvviso(); }catch(e){}
+          if(sess && (_ev==='SIGNED_IN' || _ev==='TOKEN_REFRESHED')){
+            try{ eaSbEntrataCompletata(sess); }catch(e){}
+          }
+        });
+      }
+    }catch(e){}
+  }, 2000);
+}catch(e){}
+
 function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 var DOC_CAT={
