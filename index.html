@@ -3979,8 +3979,8 @@ function apriGestioneCredenziali() {
     <div style="background:white;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;border-top:5px solid #1a4fa0;">
       <div style="background:#1a4fa0;color:white;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;">
         <div>
-          <div style="font-size:18px;font-weight:700;">🔑 Credenziali Utenti</div>
-          <div style="font-size:12px;opacity:.7;">Gestisci email e password di tutti gli utenti</div>
+          <div style="font-size:18px;font-weight:700;">👥 Utenti e permessi</div>
+          <div style="font-size:12px;opacity:.7;">Chi vede cosa dentro il gestionale</div>
         </div>
         <button onclick="document.getElementById('modal-credenziali').style.display='none'"
           style="background:none;border:none;color:white;font-size:24px;cursor:pointer;">✕</button>
@@ -4029,25 +4029,35 @@ function renderCredenzialiLista() {
   if (!el) return;
   var roleColors = {admin:'#e74c3c', staff:'#0ea5e9', manager:'#e67e22', contabilita:'#8b5cf6', dipendente:'#27ae60'};
   var roleLabels = {admin:'Admin', staff:'Staff', manager:'Manager', contabilita:'Contabilità', dipendente:'Dipendente'};
-  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-  html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Password</th><th style="padding:10px;text-align:left;">Ruolo</th><th></th></tr></thead><tbody>';
+  /* Le password non servono piu': si entra con Google. Qui resta solo il
+     ruolo, che decide quali sezioni del gestionale una persona vede.
+     Attenzione: l'accesso ai DATI lo decide la tabella "ruoli" su Supabase,
+     che e' un'altra cosa e va aggiornata a parte. */
+  var _avviso = '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1e40af;line-height:1.5;">'
+    + '<b>Il ruolo qui decide cosa si vede sullo schermo.</b><br>'
+    + 'Per far arrivare anche i dati, la stessa persona va inserita nella tabella <b>ruoli</b> su Supabase. '
+    + 'Senza quel passaggio entra ma trova le sezioni vuote.'
+    + '</div>';
+  var html = _avviso + '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Ruolo</th><th style="padding:10px;text-align:left;"></th></tr></thead><tbody>';
   UTENTI_APP.forEach(function(u, i) {
     var _ruoloEff = ruoloEffettivo(u.email, u.ruolo);
     html += '<tr style="border-bottom:1px solid #f1f5f9;">';
     html += '<td style="padding:9px 10px;font-weight:600;">'+u.nome+'</td>';
     html += '<td style="padding:9px 10px;color:#64748b;font-size:12px;">'+u.email+'</td>';
-    html += '<td style="padding:9px 10px;">';
-    html += '<input type="text" value="'+u.password+'" onchange="credCambiaPassword('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;width:130px;">';
-    html += '</td>';
     var _fisso = (u.email === 'europaautobusiness@gmail.com');
     if (_fisso) {
       html += '<td style="padding:9px 10px;"><span style="background:'+roleColors[_ruoloEff]+';color:white;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;">'+roleLabels[_ruoloEff]+'</span></td>';
     } else {
       html += '<td style="padding:9px 10px;"><select onchange="credCambiaRuolo('+i+',this.value)" style="padding:5px 8px;border:1px solid #ddd;font-family:inherit;font-size:12px;border-radius:4px;">'
-        + '<option value="dipendente"'+(u.ruolo==='dipendente'?' selected':'')+'>Dipendente</option>'
-        + '<option value="contabilita"'+(u.ruolo==='contabilita'?' selected':'')+'>Contabilità</option>'
         + '<option value="staff"'+(u.ruolo==='staff'?' selected':'')+'>Staff</option>'
+        + '<option value="contabilita"'+(u.ruolo==='contabilita'?' selected':'')+'>Contabilità</option>'
         + '<option value="admin"'+(u.ruolo==='admin'?' selected':'')+'>Admin</option>'
+        /* I ruoli in uso sono tre. "Dipendente" e "Manager" restano
+           selezionabili solo se qualcuno li ha gia': non si tolgono di
+           mano a chi ce l'ha, ma non si propongono piu'. */
+        + ((u.ruolo==='dipendente')?'<option value="dipendente" selected>Dipendente</option>':'')
+        + ((u.ruolo==='manager')?'<option value="manager" selected>Manager</option>':'')
         + '</select></td>';
     }
     html += '<td style="padding:9px 10px;">';
@@ -4738,7 +4748,11 @@ function eaHtmlToPdf(html){
           var blocchi=[];
           try{
             var _bt=body.getBoundingClientRect().top;
-            var _els=d.querySelectorAll('.nospezza,.cvrow,.cvbox,.cvsign,.cvaccept,.cvfoot,.cvgrid,.cvtop,.cvcond>div');
+            /* .cvbox NON deve comprendere il riquadro delle condizioni: quello
+               e' lungo quanto tre pagine e, trattandolo come blocco unico, il
+               taglio veniva spostato prima lasciando mezzo foglio bianco.
+               Le clausole restano intere una per una (.cvcond>div). */
+            var _els=d.querySelectorAll('.nospezza,.cvrow,.cvbox:not(.cvcond),.cvsign,.cvaccept,.cvfoot,.cvgrid,.cvtop,.cvcond>div');
             for(var _i=0;_i<_els.length;_i++){
               var _r=_els[_i].getBoundingClientRect();
               if(_r.height>0) blocchi.push({a:_r.top-_bt, b:_r.bottom-_bt});
@@ -19606,6 +19620,9 @@ function cvBuildHTML(c, tipo){
        quattro clausole, il gruppo intero passa alla pagina successiva invece
        di lasciare il titolo solo in fondo al foglio. */
     +".cvcond-avvio{page-break-inside:avoid;break-inside:avoid;}"
+    /* Nel percorso a immagine (proposta con allegati) il riquadro lungo non
+       va mai considerato un blocco unico. */
+    +".cvcond{page-break-inside:auto;break-inside:auto;}"
     +".cvsign{page-break-inside:avoid!important;break-inside:avoid!important;}"
     +".cvsign .s{page-break-inside:avoid!important;break-inside:avoid!important;}"
     /* Le firme non si spezzano mai: la riga restava su una pagina e la scritta
