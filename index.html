@@ -6566,6 +6566,11 @@ function pVenditeAperte(){
       if(typeof cvIsStorico==='function' && cvIsStorico(cv)) return;
       if(cv.origine==='sicom_ap' || cv.deleted) return;
       var t=+(cv.contrattoTs||cv.createdAt||0); if(t<limite) return;
+      /* Il calcolo delle provvigioni dal gestionale e' partito ad agosto 2026:
+         prima di allora si faceva fuori, quindi quelle vendite risultano
+         "da completare" solo perche' non sono mai passate di qui. Restano
+         consultabili dal selettore del mese, ma non vengono piu' segnalate. */
+      if(t < P_INIZIO_PROVV) return;
       var b=pProvvDiCv(cv.id, reg);
       if(b && b.r.bozza!==true) return;              /* gia' completata */
       if(!b && pProvvEsiste(cv, reg)) return;        /* abbinata per nome, vecchie righe */
@@ -6584,6 +6589,10 @@ function pVenditeAperte(){
   }catch(e){}
   return out.slice(0,12);
 }
+/* Data da cui il gestionale tiene le provvigioni. Le vendite precedenti
+   sono considerate chiuse: erano gestite altrove. */
+var P_INIZIO_PROVV = new Date(2026, 7, 1).getTime();   /* 1 agosto 2026 */
+
 function pVenditeRender(){
   try{
     var box=document.getElementById('pDaVendite'); if(!box) return;
@@ -19553,9 +19562,24 @@ function cvBuildHTML(c, tipo){
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
   /* Via il titolo ripetuto in cima al testo: il documento ne stampa gia' uno. */
   try{ _cond=String(_cond||'').replace(/^\s*CONDIZIONI(\s+(PROPOSTA\s+D['\u2019]ACQUISTO|CONTRATTUALI|DI\s+VENDITA))?\s*\n+/i, ''); }catch(_e){}
-  if((_cond||_clausolaPermuta) && !_cvDetailView){ doc+='<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div><div class="cvbox cvcond" style="background:#fff;border:none;padding:8px 0;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')+String(cvEsc(_cond)).split(/\n{2,}|\n(?=\d{1,2}\.\s)/).filter(function(x){ return x.trim(); })
-        .map(function(x){ return '<div style="page-break-inside:avoid;break-inside:avoid;margin-bottom:5px;">'+x.trim()+'</div>'; }).join('')
-      +'</div>'; doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+  if((_cond||_clausolaPermuta) && !_cvDetailView){
+    var _clausole=String(cvEsc(_cond)).split(/\n{2,}|\n(?=\d{1,2}\.\s)/)
+      .filter(function(x){ return x.trim(); })
+      .map(function(x){ return '<div style="page-break-inside:avoid;break-inside:avoid;margin-bottom:5px;">'+x.trim()+'</div>'; });
+    /* Le prime quattro stanno col titolo in un blocco solo. Se ci stanno,
+       la prima pagina si riempie e le altre proseguono sotto; se non ci
+       stanno, scende tutto insieme alla pagina dopo. Cosi' non capita piu'
+       di vedere il titolo in fondo a un foglio quasi vuoto. */
+    var _AVVIO=4;
+    var _testa=_clausole.slice(0,_AVVIO).join('');
+    var _resto=_clausole.slice(_AVVIO).join('');
+    doc+='<div class="cvcond-avvio">'
+      +'<div class="cvh" style="margin-top:14px;">Condizioni contrattuali</div>'
+      +'<div class="cvbox cvcond" style="background:#fff;border:none;padding:8px 0 0;font-size:9.5px;line-height:1.45;white-space:pre-line;">'
+      +(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')
+      +_testa
+      +'</div></div>'
+      +(_resto?('<div class="cvbox cvcond" style="background:#fff;border:none;padding:0 0 8px;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_resto+'</div>'):''); doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -19574,6 +19598,14 @@ function cvBuildHTML(c, tipo){
        paragrafo, punto numerato o voce di elenco puo' essere tagliato in due:
        il taglio a meta' frase e' quello che rende il documento illeggibile. */
     +".cvcond p,.cvcond li,.cvcond div{page-break-inside:avoid;break-inside:avoid;orphans:4;widows:4;}"
+    /* Il riquadro nel suo insieme DEVE poter continuare sulla pagina dopo:
+       le singole clausole restano intere, ma l'elenco scorre. Questa regola
+       viene dopo quella di .cvbox e la corregge. */
+    +".cvcond{page-break-inside:auto!important;break-inside:auto!important;}"
+    /* Titolo e prime clausole viaggiano insieme: se non ci stanno almeno
+       quattro clausole, il gruppo intero passa alla pagina successiva invece
+       di lasciare il titolo solo in fondo al foglio. */
+    +".cvcond-avvio{page-break-inside:avoid;break-inside:avoid;}"
     +".cvsign{page-break-inside:avoid!important;break-inside:avoid!important;}"
     +".cvsign .s{page-break-inside:avoid!important;break-inside:avoid!important;}"
     /* Le firme non si spezzano mai: la riga restava su una pagina e la scritta
