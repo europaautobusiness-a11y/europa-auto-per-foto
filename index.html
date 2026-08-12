@@ -20555,7 +20555,9 @@ function regDiagnosi(){
     txt+='\u2022 '+((x.a.marca||'')+' '+(x.a.modello||'')).trim()+' '+(x.a.targa||x.a.numero_interno||'')+'\n   manca: '+x.manca.join(', ')+'\n';
   });
   if(n>25) txt+='\n...e altri '+(n-25)+'.';
-  txt+='\n\nSe i dati esistono ma non compaiono, apri Fornitori e Clienti una volta: il registro li rilegge da l\u00ec.';
+  txt+='\n\nDove si correggono: se il veicolo e\' stato comprato da un\'azienda, i dati stanno in FORNITORI. '
+    +'Se e\' arrivato in permuta o da un privato, stanno in CLIENTI. '
+    +'Il registro legge da li\' e si aggiorna da solo.';
   alert(txt);
 }
 function regAutos(){
@@ -20625,12 +20627,48 @@ function regDepositanteDa(a){
   var out={nome:'',cf:'',ind:''};
   try{
     if(!a) return out;
-    if(a.depositanteNome||a.depositanteCf||a.depositanteInd){
-      return {nome:a.depositanteNome||'', cf:a.depositanteCf||'', ind:a.depositanteInd||''};
+    /* Quello che e' gia' scritto sulla scheda auto vale, ma solo campo per
+       campo: prima bastava avere il nome perche' la funzione uscisse subito
+       restituendo il codice fiscale vuoto, e l'anagrafica non veniva mai
+       nemmeno guardata. Era questo a tenere il registro incompleto anche
+       dopo aver corretto la scheda cliente. */
+    out.nome=a.depositanteNome||'';
+    out.cf=a.depositanteCf||'';
+    out.ind=a.depositanteInd||'';
+    if(out.nome && out.cf && out.ind) return out;
+
+    var an=null;
+    /* Prima si prova col contratto della permuta, che e' il collegamento
+       sicuro. Se non c'e', si cerca in anagrafica per nome. */
+    if(a.permutaContrattoId && typeof cvLoad==='function'){
+      var cvs=cvLoad();
+      for(var i=0;i<cvs.length;i++){
+        if(cvs[i] && cvs[i].id===a.permutaContrattoId){ an=regDatiCliente(cvs[i]); break; }
+      }
     }
-    if(!a.permutaContrattoId || typeof cvLoad!=='function') return out;
-    var cvs=cvLoad();
-    for(var i=0;i<cvs.length;i++){ if(cvs[i] && cvs[i].id===a.permutaContrattoId) return regDatiCliente(cvs[i]); }
+    if((!an || !an.cf) && out.nome && typeof clAggrega==='function'){
+      var norm=function(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9\u00e0-\u00ff ]/g,' ').replace(/\s+/g,' ').trim().split(' ').filter(Boolean).sort().join(' '); };
+      var cerco=norm(out.nome);
+      if(cerco){
+        var tutti=clAggrega();
+        for(var j=0;j<tutti.length;j++){
+          var c=tutti[j]; if(!c) continue;
+          var nc=norm(c.ragSociale || (((c.cognome||'')+' '+(c.nome||'')).trim()));
+          if(nc && nc===cerco){
+            var _cf=(c.business?(c.piva||c.cf):(c.cf||c.piva))||'';
+            var _ii=(c.indirizzi&&c.indirizzi.length)?c.indirizzi[c.indirizzi.length-1]:null;
+            an={ nome:nc, cf:_cf,
+                 ind:_ii?[_ii.via,_ii.civico,_ii.cap,_ii.citta,(_ii.prov?('('+_ii.prov+')'):'')].filter(Boolean).join(' ').trim():'' };
+            break;
+          }
+        }
+      }
+    }
+    if(an){
+      if(!out.nome) out.nome=an.nome||'';
+      if(an.cf) out.cf=an.cf;            /* l'anagrafica e' il dato tenuto aggiornato */
+      if(!out.ind) out.ind=an.ind||'';
+    }
   }catch(e){}
   return out;
 }
