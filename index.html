@@ -27833,7 +27833,10 @@ function crmDefaultStato(l){
   if(l.ultimoPrevAperto && l.ultimoPrevAperto>(l.ultimoConsegna||0)) return 'nuovo';
   return l.consegnato?'chiuso vinto':'nuovo';
 }
-function crmInit(){ crmSupaLoad(); if(typeof cvSupaLoad==='function') cvSupaLoad(); crmRender(); }
+function crmInit(){ crmSupaLoad();
+  /* Le richieste in arrivo si leggono dal cloud all'apertura del CRM:
+     non stanno nel browser, arrivano mentre il gestionale e' chiuso. */
+  try{ crmLeadCarica(function(){ if(typeof crmRender==='function') crmRender(); }); }catch(e){} if(typeof cvSupaLoad==='function') cvSupaLoad(); crmRender(); }
 function crmMesiDa(ts){ if(!ts) return 0; return Math.floor((Date.now()-ts)/(1000*60*60*24*30.44)); }
 function crmDMY(ts){ if(!ts) return '—'; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
 function crmAddMesi(ts, m){ var d=new Date(ts); d.setMonth(d.getMonth()+(parseInt(m,10)||0)); return d.getTime(); }
@@ -28308,10 +28311,15 @@ function crmRender(){
      importato compreso: migliaia di schede da disegnare a ogni apertura,
      per un elenco che nessuno usava. La ricerca dei clienti sta gia' nella
      barra in alto e nella sezione Clienti. */
-  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['online','Lead online','\ud83d\udce5'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  /* Sulla scheda dei lead il numero di quelli ancora da guardare. */
+  try{
+    var _nl=(_leadCache||[]).filter(function(x){ return (x.stato||'nuovo')==='nuovo'; }).length;
+    if(_nl) tabs[1][1]='Lead online ('+_nl+')';
+  }catch(e){}
   if(_crmTab==='lead') _crmTab='pipeline';   /* chi ci era rimasto dentro */
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderKanban()));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderKanban())));
   wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
@@ -28367,6 +28375,181 @@ function crmInZona(prov){
 }
 var _crmConsZona = false;   /* true = nasconde chi e' fuori zona */
 function crmConsZonaToggle(){ _crmConsZona=!_crmConsZona; if(typeof crmRender==='function') crmRender(); }
+
+/* ===================== LEAD ONLINE =====================
+   Le richieste che arrivano da AutoScout e dal modulo del sito. Entrano
+   da sole nel database (funzione lead-in su Supabase) e compaiono qui.
+   Non sono preventivi: sono persone che hanno scritto e vanno richiamate.
+   Da qui si legge cosa hanno scritto, si chiama o si scrive su WhatsApp,
+   e poi si decide: diventa un cliente da seguire, oppure si scarta. */
+var _leadCache = [];
+var _leadFiltro = 'nuovo';
+
+function crmLeadCarica(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb) cb(); return; }
+  try{
+    sb.from('contatti_in').select('id,data').order('created_at',{ascending:false}).limit(400)
+      .then(function(res){
+        if(res && !res.error){
+          _leadCache=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
+        } else if(res && res.error){ console.log('lead:', res.error.message); }
+        if(cb) cb();
+      }, function(){ if(cb) cb(); });
+  }catch(e){ if(cb) cb(); }
+}
+
+function crmLeadSalva(rec){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb||!rec||!rec.id) return;
+  try{ sb.from('contatti_in').upsert({ id:rec.id, data:rec }).then(function(){}); }catch(e){}
+}
+
+function crmLeadFiltro(v){ _leadFiltro=v; crmRender(); }
+
+function crmLeadQuando(ts){
+  if(!ts) return '';
+  var m=Math.floor((Date.now()-ts)/60000);
+  if(m<60) return m<=1?'adesso':(m+' minuti fa');
+  var h=Math.floor(m/60); if(h<24) return h+(h===1?' ora fa':' ore fa');
+  var g=Math.floor(h/24); if(g<30) return g+(g===1?' giorno fa':' giorni fa');
+  return crmDMY(ts);
+}
+
+/* Il cliente entra in anagrafica e nella pipeline: da li' si fa il
+   preventivo con il percorso normale, senza scorciatoie che poi creano
+   doppioni. */
+function crmLeadInserisci(id){
+  var l=_leadCache.filter(function(x){ return x.id===id; })[0]; if(!l) return;
+  var nome=String(l.nome||'').trim();
+  if(!nome){ nome=prompt('Nome e cognome del cliente:','')||''; if(!nome.trim()) return; }
+  var parti=nome.split(/\s+/);
+  var cognome=parti.length>1?parti[parti.length-1]:nome;
+  var pnome=parti.length>1?parti.slice(0,-1).join(' '):'';
+  /* Su AutoScout spesso arriva un nome solo: si chiede conferma invece di
+     inventarsi la divisione fra nome e cognome. */
+  var conf=prompt('Controlla come va salvato.\n\nCognome:', cognome);
+  if(conf===null) return; cognome=conf.trim();
+  var conf2=prompt('Nome:', pnome);
+  if(conf2===null) return; pnome=conf2.trim();
+
+  var cl={ cognome:cognome, nome:pnome, email:l.email||'', telefono:l.telefono||'' };
+  var key=(typeof crmKey==='function')?crmKey(cl):'';
+  if(!key){ alert('Servono almeno il nome e un recapito.'); return; }
+
+  /* In anagrafica, se non c'e' gia'. */
+  try{
+    if(typeof clStore==='function' && typeof clStoreSave==='function'){
+      var st=clStore()||{};
+      if(!st[key]){
+        st[key]={ key:key, cognome:cognome, nome:pnome, email:cl.email, telefono:cl.telefono, updatedAt:Date.now() };
+        clStoreSave(st);
+        if(typeof clSupaUpsert==='function') clSupaUpsert(key);
+      }
+    }
+  }catch(e){}
+
+  /* Nella pipeline, con provenienza gia' compilata. */
+  try{
+    var c=crmLoad(); if(!c[key]) c[key]={};
+    c[key].id=key;
+    c[key].stato=c[key].stato||'nuovo';
+    c[key].fonte=c[key].fonte||(l.fonte||'');
+    c[key].note=((c[key].note||'')+(c[key].note?'\n':'')+'Richiesta '+(l.fonte||'')+' del '+crmDMY(l.ricevutaTs)+(l.auto?(' \u00b7 '+l.auto):'')+(l.messaggio?('\n"'+l.messaggio+'"'):'')).slice(0,3000);
+    c[key].updatedAt=Date.now();
+    crmSave(c);
+    if(typeof crmSupaUpsert==='function') crmSupaUpsert(key, c[key]);
+  }catch(e){}
+
+  l.stato='inserito'; l.clienteKey=key; l.gestitoTs=Date.now();
+  crmLeadSalva(l);
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 '+cognome+' inserito nel CRM',true);
+  crmRender();
+}
+
+function crmLeadScarta(id){
+  var l=_leadCache.filter(function(x){ return x.id===id; })[0]; if(!l) return;
+  var m=prompt('Motivo dello scarto (facoltativo):','Non interessato');
+  if(m===null) return;
+  l.stato='scartato'; l.motivo=String(m||'').trim(); l.gestitoTs=Date.now();
+  crmLeadSalva(l);
+  crmRender();
+}
+
+function crmLeadRiapri(id){
+  var l=_leadCache.filter(function(x){ return x.id===id; })[0]; if(!l) return;
+  l.stato='nuovo'; l.motivo=''; l.gestitoTs=null;
+  crmLeadSalva(l);
+  crmRender();
+}
+
+function crmRenderLeadOnline(){
+  var tutti=_leadCache||[];
+  var conta={ nuovo:0, inserito:0, scartato:0 };
+  tutti.forEach(function(l){ var st=l.stato||'nuovo'; if(conta[st]!=null) conta[st]++; });
+
+  var lista=tutti.filter(function(l){ return (l.stato||'nuovo')===_leadFiltro; });
+
+  var bott=function(v,et,n){
+    var on=(_leadFiltro===v);
+    return '<button onclick="crmLeadFiltro(\''+v+'\')" style="padding:7px 13px;border-radius:9px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;margin-right:6px;">'+et+' ('+n+')</button>';
+  };
+
+  var h='<div style="margin-bottom:14px;">'+bott('nuovo','Da contattare',conta.nuovo)
+    +bott('inserito','Inseriti',conta.inserito)+bott('scartato','Scartati',conta.scartato)
+    +'<button onclick="crmLeadCarica(crmRender)" style="padding:7px 12px;border-radius:9px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">\u21bb Aggiorna</button></div>';
+
+  if(!lista.length){
+    return h+'<div style="text-align:center;color:#94a3b8;padding:40px 12px;font-size:14px;">'
+      +(_leadFiltro==='nuovo'?'Nessuna richiesta da contattare. \u2705':'Niente in questo elenco.')+'</div>';
+  }
+
+  lista.forEach(function(l){
+    var nuovo=((l.stato||'nuovo')==='nuovo');
+    var fonte=l.fonte||'Altro';
+    var col=(fonte==='AutoScout')?['#fef9c3','#854d0e']:((fonte==='Sito web')?['#dbeafe','#1e40af']:['#f1f5f9','#64748b']);
+    var tel=String(l.telefono||'');
+    var wa=tel?('39'+tel.replace(/^39/,'')):'';
+
+    h+='<div style="background:#fff;border:1px solid '+(nuovo?'#fcd34d':'#e2e8f0')+';border-radius:12px;padding:14px;margin-bottom:12px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
+      +'<div style="min-width:0;">'
+      +'<div style="font-size:16px;font-weight:800;color:#0f172a;">'+crmEsc(l.nome||'(senza nome)')+'</div>'
+      +(l.auto?('<div style="font-size:13px;color:#1a4fa0;font-weight:700;margin-top:2px;">'+crmEsc(l.auto)+'</div>'):'')
+      +'</div>'
+      +'<div style="text-align:right;flex:0 0 auto;">'
+      +'<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:'+col[0]+';color:'+col[1]+';font-size:11px;font-weight:800;">'+crmEsc(fonte)+'</span>'
+      +'<div style="font-size:11.5px;color:#94a3b8;margin-top:3px;">'+crmLeadQuando(l.ricevutaTs)+'</div>'
+      +'</div></div>';
+
+    if(l.messaggio){
+      h+='<div style="margin-top:10px;padding:10px 12px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 8px 8px 0;font-size:13px;color:#334155;line-height:1.55;white-space:pre-line;">'+crmEsc(l.messaggio)+'</div>';
+    }
+
+    h+='<div style="margin-top:10px;font-size:12.5px;color:#64748b;">'
+      +(tel?('\ud83d\udcde '+crmEsc(tel)+'&nbsp;&nbsp;'):'')
+      +(l.email?('\u2709\ufe0f '+crmEsc(l.email)):'')
+      +(!tel&&!l.email?'<span style="color:#dc2626;">Nessun recapito riconosciuto \u2014 apri l\'email originale</span>':'')
+      +'</div>';
+
+    if(l.budget) h+='<div style="margin-top:4px;font-size:12px;color:#94a3b8;">Budget indicato: '+crmEsc(l.budget)+'</div>';
+
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">';
+    if(wa) h+='<a href="https://wa.me/'+wa+'" target="_blank" rel="noopener" style="padding:8px 13px;border-radius:8px;background:#25d366;color:#fff;text-decoration:none;font-size:12.5px;font-weight:800;">\ud83d\udcac WhatsApp</a>';
+    if(tel) h+='<a href="tel:'+crmEsc(tel)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\ud83d\udcde Chiama</a>';
+    if(l.email) h+='<a href="mailto:'+crmEsc(l.email)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\u2709\ufe0f Email</a>';
+
+    if(nuovo){
+      h+='<button onclick="crmLeadInserisci(\''+l.id+'\')" style="padding:8px 13px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\u2795 Inserisci nel CRM</button>'
+        +'<button onclick="crmLeadScarta(\''+l.id+'\')" style="padding:8px 13px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Scarta</button>';
+    } else {
+      h+='<button onclick="crmLeadRiapri(\''+l.id+'\')" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">\u21a9 Rimetti fra i nuovi</button>';
+      if(l.motivo) h+='<span style="align-self:center;font-size:12px;color:#94a3b8;">'+crmEsc(l.motivo)+'</span>';
+    }
+    h+='</div></div>';
+  });
+
+  return h;
+}
 
 function crmRenderConsegnate(){
   /* Qui interessa solo chi e' arrivato al momento giusto per la proposta:
