@@ -4939,6 +4939,107 @@ function eaChiediMailEInvia(cfg){
     });
 }
 
+/* ===================== WHATSAPP DAL GESTIONALE =====================
+   Manda tramite la funzione wa-invia su Supabase, che parla con Meta.
+   Il messaggio parte dal server: non apre WhatsApp e non serve il
+   telefono di nessuno.
+
+   Due regole di Meta da tenere a mente, non sono nostre:
+   - TESTO LIBERO solo se il cliente ha scritto nelle ultime 24 ore.
+     Fuori da quella finestra Meta lo rifiuta.
+   - Per scrivere per primi serve un MODELLO approvato. Al momento
+     l'unico disponibile e' hello_world, quello di prova di Meta.
+
+   Finche' il numero e' quello di prova (+1 555 633 0390) si puo'
+   scrivere solo ai destinatari autorizzati in Meta. */
+var EA_WA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-invia';
+
+function waApiInvia(dati){
+  if(!dati || !dati.to) return Promise.reject(new Error('manca il numero'));
+  return fetch(EA_WA_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
+    body: JSON.stringify(dati)
+  }).then(function(r){ return r.json().catch(function(){ return {ok:false, errore:'risposta non leggibile'}; }); });
+}
+
+/* Pannello di prova: si sceglie il numero, si manda, si legge l'esito.
+   Serve a collaudare il canale prima di collegarlo ai pulsanti veri. */
+function waProvaApri(numero, nome){
+  var vecchio=document.getElementById('wa-prova'); if(vecchio) vecchio.remove();
+  var tel=String(numero||'').replace(/\D/g,'');
+  var d=document.createElement('div');
+  d.id='wa-prova';
+  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    +'<div style="font-size:17px;font-weight:900;color:#0f172a;margin-bottom:4px;">\ud83d\udcac Invia con WhatsApp</div>'
+    +'<div style="font-size:12.5px;color:#64748b;line-height:1.55;margin-bottom:14px;">Parte dal server, non dal telefono. '
+    +'Con il numero di prova si pu\u00f2 scrivere solo ai destinatari autorizzati su Meta.</div>'
+    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">NUMERO</label>'
+    +'<input id="wa-prova-tel" value="'+eaEscq(tel)+'" placeholder="3331234567" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;">'
+    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">COSA MANDARE</label>'
+    +'<select id="wa-prova-tipo" onchange="waProvaTipo()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;">'
+    +'<option value="template">Modello hello_world (si pu\u00f2 sempre)</option>'
+    +'<option value="testo">Testo libero (solo se ha scritto nelle ultime 24h)</option>'
+    +'</select>'
+    +'<div id="wa-prova-box" style="display:none;">'
+    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">TESTO</label>'
+    +'<textarea id="wa-prova-testo" rows="4" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;resize:vertical;">Buongiorno'+(nome?(' '+String(nome).split(' ')[0]):'')+', le scrivo da Europa Auto.</textarea>'
+    +'</div>'
+    +'<div id="wa-prova-esito" style="font-size:13px;line-height:1.5;margin-bottom:12px;"></div>'
+    +'<div style="display:flex;gap:8px;">'
+    +'<button onclick="document.getElementById(\'wa-prova\').remove()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    +'<button id="wa-prova-btn" onclick="waProvaInvia()" style="flex:1;padding:11px;border-radius:9px;border:none;background:#25d366;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">Invia</button>'
+    +'</div></div>';
+  d.addEventListener('click', function(ev){ if(ev.target===d) d.remove(); });
+  document.body.appendChild(d);
+}
+
+function waProvaTipo(){
+  var t=(document.getElementById('wa-prova-tipo')||{}).value;
+  var box=document.getElementById('wa-prova-box');
+  if(box) box.style.display=(t==='testo')?'':'none';
+}
+
+function waProvaInvia(){
+  var tel=((document.getElementById('wa-prova-tel')||{}).value||'').trim();
+  var tipo=(document.getElementById('wa-prova-tipo')||{}).value;
+  var esito=document.getElementById('wa-prova-esito');
+  var btn=document.getElementById('wa-prova-btn');
+  if(!tel){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Serve il numero.</span>'; return; }
+
+  var dati={ to:tel };
+  if(tipo==='testo'){
+    var txt=((document.getElementById('wa-prova-testo')||{}).value||'').trim();
+    if(!txt){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Serve il testo.</span>'; return; }
+    dati.testo=txt;
+  } else {
+    dati.template='hello_world'; dati.lingua='en_US';
+  }
+
+  if(btn){ btn.disabled=true; btn.textContent='Invio\u2026'; }
+  if(esito) esito.innerHTML='<span style="color:#64748b;">Sto inviando\u2026</span>';
+
+  waApiInvia(dati).then(function(r){
+    if(btn){ btn.disabled=false; btn.textContent='Invia'; }
+    if(!esito) return;
+    if(r && r.ok){
+      esito.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Inviato.</span> '
+        +'<span style="color:#94a3b8;font-size:12px;">Controlla il telefono del destinatario.</span>';
+    } else {
+      var msg=(r&&r.errore)||'errore sconosciuto';
+      var aiuto='';
+      if(/24|window|re-?engagement/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">La finestra di 24 ore \u00e8 chiusa: il cliente deve scrivere per primo, oppure serve un modello approvato.</span>';
+      else if(/recipient|allowed|not in|consent/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">Con il numero di prova si pu\u00f2 scrivere solo ai destinatari autorizzati: aggiungilo su Meta \u2192 Configurazione API.</span>';
+      else if(/token|auth|OAuth/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">Il token su Supabase \u00e8 scaduto o non valido.</span>';
+      esito.innerHTML='<span style="color:#b91c1c;font-weight:700;">Non inviato.</span> <span style="color:#334155;">'+String(msg).slice(0,220)+'</span>'+aiuto;
+    }
+  }, function(e){
+    if(btn){ btn.disabled=false; btn.textContent='Invia'; }
+    if(esito) esito.innerHTML='<span style="color:#b91c1c;">Non raggiungo il server: '+String(e&&e.message||e)+'</span>';
+  });
+}
+
 function eaInviaMessaggio(msg){
   // msg = {to, subject, html?, text?, canale?} — canale default 'email'
   if(!msg || !msg.to) return Promise.reject(new Error('no destinatario'));
@@ -28475,6 +28576,28 @@ function crmLeadScarta(id){
   crmRender();
 }
 
+/* Scartare e' una decisione commerciale: il lead resta, con il motivo.
+   Eliminare serve a un'altra cosa: le prove e la posta finita qui per
+   sbaglio, che non devono sporcare i conteggi. Questa cancella davvero. */
+function crmLeadElimina(id){
+  var l=_leadCache.filter(function(x){ return x.id===id; })[0]; if(!l) return;
+  var che=(l.nome||'(senza nome)')+(l.auto?(' \u00b7 '+l.auto):'');
+  if(!confirm('Eliminare definitivamente questa richiesta?\n\n'+che
+    +'\n\nDiverso da "Scarta": qui la riga sparisce e non si recupera.\n'
+    +'Da usare per le prove o per la posta arrivata per sbaglio.')) return;
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(sb){
+    try{ sb.from('contatti_in').delete().eq('id', id).then(function(res){
+      if(res && res.error){ alert('Non sono riuscito a eliminarla: '+res.error.message); return; }
+      _leadCache=_leadCache.filter(function(x){ return x.id!==id; });
+      if(typeof tcToastNew==='function') tcToastNew('\ud83d\uddd1\ufe0f Richiesta eliminata',true);
+      crmRender();
+    }); }catch(e){ alert('Non sono riuscito a eliminarla.'); }
+  } else {
+    alert('Database non raggiungibile in questo momento.');
+  }
+}
+
 function crmLeadRiapri(id){
   var l=_leadCache.filter(function(x){ return x.id===id; })[0]; if(!l) return;
   l.stato='nuovo'; l.motivo=''; l.gestitoTs=null;
@@ -28535,6 +28658,8 @@ function crmRenderLeadOnline(){
 
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">';
     if(wa) h+='<a href="https://wa.me/'+wa+'" target="_blank" rel="noopener" style="padding:8px 13px;border-radius:8px;background:#25d366;color:#fff;text-decoration:none;font-size:12.5px;font-weight:800;">\ud83d\udcac WhatsApp</a>';
+    /* Invio dal server, senza aprire il telefono: per ora in prova. */
+    if(tel) h+='<button onclick="waProvaApri(\''+crmEsc(tel)+'\',\''+crmEsc(String(l.nome||'').replace(/'/g,''))+'\')" title="Invia dal gestionale, senza aprire WhatsApp" style="padding:8px 13px;border-radius:8px;border:1px solid #25d366;background:#fff;color:#128c7e;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\ud83d\udce4 Invia dal gestionale</button>';
     if(tel) h+='<a href="tel:'+crmEsc(tel)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\ud83d\udcde Chiama</a>';
     if(l.email) h+='<a href="mailto:'+crmEsc(l.email)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\u2709\ufe0f Email</a>';
 
@@ -28545,6 +28670,8 @@ function crmRenderLeadOnline(){
       h+='<button onclick="crmLeadRiapri(\''+l.id+'\')" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">\u21a9 Rimetti fra i nuovi</button>';
       if(l.motivo) h+='<span style="align-self:center;font-size:12px;color:#94a3b8;">'+crmEsc(l.motivo)+'</span>';
     }
+    /* Sempre disponibile: una prova va tolta di mezzo in qualunque elenco sia. */
+    h+='<button onclick="crmLeadElimina(\''+l.id+'\')" title="Elimina definitivamente: prove, posta arrivata per sbaglio" style="padding:8px 11px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;color:#94a3b8;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;margin-left:auto;">\ud83d\uddd1\ufe0f</button>';
     h+='</div></div>';
   });
 
