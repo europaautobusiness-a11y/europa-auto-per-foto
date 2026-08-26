@@ -4024,6 +4024,85 @@ function apriGestioneCredenziali() {
   renderPermessiSezioni();
 }
 
+/* ===================== GUIDA AGLI ACCESSI =====================
+   Le istruzioni vivono dentro il gestionale, non in un documento a parte:
+   fra un anno nessuno si ricordera' dove stava il foglio, ma questa
+   schermata si apre da sola dal pannello degli utenti. */
+function eaSqlCopia(el, testo){
+  try{
+    navigator.clipboard.writeText(testo).then(function(){
+      var v=el.textContent; el.textContent='\u2713 copiato';
+      setTimeout(function(){ el.textContent=v; }, 1600);
+    });
+  }catch(e){ alert(testo); }
+}
+function eaGuidaAccessi(){
+  var vecchia=document.getElementById('ea-guida-accessi'); if(vecchia) vecchia.remove();
+  var blocco=function(titolo, testo, spiega){
+    var id='sql'+Math.random().toString(36).slice(2,8);
+    return '<div style="margin-bottom:16px;">'
+      +'<div style="font-weight:800;font-size:13.5px;color:#0f172a;margin-bottom:3px;">'+titolo+'</div>'
+      +(spiega?('<div style="font-size:12px;color:#64748b;margin-bottom:6px;line-height:1.5;">'+spiega+'</div>'):'')
+      +'<div style="position:relative;">'
+      +'<pre id="'+id+'" style="background:#0f172a;color:#e2e8f0;padding:11px 12px;border-radius:8px;font-size:11.5px;line-height:1.5;overflow-x:auto;margin:0;white-space:pre;">'+String(testo).replace(/</g,'&lt;')+'</pre>'
+      +'<button onclick="eaSqlCopia(this, document.getElementById(\''+id+'\').textContent)" style="position:absolute;top:7px;right:7px;padding:4px 9px;border-radius:6px;border:1px solid #475569;background:#1e293b;color:#e2e8f0;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">copia</button>'
+      +'</div></div>';
+  };
+
+  var h=''
+   +'<div style="font-size:13px;color:#334155;line-height:1.6;margin-bottom:18px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:11px 13px;">'
+   +'<b>Come funziona l\'accesso.</b> Ogni persona entra col proprio account Google. '
+   +'Ma Google dice soltanto <i>chi</i> \u00e8: quello che pu\u00f2 <i>vedere</i> lo decide la tabella '
+   +'<b>ruoli</b> sul database (Supabase). Chi non \u00e8 in quella tabella entra e non trova nulla.'
+   +'<br><br>I comandi qui sotto si incollano su <b>supabase.com</b> \u2192 progetto <b>jasrectyddshjizpxiia</b> \u2192 <b>SQL Editor</b> \u2192 <b>Run</b>.'
+   +'</div>'
+
+   +blocco('1. Vedere chi ha accesso oggi',
+      'select email, ruolo from ruoli order by ruolo, email;',
+      'Il primo comando da eseguire sempre, per capire la situazione.')
+
+   +blocco('2. Aggiungere una persona',
+      "insert into ruoli (email, ruolo) values\n  ('nome.cognome@gmail.com', 'staff')\non conflict (email) do update set ruolo = excluded.ruolo;",
+      'Sostituisci l\'indirizzo con quello vero. I ruoli sono tre: '
+      +'<b>admin</b> (vede e fa tutto), <b>contabilita</b> (anche provvigioni e sinistri), '
+      +'<b>staff</b> (tutto tranne la parte amministrativa).<br>'
+      +'Lo stesso comando serve anche per <b>cambiare</b> il ruolo di chi c\'\u00e8 gi\u00e0.')
+
+   +blocco('3. Togliere l\'accesso a chi se ne va',
+      "delete from ruoli where email = 'chi.se.ne.va@gmail.com';",
+      'Da quel momento non vede pi\u00f9 niente, anche se riesce ancora a fare l\'accesso Google. '
+      +'\u00c8 il primo comando da eseguire quando qualcuno lascia l\'azienda.')
+
+   +blocco('4. Se qualcuno entra ma non vede niente',
+      "select email, ruolo from ruoli where email = 'la.sua.email@gmail.com';",
+      'Nove volte su dieci manca la riga, o l\'indirizzo \u00e8 scritto diverso da quello con cui fa l\'accesso. '
+      +'Deve corrispondere <b>esattamente</b>, comprese maiuscole e punti.')
+
+   +blocco('5. Emergenza: una sezione non carica pi\u00f9',
+      'alter table NOMETABELLA disable row level security;',
+      'Riapre quella tabella e tutto torna come prima. Non si perde nessun dato: '
+      +'le regole decidono chi legge, non cancellano niente. '
+      +'Poi si richiude con <b>enable</b> al posto di <b>disable</b>.')
+
+   +'<div style="font-size:12.5px;color:#334155;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:11px 13px;">'
+   +'<b>Le tre cose da ricordare</b><br>'
+   +'\u2022 Un nuovo assunto va messo in <b>due</b> posti: qui per il ruolo sullo schermo, e nella tabella <b>ruoli</b> per i dati.<br>'
+   +'\u2022 Se deve anche timbrare, va aggiunto in <b>Presenze \u2192 Dipendenti</b> con la <b>stessa identica email</b>.<br>'
+   +'\u2022 Chi lascia l\'azienda: prima il comando 3, poi tutto il resto con calma.'
+   +'</div>';
+
+  var d=document.createElement('div');
+  d.id='ea-guida-accessi';
+  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:88vh;overflow:auto;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.35);">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">'
+    +'<div style="font-size:17px;font-weight:900;color:#0f172a;">\ud83d\udd11 Gestire gli accessi \u2014 guida</div>'
+    +'<button onclick="document.getElementById(\'ea-guida-accessi\').remove()" style="padding:6px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
+    +'</div>'+h+'</div>';
+  d.addEventListener('click', function(ev){ if(ev.target===d) d.remove(); });
+  document.body.appendChild(d);
+}
+
 function renderCredenzialiLista() {
   var el = document.getElementById('cred-lista');
   if (!el) return;
@@ -4036,7 +4115,8 @@ function renderCredenzialiLista() {
   var _avviso = '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1e40af;line-height:1.5;">'
     + '<b>Il ruolo qui decide cosa si vede sullo schermo.</b><br>'
     + 'Per far arrivare anche i dati, la stessa persona va inserita nella tabella <b>ruoli</b> su Supabase. '
-    + 'Senza quel passaggio entra ma trova le sezioni vuote.'
+    + 'Senza quel passaggio entra ma trova le sezioni vuote. '
+    + '<a href="#" onclick="eaGuidaAccessi();return false;" style="color:#1e40af;font-weight:800;">Come si fa \u2192</a>'
     + '</div>';
   var html = _avviso + '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
   html += '<thead><tr style="background:#f8fafc;"><th style="padding:10px;text-align:left;">Nome</th><th style="padding:10px;text-align:left;">Email</th><th style="padding:10px;text-align:left;">Ruolo</th><th style="padding:10px;text-align:left;"></th></tr></thead><tbody>';
@@ -24020,8 +24100,31 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
     var _peso=function(cv){ var m=cvCosaMancaFin(cv); return m==='delibera'?0:(m==='firma'?1:2); };
     list=list.slice().sort(function(a,b){ return _peso(a)-_peso(b); });
   }
-  var body=list.length?(_tot+_vCnt+list.slice(0,_vLim).map(cvVendCard).join('')+_vPiu):'<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'+(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di finanziamento. \u2705':'Nessun contratto in questo stato.')+'</div>';
-  wrap.innerHTML='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style><div style="padding:4px;">'+tabs+'<div class="cv-vend-grid">'+body+'</div></div>';
+  var body;
+  if(!list.length){
+    body='<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'
+      +(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di finanziamento. \u2705':'Nessun contratto in questo stato.')+'</div>';
+  } else {
+    var _righe=list.slice(0,_vLim).map(cvVendRiga).join('');
+    var th='background:#f8fafc;text-align:left;padding:10px 12px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#64748b;font-weight:800;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
+    var thn=th+'text-align:right;';
+    /* Su telefono la tabella non si rimpicciolisce e non perde colonne:
+       si scorre col dito verso destra. */
+    body='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">'
+      +'<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:900px;">'
+      +'<thead><tr>'
+      +'<th style="'+th+'width:24px;"></th>'
+      +'<th style="'+th+'position:sticky;left:0;z-index:3;">Auto</th>'
+      +'<th style="'+th+'">Cliente</th>'
+      +'<th style="'+thn+'">Totale</th>'
+      +'<th style="'+thn+'">Incassato</th>'
+      +'<th style="'+thn+'">Da incassare</th>'
+      +'<th style="'+thn+'">Finanziam.</th>'
+      +'<th style="'+th+'">Stato</th>'
+      +'</tr></thead><tbody>'+_righe+'</tbody></table></div></div>'+_vPiu;
+  }
+  wrap.innerHTML='<div style="padding:4px;">'+tabs+_tot+_vCnt+body+'</div>';
 }
 
 function cvDeliberaForm(id){
@@ -25048,6 +25151,87 @@ function cvVendTotaliHTML(list){
       + '<div style="flex:0 0 100%;font-size:11px;color:#94a3b8;">Somma dei '+list.length+(list.length===1?' contratto':' contratti')+' in questa scheda. La permuta \u00e8 valore in entrata, non denaro da incassare.</div>'
       + '</div>';
   }catch(e){ return ''; }
+}
+
+/* Quanto e' stato incassato davvero e quanto manca, per la riga. */
+function cvVendImporti(cv){
+  var out={ tot:0, inc:0, dai:0, fin:0, perm:0, daConf:0 };
+  try{
+    var t=cvCalcola(cv);
+    out.tot=cvNum(t.totaleScontato||t.totaleVendita||0);
+    out.perm=cvNum(t.permVal||0);
+    var pags=cvPagIncasso(cv.pagamenti||[]);
+    pags.forEach(function(pg){
+      var v=cvNum(pg.importo);
+      if(pg.ricevuto) out.inc+=v; else out.daConf++;
+      if(/finanziamento/i.test(pg.metodo||'')) out.fin+=v;
+    });
+    out.dai=Math.max(0, Math.round((out.tot-out.perm-out.inc)*100)/100);
+  }catch(e){}
+  return out;
+}
+
+/* Le etichette di stato, le stesse che c'erano sulla card. */
+function cvVendPill(cv){
+  var h='';
+  var P=function(bg,fg,txt){ return '<span style="display:inline-block;padding:3px 8px;border-radius:999px;background:'+bg+';color:'+fg+';font-size:10px;font-weight:800;white-space:nowrap;margin:1px 3px 1px 0;">'+txt+'</span>'; };
+  var st=cv.statoVendita||'in_attesa_pagamento';
+  try{
+    if(cv.firmaDigitale && cv.firmaDigitale.firmatoTs) h+=P('#dcfce7','#166534','\u2713 Firma dig.');
+    if(cv.finDelibera && cv.finDelibera.confermata) h+=P('#e0f2fe','#075985','\u2713 Delibera');
+  }catch(e){}
+  var et={ in_attesa_pagamento:['#fef3c7','#92400e','In attesa pagamento'],
+           in_attesa_delibera:['#ffedd5','#9a3412','In attesa delibera'],
+           in_attesa_firma:['#fee2e2','#991b1b','In attesa firma'],
+           in_attesa_immatricolazione:['#ede9fe','#5b21b6','In immatricolazione'],
+           da_consegnare:['#dbeafe','#1e40af','Da consegnare'],
+           consegnato:['#dcfce7','#166534','Consegnato'] }[st];
+  if(et) h+=P(et[0],et[1],et[2]);
+  return h;
+}
+
+/* La riga dell'elenco, piu' la riga nascosta col dettaglio. */
+function cvVendRiga(cv, i){
+  var a=cv.autoSnapshot||{};
+  var im=cvVendImporti(cv);
+  var targa=cv.nuovaTarga||a.targa||(a.numero_interno?('N\u00b0 '+a.numero_interno):'');
+  var auto=((a.marca||'')+' '+(a.modello||'')).trim()||'(veicolo)';
+  var cliente=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
+  var pill=cvVendPill(cv);
+  if(im.daConf) pill+='<span style="display:inline-block;padding:3px 8px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:10px;font-weight:800;white-space:nowrap;margin:1px 3px 1px 0;">\u25cf '+im.daConf+' da confermare</span>';
+
+  var td='padding:11px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top;';
+  var num=td+'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;';
+  /* La colonna dell'auto resta ferma mentre si scorre verso destra:
+     altrimenti si leggono gli importi senza sapere di quale pratica. */
+  var fisso='position:sticky;left:0;background:#fff;z-index:2;box-shadow:1px 0 0 #e2e8f0;';
+
+  var h='<tr id="vr'+i+'" onclick="cvVendApri('+i+')" style="cursor:pointer;">'
+    +'<td id="vf'+i+'" style="'+td+'color:#94a3b8;font-size:11px;width:24px;">\u25b8</td>'
+    +'<td style="'+td+fisso+'"><div style="font-weight:800;color:#1a4fa0;">'+cvEsc(auto)+'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'+cvEsc(targa)+'</div></td>'
+    +'<td style="'+td+'"><div style="font-weight:700;">'+cvEsc(cliente)+'</div>'
+      +(im.perm?('<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">permuta '+cvEuro(im.perm)+'</div>'):'')+'</td>'
+    +'<td style="'+num+'">'+cvEuro(im.tot)+'</td>'
+    +'<td style="'+num+'color:#16a34a;font-weight:700;">'+cvEuro(im.inc)+'</td>'
+    +'<td style="'+num+'color:'+(im.dai>0?'#dc2626':'#94a3b8')+';font-weight:800;">'+cvEuro(im.dai)+'</td>'
+    +'<td style="'+num+'color:#64748b;">'+(im.fin?cvEuro(im.fin):'\u2014')+'</td>'
+    +'<td style="'+td+'min-width:200px;">'+pill+'</td>'
+    +'</tr>';
+
+  /* Il dettaglio e' la scheda di prima, intera: nessun pulsante perso. */
+  h+='<tr id="vd'+i+'" style="display:none;"><td colspan="8" style="background:#fbfdff;border-bottom:1px solid #e2e8f0;padding:0;">'
+    +'<div style="padding:12px;max-width:100%;">'+cvVendCard(cv)+'</div></td></tr>';
+  return h;
+}
+
+function cvVendApri(i){
+  var d=document.getElementById('vd'+i), r=document.getElementById('vr'+i), f=document.getElementById('vf'+i);
+  if(!d) return;
+  var chiuso=(d.style.display==='none');
+  d.style.display = chiuso ? '' : 'none';
+  if(r) r.style.background = chiuso ? '#f8fafc' : '';
+  if(f) f.textContent = chiuso ? '\u25be' : '\u25b8';
 }
 
 function cvVendCard(cv){
