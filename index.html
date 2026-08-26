@@ -4963,82 +4963,160 @@ function waApiInvia(dati){
   }).then(function(r){ return r.json().catch(function(){ return {ok:false, errore:'risposta non leggibile'}; }); });
 }
 
-/* Pannello di prova: si sceglie il numero, si manda, si legge l'esito.
-   Serve a collaudare il canale prima di collegarlo ai pulsanti veri. */
-function waProvaApri(numero, nome){
-  var vecchio=document.getElementById('wa-prova'); if(vecchio) vecchio.remove();
-  var tel=String(numero||'').replace(/\D/g,'');
+/* ===================== CONVERSAZIONE WHATSAPP =====================
+   I messaggi in arrivo li salva la funzione wa-ricevi su Supabase, anche
+   col gestionale chiuso. Qui si leggono e si risponde.
+
+   Regola di Meta, non nostra: si puo' scrivere testo libero solo entro
+   24 ore dall'ultimo messaggio del cliente. Fuori da quella finestra
+   serve un modello approvato, e il campo si blocca da solo per non far
+   partire messaggi che verrebbero rifiutati. */
+var _waTel = '', _waNome = '', _waTimer = null;
+
+function waNum(v){
+  var t=String(v||'').replace(/\D/g,'');
+  if(t.indexOf('00')===0) t=t.slice(2);
+  if(t.indexOf('39')===0 && t.length>10) t=t.slice(2);
+  return t;
+}
+
+function waChatApri(numero, nome){
+  _waTel=waNum(numero); _waNome=nome||'';
+  if(!_waTel){ alert('Questo contatto non ha un numero di telefono.'); return; }
+  var v=document.getElementById('wa-chat'); if(v) v.remove();
   var d=document.createElement('div');
-  d.id='wa-prova';
-  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
-  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
-    +'<div style="font-size:17px;font-weight:900;color:#0f172a;margin-bottom:4px;">\ud83d\udcac Invia con WhatsApp</div>'
-    +'<div style="font-size:12.5px;color:#64748b;line-height:1.55;margin-bottom:14px;">Parte dal server, non dal telefono. '
-    +'Con il numero di prova si pu\u00f2 scrivere solo ai destinatari autorizzati su Meta.</div>'
-    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">NUMERO</label>'
-    +'<input id="wa-prova-tel" value="'+eaEscq(tel)+'" placeholder="3331234567" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;">'
-    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">COSA MANDARE</label>'
-    +'<select id="wa-prova-tipo" onchange="waProvaTipo()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;">'
-    +'<option value="template">Modello hello_world (si pu\u00f2 sempre)</option>'
-    +'<option value="testo">Testo libero (solo se ha scritto nelle ultime 24h)</option>'
-    +'</select>'
-    +'<div id="wa-prova-box" style="display:none;">'
-    +'<label style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.04em;">TESTO</label>'
-    +'<textarea id="wa-prova-testo" rows="4" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;margin:4px 0 12px;resize:vertical;">Buongiorno'+(nome?(' '+String(nome).split(' ')[0]):'')+', le scrivo da Europa Auto.</textarea>'
+  d.id='wa-chat';
+  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px;';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;height:min(80vh,680px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    +'<div style="background:#075e54;color:#fff;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;">'
+    +'<div><div style="font-weight:800;font-size:15px;">'+eaEscq(_waNome||_waTel)+'</div>'
+    +'<div style="font-size:11.5px;opacity:.75;" id="wa-chat-sub">'+eaEscq(_waTel)+'</div></div>'
+    +'<button onclick="waChatChiudi()" style="padding:6px 12px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
     +'</div>'
-    +'<div id="wa-prova-esito" style="font-size:13px;line-height:1.5;margin-bottom:12px;"></div>'
-    +'<div style="display:flex;gap:8px;">'
-    +'<button onclick="document.getElementById(\'wa-prova\').remove()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button>'
-    +'<button id="wa-prova-btn" onclick="waProvaInvia()" style="flex:1;padding:11px;border-radius:9px;border:none;background:#25d366;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">Invia</button>'
-    +'</div></div>';
-  d.addEventListener('click', function(ev){ if(ev.target===d) d.remove(); });
+    +'<div id="wa-chat-corpo" style="flex:1;overflow-y:auto;padding:14px;background:#ece5dd;">'
+    +'<div style="text-align:center;color:#667781;font-size:13px;padding:20px;">Carico la conversazione\u2026</div></div>'
+    +'<div id="wa-chat-piede" style="border-top:1px solid #e2e8f0;padding:10px 12px;background:#f8fafc;"></div>'
+    +'</div>';
+  d.addEventListener('click', function(ev){ if(ev.target===d) waChatChiudi(); });
   document.body.appendChild(d);
+  waChatCarica();
+  /* Si aggiorna da sola: se il cliente risponde mentre la finestra e'
+     aperta, il messaggio compare senza dover premere niente. */
+  _waTimer=setInterval(waChatCarica, 15000);
 }
 
-function waProvaTipo(){
-  var t=(document.getElementById('wa-prova-tipo')||{}).value;
-  var box=document.getElementById('wa-prova-box');
-  if(box) box.style.display=(t==='testo')?'':'none';
+function waChatChiudi(){
+  if(_waTimer){ clearInterval(_waTimer); _waTimer=null; }
+  var v=document.getElementById('wa-chat'); if(v) v.remove();
 }
 
-function waProvaInvia(){
-  var tel=((document.getElementById('wa-prova-tel')||{}).value||'').trim();
-  var tipo=(document.getElementById('wa-prova-tipo')||{}).value;
-  var esito=document.getElementById('wa-prova-esito');
-  var btn=document.getElementById('wa-prova-btn');
-  if(!tel){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Serve il numero.</span>'; return; }
+function waChatCarica(){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ waChatDisegna([]); return; }
+  try{
+    sb.from('wa_messaggi').select('id,data').eq('data->>telefono', _waTel)
+      .order('created_at',{ascending:true}).limit(200)
+      .then(function(res){
+        if(res && res.error){ console.log('wa chat:', res.error.message); waChatDisegna([]); return; }
+        waChatDisegna((res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; }));
+      }, function(){ waChatDisegna([]); });
+  }catch(e){ waChatDisegna([]); }
+}
 
-  var dati={ to:tel };
-  if(tipo==='testo'){
-    var txt=((document.getElementById('wa-prova-testo')||{}).value||'').trim();
-    if(!txt){ if(esito) esito.innerHTML='<span style="color:#b91c1c;">Serve il testo.</span>'; return; }
-    dati.testo=txt;
+function waChatDisegna(msgs){
+  var corpo=document.getElementById('wa-chat-corpo'); if(!corpo) return;
+  msgs.sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+
+  if(!msgs.length){
+    corpo.innerHTML='<div style="text-align:center;color:#667781;font-size:13px;padding:30px 16px;line-height:1.6;">'
+      +'Nessun messaggio con questo numero.<br><span style="font-size:12px;">'
+      +'Manda il primo qui sotto, oppure aspetta che scriva il cliente.</span></div>';
   } else {
-    dati.template='hello_world'; dati.lingua='en_US';
+    var h='';
+    msgs.forEach(function(m){
+      var mio=(m.direzione==='out');
+      var ora=''; try{ var dt=new Date(m.ts||0); ora=('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2); }catch(e){}
+      var spunta='';
+      if(mio){
+        var st=m.stato||'';
+        spunta = (st==='read')?' \u2713\u2713' : ((st==='delivered')?' \u2713\u2713' : ((st==='sent')?' \u2713' : ''));
+      }
+      h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin-bottom:7px;">'
+        +'<div style="max-width:76%;background:'+(mio?'#dcf8c6':'#fff')+';border-radius:9px;padding:7px 10px;box-shadow:0 1px 1px rgba(0,0,0,.13);">'
+        +'<div style="font-size:13.5px;color:#111b21;line-height:1.45;white-space:pre-wrap;word-break:break-word;">'+eaEscq(m.testo||'')+'</div>'
+        +'<div style="font-size:10.5px;color:'+(mio&&m.stato==='read'?'#53bdeb':'#667781')+';text-align:right;margin-top:3px;">'+ora+spunta+'</div>'
+        +'</div></div>';
+    });
+    corpo.innerHTML=h;
+    corpo.scrollTop=corpo.scrollHeight;
   }
 
-  if(btn){ btn.disabled=true; btn.textContent='Invio\u2026'; }
-  if(esito) esito.innerHTML='<span style="color:#64748b;">Sto inviando\u2026</span>';
+  /* La finestra delle 24 ore parte dall'ultimo messaggio del CLIENTE. */
+  var ultimoIn=0;
+  msgs.forEach(function(m){ if(m.direzione==='in' && (m.ts||0)>ultimoIn) ultimoIn=m.ts||0; });
+  var restano = ultimoIn ? (24*3600000 - (Date.now()-ultimoIn)) : -1;
+  waChatPiede(restano);
+}
 
-  waApiInvia(dati).then(function(r){
+function waChatPiede(restano){
+  var pie=document.getElementById('wa-chat-piede'); if(!pie) return;
+  if(restano>0){
+    var ore=Math.floor(restano/3600000), min=Math.floor((restano%3600000)/60000);
+    pie.innerHTML='<div style="font-size:11px;color:#15803d;font-weight:700;margin-bottom:6px;">'
+      +'\u25cf Puoi rispondere liberamente ancora per '+(ore?ore+'h ':'')+min+'m</div>'
+      +'<div style="display:flex;gap:8px;">'
+      +'<input id="wa-chat-txt" placeholder="Scrivi un messaggio\u2026" onkeydown="if(event.key===\'Enter\')waChatInvia()" style="flex:1;padding:10px 12px;border:1px solid #cbd5e1;border-radius:20px;font-family:inherit;font-size:14px;">'
+      +'<button id="wa-chat-btn" onclick="waChatInvia()" style="padding:10px 16px;border-radius:20px;border:none;background:#25d366;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">Invia</button>'
+      +'</div><div id="wa-chat-esito" style="font-size:12px;margin-top:6px;"></div>';
+  } else {
+    pie.innerHTML='<div style="font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;line-height:1.5;">'
+      +'<b>Finestra chiusa.</b> Sono passate pi\u00f9 di 24 ore dall\'ultimo messaggio del cliente: '
+      +'Meta non permette pi\u00f9 il testo libero. Si pu\u00f2 solo mandare un modello approvato.</div>'
+      +'<div style="display:flex;gap:8px;margin-top:8px;">'
+      +'<button onclick="waChatModello()" style="flex:1;padding:10px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;cursor:pointer;">Invia modello hello_world</button>'
+      +'</div><div id="wa-chat-esito" style="font-size:12px;margin-top:6px;"></div>';
+  }
+}
+
+/* Il messaggio inviato si scrive anche nella conversazione: cosi' resta
+   la traccia di cosa e' partito, e non solo di cosa e' arrivato. */
+function waChatRegistra(testo, idMeta){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  var rec={ telefono:_waTel, nome:_waNome, direzione:'out', testo:testo,
+            tipo:'text', ts:Date.now(), stato:'sent',
+            da:(typeof _currentUserEmail!=='undefined'?_currentUserEmail:'') };
+  var id=idMeta||('out_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
+  try{ sb.from('wa_messaggi').upsert({ id:id, data:rec }).then(function(){ waChatCarica(); }); }catch(e){}
+}
+
+function waChatEsito(html){ var e=document.getElementById('wa-chat-esito'); if(e) e.innerHTML=html; }
+
+function waChatInvia(){
+  var el=document.getElementById('wa-chat-txt'); if(!el) return;
+  var txt=(el.value||'').trim(); if(!txt) return;
+  var btn=document.getElementById('wa-chat-btn');
+  if(btn){ btn.disabled=true; btn.textContent='\u2026'; }
+  waApiInvia({ to:_waTel, testo:txt }).then(function(r){
     if(btn){ btn.disabled=false; btn.textContent='Invia'; }
-    if(!esito) return;
-    if(r && r.ok){
-      esito.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Inviato.</span> '
-        +'<span style="color:#94a3b8;font-size:12px;">Controlla il telefono del destinatario.</span>';
-    } else {
-      var msg=(r&&r.errore)||'errore sconosciuto';
-      var aiuto='';
-      if(/24|window|re-?engagement/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">La finestra di 24 ore \u00e8 chiusa: il cliente deve scrivere per primo, oppure serve un modello approvato.</span>';
-      else if(/recipient|allowed|not in|consent/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">Con il numero di prova si pu\u00f2 scrivere solo ai destinatari autorizzati: aggiungilo su Meta \u2192 Configurazione API.</span>';
-      else if(/token|auth|OAuth/i.test(msg)) aiuto='<br><span style="color:#64748b;font-size:12px;">Il token su Supabase \u00e8 scaduto o non valido.</span>';
-      esito.innerHTML='<span style="color:#b91c1c;font-weight:700;">Non inviato.</span> <span style="color:#334155;">'+String(msg).slice(0,220)+'</span>'+aiuto;
-    }
+    if(r && r.ok){ el.value=''; waChatEsito(''); waChatRegistra(txt, r.id); }
+    else waChatEsito('<span style="color:#b91c1c;">'+eaEscq(String((r&&r.errore)||'non inviato')).slice(0,200)+'</span>');
   }, function(e){
     if(btn){ btn.disabled=false; btn.textContent='Invia'; }
-    if(esito) esito.innerHTML='<span style="color:#b91c1c;">Non raggiungo il server: '+String(e&&e.message||e)+'</span>';
+    waChatEsito('<span style="color:#b91c1c;">Server non raggiungibile</span>');
   });
 }
+
+function waChatModello(){
+  waChatEsito('<span style="color:#64748b;">Invio\u2026</span>');
+  waApiInvia({ to:_waTel, template:'hello_world', lingua:'en_US' }).then(function(r){
+    if(r && r.ok){ waChatEsito('<span style="color:#15803d;">\u2713 Modello inviato.</span>'); waChatRegistra('[modello hello_world]', r.id); }
+    else waChatEsito('<span style="color:#b91c1c;">'+eaEscq(String((r&&r.errore)||'non inviato')).slice(0,200)+'</span>');
+  });
+}
+
+/* Il vecchio nome resta valido: i pulsanti gia' in giro continuano a
+   funzionare e aprono la conversazione. */
+function waProvaApri(numero, nome){ waChatApri(numero, nome); }
 
 function eaInviaMessaggio(msg){
   // msg = {to, subject, html?, text?, canale?} — canale default 'email'
@@ -11640,9 +11718,10 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
   +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
-  +       '<div class="cc-field"><label>Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
+  +       '<div class="cc-field" id="cc-veicolo-wrap"><label id="cc-veicolo-lab">Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" onchange="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"></div><datalist id="cc-clienti-list"></datalist>'
+  +         '<div id="cc-cli-nota" style="font-size:11.5px;color:#94a3b8;margin-top:4px;"></div>'
   +       '</div>'
   +       '<div class="cc-row2">'
   +         '<div class="cc-field"><label>Email cliente *</label><input type="email" id="cc-email" placeholder="cliente@email.it"></div>'
@@ -11884,6 +11963,9 @@ document.addEventListener('DOMContentLoaded',function(){
     /* La data e' modificabile: se hai cliccato il giorno sbagliato la correggi qui,
        senza chiudere e ricominciare. */
     try{ var _dEl=document.getElementById('cc-data'); if(_dEl) _dEl.value=ccGiornoSel||''; }catch(e){}
+    /* Prima si sistema il modulo secondo il tipo, poi si riempiono gli
+       elenchi: sono diversi fra intervento e vendita. */
+    try{ if(typeof ccTipoUI==='function') ccTipoUI(); }catch(e){}
     try{ if(typeof ccPopolaSuggerimenti==='function') ccPopolaSuggerimenti(); }catch(e){}
     var parts = ds.split('-');
     document.getElementById('cc-daydate').textContent = parseInt(parts[2])+' '+MESI[parseInt(parts[1])-1]+' '+parts[0];
@@ -12086,11 +12168,44 @@ document.addEventListener('DOMContentLoaded',function(){
       var vl=document.getElementById('cc-veicoli-list');
       if(vl && typeof mzLoad==='function'){ ccIdxProprietari(); vl.innerHTML=ccVeicoliUtili().map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a))+'"></option>'; }).join(''); }
       var cl=document.getElementById('cc-clienti-list');
-      if(cl && typeof clAggrega==='function'){ var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join(''); }
+      var _tipo=((document.getElementById('cc-tipo')||{}).value)||'intervento';
+      if(cl && typeof clAggrega==='function'){
+        if(_tipo!=='vendita'){
+          /* Su un intervento si scrive il cognome e si vede subito QUALE auto:
+             se ci sono tre Rota, si distinguono dalla vettura, non tirando a
+             indovinare. Ogni riga e' "Cognome Nome \u2014 MARCA MODELLO TARGA". */
+          ccIdxProprietari();
+          var righe=[], visti={};
+          ccVeicoliUtili().forEach(function(a){
+            var pr=_ccProp&&_ccProp[a.id]; if(!pr||!pr.nome) return;
+            var et=pr.nome+' \u2014 '+((a.marca||'')+' '+(a.modello||'')).trim()
+              +(a.targa?(' '+a.targa):(a.numero_interno?(' N\u00b0'+a.numero_interno):''));
+            if(visti[et]) return; visti[et]=1;
+            righe.push({ et:et, contratto:!!pr.contratto });
+          });
+          righe.sort(function(x,y){ return (y.contratto?1:0)-(x.contratto?1:0) || x.et.localeCompare(y.et); });
+          cl.innerHTML=righe.slice(0,600).map(function(r){ return '<option value="'+ccEsc(r.et)+'"></option>'; }).join('');
+        } else {
+          var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join('');
+        }
+      }
     }catch(e){}
   }
   function ccClienteSel(){
     try{
+      var _campo=document.getElementById('cc-titolo');
+      var _tipo=((document.getElementById('cc-tipo')||{}).value)||'intervento';
+      /* Su un intervento la voce scelta e' "Cognome Nome \u2014 AUTO TARGA":
+         si separano le due parti, il nome resta nel campo e l'auto va nel
+         suo, che resta nascosto ma viene salvato con l'appuntamento. */
+      if(_tipo!=='vendita' && _campo && _campo.value.indexOf('\u2014')>0){
+        var pezzi=_campo.value.split('\u2014');
+        var _nome=pezzi[0].trim();
+        var _auto=pezzi.slice(1).join('\u2014').trim();
+        _campo.value=_nome;
+        var _ve=document.getElementById('cc-veicolo'); if(_ve) _ve.value=_auto;
+        ccNotaCliente('\ud83d\ude97 '+ccEsc(_auto));
+      }
       var v=((document.getElementById('cc-titolo')||{}).value||'').toLowerCase().trim(); if(!v||typeof clAggrega!=='function') return;
       var lista=clAggrega();
       var match=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim()===v; })[0];
@@ -12802,9 +12917,21 @@ document.addEventListener('DOMContentLoaded',function(){
       var t=(document.getElementById('cc-tipo')||{}).value||'intervento';
       var box=document.getElementById('cc-nota-wrap');
       if(box) box.style.display=(t==='vendita')?'none':'';
+      /* Su un intervento l'auto e' quella che il cliente ha gia' comprato:
+         cercarla in magazzino non ha senso, il campo sparisce e si compila
+         da solo scegliendo il cliente. Sulla vendita invece l'auto e'
+         quella che si vuole vendere, e li' serve il magazzino. */
       var vb=document.getElementById('cc-veicolo-wrap');
-      if(vb) vb.style.display='';
+      if(vb) vb.style.display=(t==='vendita')?'':'none';
+      var ti=document.getElementById('cc-titolo');
+      if(ti) ti.placeholder=(t==='vendita')?'Cliente esistente o descrizione':'Cognome del cliente\u2026';
+      ccPopolaSuggerimenti();
+      ccNotaCliente('');
     }catch(e){}
+  }
+  function ccNotaCliente(txt){
+    var n=document.getElementById('cc-cli-nota'); if(!n) return;
+    n.innerHTML=txt||'';
   }
   window.ccTipoUI = ccTipoUI;
   /* Interventi ricorrenti: un tocco e finiscono nella nota. */
@@ -28659,7 +28786,7 @@ function crmRenderLeadOnline(){
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">';
     if(wa) h+='<a href="https://wa.me/'+wa+'" target="_blank" rel="noopener" style="padding:8px 13px;border-radius:8px;background:#25d366;color:#fff;text-decoration:none;font-size:12.5px;font-weight:800;">\ud83d\udcac WhatsApp</a>';
     /* Invio dal server, senza aprire il telefono: per ora in prova. */
-    if(tel) h+='<button onclick="waProvaApri(\''+crmEsc(tel)+'\',\''+crmEsc(String(l.nome||'').replace(/'/g,''))+'\')" title="Invia dal gestionale, senza aprire WhatsApp" style="padding:8px 13px;border-radius:8px;border:1px solid #25d366;background:#fff;color:#128c7e;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\ud83d\udce4 Invia dal gestionale</button>';
+    if(tel) h+='<button onclick="waChatApri(\''+crmEsc(tel)+'\',\''+crmEsc(String(l.nome||'').replace(/'/g,''))+'\')" title="Conversazione dentro il gestionale" style="padding:8px 13px;border-radius:8px;border:1px solid #25d366;background:#fff;color:#128c7e;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\ud83d\udcac Chat gestionale</button>';
     if(tel) h+='<a href="tel:'+crmEsc(tel)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\ud83d\udcde Chiama</a>';
     if(l.email) h+='<a href="mailto:'+crmEsc(l.email)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\u2709\ufe0f Email</a>';
 
