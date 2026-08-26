@@ -14561,6 +14561,15 @@ function mzSave(list){
 }
 function mzSaveOra(){
   var vivi=(_mzMem||[]).filter(function(a){ return !mzIsStorico(a); });
+  /* Non si sovrascrive MAI una copia piena con una vuota. Se il salvataggio
+     scatta prima che il magazzino sia stato caricato, o mentre il cloud non
+     risponde, azzererebbe l'elenco sul dispositivo. Meglio non scrivere. */
+  try{
+    if(!vivi.length){
+      var _pre=JSON.parse(localStorage.getItem(MZ_KEY)||'[]');
+      if(_pre && _pre.length){ console.log('mzSaveOra: salvataggio a vuoto ignorato'); return; }
+    }
+  }catch(e){}
   try{ localStorage.setItem(MZ_KEY, JSON.stringify(vivi)); return; }catch(e){}
   /* se ancora non basta: tengo le piu' recenti, il resto arriva dal cloud */
   try{
@@ -16330,6 +16339,14 @@ try{
 function cvSaveOra(list){
   list=list||_cvMem||[];
   var vivi=_cvMem.filter(function(x){ return !cvIsStorico(x); });
+  /* Stessa protezione del magazzino: una copia piena non viene mai
+     sostituita da una vuota. */
+  try{
+    if(!vivi.length){
+      var _pre=JSON.parse(localStorage.getItem(CV_KEY)||'[]');
+      if(_pre && _pre.length){ console.log('cvSaveOra: salvataggio a vuoto ignorato'); return; }
+    }
+  }catch(e){}
   try{ localStorage.setItem(CV_KEY, JSON.stringify(vivi)); return; }catch(e){}
   /* se non basta ancora: tengo i piu' recenti, il resto arriva dal cloud */
   try{
@@ -24105,6 +24122,14 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
     body='<div style="text-align:center;color:#94a3b8;padding:36px 10px;font-size:14px;">'
       +(_cvVendStato==='in_attesa_delibera'?'Nessuna pratica in attesa di finanziamento. \u2705':'Nessun contratto in questo stato.')+'</div>';
   } else {
+    /* Le Consegnate restano come erano: sono 1.600 pratiche che si guardano
+       di rado e una per volta, non un elenco da confrontare a colonne. */
+    if(_cvVendStato==='consegnato'){
+      body='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style>'
+        +'<div class="cv-vend-grid">'+list.slice(0,_vLim).map(cvVendCard).join('')+'</div>'+_vPiu;
+      wrap.innerHTML='<div style="padding:4px;">'+tabs+_tot+_vCnt+body+'</div>';
+      return;
+    }
     var _righe=list.slice(0,_vLim).map(cvVendRiga).join('');
     var th='background:#f8fafc;text-align:left;padding:10px 12px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#64748b;font-weight:800;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
     var thn=th+'text-align:right;';
@@ -25160,13 +25185,18 @@ function cvVendImporti(cv){
     var t=cvCalcola(cv);
     out.tot=cvNum(t.totaleScontato||t.totaleVendita||0);
     out.perm=cvNum(t.permVal||0);
-    var pags=cvPagIncasso(cv.pagamenti||[]);
+    /* Gli stessi identici conti della scheda che si apre sotto, altrimenti
+       riga e dettaglio mostrano due numeri diversi sulla stessa pratica.
+       Il campo che conta e' 'confermato', non 'ricevuto': un pagamento puo'
+       essere arrivato ma non ancora verificato dall'amministrazione. */
+    var pags=cvPagIncasso(cv.pagamenti||[]).filter(function(p){ return cvNum(p.importo); });
     pags.forEach(function(pg){
       var v=cvNum(pg.importo);
-      if(pg.ricevuto) out.inc+=v; else out.daConf++;
-      if(/finanziamento/i.test(pg.metodo||'')) out.fin+=v;
+      if(pg.confermato) out.inc+=v; else out.daConf++;
+      if(/finanziamento/i.test(pg.metodo||'') || pg.tipo==='Finanziamento') out.fin+=v;
     });
-    out.dai=Math.max(0, Math.round((out.tot-out.perm-out.inc)*100)/100);
+    /* La permuta non si sottrae: e' valore in entrata, non denaro incassato. */
+    out.dai=Math.max(0, Math.round((out.tot-out.inc)*100)/100);
   }catch(e){}
   return out;
 }
