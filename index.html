@@ -20705,9 +20705,15 @@ function eaSbEntra(){
 function eaSbRiconnetti(){
   try{
     if(sessionStorage.getItem('ea_sb_riconn')==='1') return false;
-    /* Solo per chi e' gia' dentro il gestionale: a chi non e' entrato la
-       schermata di accesso la mostra gia' il percorso normale. */
-    if(typeof _currentUserEmail==='undefined' || !_currentUserEmail) return false;
+    /* Basta che da questo dispositivo si sia gia' entrati almeno una volta.
+       Prima si pretendeva _currentUserEmail gia' valorizzata, ma al momento
+       del controllo (due secondi dall'avvio) spesso non lo e' ancora: il
+       tentativo veniva scartato e non si ripeteva mai piu'. Da qui la
+       schermata gialla anche con la riconnessione automatica attiva. */
+    var _dentro=false;
+    try{ _dentro=(typeof _currentUserEmail!=='undefined' && !!_currentUserEmail); }catch(e){}
+    if(!_dentro){ try{ _dentro=(localStorage.getItem('ea_last_login')==='1'); }catch(e){} }
+    if(!_dentro) return false;
     var sb=sbClient(); if(!sb || !sb.auth || !sb.auth.signInWithOAuth) return false;
     sessionStorage.setItem('ea_sb_riconn','1');
     sb.auth.signInWithOAuth({
@@ -20721,6 +20727,17 @@ function eaSbRiconnetti(){
     return true;
   }catch(e){ return false; }
 }
+/* Chiamata da chi ha bisogno del database e non lo trova collegato. Ritorna
+   true se sta ripartendo il giro con Google (la pagina sta per cambiare),
+   false se non c'e' piu' niente da tentare e va mostrato il pulsante. */
+function eaSbAssicuraSessione(){
+  try{
+    if(eaSbSessioneAttiva()) return false;
+    return eaSbRiconnetti();
+  }catch(e){ return false; }
+}
+try{ window.eaSbAssicuraSessione=eaSbAssicuraSessione; }catch(e){}
+
 /* Il token dura un'ora e si rinnova da solo finche' la pagina e' aperta.
    Un controllo ogni dieci minuti tiene aggiornata la nostra copia e fa
    accorgere subito se la sessione e' caduta. */
@@ -29275,6 +29292,7 @@ var _leadFiltro = 'nuovo';
 
 var _leadErrore = '';
 var _leadNoSessione = false;   /* niente accesso al database su QUESTO dispositivo */
+var _leadRiconnProvato = false;   /* la riconnessione automatica si tenta una volta */
 var _leadLetto = false;        /* la lettura e' andata a buon fine almeno una volta */
 
 /* ===== PERCHE' L'ELENCO ERA VUOTO SU UN DISPOSITIVO E PIENO SULL'ALTRO =====
@@ -29297,6 +29315,7 @@ function crmLeadCarica(cb){
           if(res && !res.error){
             _leadCache=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
             _leadLetto=true;
+            _leadRiconnProvato=false;
           } else if(res && res.error){
             /* Un elenco vuoto senza spiegazione fa perdere tempo: qui si dice
                cosa e' successo. Quasi sempre e' l'accesso al database non
@@ -29451,16 +29470,33 @@ function crmRenderLeadOnline(){
       +'<span style="font-size:12.5px;color:#334155;">Quasi sempre \u00e8 l\'accesso al database scaduto: '
       +'esci dal gestionale e rientra con Google, poi riprova.</span></div>';
   }
-  /* Nessun accesso al database: qui NON si puo' dire che non c'e' niente,
-     perche' non lo sappiamo. Si dice che non riusciamo a leggere. */
+  /* Nessun accesso al database. Prima di dire qualsiasi cosa si prova a
+     ricollegarsi da soli: chi ha gia' fatto l'accesso col suo Google non deve
+     premere un secondo pulsante per la stessa identita'. La schermata gialla
+     resta solo per il caso in cui il tentativo sia gia' stato fatto e non sia
+     servito \u2014 in pratica quando lo spazio del browser e' pieno e la
+     sessione non riesce a salvarsi. */
+  if(_leadNoSessione && !_leadRiconnProvato){
+    _leadRiconnProvato=true;
+    setTimeout(function(){
+      try{
+        if(typeof eaSbAssicuraSessione==='function' && eaSbAssicuraSessione()) return; /* si va su Google */
+        if(typeof crmLeadCarica==='function') crmLeadCarica(crmRender);
+        else if(typeof crmRender==='function') crmRender();
+      }catch(e){}
+    }, 60);
+    return h+'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px;color:#1e40af;font-size:13.5px;line-height:1.65;">'
+      +'\u23f3 Mi sto ricollegando al database\u2026<br>'
+      +'<span style="font-size:12.5px;color:#3b82f6;">Se serve si passa un attimo da Google e si torna qui.</span></div>';
+  }
   if(_leadNoSessione){
     return h+'<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:16px;color:#92400e;font-size:13.5px;line-height:1.65;">'
       +'<b>\ud83d\udd12 Questo dispositivo non \u00e8 collegato al database.</b><br>'
       +'Le richieste ci sono, ma da qui non si leggono: senza accesso Supabase risponde con un elenco vuoto invece che con un errore. '
-      +'\u00c8 il motivo per cui su un computer si vedono e sul telefono no.<br><br>'
-      +'<button onclick="eaSbCollegaOra()" style="padding:9px 16px;border-radius:8px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Collega ora con Google</button>'
-      +'<div style="font-size:12px;color:#a16207;margin-top:8px;">Si passa da Google e si torna qui: la pagina si ricarica, \u00e8 normale. '
-      +'Da adesso il collegamento si rifa\u2019 da solo all\u2019apertura: se lo vedi ancora, lo spazio del browser \u00e8 pieno e la sessione non riesce a salvarsi.</div></div>';
+      +'Il collegamento automatico \u00e8 gi\u00e0 stato tentato e non ha retto: su questo dispositivo '
+      +'lo <b>spazio del browser \u00e8 pieno</b>, e la sessione non riesce a salvarsi.<br><br>'
+      +'<button onclick="eaSbCollegaOra()" style="padding:9px 16px;border-radius:8px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Riprova ora</button> '
+      +'<button onclick="eaSpazioApri()" style="padding:9px 16px;border-radius:8px;border:1px solid #92400e;background:#fff;color:#92400e;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Vedi lo spazio</button></div>';
   }
   if(!lista.length){
     var _altri=(_leadCache||[]).length;
