@@ -3744,6 +3744,10 @@ function skipWelcome() {
 }
 
 async function welcomeLogin() {
+  /* Questo e' l'accesso fatto a mano: solo da qui si riparte dalla schermata
+     iniziale del ruolo. La riconnessione automatica al database non passa di
+     qui e quindi non sposta nessuno da dove si trovava. */
+  try{ sessionStorage.setItem('ea_login_manuale','1'); }catch(e){}
   const btn = document.getElementById('welcome-login-btn');
   const err = document.getElementById('welcome-error');
   if (btn) { btn.textContent = 'Connessione in corso…'; btn.disabled = true; }
@@ -9482,13 +9486,17 @@ function setCurrentUser(email) {
   try { _u = UTENTI_APP.find(function(x){ return x.email && x.email.toLowerCase() === _currentUserEmail; }); } catch(e){}
   var dip = getDipendenteByEmail(_currentUserEmail);
   if (_currentUserEmail === 'europaautobusiness@gmail.com') {
-    _currentUserRole = 'admin';                 // Davide — amministratore
-  } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
-    _currentUserRole = 'staff';                 // Rudy — vede tutto tranne la parte admin
+    _currentUserRole = 'admin';                 // Davide — amministratore, mai declassabile
   } else if (eaIsContabilita(_currentUserEmail)) {
     _currentUserRole = 'contabilita';           // Arianna — contabilità (conferma pagamenti)
-  } else if (_u) {
-    _currentUserRole = _u.ruolo;                // Credenziali Utenti: ha la precedenza
+  } else if (_u && _u.ruolo) {
+    /* Il ruolo scelto in Utenti e permessi ha la precedenza. Prima, per
+       l'indirizzo di servizio usato da Rudy, il ruolo era scritto qui dentro
+       e vinceva su tutto: si poteva cambiare la voce nella tendina quante
+       volte si voleva, restava 'staff' e non si capiva perche'. */
+    _currentUserRole = _u.ruolo;
+  } else if (_currentUserEmail === 'no.reply.europaauto@gmail.com') {
+    _currentUserRole = 'staff';                 // rete di sicurezza finché non ha un account suo
   } else {
     _currentUserRole = 'dipendente';            // chi è solo nelle Presenze = dipendente (limitato)
   }
@@ -10077,19 +10085,42 @@ function applyRoleUI() {
   var _bs1=document.getElementById('btn-apri-sheet'); if(_bs1) _bs1.style.display=(role==='admin')?'':'none';
   var _bs2=document.getElementById('btn-apri-sheet-presenze'); if(_bs2) _bs2.style.display=(role==='admin')?'':'none';
 
-  // Schermata iniziale: l'admin apre direttamente le Vendite (In attesa pagamento)
+  // Schermata iniziale: l'admin apre le Vendite all'accesso, poi ritrova il suo posto
   if (role === 'admin' && !_landingApplied) {
     _landingApplied = true;
-    var bV = document.getElementById('si-vendite');
+    var _accessoVeroA = false;
+    try{ _accessoVeroA = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
+    var _doveA = 'vendite';
+    if (!_accessoVeroA) {
+      var _ultA=''; try{ _ultA=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
+      if (_ultA && allowed.indexOf(_ultA) !== -1) _doveA = _ultA;
+    }
+    try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
+    var bV = document.getElementById('si-' + _doveA);
     if (bV) setTimeout(function(){ try{ bV.click(); }catch(e){} }, 200);
     return;
   }
-  // Schermata iniziale: al login i non-admin (dipendenti/staff, incluso Rudy) aprono le Timbrature
+  /* ===== DOVE SI APRE =====
+     Le Timbrature restano la schermata di chi entra a inizio giornata, ma
+     solo quando l'accesso e' stato fatto davvero premendo il pulsante. Se la
+     pagina si e' semplicemente ricaricata — scheda cambiata e ripresa,
+     telefono che libera memoria, rientro dopo il giro su Google — si torna
+     dove si era: chi stava in magazzino ritrova il magazzino. */
   var landing = (role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0];
   if (role !== 'admin' && !_landingApplied && allowed.indexOf('presenze') !== -1) {
     _landingApplied = true;
-    var bP = document.getElementById('si-presenze');
-    if (bP) setTimeout(function(){ bP.click(); setTimeout(presenzeInit, 150); }, 200);
+    var _accessoVero = false;
+    try{ _accessoVero = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
+    var _dove = 'presenze';
+    if (!_accessoVero) {
+      var _ultima=''; try{ _ultima=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
+      /* si ripristina solo se quella sezione e' ancora permessa a questa
+         persona: i permessi possono essere cambiati nel frattempo */
+      if (_ultima && allowed.indexOf(_ultima) !== -1) _dove = _ultima;
+    }
+    try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
+    var bP = document.getElementById('si-' + _dove);
+    if (bP) setTimeout(function(){ bP.click(); if(_dove==='presenze') setTimeout(presenzeInit, 150); }, 200);
     return;
   }
   var activeEl = document.querySelector('.view.active');
@@ -10160,6 +10191,7 @@ function fetchUserEmailAndSetRole(token) {
 }
 
 function disconnettiUtente() {
+  try{ localStorage.removeItem('ea_ultima_vista'); }catch(e){}
   if (!confirm("Vuoi uscire?")) return;
   try{ localStorage.removeItem('ea_last_login'); }catch(e){}
   _driveAccessToken = null;
@@ -12063,6 +12095,12 @@ function sidebarNav(view,btn){
   });
   var activeEl = document.getElementById('view-' + view);
   if (activeEl) activeEl.classList.add('active');
+  /* Dove sono adesso. Serve a ritrovare il posto quando il browser ricarica
+     la pagina da solo: cambiando scheda e tornando indietro, il telefono e
+     spesso anche il computer buttano via la pagina e la rifanno da capo. Da
+     fuori sembra di non essersi mai mossi, ma per il gestionale e' un avvio
+     nuovo, e finiva sempre sulle timbrature. */
+  try{ if(view) localStorage.setItem('ea_ultima_vista', view); }catch(e){}
   document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
   var t = document.getElementById('contentTitle');
@@ -26666,22 +26704,29 @@ function cvRecTesto(cv){
   if(!link) link=EA_LINK_RECENSIONI;
   /* Stesso discorso della mail, negli stessi passaggi e nello stesso ordine:
      chi riceve il promemoria su WhatsApp e chi lo riceve per posta deve
-     leggere la stessa cosa, altrimenti sembrano due aziende diverse. */
-  var t='Ciao '+(nome||'')+'! \ud83d\udc4b Come sta andando la tua '+auto+'?'
-    +'\n\nSperiamo che tu ti stia trovando bene con la tua auto e con Europa Auto! \ud83d\ude97'
-    +'\n\nSe hai avuto una buona esperienza con noi, ci farebbe davvero piacere se ci lasciassi una recensione su Google \u2b50\ufe0f'
+     leggere la stessa cosa, altrimenti sembrano due aziende diverse.
+
+     NIENTE EMOJI QUI DENTRO. Il messaggio arriva a WhatsApp dentro un
+     indirizzo web (wa.me/...?text=...), e su quel passaggio le emoji si
+     perdono: al cliente arriverebbe un rombo nero al posto della manina.
+     Meglio nessun simbolo che un simbolo rotto in un messaggio che chiede
+     una recensione. Nella mail restano, perche' li' viaggiano in HTML e
+     arrivano intere. */
+  var t='Ciao '+(nome||'')+'! Come sta andando la tua '+auto+'?'
+    +'\n\nSperiamo che tu ti stia trovando bene con la tua auto e con Europa Auto.'
+    +'\n\nSe hai avuto una buona esperienza con noi, ci farebbe davvero piacere se ci lasciassi una recensione su Google.'
     +'\n\nCi vogliono solo 30 secondi, ma per un\u2019attivit\u00e0 come la nostra significa tantissimo: '
     +'aiuta chi sta pensando di acquistare un\u2019auto a scegliere con maggiore fiducia e ci permette di capire '
     +'che stiamo andando nella direzione giusta.'
     +'\n\nTi chiediamo semplicemente di raccontare la tua esperienza in modo sincero. Se \u00e8 stata all\u2019altezza '
     +'delle aspettative, una recensione a 5 stelle ci aiuta davvero: su Google anche 4 stelle vengono lette come '
     +'\u201cbuono\u201d, ma abbassano la media.'
-    +(link?('\n\n\ud83d\udc49 '+link):'')
+    +(link?('\n\n'+link):'')
     +'\n\nE visto che il tuo tempo per noi \u00e8 prezioso, abbiamo pensato anche a un piccolo grazie: al tuo prossimo '
-    +'tagliando presso la nostra officina ti riserviamo 50 \u20ac di sconto. \ud83d\udd27 Non serve ricordare nessun '
+    +'tagliando presso la nostra officina ti riserviamo 50 \u20ac di sconto. Non serve ricordare nessun '
     +'codice, ce lo ricordiamo noi.'
     +'\n\nSe invece qualcosa non \u00e8 andato come speravi, scrivicelo prima: preferiamo sistemarlo noi che leggerlo online.'
-    +'\n\nGrazie ancora per averci scelto! \ud83d\ude4f'
+    +'\n\nGrazie ancora per averci scelto!'
     +'\nIl team di Europa Auto';
   return { testo:t, link:link, nome:nome, auto:auto };
 }
