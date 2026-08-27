@@ -5358,13 +5358,15 @@ function rpSupaCarica(){
 }
 
 function saveReady(d){
-  localStorage.setItem(READY_KEY, JSON.stringify(d));
+  if(typeof eaLsSet==='function') eaLsSet(READY_KEY, JSON.stringify(d), 'report pronti');
+  else { try{ localStorage.setItem(READY_KEY, JSON.stringify(d)); }catch(e){} }
   updateCounts();
   rpSupaSalva('pronti', d);
   gsSave('ReportPronti', d); // Sheets resta finche' non stacchiamo Google
 }
 function saveSent(d){
-  localStorage.setItem(SENT_KEY, JSON.stringify(d));
+  if(typeof eaLsSet==='function') eaLsSet(SENT_KEY, JSON.stringify(d), 'report inviati');
+  else { try{ localStorage.setItem(SENT_KEY, JSON.stringify(d)); }catch(e){} }
   updateCounts();
   rpSupaSalva('inviati', d);
   gsSave('ReportInviati', d);
@@ -9639,6 +9641,160 @@ function _tuttiUtenti(){
   return out;
 }
 
+/* ═══════════════ SPAZIO DEL BROWSER ═══════════════
+   Il messaggio "Memoria piena" arriva da localStorage, il magazzino di dati
+   che ogni browser tiene per ogni sito. Non e' la memoria del computer e non
+   e' Supabase: e' uno spazio da circa 5 MB per dispositivo, e quando e' pieno
+   il browser rifiuta OGNI nuova scrittura. Da li' il messaggio aprendo una
+   sezione qualsiasi: non c'entra la sezione, c'entra il fatto che quella
+   sezione ha provato a salvare qualcosa.
+
+   Qui non si cancella niente da soli. Prima si misura: sapere quali chiavi
+   occupano lo spazio e' l'unico modo per non buttare via dati buoni. */
+function eaLsByte(v){ try{ return v ? v.length*2 : 0; }catch(e){ return 0; } }
+function eaMB(b){ return (b/1048576).toFixed(2)+' MB'; }
+var EA_LS_LIMITE = 5*1024*1024;   /* stima prudente: quasi tutti i browser stanno qui */
+
+/* Famiglie di chiavi, per leggere il risultato senza dover indovinare */
+function eaLsFamiglia(k){
+  if(k.indexOf('ea_foto_')===0)        return 'Foto salvate nel browser';
+  if(k.indexOf('ea_drive_')===0)       return 'Residui Google Drive';
+  if(k.indexOf('ea_pmcl_draft_')===0)  return 'Bozze perizie non salvate';
+  if(k.indexOf('ea_report')===0 || k.indexOf('ea_ready')===0 || k.indexOf('ea_sent')===0) return 'Report veicolo';
+  if(k.indexOf('ea_magazzino')===0)    return 'Magazzino';
+  if(k.indexOf('ea_preventivi')===0 || k.indexOf('ea_cv')===0) return 'Preventivi e contratti';
+  if(k.indexOf('ea_sinistri')===0)     return 'Sinistri';
+  if(k.indexOf('ea_permute')===0)      return 'Permute';
+  if(k.indexOf('ea_provv')===0)        return 'Provvigioni';
+  if(k.indexOf('ea_presenze')===0 || k.indexOf('ea_tc')===0) return 'Presenze';
+  if(k.indexOf('ea_')===0)             return 'Altro gestionale';
+  return 'Fuori dal gestionale';
+}
+function eaSpazioDettaglio(){
+  var voci=[], tot=0, fam={};
+  try{
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i); if(!k) continue;
+      var b=eaLsByte(localStorage.getItem(k))+k.length*2;
+      tot+=b; voci.push({k:k, b:b});
+      var f=eaLsFamiglia(k);
+      if(!fam[f]) fam[f]={b:0,n:0};
+      fam[f].b+=b; fam[f].n++;
+    }
+  }catch(e){}
+  voci.sort(function(a,c){ return c.b-a.b; });
+  return { tot:tot, voci:voci, fam:fam };
+}
+/* Quante foto sono ancora immagini intere (base64) e quante sono solo
+   riferimenti: le prime pesano migliaia di volte tanto. */
+function eaFotoPeso(){
+  var targhe=0, pesanti=0, leggere=0, byte=0;
+  try{
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(!k || k.indexOf('ea_foto_')!==0) continue;
+      var raw=localStorage.getItem(k)||'';
+      byte+=eaLsByte(raw); targhe++;
+      var arr=null; try{ arr=JSON.parse(raw); }catch(e){}
+      if(!Array.isArray(arr)) continue;
+      arr.forEach(function(p){
+        var d=p&&p.data;
+        if(typeof d==='string' && d.indexOf('data:')===0) pesanti++; else leggere++;
+      });
+    }
+  }catch(e){}
+  return { targhe:targhe, pesanti:pesanti, leggere:leggere, byte:byte };
+}
+function eaSpazioApri(){
+  var d=eaSpazioDettaglio(), f=eaFotoPeso();
+  var perc=Math.min(100, Math.round(d.tot/EA_LS_LIMITE*100));
+  var col = perc>=90 ? '#dc2626' : (perc>=70 ? '#d97706' : '#16a34a');
+  var h='<div style="background:#fff;width:100%;max-width:680px;max-height:90vh;overflow:auto;border-top:5px solid '+col+';border-radius:10px;">';
+  h+='<div style="padding:16px 20px;background:'+col+';color:#fff;display:flex;justify-content:space-between;align-items:center;">';
+  h+='<div><div style="font-size:18px;font-weight:800;">\ud83d\uddc4\ufe0f Spazio del browser</div>';
+  h+='<div style="font-size:12px;opacity:.85;">Questo dispositivo, questo browser</div></div>';
+  h+='<button onclick="var m=document.getElementById(\'ea-spazio-modal\'); if(m) m.style.display=\'none\';" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">\u2715</button></div>';
+  h+='<div style="padding:20px;">';
+  h+='<div style="font-size:15px;font-weight:800;color:#0f172a;">'+eaMB(d.tot)+' occupati su circa 5 MB \u2014 '+perc+'%</div>';
+  h+='<div style="height:12px;background:#e2e8f0;border-radius:99px;margin:10px 0 4px;overflow:hidden;"><div style="height:100%;width:'+perc+'%;background:'+col+';"></div></div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:16px;">Quando si arriva al 100% il browser rifiuta ogni salvataggio: da li\u2019 il messaggio \u201cMemoria piena\u201d.</div>';
+
+  h+='<div style="font-size:12px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Chi occupa lo spazio</div>';
+  var fk=Object.keys(d.fam).sort(function(a,c){ return d.fam[c].b-d.fam[a].b; });
+  h+='<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  fk.forEach(function(n){
+    var p=Math.round(d.fam[n].b/(d.tot||1)*100);
+    h+='<tr style="border-bottom:1px solid #eef2f7;"><td style="padding:7px 4px;">'+n+'</td>'
+      +'<td style="padding:7px 4px;text-align:right;color:#64748b;">'+d.fam[n].n+' voci</td>'
+      +'<td style="padding:7px 4px;text-align:right;font-weight:700;">'+eaMB(d.fam[n].b)+'</td>'
+      +'<td style="padding:7px 4px;text-align:right;color:#94a3b8;">'+p+'%</td></tr>';
+  });
+  h+='</table>';
+
+  if(f.targhe){
+    h+='<div style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:13px;line-height:1.6;">';
+    h+='<b>Foto:</b> '+f.targhe+' targhe, '+eaMB(f.byte)+'.<br>';
+    h+=f.pesanti+' immagini sono salvate per intero dentro il browser, '+f.leggere+' sono solo riferimenti.';
+    if(f.pesanti) h+='<br><span style="color:#b45309;">Le immagini intere sono quasi sempre tutto il problema.</span>';
+    h+='</div>';
+  }
+
+  h+='<div style="font-size:12px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin:18px 0 8px;">Le 12 voci piu\u2019 pesanti</div>';
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+  d.voci.slice(0,12).forEach(function(v){
+    h+='<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:5px 4px;font-family:monospace;color:#334155;word-break:break-all;">'+v.k+'</td>'
+      +'<td style="padding:5px 4px;text-align:right;white-space:nowrap;font-weight:700;">'+eaMB(v.b)+'</td></tr>';
+  });
+  h+='</table>';
+
+  h+='<button onclick="eaSpazioCopia()" style="margin-top:16px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-weight:800;font-family:inherit;font-size:14px;cursor:pointer;">\ud83d\udccb Copia il riepilogo</button>';
+  h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">Copia e mandami il riepilogo: dai numeri si capisce cosa si puo\u2019 togliere senza perdere niente. Non cancellare a mano: alcune di queste voci sono dati non ancora finiti sul cloud.</div>';
+  h+='<div id="ea-spazio-esito" style="margin-top:8px;font-size:13px;font-weight:700;color:#16a34a;min-height:18px;"></div>';
+  h+='</div></div>';
+
+  var m=document.getElementById('ea-spazio-modal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='ea-spazio-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+    document.body.appendChild(m);
+  }
+  m.style.display='flex';
+  m.innerHTML=h;
+}
+function eaSpazioCopia(){
+  var d=eaSpazioDettaglio(), f=eaFotoPeso();
+  var t='SPAZIO BROWSER: '+eaMB(d.tot)+' su ~5 MB\n';
+  t+='Foto: '+f.targhe+' targhe, '+eaMB(f.byte)+', '+f.pesanti+' immagini intere, '+f.leggere+' riferimenti\n\nFAMIGLIE:\n';
+  Object.keys(d.fam).sort(function(a,c){ return d.fam[c].b-d.fam[a].b; }).forEach(function(n){
+    t+='- '+n+': '+eaMB(d.fam[n].b)+' ('+d.fam[n].n+' voci)\n';
+  });
+  t+='\nVOCI PIU\u2019 PESANTI:\n';
+  d.voci.slice(0,20).forEach(function(v){ t+='- '+v.k+': '+eaMB(v.b)+'\n'; });
+  var esito=document.getElementById('ea-spazio-esito');
+  var ok=function(){ if(esito) esito.textContent='\u2705 Copiato'; };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(ok, function(){ if(esito) esito.textContent=t; }); }
+    else if(esito){ esito.textContent=t; }
+  }catch(e){ if(esito) esito.textContent=t; }
+}
+/* Salvataggio che non fa saltare la sezione: se lo spazio e' finito lo dice
+   in modo utile, invece del secco "Memoria piena" che non spiega niente. */
+function eaLsSet(chiave, valore, etichetta){
+  try{ localStorage.setItem(chiave, valore); return true; }
+  catch(e){
+    try{
+      if(typeof tcToastNew==='function'){
+        tcToastNew('\u26a0\ufe0f Spazio del browser esaurito: '+(etichetta||'salvataggio')+' non riuscito in locale. Apri Parametri \u2192 Spazio del browser.', false);
+      } else {
+        alert('Spazio del browser esaurito: '+(etichetta||'il salvataggio')+' non e\u2019 riuscito in locale.\n\nApri Parametri \u2192 Spazio del browser per vedere cosa lo occupa.');
+      }
+    }catch(e2){}
+    return false;
+  }
+}
+try{ window.eaSpazioApri=eaSpazioApri; window.eaSpazioCopia=eaSpazioCopia; window.eaLsSet=eaLsSet; window.eaSpazioDettaglio=eaSpazioDettaglio; }catch(e){}
+
 /* Nascondendo le singole voci restavano in piedi le intestazioni vuote:
    "CRM" e "Magazzino" scritti nel menu senza niente sotto, che e' peggio di
    non vederli affatto — sembra un guasto. Un gruppo senza voci visibili
@@ -12285,18 +12441,32 @@ document.addEventListener('DOMContentLoaded',function(){
     var pr=ccProprietario(a.id); if(pr) lab+=' \u00b7 '+pr;
     return lab;
   }
-  /* Le vendute restano cercabili solo se consegnate da noi: servono per i tagliandi. */
-  function ccVeicoliUtili(){
+  /* Un'auto che si puo' ancora proporre a un cliente: quella in giacenza,
+     compresa l'opzionata. Stessa regola dell'elenco vendibili del magazzino,
+     cosi' le due liste non raccontano cose diverse. */
+  function ccInMagazzino(a){
+    if(!a || a.nlt) return false;
+    return a.stato==='disponibile' || a.stato==='prenotata' || a.stato==='opzionata';
+  }
+  /* Due elenchi diversi, perche' servono due cose diverse:
+     - INTERVENTO: l'auto del cliente, che di norma e' gia' venduta e
+       consegnata da noi (tagliandi, garanzie). Le vendute servono.
+     - VENDITA: l'auto da proporre. Una macchina gia' venduta non c'entra
+       niente, e riempiva l'elenco di righe inutili in cui era impossibile
+       trovare quelle disponibili. */
+  function ccVeicoliUtili(soloMagazzino){
     try{
       if(typeof mzLoad!=='function') return [];
       ccIdxProprietari();
       return mzLoad().filter(function(a){
         if(!a) return false;
+        if(soloMagazzino) return ccInMagazzino(a);
         if(a.stato!=='venduta') return true;
         return !!ccProprietario(a.id);
       });
     }catch(e){ return []; }
   }
+  function ccTipoOra(){ try{ return ((document.getElementById('cc-tipo')||{}).value)||'intervento'; }catch(e){ return 'intervento'; } }
   /* "ROSSI MARIO" e "Mario Rossi" sono la stessa persona: si confronta per
      parole, non lettera per lettera. */
   function ccStessoNome(a,b){
@@ -12321,26 +12491,76 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccPopolaSuggerimenti(){
     try{
       try{ ccNotaSugg(); }catch(e){}
+      var _tipo=ccTipoOra();
       var vl=document.getElementById('cc-veicoli-list');
-      if(vl && typeof mzLoad==='function'){ ccIdxProprietari(); vl.innerHTML=ccVeicoliUtili().map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a))+'"></option>'; }).join(''); }
+      if(vl && typeof mzLoad==='function'){
+        ccIdxProprietari();
+        /* Sulla vendita passano solo le auto in magazzino. */
+        var _auto=ccVeicoliUtili(_tipo==='vendita');
+        vl.innerHTML=_auto.map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a))+'"></option>'; }).join('');
+        var _ve=document.getElementById('cc-veicolo');
+        if(_ve && _tipo==='vendita') _ve.placeholder=_auto.length+' auto in magazzino \u2014 targa / modello / n\u00b0\u2026';
+      }
       var cl=document.getElementById('cc-clienti-list');
-      var _tipo=((document.getElementById('cc-tipo')||{}).value)||'intervento';
       if(cl && typeof clAggrega==='function'){
         if(_tipo!=='vendita'){
-          /* Su un intervento si scrive il cognome e si vede subito QUALE auto:
-             se ci sono tre Rota, si distinguono dalla vettura, non tirando a
-             indovinare. Ogni riga e' "Cognome Nome \u2014 MARCA MODELLO TARGA". */
+          /* ===== PERCHE' NON TROVAVA NE' MBAYE NE' LA TARGA =====
+             Questo elenco nasceva dalle AUTO, non dai clienti: partiva da
+             ccVeicoliUtili e teneva solo i veicoli con un intestatario noto,
+             cioe' quelli agganciati a un preventivo o a un contratto tramite
+             autoId. I clienti arrivati dall'importazione SICOM non hanno
+             quell'aggancio: esistono in anagrafica ma non erano collegati a
+             nessuna auto, quindi qui non comparivano affatto. Stessa sorte per
+             le targhe delle auto vendute a quei clienti. In piu' l'elenco si
+             fermava a 600 righe, e con 1.800 clienti il taglio da solo bastava
+             a far sparire chi veniva dopo in ordine alfabetico.
+
+             Adesso l'elenco e' l'unione di tre cose:
+               a) auto con intestatario noto  -> "COGNOME NOME \u2014 AUTO TARGA"
+               b) tutti i clienti in anagrafica -> "COGNOME NOME"
+               c) auto senza intestatario noto  -> "MARCA MODELLO - TARGA"
+             cosi' si arriva allo stesso appuntamento sia dal cognome sia dalla
+             targa, comunque siano entrati i dati. */
           ccIdxProprietari();
-          var righe=[], visti={};
+          var righe=[], visti={}, conAuto={};
+
+          /* a) chi ha un'auto agganciata: la riga migliore, si vede subito
+                di quale vettura si parla se ci sono tre omonimi. */
           ccVeicoliUtili().forEach(function(a){
             var pr=_ccProp&&_ccProp[a.id]; if(!pr||!pr.nome) return;
             var et=pr.nome+' \u2014 '+((a.marca||'')+' '+(a.modello||'')).trim()
               +(a.targa?(' '+a.targa):(a.numero_interno?(' N\u00b0'+a.numero_interno):''));
             if(visti[et]) return; visti[et]=1;
-            righe.push({ et:et, contratto:!!pr.contratto });
+            conAuto[String(pr.nome).toLowerCase().trim()]=1;
+            righe.push({ et:et, ord:0, contratto:!!pr.contratto });
           });
-          righe.sort(function(x,y){ return (y.contratto?1:0)-(x.contratto?1:0) || x.et.localeCompare(y.et); });
-          cl.innerHTML=righe.slice(0,600).map(function(r){ return '<option value="'+ccEsc(r.et)+'"></option>'; }).join('');
+
+          /* b) tutti gli altri clienti dell'anagrafica, anche senza auto
+                collegata: sono la maggior parte dello storico SICOM. */
+          try{
+            clAggrega().forEach(function(o){
+              var nome=ccNomeCliente(o); if(!nome) return;
+              var k=nome.toLowerCase().trim();
+              if(conAuto[k] || visti['n:'+k]) return; visti['n:'+k]=1;
+              righe.push({ et:nome, ord:1, contratto:false });
+            });
+          }catch(e){}
+
+          /* c) le auto di cui non sappiamo l'intestatario: senza queste una
+                targa scritta a mano non trovava niente. */
+          try{
+            ((typeof mzLoad==='function')?mzLoad():[]).forEach(function(a){
+              if(!a || !a.id) return;
+              if(!a.targa && !a.numero_interno) return;
+              if(_ccProp && _ccProp[a.id]) return;   /* gia' coperta dal punto a */
+              var et=ccEtichettaAuto(a);
+              if(!et || visti['a:'+et]) return; visti['a:'+et]=1;
+              righe.push({ et:et, ord:2, contratto:false });
+            });
+          }catch(e){}
+
+          righe.sort(function(x,y){ return (x.ord-y.ord) || ((y.contratto?1:0)-(x.contratto?1:0)) || x.et.localeCompare(y.et); });
+          cl.innerHTML=righe.slice(0,4000).map(function(r){ return '<option value="'+ccEsc(r.et)+'"></option>'; }).join('');
         } else {
           var seen={}; cl.innerHTML=clAggrega().slice(0,400).map(function(o){ var nome=ccNomeCliente(o); if(!nome||seen[nome.toLowerCase()]) return ''; seen[nome.toLowerCase()]=1; return '<option value="'+ccEsc(nome)+'"></option>'; }).join('');
         }
@@ -12362,6 +12582,27 @@ document.addEventListener('DOMContentLoaded',function(){
         var _ve=document.getElementById('cc-veicolo'); if(_ve) _ve.value=_auto;
         ccNotaCliente('\ud83d\ude97 '+ccEsc(_auto));
       }
+      /* Riga scelta cercando la targa, di un'auto di cui non conosciamo
+         l'intestatario: non c'e' nessun nome da separare. L'auto va nel suo
+         campo e il nome del cliente resta da scrivere, invece di lasciare la
+         targa piantata al posto del cliente. */
+      else if(_tipo!=='vendita' && _campo && String(_campo.value||'').trim()){
+        try{
+          var _v=String(_campo.value).trim();
+          var _hit=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){
+            return a && a.id && ccEtichettaAuto(a)===_v;
+          })[0];
+          if(_hit){
+            var _ve2=document.getElementById('cc-veicolo');
+            if(_ve2) _ve2.value=ccEtichettaAuto(_hit);
+            _campo.value='';
+            _campo.placeholder='Cognome del cliente\u2026';
+            ccNotaCliente('\ud83d\ude97 '+ccEsc(ccEtichettaAuto(_hit))+' \u2014 scrivi il nome del cliente');
+            try{ _campo.focus(); }catch(e){}
+            return;
+          }
+        }catch(e){}
+      }
       var v=((document.getElementById('cc-titolo')||{}).value||'').toLowerCase().trim(); if(!v||typeof clAggrega!=='function') return;
       var lista=clAggrega();
       var match=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim()===v; })[0];
@@ -12374,6 +12615,11 @@ document.addEventListener('DOMContentLoaded',function(){
         /* Scelto il cliente si tira su anche la sua auto: prima bisognava
            ricordarsi targa e modello e riscriverli a mano nel campo sopra. */
         try{
+          /* Su una VENDITA l'auto gia' comprata dal cliente non deve entrare
+             qui: si sta scegliendo cosa proporgli adesso, non cosa ha preso
+             l'anno scorso. L'elenco resta il magazzino e basta. */
+          if(_tipo==='vendita'){ ccPopolaSuggerimenti(); }
+          else {
           var auto=ccAutoDelCliente(ccNomeCliente(match));
           if(auto.length){
             var ve=document.getElementById('cc-veicolo');
@@ -12391,6 +12637,7 @@ document.addEventListener('DOMContentLoaded',function(){
               if(auto.length===1) ve.value=ccEtichettaAuto(auto[0]);
               else ve.placeholder=auto.length+' auto del cliente \u2014 tocca qui';
             }
+          }
           }
         }catch(_e){}
       }
@@ -13079,6 +13326,8 @@ document.addEventListener('DOMContentLoaded',function(){
          quella che si vuole vendere, e li' serve il magazzino. */
       var vb=document.getElementById('cc-veicolo-wrap');
       if(vb) vb.style.display=(t==='vendita')?'':'none';
+      var vlab=document.getElementById('cc-veicolo-lab');
+      if(vlab) vlab.textContent=(t==='vendita')?'Veicolo da proporre (solo magazzino)':'Veicolo (magazzino)';
       var ti=document.getElementById('cc-titolo');
       if(ti) ti.placeholder=(t==='vendita')?'Cliente esistente o descrizione':'Cognome del cliente\u2026';
       ccPopolaSuggerimenti();
@@ -20843,7 +21092,7 @@ var FORN_KEY='ea_fornitori_v1';
 var _fnId=null, _fnReturn=null;
 function fnEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function fnLoad(){ try{ return JSON.parse(localStorage.getItem(FORN_KEY)||'[]'); }catch(e){ return []; } }
-function fnSave(l){ try{ localStorage.setItem(FORN_KEY, JSON.stringify(l)); }catch(e){ alert('Memoria piena.'); } }
+function fnSave(l){ if(typeof eaLsSet==='function') eaLsSet(FORN_KEY, JSON.stringify(l), 'elenco fornitori'); else { try{ localStorage.setItem(FORN_KEY, JSON.stringify(l)); }catch(e){} } }
 function fnById(id){ return fnLoad().filter(function(x){return x.id===id;})[0]||null; }
 function fnInit(){ fnRender(); fnSupaLoad(); }
 function fnRender(){
@@ -21190,6 +21439,7 @@ function parInit(){
   h+='<button onclick="cvFirmaCercaOra()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #7c3aed;background:#fff;color:#7c3aed;font-weight:700;font-family:inherit;cursor:pointer;">\uD83D\uDD8A Cerca le firme adesso</button>';
   h+='<button onclick="cvFirmaDiagnosi()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #b45309;background:#fff;color:#b45309;font-weight:700;font-family:inherit;cursor:pointer;">\u2753 Perch\u00e9 non trova la firma?</button>';
   h+='<button onclick="diagRicarica()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\udd04 Ricarica dati dal cloud</button>';
+  h+='<button onclick="eaSpazioApri()" style="flex:1;min-width:170px;padding:12px;border-radius:9px;border:1px solid #0f766e;background:#fff;color:#0f766e;font-weight:700;font-family:inherit;cursor:pointer;">\ud83d\uddc4\ufe0f Spazio del browser</button>';
   h+='</div>';
   h+='<div id="diag-out" style="margin-top:10px;font-size:13px;color:#334155;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px;min-height:20px;">Premi \u201cVerifica sincronizzazione\u201d per controllare.</div>';
   h+='</div>';
@@ -21202,8 +21452,16 @@ function parSalva(){
   var p={};
   ['condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
-  try{ localStorage.setItem(PARAM_KEY, JSON.stringify(p)); }catch(e){ alert('Memoria piena.'); return; }
+  /* Anche se il locale e' pieno i parametri devono partire per il cloud:
+     e' li' che li leggono gli altri. Prima si salva su Supabase, poi si
+     tenta il locale. */
+  var okLoc = (typeof eaLsSet==='function') ? eaLsSet(PARAM_KEY, JSON.stringify(p), 'parametri') : true;
   parSupaSave(p);
+  if(!okLoc){
+    var st0=document.getElementById('par-stato');
+    if(st0) st0.innerHTML='\u26a0\ufe0f Salvati sul cloud, ma non in locale: spazio browser esaurito. <a href="#" onclick="eaSpazioApri();return false;" style="color:#1a4fa0;font-weight:800;">Vedi cosa lo occupa \u2192</a>';
+    return;
+  }
   var st=document.getElementById('par-stato'); if(st) st.textContent='✅ Parametri salvati'; setTimeout(function(){ if(st)st.textContent=''; },2500);
 }
 function parDemoToggle(el){ try{ localStorage.setItem('ea_demo_off', el.checked?'0':'1'); }catch(e){} try{ var vv=document.getElementById('view-vendite'); if(vv&&vv.classList.contains('active')&&typeof cvVendRender==='function') cvVendRender(); }catch(e){} var st=document.getElementById('par-stato'); if(st){ st.textContent=el.checked?'✅ Modalità demo ATTIVA':'✅ Modalità demo disattivata'; setTimeout(function(){ if(st)st.textContent=''; },2500); } }
@@ -24492,6 +24750,15 @@ try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVist
 
 function eaBadgeBoot(){
   try{ eaSyncVivo(); }catch(e){}
+  /* Meglio avvisare quando manca poco che spiegare dopo perche' non salva. */
+  setTimeout(function(){
+    try{
+      var d=eaSpazioDettaglio();
+      if(d.tot > EA_LS_LIMITE*0.8 && typeof tcToastNew==='function'){
+        tcToastNew('\ud83d\uddc4\ufe0f Spazio del browser quasi pieno ('+eaMB(d.tot)+'). Parametri \u2192 Spazio del browser.', false);
+      }
+    }catch(e){}
+  }, 6000);
   /* carica i contratti anche se l'utente non apre nessuna sezione:
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
@@ -28890,25 +29157,53 @@ var _leadCache = [];
 var _leadFiltro = 'nuovo';
 
 var _leadErrore = '';
+var _leadNoSessione = false;   /* niente accesso al database su QUESTO dispositivo */
+var _leadLetto = false;        /* la lettura e' andata a buon fine almeno una volta */
+
+/* ===== PERCHE' L'ELENCO ERA VUOTO SU UN DISPOSITIVO E PIENO SULL'ALTRO =====
+   Le richieste stanno su Supabase, nella tabella contatti_in, protetta dalle
+   regole RLS. Quando il dispositivo non ha una sessione valida del database,
+   Supabase NON risponde con un errore: risponde con zero righe. Il gestionale
+   prendeva quello zero per buono e scriveva "Nessuna richiesta da contattare",
+   con tanto di spunta verde. Sul computer dove eri entrato di recente la
+   sessione c'era e i lead si vedevano; sul telefono e sull'altro computer no.
+
+   Le sessioni scadono da sole, quindi il caso e' destinato a ripetersi: va
+   distinto una volta per tutte "non c'e' niente" da "non riesco a leggere". */
 function crmLeadCarica(cb){
   var sb=(typeof sbClient==='function')?sbClient():null;
-  if(!sb){ _leadErrore='Database non raggiungibile.'; if(cb) cb(); return; }
-  _leadErrore='';
+  if(!sb){ _leadErrore='Database non raggiungibile.'; _leadNoSessione=false; if(cb) cb(); return; }
+  var leggi=function(){
+    try{
+      sb.from('contatti_in').select('id,data').order('created_at',{ascending:false}).limit(400)
+        .then(function(res){
+          if(res && !res.error){
+            _leadCache=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
+            _leadLetto=true;
+          } else if(res && res.error){
+            /* Un elenco vuoto senza spiegazione fa perdere tempo: qui si dice
+               cosa e' successo. Quasi sempre e' l'accesso al database non
+               valido su quel dispositivo. */
+            _leadErrore=res.error.message||'errore di lettura';
+            console.log('lead:', _leadErrore);
+          }
+          if(cb) cb();
+        }, function(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); });
+    }catch(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); }
+  };
+  _leadErrore=''; _leadNoSessione=false;
+  /* Prima la sessione: senza, la lettura tornerebbe vuota senza dire niente. */
+  if(typeof eaSbControllaSessione==='function'){
+    eaSbControllaSessione(function(ok){ _leadNoSessione=!ok; leggi(); });
+  } else { leggi(); }
+}
+/* Con chi risulta collegato questo dispositivo: serve per capire subito se
+   il vuoto dipende dall'indirizzo sbagliato invece che dalla sessione. */
+function crmLeadMailDb(){
   try{
-    sb.from('contatti_in').select('id,data').order('created_at',{ascending:false}).limit(400)
-      .then(function(res){
-        if(res && !res.error){
-          _leadCache=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
-        } else if(res && res.error){
-          /* Un elenco vuoto senza spiegazione fa perdere tempo: qui si dice
-             cosa e' successo. Quasi sempre e' l'accesso al database non
-             valido su quel dispositivo. */
-          _leadErrore=res.error.message||'errore di lettura';
-          console.log('lead:', _leadErrore);
-        }
-        if(cb) cb();
-      }, function(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); });
-  }catch(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); }
+    if(typeof _eaSbSessione!=='undefined' && _eaSbSessione && _eaSbSessione.user) return String(_eaSbSessione.user.email||'');
+  }catch(e){}
+  return '';
 }
 
 function crmLeadSalva(rec){
@@ -29039,7 +29334,29 @@ function crmRenderLeadOnline(){
       +'<span style="font-size:12.5px;color:#334155;">Quasi sempre \u00e8 l\'accesso al database scaduto: '
       +'esci dal gestionale e rientra con Google, poi riprova.</span></div>';
   }
+  /* Nessun accesso al database: qui NON si puo' dire che non c'e' niente,
+     perche' non lo sappiamo. Si dice che non riusciamo a leggere. */
+  if(_leadNoSessione){
+    return h+'<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:16px;color:#92400e;font-size:13.5px;line-height:1.65;">'
+      +'<b>\ud83d\udd12 Questo dispositivo non \u00e8 collegato al database.</b><br>'
+      +'Le richieste ci sono, ma da qui non si leggono: senza accesso Supabase risponde con un elenco vuoto invece che con un errore. '
+      +'\u00c8 il motivo per cui su un computer si vedono e sul telefono no.<br><br>'
+      +'<button onclick="eaSbEntra()" style="padding:9px 16px;border-radius:8px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Collega ora con Google</button>'
+      +'<div style="font-size:12px;color:#a16207;margin-top:8px;">Si passa da Google e si torna qui: la pagina si ricarica, \u00e8 normale.</div></div>';
+  }
   if(!lista.length){
+    var _altri=(_leadCache||[]).length;
+    /* Zero righe con la sessione buona: puo' essere davvero zero, oppure i
+       permessi RLS sulla tabella. Si mostra con quale indirizzo siamo
+       collegati, che e' l'informazione che serve per capirlo. */
+    if(!_altri && _leadFiltro==='nuovo'){
+      var _mail=crmLeadMailDb();
+      return h+'<div style="text-align:center;color:#94a3b8;padding:34px 12px;font-size:14px;line-height:1.7;">'
+        +'Nessuna richiesta in arrivo.<br>'
+        +'<span style="font-size:12.5px;">Se invece dovrebbero essercene, il database non ce le sta passando'
+        +(_mail?(': questo dispositivo \u00e8 collegato come <b>'+crmEsc(_mail)+'</b>'):'')+'.<br>'
+        +'In quel caso sono i permessi (RLS) sulla tabella <code>contatti_in</code>.</span></div>';
+    }
     return h+'<div style="text-align:center;color:#94a3b8;padding:40px 12px;font-size:14px;">'
       +(_leadFiltro==='nuovo'?'Nessuna richiesta da contattare. \u2705':'Niente in questo elenco.')+'</div>';
   }
