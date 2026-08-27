@@ -4973,6 +4973,84 @@ function waApiInvia(dati){
    partire messaggi che verrebbero rifiutati. */
 var _waTel = '', _waNome = '', _waTimer = null;
 
+/* Le faccine piu' usate scrivendo a un cliente: poche e giuste, non un
+   catalogo da cercarci dentro. */
+var WA_EMOJI = ['\ud83d\ude0a','\ud83d\udc4d','\ud83d\ude4f','\ud83d\ude09','\ud83d\ude4c','\ud83d\udc4c',
+                '\ud83d\ude97','\ud83d\udd11','\ud83d\udd27','\u2705','\u274c','\u23f0',
+                '\ud83d\udcde','\ud83d\udcc5','\ud83d\udccd','\ud83d\udcb6','\ud83d\udcc4','\ud83c\udf89'];
+
+/* Frasi pronte. Si cambiano da qui: nome corto per il pulsante, testo che
+   viene inserito nel campo. {nome} diventa il nome del cliente.
+   Non partono da sole: riempiono il campo e si rilegge prima di inviare. */
+var WA_RAPIDE_DEF = [
+  { et:'Saluto',      tx:'Buongiorno {nome}, sono di Europa Auto. Come posso aiutarla?' },
+  { et:'Disponibile', tx:'Buongiorno {nome}, il veicolo \u00e8 ancora disponibile. Se vuole possiamo fissare un appuntamento per vederlo.' },
+  { et:'Appuntamento',tx:'Quando le farebbe comodo passare? Siamo aperti dal luned\u00ec al sabato, 9:00-12:00 e 14:30-19:00.' },
+  { et:'Permuta',     tx:'Per valutare la sua auto in permuta ci servono targa e chilometri. Se preferisce pu\u00f2 portarla in sede: la valutiamo sul momento, senza impegno.' },
+  { et:'Preventivo',  tx:'Le preparo il preventivo e glielo mando appena pronto.' },
+  { et:'Pronta',      tx:'Buongiorno {nome}, la sua auto \u00e8 pronta per il ritiro. Ci faccia sapere quando pu\u00f2 passare.' },
+  { et:'Grazie',      tx:'Grazie {nome}, a presto!' }
+];
+var WA_RAPIDE_KEY='ea_wa_rapide_v1';
+function waRapide(){
+  try{ var v=JSON.parse(localStorage.getItem(WA_RAPIDE_KEY)||'null'); if(v&&v.length) return v; }catch(e){}
+  return WA_RAPIDE_DEF;
+}
+function waRapideSalva(l){ try{ localStorage.setItem(WA_RAPIDE_KEY, JSON.stringify(l)); }catch(e){} }
+
+function waInserisci(txt){
+  var el=document.getElementById('wa-chat-txt'); if(!el) return;
+  var primo=String(_waNome||'').trim().split(' ')[0]||'';
+  /* Senza nome, "Buongiorno {nome}," diventerebbe "Buongiorno ,":
+     si toglie anche la virgola rimasta appesa. */
+  var t=String(txt).replace(/\{nome\}/g, primo);
+  if(!primo) t=t.replace(/\s*,\s*(?=[a-z])/,' ').replace(/\s+([,.!?])/g,'$1');
+  t=t.replace(/\s{2,}/g,' ').trim();
+  /* Se c'e' gia' qualcosa scritto non si cancella: si aggiunge in coda. */
+  el.value = el.value ? (el.value.replace(/\s+$/,'')+' '+t) : t;
+  el.focus();
+}
+
+function waPannello(quale){
+  var box=document.getElementById('wa-extra'); if(!box) return;
+  var aperto=(box.getAttribute('data-on')===quale);
+  if(aperto){ box.style.display='none'; box.setAttribute('data-on',''); return; }
+  box.setAttribute('data-on', quale);
+  box.style.display='';
+  if(quale==='emoji'){
+    box.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:4px;padding:8px;background:#fff;border:1px solid #e2e8f0;border-radius:9px;">'
+      +WA_EMOJI.map(function(e){ return '<button onclick="waInserisci(\''+e+'\')" style="font-size:20px;line-height:1;padding:5px 7px;border:none;background:transparent;cursor:pointer;border-radius:6px;">'+e+'</button>'; }).join('')
+      +'</div>';
+  } else {
+    var l=waRapide();
+    box.innerHTML='<div style="padding:8px;background:#fff;border:1px solid #e2e8f0;border-radius:9px;">'
+      +'<div style="display:flex;flex-wrap:wrap;gap:5px;">'
+      +l.map(function(r,i){ return '<button onclick="waInserisci(\''+String(r.tx).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')" title="'+eaEscq(r.tx)+'" style="padding:6px 11px;border-radius:16px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+eaEscq(r.et)+'</button>'; }).join('')
+      +'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:7px;">Il testo finisce nel campo: rileggilo e poi invia. '
+      +'<a href="#" onclick="waRapideModifica();return false;" style="color:#1a4fa0;font-weight:700;">Modifica frasi</a></div>'
+      +'</div>';
+  }
+}
+
+function waRapideModifica(){
+  var l=waRapide();
+  var testo=l.map(function(r){ return r.et+' | '+r.tx; }).join('\n');
+  var v=prompt('Una frase per riga, nel formato:\n\nNOME PULSANTE | testo del messaggio\n\n{nome} diventa il nome del cliente.\nSvuota tutto per tornare alle frasi di partenza.', testo);
+  if(v===null) return;
+  if(!String(v).trim()){ waRapideSalva(null); try{ localStorage.removeItem(WA_RAPIDE_KEY); }catch(e){} waPannello('rapide'); waPannello('rapide'); return; }
+  var nuove=String(v).split('\n').map(function(r){
+    var i=r.indexOf('|'); if(i<0) return null;
+    var et=r.slice(0,i).trim(), tx=r.slice(i+1).trim();
+    if(!et||!tx) return null;
+    return { et:et, tx:tx };
+  }).filter(Boolean);
+  if(!nuove.length){ alert('Non ho letto nessuna frase valida. Serve il carattere | fra nome e testo.'); return; }
+  waRapideSalva(nuove);
+  var box=document.getElementById('wa-extra'); if(box) box.setAttribute('data-on','');
+  waPannello('rapide');
+}
+
 function waNum(v){
   var t=String(v||'').replace(/\D/g,'');
   if(t.indexOf('00')===0) t=t.slice(2);
@@ -5030,7 +5108,9 @@ function waChatDisegna(msgs){
   if(!msgs.length){
     corpo.innerHTML='<div style="text-align:center;color:#667781;font-size:13px;padding:30px 16px;line-height:1.6;">'
       +'Nessun messaggio con questo numero.<br><span style="font-size:12px;">'
-      +'Manda il primo qui sotto, oppure aspetta che scriva il cliente.</span></div>';
+      +'Manda il primo qui sotto, oppure aspetta che scriva il cliente.<br><br>'
+      +'La conversazione parte da quando il gestionale \u00e8 stato collegato: '
+      +'quello che c\'era prima resta solo sul telefono.</span></div>';
   } else {
     var h='';
     msgs.forEach(function(m){
@@ -5064,8 +5144,11 @@ function waChatPiede(restano){
     var ore=Math.floor(restano/3600000), min=Math.floor((restano%3600000)/60000);
     pie.innerHTML='<div style="font-size:11px;color:#15803d;font-weight:700;margin-bottom:6px;">'
       +'\u25cf Puoi rispondere liberamente ancora per '+(ore?ore+'h ':'')+min+'m</div>'
-      +'<div style="display:flex;gap:8px;">'
-      +'<input id="wa-chat-txt" placeholder="Scrivi un messaggio\u2026" onkeydown="if(event.key===\'Enter\')waChatInvia()" style="flex:1;padding:10px 12px;border:1px solid #cbd5e1;border-radius:20px;font-family:inherit;font-size:14px;">'
+      +'<div id="wa-extra" data-on="" style="display:none;margin-bottom:8px;"></div>'
+      +'<div style="display:flex;gap:6px;align-items:center;">'
+      +'<button onclick="waPannello(\'emoji\')" title="Faccine" style="padding:8px 10px;border-radius:18px;border:1px solid #cbd5e1;background:#fff;font-size:17px;line-height:1;cursor:pointer;">\ud83d\ude0a</button>'
+      +'<button onclick="waPannello(\'rapide\')" title="Frasi pronte" style="padding:8px 10px;border-radius:18px;border:1px solid #cbd5e1;background:#fff;font-size:15px;line-height:1;cursor:pointer;">\u26a1</button>'
+      +'<input id="wa-chat-txt" placeholder="Scrivi un messaggio\u2026" onkeydown="if(event.key===\'Enter\')waChatInvia()" style="flex:1;padding:10px 12px;border:1px solid #cbd5e1;border-radius:20px;font-family:inherit;font-size:14px;min-width:0;">'
       +'<button id="wa-chat-btn" onclick="waChatInvia()" style="padding:10px 16px;border-radius:20px;border:none;background:#25d366;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">Invia</button>'
       +'</div><div id="wa-chat-esito" style="font-size:12px;margin-top:6px;"></div>';
   } else {
@@ -28613,18 +28696,26 @@ function crmConsZonaToggle(){ _crmConsZona=!_crmConsZona; if(typeof crmRender===
 var _leadCache = [];
 var _leadFiltro = 'nuovo';
 
+var _leadErrore = '';
 function crmLeadCarica(cb){
   var sb=(typeof sbClient==='function')?sbClient():null;
-  if(!sb){ if(cb) cb(); return; }
+  if(!sb){ _leadErrore='Database non raggiungibile.'; if(cb) cb(); return; }
+  _leadErrore='';
   try{
     sb.from('contatti_in').select('id,data').order('created_at',{ascending:false}).limit(400)
       .then(function(res){
         if(res && !res.error){
           _leadCache=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
-        } else if(res && res.error){ console.log('lead:', res.error.message); }
+        } else if(res && res.error){
+          /* Un elenco vuoto senza spiegazione fa perdere tempo: qui si dice
+             cosa e' successo. Quasi sempre e' l'accesso al database non
+             valido su quel dispositivo. */
+          _leadErrore=res.error.message||'errore di lettura';
+          console.log('lead:', _leadErrore);
+        }
         if(cb) cb();
-      }, function(){ if(cb) cb(); });
-  }catch(e){ if(cb) cb(); }
+      }, function(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); });
+  }catch(e){ _leadErrore=String((e&&e.message)||e); if(cb) cb(); }
 }
 
 function crmLeadSalva(rec){
@@ -28748,6 +28839,13 @@ function crmRenderLeadOnline(){
     +bott('inserito','Inseriti',conta.inserito)+bott('scartato','Scartati',conta.scartato)
     +'<button onclick="crmLeadCarica(crmRender)" style="padding:7px 12px;border-radius:9px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">\u21bb Aggiorna</button></div>';
 
+  if(_leadErrore){
+    return h+'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px;color:#991b1b;font-size:13.5px;line-height:1.6;">'
+      +'<b>Non riesco a leggere le richieste su questo dispositivo.</b><br>'
+      +'<span style="font-size:12.5px;color:#7f1d1d;">'+crmEsc(_leadErrore)+'</span><br><br>'
+      +'<span style="font-size:12.5px;color:#334155;">Quasi sempre \u00e8 l\'accesso al database scaduto: '
+      +'esci dal gestionale e rientra con Google, poi riprova.</span></div>';
+  }
   if(!lista.length){
     return h+'<div style="text-align:center;color:#94a3b8;padding:40px 12px;font-size:14px;">'
       +(_leadFiltro==='nuovo'?'Nessuna richiesta da contattare. \u2705':'Niente in questo elenco.')+'</div>';
