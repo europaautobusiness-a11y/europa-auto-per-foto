@@ -9748,7 +9748,11 @@ function eaSpazioApri(){
   });
   h+='</table>';
 
-  h+='<button onclick="eaSpazioCopia()" style="margin-top:16px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-weight:800;font-family:inherit;font-size:14px;cursor:pointer;">\ud83d\udccb Copia il riepilogo</button>';
+  if(f.pesanti){
+    h+='<button onclick="eaFotoRecupera()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-family:inherit;font-size:14px;cursor:pointer;">\ud83d\udcf7 Metti al sicuro le foto e libera lo spazio</button>';
+    h+='<div style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.55;">Controlla auto per auto se le foto sono gi\u00e0 sul cloud. Dove non lo sono le carica, e solo dopo libera il browser.</div>';
+  }
+  h+='<button onclick="eaSpazioCopia()" style="margin-top:10px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-weight:800;font-family:inherit;font-size:14px;cursor:pointer;">\ud83d\udccb Copia il riepilogo</button>';
   h+='<div style="font-size:12px;color:#64748b;margin-top:8px;line-height:1.6;">Copia e mandami il riepilogo: dai numeri si capisce cosa si puo\u2019 togliere senza perdere niente. Non cancellare a mano: alcune di queste voci sono dati non ancora finiti sul cloud.</div>';
   h+='<div id="ea-spazio-esito" style="margin-top:8px;font-size:13px;font-weight:700;color:#16a34a;min-height:18px;"></div>';
   h+='</div></div>';
@@ -9799,6 +9803,211 @@ function eaLsSet(chiave, valore, etichetta){
 /* Avviso che resta finche' non lo si chiude, e che porta dritto al pannello.
    Serve a chiunque, non solo a chi ha Parametri: lo spazio si riempie sul
    dispositivo di chi carica le foto, cioe' quasi mai quello dell'ufficio. */
+
+/* ══════════════════════════════════════════════════════════════
+   RECUPERO DELLE FOTO RIMASTE NEL BROWSER
+   Le voci ea_foto_<TARGA> sono l'eredita' dell'epoca Google Drive: le
+   immagini stanno dentro il browser per intero, in base64. Su un telefono
+   bastano due auto per occupare 9 MB su 5 disponibili, e da li' non si salva
+   piu' niente — nemmeno la sessione del database.
+   Cancellarle e basta sarebbe un azzardo: per alcune quella copia potrebbe
+   essere l'unica. Quindi prima si guarda, auto per auto, se le stesse foto
+   sono gia' su R2 (il magazzino le tiene come indirizzi, non come immagini),
+   e solo allora si libera. Dove non ci sono, si caricano e poi si libera.
+   ══════════════════════════════════════════════════════════════ */
+function eaFotoLocali(){
+  var out=[];
+  try{
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(!k || k.indexOf('ea_foto_')!==0) continue;
+      if(k==='ea_foto_pubbliche_v1') continue;
+      var targa=k.replace('ea_foto_','');
+      var raw=localStorage.getItem(k)||'';
+      var arr=[]; try{ arr=JSON.parse(raw)||[]; }catch(e){ arr=[]; }
+      if(!Array.isArray(arr)) arr=[];
+      var intere=[], rif=0;
+      arr.forEach(function(p,idx){
+        var d=p&&p.data;
+        if(typeof d==='string' && d.indexOf('data:')===0) intere.push({i:idx, data:d});
+        else rif++;
+      });
+      out.push({ chiave:k, targa:targa, byte:raw.length*2, tot:arr.length, intere:intere, rif:rif });
+    }
+  }catch(e){}
+  out.sort(function(a,b){ return b.byte-a.byte; });
+  return out;
+}
+/* L'auto in magazzino con quella targa, se c'e' ancora. */
+function eaFotoAuto(targa){
+  try{
+    if(typeof mzLoad!=='function') return null;
+    var t=String(targa||'').toUpperCase().replace(/\s/g,'');
+    var trovata=null;
+    mzLoad().forEach(function(a){
+      if(!a || a.deleted) return;
+      if(String(a.targa||'').toUpperCase().replace(/\s/g,'')===t) trovata=a;
+    });
+    return trovata;
+  }catch(e){ return null; }
+}
+function eaFotoStato(v){
+  var a=eaFotoAuto(v.targa);
+  var suR2=(a && Array.isArray(a.foto))?a.foto.length:0;
+  if(!v.intere.length) return { cod:'vuota', a:a, suR2:suR2, txt:'Nessuna immagine intera: sono solo riferimenti, si possono togliere.' };
+  if(!a) return { cod:'orfana', a:null, suR2:0, txt:'Questa targa non \u00e8 in magazzino: non c\u2019\u00e8 una scheda a cui agganciare le foto.' };
+  if(suR2>=v.intere.length) return { cod:'sicura', a:a, suR2:suR2, txt:'La scheda ha gi\u00e0 '+suR2+' foto sul cloud: la copia nel browser \u00e8 un doppione.' };
+  return { cod:'dacaricare', a:a, suR2:suR2, txt:'La scheda ha '+suR2+' foto sul cloud contro '+v.intere.length+' qui: vanno caricate prima di liberare.' };
+}
+/* base64 -> Blob, per poterle rimandare al Worker come un file qualsiasi */
+function eaDataUrlBlob(d){
+  try{
+    var virg=d.indexOf(','); if(virg<0) return null;
+    var testa=d.slice(0,virg), corpo=d.slice(virg+1);
+    var tipo=(testa.match(/data:([^;]+)/)||[])[1]||'image/jpeg';
+    var bin=atob(corpo), n=bin.length, u=new Uint8Array(n);
+    for(var i=0;i<n;i++) u[i]=bin.charCodeAt(i);
+    return new Blob([u], {type:tipo});
+  }catch(e){ return null; }
+}
+function eaFotoEsito(t){ var e=document.getElementById('ea-foto-esito'); if(e) e.innerHTML=t; }
+
+/* Carica su R2 le immagini intere di una targa e poi libera lo spazio. */
+function eaFotoSalvaR2(targa){
+  var v=eaFotoLocali().filter(function(x){ return x.targa===targa; })[0];
+  if(!v || !v.intere.length){ eaFotoRecupera(); return; }
+  var st=eaFotoStato(v);
+  if(!st.a){ alert('Questa targa non \u00e8 in magazzino: non c\u2019\u00e8 una scheda a cui agganciare le foto.'); return; }
+  if(typeof WORKER_FOTO==='undefined'){ alert('Il caricamento foto non \u00e8 disponibile su questa versione.'); return; }
+  var a=st.a;
+  if(!Array.isArray(a.foto)) a.foto=[];
+  var tot=v.intere.length, fatte=0, ok=0, ko=0, idx=0;
+  eaFotoEsito('\u23f3 Carico 0/'+tot+'\u2026 non chiudere la pagina.');
+  var uno=function(){
+    if(idx>=v.intere.length) return Promise.resolve();
+    var img=v.intere[idx++];
+    var blob=eaDataUrlBlob(img.data);
+    if(!blob){ ko++; fatte++; return uno(); }
+    var invia=function(b){
+      return fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(a.id)+'&nome='+encodeURIComponent(targa+'-'+(img.i+1)+'.jpg'), {
+        method:'POST', headers:{'Content-Type':(b.type||'image/jpeg')}, body:b
+      }).then(function(r){ return r.json(); })
+        .then(function(res){ if(res && res.ok && res.url){ a.foto.push({url:res.url, key:res.key}); ok++; } else { ko++; } })
+        .catch(function(){ ko++; });
+    };
+    var pre=(typeof mzFotoResize==='function')?mzFotoResize(new File([blob], 'f.jpg', {type:blob.type||'image/jpeg'})):Promise.resolve(blob);
+    return pre.then(function(b){ return invia(b||blob); }, function(){ return invia(blob); })
+      .then(function(){ fatte++; eaFotoEsito('\u23f3 Carico '+fatte+'/'+tot+'\u2026 non chiudere la pagina.'); return uno(); });
+  };
+  var code=[]; for(var i=0;i<Math.min(2, v.intere.length); i++) code.push(uno());
+  Promise.all(code).then(function(){
+    if(!ok){ eaFotoEsito('<span style="color:#dc2626;">Nessuna foto caricata ('+ko+' non riuscite). Non ho tolto niente.</span>'); return; }
+    /* Prima si salva la scheda con i nuovi indirizzi, poi — e solo poi — si
+       libera il browser. Se si invertisse l'ordine e il salvataggio fallisse,
+       le foto sarebbero perse. */
+    try{
+      a.updatedAt=Date.now();
+      if(typeof mzSave==='function'){ var l=mzLoad(); mzSave(l); }
+      if(typeof mzSaveOra==='function') mzSaveOra();
+      if(typeof mzSupaUpsert==='function') mzSupaUpsert(a);
+    }catch(e){}
+    if(ko){ eaFotoEsito('<span style="color:#b45309;">'+ok+' foto caricate, '+ko+' no. Non libero: rifai il caricamento.</span>'); eaFotoRecupera(); return; }
+    try{ localStorage.removeItem(v.chiave); }catch(e){}
+    eaFotoEsito('<span style="color:#16a34a;">\u2705 '+ok+' foto di '+targa+' ora sul cloud, spazio liberato.</span>');
+    eaFotoRecupera();
+  });
+}
+/* Libera senza caricare niente: solo dove non c'e' niente da perdere. */
+function eaFotoLibera(targa){
+  var v=eaFotoLocali().filter(function(x){ return x.targa===targa; })[0]; if(!v) return;
+  var st=eaFotoStato(v);
+  if(st.cod==='dacaricare' || st.cod==='orfana'){
+    if(!confirm('Attenzione: per '+targa+' le immagini potrebbero essere solo qui.\n\nTolgo lo stesso? Non si torna indietro.')) return;
+  } else {
+    if(!confirm('Tolgo la copia nel browser delle foto di '+targa+'?\n\n'+st.txt)) return;
+  }
+  try{ localStorage.removeItem(v.chiave); }catch(e){}
+  eaFotoEsito('<span style="color:#16a34a;">Spazio liberato per '+targa+'.</span>');
+  eaFotoRecupera();
+}
+/* Salva le immagini sul dispositivo prima di toglierle: unica via quando
+   l'auto non e' piu' in magazzino e non c'e' scheda dove agganciarle. */
+function eaFotoScarica(targa){
+  var v=eaFotoLocali().filter(function(x){ return x.targa===targa; })[0]; if(!v || !v.intere.length) return;
+  v.intere.forEach(function(img, n){
+    try{
+      var b=eaDataUrlBlob(img.data); if(!b) return;
+      var u=URL.createObjectURL(b);
+      var a=document.createElement('a'); a.href=u; a.download=targa+'-'+(n+1)+'.jpg';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ try{ URL.revokeObjectURL(u); }catch(e){} }, 4000);
+    }catch(e){}
+  });
+  eaFotoEsito('Scaricate '+v.intere.length+' immagini di '+targa+'. Controlla che ci siano davvero, poi puoi liberare.');
+}
+
+function eaFotoRecupera(){
+  var v=eaFotoLocali();
+  var tot=0; v.forEach(function(x){ tot+=x.byte; });
+  var h='<div style="background:#fff;width:100%;max-width:680px;max-height:90vh;overflow:auto;border-radius:10px;">';
+  h+='<div style="padding:16px 20px;background:#1a4fa0;color:#fff;display:flex;justify-content:space-between;align-items:center;">';
+  h+='<div><div style="font-size:18px;font-weight:800;">\ud83d\udcf7 Foto rimaste nel browser</div>';
+  h+='<div style="font-size:12px;opacity:.85;">'+(typeof eaMB==='function'?eaMB(tot):tot+' byte')+' su questo dispositivo</div></div>';
+  h+='<button onclick="var m=document.getElementById(\'ea-foto-modal\'); if(m) m.style.display=\'none\';" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">\u2715</button></div>';
+  h+='<div style="padding:20px;">';
+  h+='<div id="ea-foto-esito" style="font-size:13px;font-weight:700;margin-bottom:12px;min-height:18px;"></div>';
+
+  if(!v.length){
+    h+='<div style="font-size:14px;color:#64748b;">Non c\u2019\u00e8 nessuna foto salvata dentro il browser. Lo spazio \u00e8 occupato da altro.</div>';
+  } else {
+    h+='<div style="font-size:13px;color:#64748b;line-height:1.6;margin-bottom:14px;">'
+      +'Per ogni targa si controlla se le stesse foto sono gi\u00e0 sul cloud. Dove ci sono, la copia qui \u00e8 un doppione '
+      +'e si pu\u00f2 togliere. Dove non ci sono, si caricano <b>prima</b> e si libera dopo.</div>';
+    v.forEach(function(x){
+      var st=eaFotoStato(x);
+      var col={sicura:'#16a34a', dacaricare:'#b45309', orfana:'#dc2626', vuota:'#64748b'}[st.cod];
+      h+='<div style="border:1px solid #e2e8f0;border-left:4px solid '+col+';border-radius:10px;padding:12px 14px;margin-bottom:10px;">';
+      h+='<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline;">'
+        +'<b style="font-size:15px;">'+x.targa+'</b>'
+        +'<span style="font-weight:800;color:'+col+';">'+(typeof eaMB==='function'?eaMB(x.byte):x.byte)+'</span></div>';
+      h+='<div style="font-size:12.5px;color:#64748b;margin-top:3px;">'+x.intere.length+' immagini intere'
+        +(x.rif?(' \u00b7 '+x.rif+' riferimenti'):'')
+        +(st.a?(' \u00b7 scheda in magazzino trovata'):'')+'</div>';
+      h+='<div style="font-size:12.5px;color:'+col+';margin-top:5px;line-height:1.5;">'+st.txt+'</div>';
+      h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">';
+      if(st.cod==='dacaricare'){
+        h+='<button onclick="eaFotoSalvaR2(\''+x.targa+'\')" style="padding:9px 14px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">\u2601\ufe0f Carica sul cloud e libera</button>';
+      }
+      if(st.cod==='sicura' || st.cod==='vuota'){
+        h+='<button onclick="eaFotoLibera(\''+x.targa+'\')" style="padding:9px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">\ud83e\uddf9 Libera '+(typeof eaMB==='function'?eaMB(x.byte):'')+'</button>';
+      }
+      if(x.intere.length){
+        h+='<button onclick="eaFotoScarica(\''+x.targa+'\')" style="padding:9px 14px;border-radius:8px;border:1px solid #64748b;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">\u2b07\ufe0f Scarica sul dispositivo</button>';
+      }
+      if(st.cod==='orfana'){
+        h+='<button onclick="eaFotoLibera(\''+x.targa+'\')" style="padding:9px 14px;border-radius:8px;border:1px solid #dc2626;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">Togli comunque</button>';
+      }
+      h+='</div></div>';
+    });
+  }
+  h+='</div></div>';
+
+  var m=document.getElementById('ea-foto-modal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='ea-foto-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px;';
+    document.body.appendChild(m);
+  }
+  m.style.display='flex';
+  m.innerHTML=h;
+}
+try{
+  window.eaFotoRecupera=eaFotoRecupera; window.eaFotoSalvaR2=eaFotoSalvaR2;
+  window.eaFotoLibera=eaFotoLibera; window.eaFotoScarica=eaFotoScarica;
+  window.eaFotoLocali=eaFotoLocali;
+}catch(e){}
+
 function eaSpazioAvviso(d){
   try{
     if(document.getElementById('ea-spazio-bar')) return;
