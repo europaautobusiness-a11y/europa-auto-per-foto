@@ -4210,11 +4210,9 @@ function salvaPermessiTutti(){
     if(!sb || !emails.length){ setStatus('\u2705 Salvato', '#16a34a'); return; }
     var done=0, err=null, total=emails.length;
     emails.forEach(function(email){
-      var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===email;}):null;
-      var rec={ id:utenteId(email), email:email, nome:(u&&u.nome)||email.split('@')[0], ruolo:(u&&u.ruolo)||'dipendente', password:(u&&u.password)||'-', sezioni:perEmail[email], updatedAt:Date.now() };
       var fin=function(e){ done++; if(e) err=String(e); if(done>=total){ if(err) setStatus('\u26a0\ufe0f Errore Supabase: '+err, '#dc2626'); else setStatus('\u2705 Salvato (locale + Supabase)', '#16a34a'); } };
-      try{ sb.from('utenti').upsert({ id:String(rec.id), data:rec }).then(function(res){ fin(res&&res.error?res.error.message:null); }, function(e){ fin(e); }); }
-      catch(e){ fin(e); }
+      try{ _utentiSezRemote[email]=perEmail[email]; }catch(e){}
+      permSalvaSezioniCloud(email, perEmail[email], fin);
     });
   }catch(e){ alert('Errore salvataggio permessi: '+e); }
 }
@@ -4229,6 +4227,12 @@ function tcTogglePermesso(cb) {
   var i = cur.indexOf(view);
   if (cb.checked) { if (i===-1) cur.push(view); } else { if (i!==-1) cur.splice(i,1); }
   setPermessiUtente(email, cur);
+  try{
+    if(typeof tcToastNew==='function'){
+      var lab=(SEZIONI_DEFS.filter(function(x){return x.v===view;})[0]||{}).label||view;
+      tcToastNew((cb.checked?'\u2705 ':'\u274c ')+lab+' \u2014 '+email.split('@')[0], true);
+    }
+  }catch(e){}
   if (_currentUserEmail === email) { try { applyRoleUI(); } catch(e){} }
 }
 
@@ -5419,9 +5423,10 @@ async function manualSync(btn){
     renderReady('');
     renderArchive('');
     updateCounts();
-    // Carica anche provvigioni: prima dal cloud, poi da Sheets
+    /* Provvigioni: solo dal cloud. Rileggerle anche dal foglio Google
+       rimetteva la copia vecchia sopra quella buona. Per ripescare lo
+       storico dal foglio c'e' il pulsante "Aggiorna da Sheets". */
     try { pSupaLoad(); } catch(e) {}
-    try { pLoadFromGS(); } catch(e) {}
     // Carica presenze da Sheets
     try { presenzeLoadDaSheets(); } catch(e) {}
     // Carica richieste permessi/ferie da Sheets
@@ -5468,7 +5473,7 @@ async function syncFromSheets(){
     if(ready !== null){ saveReady(ready); }
     if(sent  !== null){ saveSent(sent); }
     renderReady(''); renderArchive('');
-    try{ if(typeof pmLoadDaSheets==='function') pmLoadDaSheets(); }catch(e){}
+    try{ if(typeof pmSupaLoad==='function') pmSupaLoad(); }catch(e){}
     if(st){ st.textContent='🟢 Google Sheets connesso'; st.style.color='#27ae60'; }
   }catch(e){
     if(st){ st.textContent='🔴 Errore connessione'; st.style.color='#e74c3c'; }
@@ -9544,15 +9549,57 @@ function getPermessiUtente(email){
   var m=loadPermessiSezioni(); var k=String(email).toLowerCase();
   return Object.prototype.hasOwnProperty.call(m,k) ? (m[k]||[]) : null;
 }
+/* ===== SALVATAGGIO PERMESSI: SEMPRE SUL CLOUD =====
+   Qui c'era il difetto piu' insidioso di tutti, perche' muto. La spunta si
+   salvava sul cloud solo se la persona era gia' presente in UTENTI_APP; per
+   tutti gli altri (chi e' entrato dall'elenco dipendenti delle Presenze) la
+   riga if(u) faceva cadere il salvataggio nel vuoto. Sullo schermo di chi
+   spuntava la casella restava spuntata — era salvata in locale — ma sull'altro
+   dispositivo non arrivava mai niente.
+
+   Adesso la scrittura parte comunque. Il ruolo non lo inventiamo: si rilegge
+   la riga gia' presente su Supabase e si cambia solo il campo sezioni, cosi'
+   nessuno viene declassato per sbaglio. Se la scrittura fallisce si vede. */
+function permSalvaSezioniCloud(email, views, cb){
+  var k=String(email||'').toLowerCase();
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!k){ if(cb)cb('email mancante'); return; }
+  if(!sb){ if(cb)cb('Supabase non raggiungibile'); return; }
+  var id=utenteId(k);
+  var loc=null;
+  try{ loc=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===k;}):null; }catch(e){}
+  var scrivi=function(vecchio){
+    var rec={
+      id:id, email:k,
+      nome:    (vecchio&&vecchio.nome)     || (loc&&loc.nome)     || k.split('@')[0],
+      ruolo:   (vecchio&&vecchio.ruolo)    || (loc&&loc.ruolo)    || 'dipendente',
+      password:(vecchio&&vecchio.password) || (loc&&loc.password) || '-',
+      sezioni: views, updatedAt: Date.now()
+    };
+    try{
+      sb.from('utenti').upsert({ id:String(id), data:rec }).then(function(res){
+        if(cb) cb(res&&res.error ? res.error.message : null);
+      }, function(e){ if(cb) cb((e&&e.message)||String(e)); });
+    }catch(e){ if(cb) cb((e&&e.message)||String(e)); }
+  };
+  try{
+    sb.from('utenti').select('data').eq('id',id).then(function(res){
+      var v=null;
+      if(res && !res.error){
+        var r=(res.data||[])[0]; v=r&&r.data;
+        if(typeof v==='string'){ try{ v=JSON.parse(v); }catch(e){ v=null; } }
+      }
+      scrivi(v);
+    }, function(){ scrivi(null); });
+  }catch(e){ scrivi(null); }
+}
 function setPermessiUtente(email, views){
   var m=loadPermessiSezioni(); var k=String(email||'').toLowerCase();
   m[k]=views; savePermessiSezioniLocal(m);
-  if(typeof utentiSupaSave==='function'){
-    var u=(typeof UTENTI_APP!=='undefined')?UTENTI_APP.find(function(x){return String(x.email).toLowerCase()===k;}):null;
-    /* Se l'utente non e' ancora in elenco NON inventiamo il ruolo 'dipendente':
-       lo scriveremmo su Supabase declassandolo. Si salva solo il permesso. */
-    if(u) utentiSupaSave(u, views);
-  }
+  try{ _utentiSezRemote[k]=views; }catch(e){}
+  permSalvaSezioniCloud(k, views, function(err){
+    if(err && typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f Permessi NON salvati sul cloud: '+err, false);
+  });
 }
 function caricaPermessiDaSheets(){
   if(typeof utentiSupaLoad==='function'){ utentiSupaLoad(); return; }
@@ -9592,6 +9639,28 @@ function _tuttiUtenti(){
   return out;
 }
 
+/* Nascondendo le singole voci restavano in piedi le intestazioni vuote:
+   "CRM" e "Magazzino" scritti nel menu senza niente sotto, che e' peggio di
+   non vederli affatto — sembra un guasto. Un gruppo senza voci visibili
+   sparisce, insieme alla riga di separazione che lo precede. */
+function eaSidebarGruppi(){
+  try{
+    var gruppi=document.querySelectorAll('.sidebar-group');
+    for(var i=0;i<gruppi.length;i++){
+      var g=gruppi[i], body=g.querySelector('.sidebar-group-body');
+      if(!body) continue;
+      var voci=body.querySelectorAll('.sidebar-item'), vis=0;
+      for(var j=0;j<voci.length;j++){ if(voci[j].style.display!=='none') vis++; }
+      g.style.display = vis ? '' : 'none';
+      var prev=g.previousElementSibling;
+      if(prev && prev.className && prev.className.indexOf('sidebar-divider')>=0){
+        prev.style.display = vis ? '' : 'none';
+      }
+    }
+  }catch(e){}
+}
+try{ window.eaSidebarGruppi=eaSidebarGruppi; }catch(e){}
+
 function applyRoleUI() {
   var role = getCurrentRole();
   try{ var _rg=document.getElementById('mz-tab-reg'); if(_rg) _rg.style.display=(role==='admin')?'':'none'; }catch(e){}
@@ -9615,6 +9684,7 @@ function applyRoleUI() {
     var btn = document.getElementById('si-' + v);
     if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
+  try{ eaSidebarGruppi(); }catch(e){}
 
   var btnCred = document.getElementById('btn-credenziali');
   if (btnCred) btnCred.style.display = 'none';
@@ -11621,7 +11691,10 @@ function sidebarNav(view,btn){
   if(view==='bmvalue'){ try{ if(typeof bmRender==='function') bmRender(); }catch(e){} }
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
-  if(view==='provv'){pSupaLoad();pLoadFromGS();pCalcola();}
+  /* pLoadFromGS riscriveva tutto il registro con la copia del foglio Google,
+     cancellando le modifiche fatte altrove. Resta il pulsante manuale
+     "Aggiorna da Sheets" per chi deve ripescare lo storico. */
+  if(view==='provv'){pSupaLoad();pCalcola();}
   if(view==='foto'){
     // Carica automaticamente da Drive se connesso
     if(isDriveConnected()) {
@@ -13133,12 +13206,21 @@ function sinSave(list){ try{ localStorage.setItem(SINISTRI_KEY, JSON.stringify(l
 function sinById(id){ return sinLoad().filter(function(s){return s.id===id;})[0]; }
 function sinEsc(v){ return (v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// Invia un sinistro al foglio
-function sinPush(s){ try{ if(s && s.id){ s.updatedAt=Date.now(); if(typeof sinSupaUpsert==='function') sinSupaUpsert(s); } }catch(e){}
-  if(typeof GS_URL!=='undefined' && GS_URL && s && s.id){ try{ gsJsonp({action:'upsert', sheet:SINISTRI_SHEET, record:s}); }catch(e){} } }
+/* Si scrive solo su Supabase. Il foglio Google era l'altro ramo: leggendolo
+   si riportavano indietro gli stati (una pratica liquidata tornava "In attesa
+   di saldo" sugli altri dispositivi). updatedAt e' il criterio con cui gli
+   altri decidono quale versione tenere: va sempre valorizzato. */
+function sinPush(s){ try{ if(s && s.id){ s.updatedAt=Date.now(); if(typeof sinSupaUpsert==='function') sinSupaUpsert(s); } }catch(e){} }
 
-// Rilegge i sinistri dal foglio e li unisce (rispettando la lista nera)
-function sinLoadDaSheets(){
+/* ===== FOGLIO GOOGLE: DISATTIVATO =====
+   Il foglio Sinistri e' la fotografia di com'erano le pratiche al momento
+   della migrazione. Non conosce gli avanzamenti di stato fatti dopo. La riga
+   che fondeva i dati (byId[r.id]=r) sovrascriveva senza confrontare le date:
+   il foglio vinceva sempre. Risultato: le pratiche segnate liquidate
+   dall'amministratore tornavano "In attesa di saldo" su tutti gli altri
+   dispositivi appena aprivano la sezione. L'archivio buono e' Supabase. */
+function sinLoadDaSheets(){ return; }
+function sinLoadDaSheets_LEGACY(){
   if(typeof GS_URL==='undefined' || !GS_URL) return;
   var cb='sinCb_'+Date.now();
   var s=document.createElement('script');
@@ -13158,7 +13240,7 @@ function sinLoadDaSheets(){
   document.body.appendChild(s);
 }
 
-function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); sinLoadDaSheets(); }
+function sinInit(){ sinRenderTabs(); sinSetTab(_sinTab||'attesa_apertura'); if(typeof sinSupaLoad==='function') sinSupaLoad(); }
 
 function sinRenderTabs(){
   var bar=document.getElementById('sin-tabs'); if(!bar) return;
@@ -14113,9 +14195,13 @@ function pmLoad(){ try{ var t=pmTombstones(); return (JSON.parse(localStorage.ge
 function pmSave(list){ try{ localStorage.setItem(PERMUTE_KEY, JSON.stringify(list)); }catch(e){} }
 function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; }
 
+/* Si scrive solo su Supabase: il foglio Google era il ramo che poi rimandava
+   indietro i dati vecchi. Ogni scrittura porta con se' updatedAt, che e' il
+   criterio con cui gli altri dispositivi decidono quale versione tenere. */
 function pmPush(p){
-  if(typeof GS_URL!=='undefined' && GS_URL && p && p.id){ try{ gsJsonp({action:'upsert', sheet:PERMUTE_SHEET, record:p}); }catch(e){} }
-  if(p && p.id && typeof supaUpsert==='function') supaUpsert('permute_app', p);
+  if(!p || !p.id) return;
+  if(!p.updatedAt) p.updatedAt=Date.now();
+  if(typeof supaUpsert==='function') supaUpsert('permute_app', p);
 }
 /* Le lapidi erano solo locali: un'altra postazione, o un browser ripulito,
    non sapeva che quelle perizie erano state eliminate e le rimandava su.
@@ -14140,7 +14226,18 @@ function pmSupaLoad(){
     try{ var v=document.getElementById('view-permute'); if(v && v.classList.contains('active') && typeof pmRender==='function') pmRender(); }catch(e){}
   });
 }
+/* ===== FOGLIO GOOGLE: SOLA LETTURA STORICA, NON PIU' USATO =====
+   Il foglio Permute contiene la fotografia delle perizie com'erano al
+   momento della migrazione: non sa chi e' stato concluso, ne' chi e' stato
+   eliminato. La vecchia versione di questa funzione sovrascriveva il dato
+   appena letto da Supabase (byId[r.id]=r, senza confrontare le date), cosi'
+   una perizia conclusa da un dispositivo tornava "In ingresso" su tutti gli
+   altri appena riaprivano la sezione. L'archivio buono e' Supabase. */
 function pmLoadDaSheets(onDone){
+  if(onDone) onDone(false,'disattivato');
+  return;
+}
+function pmLoadDaSheets_LEGACY(onDone){
   if(typeof GS_URL==='undefined' || !GS_URL){ if(onDone)onDone(false,'no-sync'); return; }
   var cb='pmCb_'+Date.now(); var s=document.createElement('script');
   var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(s.parentNode)s.parentNode.removeChild(s); if(onDone)onDone(false,'timeout'); },15000);
@@ -14196,7 +14293,28 @@ function pmDedup(){
     }
   }catch(e){}
 }
-function pmInit(){ pmDedup(); pmRender(); pmSupaLoad(); pmLoadDaSheets(); }
+function pmInit(){ pmDedup(); pmRender(); pmSupaLoad(); pmAutoAggiorna(); }
+/* ===== LE CONCLUSIONI DEVONO VEDERSI SU TUTTI I DISPOSITIVI =====
+   Chi ha la sezione Permute gia' aperta non rileggeva piu' il cloud: una
+   perizia conclusa in quel momento da un altro utente restava "In ingresso"
+   finche' non ricaricava la pagina. Finche' la sezione e' aperta e visibile
+   si ricontrolla Supabase ogni 45 secondi, e subito quando si torna sulla
+   scheda del browser. Se e' aperta la scheda di una perizia si salta il giro,
+   per non muovere la lista sotto le mani di chi sta scrivendo. */
+function pmAggiornabile(){
+  try{
+    var v=document.getElementById('view-permute');
+    if(!v || !v.classList.contains('active')) return false;
+    if(document.hidden) return false;
+    var m=document.getElementById('pm-modal');
+    if(m && m.style.display!=='none' && m.style.display!=='') return false;
+    return true;
+  }catch(e){ return false; }
+}
+/* L'aggiornamento automatico non e' piu' roba delle sole permute: e' il
+   motore unico eaSyncVivo, qui sotto resta solo l'aggancio. */
+function pmAutoAggiorna(){ try{ if(typeof eaSyncVivo==='function') eaSyncVivo(); }catch(e){} }
+try{ window.pmAutoAggiorna=pmAutoAggiorna; window.pmAggiornabile=pmAggiornabile; }catch(e){}
 
 var _pmTab='ingresso', _pmQ='';
 function pmSetTab(t){ _pmTab=t; pmRender(); }
@@ -22213,9 +22331,10 @@ function sinSupaLoad(done){
       daSpingere.forEach(function(x){ sinSupaUpsert(x); });
 
       _sinSyncFatta = true;
+      try{ if(typeof sinRenderTabs==='function') sinRenderTabs(); }catch(e){}
       try{ if(typeof sinRender==='function') sinRender(); }catch(e){}
       if(done) done(remoti.length, daSpingere.length);
-    }).catch(function(e){ console.log('sinistri_app load:', e && e.message); if(done) done(); });
+    });
   }catch(e){ if(done) done(); }
 }
 
@@ -24298,7 +24417,81 @@ function eaBadgeRefreshAll(){
   try{ if(typeof riAggiornaBadge==='function') riAggiornaBadge(); }catch(e){}
   try{ if(typeof notifBadgeUpdate==='function') notifBadgeUpdate(); }catch(e){}
 }
+/* ═══════════ AGGIORNAMENTO VIVO DI TUTTE LE SEZIONI ═══════════
+   Regola: quello che uno segna, gli altri lo devono vedere senza ricaricare
+   la pagina. Finora ogni sezione rileggeva il cloud solo quando la si apriva:
+   chi la teneva gia' aperta restava fermo alla fotografia di quando era
+   entrato, e vedeva ancora "In attesa di saldo" una pratica liquidata mezz'ora
+   prima. Adesso la sezione attiva si ricontrolla da sola ogni 45 secondi, e
+   subito quando si torna sulla scheda del browser.
+
+   Due regole di buona educazione, o si fanno danni:
+   - non si tocca niente mentre e' aperta una finestra (contratto, perizia,
+     scheda sinistro): la lista sotto non deve muoversi mentre uno scrive;
+   - non si tocca niente se il cursore e' dentro un campo, per lo stesso
+     motivo. Il giro saltato si recupera 45 secondi dopo. */
+function eaVistaAttiva(){
+  try{
+    var v=document.querySelector('.view.active');
+    return (v && v.id) ? v.id.replace(/^view-/,'') : '';
+  }catch(e){ return ''; }
+}
+function eaSyncMomentoBuono(){
+  try{
+    if(document.hidden) return false;
+    var a=document.activeElement;
+    if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||'')) return false;
+    if(a && a.isContentEditable) return false;
+    var mod=document.querySelectorAll('[id$="-modal"],[id$="Modal"],dialog[open]');
+    for(var i=0;i<mod.length;i++){
+      var e=mod[i];
+      if(e.tagName==='DIALOG') return false;
+      var d=(e.style&&e.style.display)||'';
+      if(d!=='none' && d!=='') return false;
+      if(d==='' && e.offsetParent!==null) return false;
+    }
+    return true;
+  }catch(e){ return false; }
+}
+var EA_SYNC_VISTE = {
+  sinistri:   function(){ if(typeof sinSupaLoad==='function') sinSupaLoad(); },
+  permute:    function(){ if(typeof pmSupaLoad==='function') pmSupaLoad(); },
+  preventivi: function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); },
+  vendite:    function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); },
+  crm:        function(){ if(typeof crmSupaLoad==='function') crmSupaLoad(); },
+  clienti:    function(){ if(typeof clSupaLoad==='function') clSupaLoad(); },
+  magazzino:  function(){ if(typeof mzSupaLoad==='function') mzSupaLoad(); },
+  fornitori:  function(){ if(typeof fnSupaLoad==='function') fnSupaLoad(); },
+  provv:      function(){ if(typeof pSupaLoad==='function') pSupaLoad(); },
+  presenze:   function(){ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); },
+  permessi:   function(){ if(typeof riSupaLoad==='function') riSupaLoad(); },
+  whatsapp:   function(){ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }
+};
+function eaSyncVista(){
+  try{
+    if(!eaSyncMomentoBuono()) return;
+    var f=EA_SYNC_VISTE[eaVistaAttiva()];
+    if(typeof f==='function') f();
+  }catch(e){}
+}
+function eaSyncVivo(){
+  try{
+    if(window._eaSyncTimer) return;
+    window._eaSyncTimer = setInterval(eaSyncVista, 45000);
+    /* I permessi delle sezioni si leggevano solo al login: una sezione
+       concessa a meta' mattina si vedeva il giorno dopo. Giro piu' lento,
+       ogni due minuti: cambiano di rado e la rilettura rifa' il menu. */
+    window._eaPermTimer = setInterval(function(){
+      try{ if(eaSyncMomentoBuono() && typeof utentiSupaLoad==='function') utentiSupaLoad(); }catch(e){}
+    }, 120000);
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden) eaSyncVista(); });
+    window.addEventListener('focus', eaSyncVista);
+  }catch(e){}
+}
+try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVistaAttiva=eaVistaAttiva; }catch(e){}
+
 function eaBadgeBoot(){
+  try{ eaSyncVivo(); }catch(e){}
   /* carica i contratti anche se l'utente non apre nessuna sezione:
      cvSupaLoad, a caricamento finito, richiama da solo i badge */
   try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){}
