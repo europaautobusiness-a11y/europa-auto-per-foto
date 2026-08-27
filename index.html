@@ -9543,7 +9543,10 @@ var SEZIONI_DEFS = [
 ];
 var SEZIONI_DEFAULT_RUOLO = {
   'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
-  'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi'],
+  /* Tenere allineato con ROLE_VIEWS in applyRoleUI: uno decide cosa si vede
+     nel menu, questo se la sezione si apre davvero. Se divergono, le voci
+     compaiono ma rispondono "Sezione riservata". */
+  'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
   'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
@@ -10064,16 +10067,38 @@ function applyRoleUI() {
   try{ var _bc=document.getElementById('btnContabApp'); if(_bc){ var _em=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); _bc.style.display=(role==='admin'||eaIsContabilita(_em))?'block':'none'; } }catch(e){}
   var ROLE_VIEWS = {
     'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
-    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi'],
+    /* staff = il venditore: tutto tranne la parte amministrativa. Magazzino,
+       CRM e Clienti mancavano da questo elenco, ed e' meta' del motivo per
+       cui a Rudy sparivano. */
+    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
   'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
     'manager':    ['editor','ready','archive','provv','presenze','compiti'],
     'dipendente': ['presenze','compiti']
   };
   var allowed = ROLE_VIEWS[role] || ['presenze','compiti'];
-  // Permessi personalizzati impostati dall'admin (l'admin vede sempre tutto)
+  /* ===== PERCHE' LE SEZIONI ANDAVANO E VENIVANO =====
+     I permessi personalizzati sostituivano in blocco l'elenco del ruolo. E
+     quell'elenco personalizzato viene riletto dal cloud ogni due minuti
+     (utentiSupaLoad, riga m[k]=r.sezioni): se la copia sul cloud era piu'
+     corta di quella locale — scritta quando le caselle disponibili erano
+     meno — a meta' giornata Magazzino e CRM sparivano da soli. Da qui il
+     "a volte le vedo e a volte no".
+
+     Adesso: per chi e' staff l'elenco del ruolo e' il pavimento. I permessi
+     personalizzati possono aggiungere, non togliere. Se serve limitare
+     qualcuno, gli si mette il ruolo 'dipendente' e si scelgono le sezioni
+     una per una: e' li' che quel meccanismo serve davvero. */
   if (role !== 'admin') {
     var permU = getPermessiUtente(_currentUserEmail);
-    if (permU) allowed = permU.slice();
+    if (permU) {
+      if (role === 'staff') {
+        var _u2 = allowed.slice();
+        permU.forEach(function(v){ if(_u2.indexOf(v) < 0) _u2.push(v); });
+        allowed = _u2;
+      } else {
+        allowed = permU.slice();
+      }
+    }
   }
   if (!allowed.length) allowed = ['presenze'];
 
@@ -12066,8 +12091,16 @@ function eaSezioniMie(){
     if(ruolo==='admin') return null;   /* null = nessun limite */
     var mail=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
     var perm=(typeof loadPermessiSezioni==='function')?loadPermessiSezioni():{};
-    if(mail && Object.prototype.hasOwnProperty.call(perm, mail)) return perm[mail]||[];
-    return SEZIONI_DEFAULT_RUOLO[ruolo] || SEZIONI_DEFAULT_RUOLO['dipendente'] || [];
+    var base=SEZIONI_DEFAULT_RUOLO[ruolo] || SEZIONI_DEFAULT_RUOLO['dipendente'] || [];
+    if(mail && Object.prototype.hasOwnProperty.call(perm, mail)){
+      var mie=perm[mail]||[];
+      /* Per lo staff il ruolo e' il pavimento: i permessi personalizzati
+         possono aggiungere, non togliere. Stessa regola di applyRoleUI,
+         altrimenti la voce si vede ma non si apre. */
+      if(ruolo==='staff'){ var u=base.slice(); mie.forEach(function(v){ if(u.indexOf(v)<0) u.push(v); }); return u; }
+      return mie;
+    }
+    return base;
   }catch(e){ return null; }
 }
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
