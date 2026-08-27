@@ -5375,82 +5375,74 @@ function saveSent(d){
 
 // Carica da Sheets e aggiorna localStorage (chiamato all'avvio)
 async function manualSync(btn){
-  const orig = btn ? btn.textContent : '';
-  if(btn){ btn.textContent = '⏳...'; btn.disabled = true; }
-  try{
-    // Step 1: scarica da Sheets
-    const [remoteReady, remoteSent] = await Promise.all([
-      gsLoad('ReportPronti'),
-      gsLoad('ReportInviati')
-    ]);
+  /* ===== "AGGIORNA TUTTO" =====
+     Fino a ieri questo pulsante andava a leggere il foglio Google e ne
+     rovesciava il contenuto sopra i dati del dispositivo, riscrivendo poi il
+     foglio. Era l'ultimo percorso rimasto con quel difetto: il foglio e' un
+     archivio fermo alla migrazione, non conosce ne' gli avanzamenti di stato
+     ne' le eliminazioni, quindi premere qui poteva far ricomparire presenze
+     cancellate e richieste gia' evase.
+     Adesso il pulsante fa quello che dice il suo nome: rilegge tutto da
+     Supabase, che e' l'unica fonte di verita'. Non scrive piu' niente sul
+     foglio. */
+  var orig = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = '\u23f3\u2026'; btn.disabled = true; }
+  var st = document.getElementById('gsStatus');
+  if(st){ st.textContent = '\ud83d\udd04 Rileggo tutto dal database\u2026'; st.style.color='#64748b'; }
 
-    // Step 2: merge intelligente
-    // - Sheets è la fonte di verità COMPLETA
-    // - Il locale aggiunge solo report nuovi non ancora sincronizzati (creati negli ultimi 30 min)
-    function mergeById(local, remote){
-      const map = {};
-      const remoteIds = new Set((remote||[]).map(r => r && r.id).filter(Boolean));
-      // Sheets è sempre la fonte di verità — carica TUTTI i record da Sheets
-      (remote||[]).forEach(r => { if(r && r.id) map[r.id] = r; });
-      // Aggiunge dal locale SOLO i report nuovi non ancora su Sheets (ultimi 30 minuti)
-      const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
-      (local||[]).forEach(r => { 
-        if(r && r.id && !remoteIds.has(r.id)){
-          // Aggiunge solo se creato di recente (non eliminato da altro dispositivo)
-          if(r.id > thirtyMinAgo) map[r.id] = r;
-        }
-      });
-      return Object.values(map).sort((a,b) => (b.id||0)-(a.id||0));
-    }
-
-    const mergedReady = mergeById(loadReady(), remoteReady || []);
-    const mergedSent  = mergeById(loadSent(),  remoteSent  || []);
-
-    // Step 3: salva il merge in locale
-    localStorage.setItem(READY_KEY, JSON.stringify(mergedReady));
-    localStorage.setItem(SENT_KEY, JSON.stringify(mergedSent));
-
-    // Step 4: scrivi su Sheets SOLO se:
-    // 1. I dati remoti erano disponibili (non null)
-    // 2. Il merge ha almeno tanti record quanti ne aveva Sheets (non cancellare!)
-    // 3. C'è almeno 1 record da salvare
-    var remoteReadyLen = (remoteReady||[]).length;
-    var remoteSentLen  = (remoteSent||[]).length;
-    if(remoteReady !== null && mergedReady.length > 0 && mergedReady.length >= remoteReadyLen) {
-      gsSave('ReportPronti', mergedReady);
-    }
-    if(remoteSent !== null && mergedSent.length > 0 && mergedSent.length >= remoteSentLen) {
-      gsSave('ReportInviati', mergedSent);
-    }
-
-    renderReady('');
-    renderArchive('');
-    updateCounts();
-    /* Provvigioni: solo dal cloud. Rileggerle anche dal foglio Google
-       rimetteva la copia vecchia sopra quella buona. Per ripescare lo
-       storico dal foglio c'e' il pulsante "Aggiorna da Sheets". */
-    try { pSupaLoad(); } catch(e) {}
-    // Carica presenze da Sheets
-    try { presenzeLoadDaSheets(); } catch(e) {}
-    // Carica richieste permessi/ferie da Sheets
-    try { if(typeof riLoadDaSheets==='function') riLoadDaSheets(); } catch(e) {}
-    // Aggiorna anche il Calendario
-    try { if(typeof window.ccRefresh==='function') window.ccRefresh(); } catch(e) {}
-    // Ricarica i permessi delle sezioni (così la regola dell'admin arriva subito)
-    try { if(typeof caricaPermessiDaSheets==='function') caricaPermessiDaSheets(); } catch(e) {}
-    const st = document.getElementById('gsStatus');
-    if(remoteReady === null && remoteSent === null){
-      if(st){ st.textContent = '🔴 Impossibile connettersi a Google Sheets'; st.style.color='#e74c3c'; }
-      if(btn){ btn.textContent = '❌ Errore connessione'; setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, 3000); }
-      return;
-    }
-    if(st){ st.textContent = '🟢 Tutto aggiornato (' + mergedReady.length + ' pronti, ' + mergedSent.length + ' inviati, + provvigioni, presenze e richieste)'; st.style.color='#27ae60'; }
-    if(btn){ btn.textContent = '✅ OK!'; }
-    setTimeout(()=>{ if(btn){ btn.textContent = orig; btn.disabled = false; } }, 3000);
-  }catch(e){
-    console.warn('Sync error:', e);
-    if(btn){ btn.textContent = '❌ Errore'; setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, 2000); }
+  var sb = (typeof sbClient==='function') ? sbClient() : null;
+  if(!sb){
+    if(st){ st.textContent = '\ud83d\udd34 Database non raggiungibile: ricarica la pagina.'; st.style.color='#e74c3c'; }
+    if(btn){ btn.textContent = '\u274c Nessun database'; setTimeout(function(){ if(btn){ btn.textContent=orig; btn.disabled=false; } }, 3000); }
+    return;
   }
+  /* Senza sessione Supabase risponde con elenchi vuoti invece che con un
+     errore: meglio fermarsi che sovrascrivere il locale con il nulla. */
+  var haSessione = true;
+  try{ if(typeof eaSbSessioneAttiva==='function') haSessione = !!eaSbSessioneAttiva(); }catch(e){}
+  if(!haSessione){
+    try{ if(typeof eaSbAssicuraSessione==='function' && eaSbAssicuraSessione()) return; }catch(e){}
+    if(st){ st.textContent = '\ud83d\udd34 Questo dispositivo non \u00e8 collegato al database.'; st.style.color='#e74c3c'; }
+    if(btn){ btn.textContent = '\u274c Non collegato'; setTimeout(function(){ if(btn){ btn.textContent=orig; btn.disabled=false; } }, 3000); }
+    return;
+  }
+
+  var passi = [
+    ['report',      function(){ if(typeof rpSupaCarica==='function') rpSupaCarica(); }],
+    ['magazzino',   function(){ if(typeof mzSupaLoad==='function') mzSupaLoad(); }],
+    ['fornitori',   function(){ if(typeof fnSupaLoad==='function') fnSupaLoad(); }],
+    ['preventivi',  function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); }],
+    ['clienti',     function(){ if(typeof clSupaLoad==='function') clSupaLoad(); }],
+    ['CRM',         function(){ if(typeof crmSupaLoad==='function') crmSupaLoad(); }],
+    ['permute',     function(){ if(typeof pmSupaLoad==='function') pmSupaLoad(); }],
+    ['sinistri',    function(){ if(typeof sinSupaLoad==='function') sinSupaLoad(); }],
+    ['provvigioni', function(){ if(typeof pSupaLoad==='function') pSupaLoad(); }],
+    ['presenze',    function(){ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }],
+    ['richieste',   function(){ if(typeof riSupaLoad==='function') riSupaLoad(); }],
+    ['parametri',   function(){ if(typeof parSupaLoad==='function') parSupaLoad(); }],
+    ['permessi',    function(){ if(typeof utentiSupaLoad==='function') utentiSupaLoad(); }],
+    ['WhatsApp',    function(){ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }],
+    ['calendario',  function(){ if(typeof window.ccRefresh==='function') window.ccRefresh(); }]
+  ];
+  var ko=[];
+  passi.forEach(function(p){
+    try{ p[1](); }catch(e){ ko.push(p[0]); }
+  });
+
+  try{ if(typeof renderReady==='function') renderReady(''); }catch(e){}
+  try{ if(typeof renderArchive==='function') renderArchive(''); }catch(e){}
+  try{ if(typeof updateCounts==='function') updateCounts(); }catch(e){}
+
+  /* Le letture partono tutte insieme e rispondono ognuna per conto suo:
+     si lascia un momento prima di dire che e' finita. */
+  setTimeout(function(){
+    if(st){
+      if(ko.length){ st.textContent = '\u26a0\ufe0f Aggiornato, ma non ha risposto: ' + ko.join(', '); st.style.color='#e67e22'; }
+      else { st.textContent = '\ud83d\udfe2 Tutto riletto dal database'; st.style.color='#27ae60'; }
+    }
+    if(btn){ btn.textContent = ko.length ? '\u26a0\ufe0f Parziale' : '\u2705 OK!'; }
+    setTimeout(function(){ if(btn){ btn.textContent = orig; btn.disabled = false; } }, 3000);
+  }, 2500);
 }
 
 async function autoSyncOnLoad(){
