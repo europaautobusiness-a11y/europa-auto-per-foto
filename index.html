@@ -20589,7 +20589,66 @@ function cvStampaDoc(c, tipo){
 var SB_URL='https://jasrectyddshjizpxiia.supabase.co';
 var SB_KEY='sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var _sb=null;
-function sbClient(){ if(_sb) return _sb; try{ if(typeof supabase==='undefined'||!supabase.createClient) return null; _sb=supabase.createClient(SB_URL, SB_KEY); return _sb; }catch(e){ return null; } }
+/* ===== PERCHE' L'ACCESSO AL DATABASE NON RESTAVA =====
+   Supabase tiene la sessione in localStorage, sotto una chiave sua. Quello e'
+   lo stesso spazio da 5 MB che si riempie di foto: quando e' pieno la
+   scrittura fallisce, la sessione non viene mai salvata e alla ricarica
+   successiva risulta sparita. Ecco perche' "memoria piena" e "il database non
+   e' collegato" arrivavano insieme: sono lo stesso problema.
+
+   Qui si passa a Supabase un magazzino nostro. La sessione ha la precedenza su
+   tutto: se non entra, si buttano prima i residui di Google Drive, e se ancora
+   non basta si ripiega su sessionStorage, che almeno tiene fino a fine
+   giornata. Non si toccano mai le foto: quelle possono essere l'unica copia. */
+function eaSbFaiSpazio(){
+  var buttate=0;
+  try{
+    var da=[];
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(k && (k.indexOf('ea_drive_count_')===0 || k.indexOf('ea_drive_link_')===0 || k==='ea_drive_skipped')) da.push(k);
+    }
+    da.forEach(function(k){ try{ localStorage.removeItem(k); buttate++; }catch(e){} });
+  }catch(e){}
+  return buttate;
+}
+var EA_SB_STORAGE = {
+  getItem: function(k){
+    try{ var v=localStorage.getItem(k); if(v!=null) return v; }catch(e){}
+    try{ return sessionStorage.getItem(k); }catch(e){ return null; }
+  },
+  setItem: function(k, v){
+    try{ localStorage.setItem(k, v); return; }catch(e){}
+    try{ eaSbFaiSpazio(); localStorage.setItem(k, v); return; }catch(e){}
+    /* Ultima spiaggia: la sessione vive finche' la scheda resta aperta. */
+    try{
+      sessionStorage.setItem(k, v);
+      if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f Spazio del browser esaurito: l\'accesso al database non resta salvato. Parametri \u2192 Spazio del browser.', false);
+    }catch(e2){}
+  },
+  removeItem: function(k){
+    try{ localStorage.removeItem(k); }catch(e){}
+    try{ sessionStorage.removeItem(k); }catch(e){}
+  }
+};
+function sbClient(){
+  if(_sb) return _sb;
+  try{
+    if(typeof supabase==='undefined'||!supabase.createClient) return null;
+    _sb=supabase.createClient(SB_URL, SB_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: EA_SB_STORAGE
+      }
+    });
+    return _sb;
+  }catch(e){
+    /* Se le opzioni non fossero accettate meglio un client normale che nessuno. */
+    try{ _sb=supabase.createClient(SB_URL, SB_KEY); return _sb; }catch(e2){ return null; }
+  }
+}
 /* ===================== ACCESSO AL DATABASE =====================
    L'accesso con Google fa entrare nel gestionale, ma Supabase non lo sapeva:
    riceveva solo la chiave scritta nel file, uguale per tutti. Con le regole
@@ -20617,6 +20676,11 @@ function eaSbControllaSessione(cb){
 /* Avvia l'accesso a Supabase. Porta su Google e torna qui: la pagina si
    ricarica, ed e' normale. Da quel momento la sessione resta salvata per
    giorni e non viene piu' chiesto niente. */
+function eaSbCollegaOra(){
+  try{ sessionStorage.removeItem('ea_sb_riconn'); }catch(e){}
+  eaSbEntra();
+}
+try{ window.eaSbCollegaOra=eaSbCollegaOra; }catch(e){}
 function eaSbEntra(){
   var sb=sbClient();
   if(!sb || !sb.auth){ alert('Database non raggiungibile in questo momento.'); return; }
@@ -20629,8 +20693,53 @@ function eaSbEntra(){
   }catch(e){ alert('Non riesco ad avviare l\'accesso al database: '+((e&&e.message)||e)); }
 }
 
+/* ===== RICONNESSIONE AUTOMATICA =====
+   Chi e' gia' entrato nel gestionale con Google non deve premere un secondo
+   pulsante per il database: e' lo stesso account. Se la sessione manca si
+   rifa' il giro da soli, senza schermata di scelta account, e si torna dove
+   si era. Google non chiede niente perche' l'utente e' gia' collegato.
+
+   Un solo tentativo per apertura del browser: se qualcosa non va (l'account
+   Google non e' piu' valido, la rete cade) senza questo freno la pagina
+   entrerebbe in un giro infinito di ricaricamenti. */
+function eaSbRiconnetti(){
+  try{
+    if(sessionStorage.getItem('ea_sb_riconn')==='1') return false;
+    /* Solo per chi e' gia' dentro il gestionale: a chi non e' entrato la
+       schermata di accesso la mostra gia' il percorso normale. */
+    if(typeof _currentUserEmail==='undefined' || !_currentUserEmail) return false;
+    var sb=sbClient(); if(!sb || !sb.auth || !sb.auth.signInWithOAuth) return false;
+    sessionStorage.setItem('ea_sb_riconn','1');
+    sb.auth.signInWithOAuth({
+      provider:'google',
+      options:{
+        redirectTo: location.origin + location.pathname,
+        scopes: 'email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly'
+        /* niente prompt:'select_account': si passa e si torna senza chiedere */
+      }
+    });
+    return true;
+  }catch(e){ return false; }
+}
+/* Il token dura un'ora e si rinnova da solo finche' la pagina e' aperta.
+   Un controllo ogni dieci minuti tiene aggiornata la nostra copia e fa
+   accorgere subito se la sessione e' caduta. */
+function eaSbTieniVivo(){
+  try{
+    if(window._eaSbTimer) return;
+    window._eaSbTimer=setInterval(function(){
+      try{ if(typeof eaSbControllaSessione==='function') eaSbControllaSessione(function(){}); }catch(e){}
+    }, 600000);
+    document.addEventListener('visibilitychange', function(){
+      if(!document.hidden){ try{ eaSbControllaSessione(function(){}); }catch(e){} }
+    });
+  }catch(e){}
+}
+try{ window.eaSbRiconnetti=eaSbRiconnetti; window.eaSbTieniVivo=eaSbTieniVivo; }catch(e){}
+
 function eaSbEsci(){
   var sb=sbClient();
+  try{ sessionStorage.setItem('ea_sb_riconn','1'); }catch(e){}
   try{ if(sb&&sb.auth) sb.auth.signOut(); }catch(e){}
   _eaSbSessione=null;
   try{ eaSbAggiornaAvviso(); }catch(e){}
@@ -20704,7 +20813,15 @@ try{
   document.addEventListener('DOMContentLoaded', function(){
     setTimeout(function(){
       eaSbControllaSessione(function(ok){
-        if(ok){ eaSbEntrataCompletata(_eaSbSessione); }
+        if(ok){
+          eaSbEntrataCompletata(_eaSbSessione);
+          try{ sessionStorage.removeItem('ea_sb_riconn'); }catch(e){}
+          try{ eaSbTieniVivo(); }catch(e){}
+          return;
+        }
+        /* Sessione assente: chi e' gia' entrato nel gestionale viene
+           ricollegato da solo, senza dover premere niente. */
+        setTimeout(function(){ try{ eaSbRiconnetti(); }catch(e){} }, 1500);
       });
     }, 900);
   });
@@ -29341,8 +29458,9 @@ function crmRenderLeadOnline(){
       +'<b>\ud83d\udd12 Questo dispositivo non \u00e8 collegato al database.</b><br>'
       +'Le richieste ci sono, ma da qui non si leggono: senza accesso Supabase risponde con un elenco vuoto invece che con un errore. '
       +'\u00c8 il motivo per cui su un computer si vedono e sul telefono no.<br><br>'
-      +'<button onclick="eaSbEntra()" style="padding:9px 16px;border-radius:8px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Collega ora con Google</button>'
-      +'<div style="font-size:12px;color:#a16207;margin-top:8px;">Si passa da Google e si torna qui: la pagina si ricarica, \u00e8 normale.</div></div>';
+      +'<button onclick="eaSbCollegaOra()" style="padding:9px 16px;border-radius:8px;border:none;background:#92400e;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">Collega ora con Google</button>'
+      +'<div style="font-size:12px;color:#a16207;margin-top:8px;">Si passa da Google e si torna qui: la pagina si ricarica, \u00e8 normale. '
+      +'Da adesso il collegamento si rifa\u2019 da solo all\u2019apertura: se lo vedi ancora, lo spazio del browser \u00e8 pieno e la sessione non riesce a salvarsi.</div></div>';
   }
   if(!lista.length){
     var _altri=(_leadCache||[]).length;
