@@ -16270,6 +16270,43 @@ function gsLibBtn(autoId){
     +'background:'+(c?'#f0fdf4':'#f8fafc')+';color:'+(c?'#166534':'#64748b')+';font-family:inherit;font-weight:800;font-size:10px;cursor:pointer;white-space:nowrap;">'
     +'\uD83D\uDCD8 Libretto</button>';
 }
+/* ===== STORICO NELLA RICERCA =====
+   Il magazzino locale tiene solo le auto vive. Per le vendute d'archivio si
+   interroga Supabase, ma non a ogni lettera: si aspetta che la digitazione si
+   fermi, e sotto i 3 caratteri non si chiede niente (una "a" tirerebbe su
+   mezzo archivio). Il risultato resta in memoria per la sola ricerca in corso. */
+var _gsStorico=null, _gsStoricoQ='', _gsStoricoT=null, _gsStoricoInCorso='';
+function gsearchStorico(q){
+  try{
+    q=String(q||'').trim();
+    if(q.length<3){ _gsStorico=null; _gsStoricoQ=''; return; }
+    if(_gsStoricoQ===q || _gsStoricoInCorso===q) return;   /* gia' fatta */
+    if(_gsStoricoT) clearTimeout(_gsStoricoT);
+    _gsStoricoT=setTimeout(function(){
+      _gsStoricoT=null;
+      var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+      _gsStoricoInCorso=q;
+      var like='%'+q.replace(/[%_,]/g,' ')+'%';
+      var campi=['data->>marca','data->>modello','data->>targa','data->>telaio','data->>numero_interno','data->>allestimento'];
+      var filtro=campi.map(function(c){ return c+'.ilike.'+like; }).join(',');
+      sb.from('magazzino').select('id,data').or(filtro).limit(60).then(function(res){
+        _gsStoricoInCorso='';
+        if(!res || res.error){ if(res&&res.error) console.log('ricerca storico:', res.error.message); return; }
+        var out=[];
+        (res.data||[]).forEach(function(r){
+          var d=r&&r.data;
+          if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+          if(!d || !d.id || d.deleted===true) return;
+          out.push(d);
+        });
+        _gsStorico=out; _gsStoricoQ=q;
+        /* la casella e' ancora aperta sulla stessa parola: si ridisegna */
+        var inp=document.getElementById('gsearch-input');
+        if(inp && String(inp.value||'').toLowerCase().trim()===q && typeof gsearchRun==='function') gsearchRun();
+      });
+    }, 350);
+  }catch(e){ _gsStoricoInCorso=''; }
+}
 function gsearchStato(a){
   if(a.stato==='venduta') return ['Venduta','#991b1b','#fecaca'];
   if(a.impegnata) return ['Opzionata','#92400e','#fde68a'];
@@ -16282,7 +16319,18 @@ function gsearchRun(){
   var q=(inp.value||'').toLowerCase().trim(); var qsafe=q.replace(/['"\\]/g,'');
   if(!q){ box.style.display='none'; box.innerHTML=''; return; }
   // ---- VEICOLI ----
+  /* Le vendute che vengono da SICOM non stanno in localStorage: mzSaveOra le
+     esclude perche' 1.684 veicoli non ci entrerebbero. Erano quindi invisibili
+     alla ricerca. Lo storico si chiede a Supabase e si unisce a quello locale;
+     in memoria ci restano solo i risultati di questa ricerca, non l'archivio. */
+  gsearchStorico(q);
   var all=(typeof mzLoad==='function')?mzLoad():[];
+  try{
+    if(_gsStoricoQ===q && _gsStorico && _gsStorico.length){
+      var _giaC={}; all.forEach(function(a){ if(a&&a.id) _giaC[a.id]=1; });
+      all=all.concat(_gsStorico.filter(function(a){ return a && a.id && !_giaC[a.id]; }));
+    }
+  }catch(e){}
   var res=all.filter(function(a){
     var blob=((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')+' '+(a.targa||'')+' '+(a.telaio||'')+' '+(a.numero_interno||'')).toLowerCase();
     return blob.indexOf(q)>=0;
@@ -16365,7 +16413,7 @@ function gsearchRun(){
   }
   // sezione veicoli
   if(res.length){
-    var tot=res.length; var shown=res.slice(0,30);
+    var tot=res.length; var shown=res.slice(0,50);
     h+='<div style="padding:8px 12px;font-size:11px;font-weight:800;color:#475569;border-bottom:1px solid #f1f5f9;background:#f8fafc;">Veicoli ('+tot+')</div>';
     h+=shown.map(function(a){
       var st=gsearchStato(a);
