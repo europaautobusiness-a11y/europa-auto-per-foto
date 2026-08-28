@@ -20348,12 +20348,15 @@ function cvStampaFascicolo(cv, tipo, allegati){
       /* Il documento si genera una volta e le sue pagine si accodano DUE
          volte: una copia per il cliente, una per la concessionaria. Duplicare
          invece l'HTML non funzionava, perche' la conversione in PDF disegna
-         tutto come un'unica immagine lunga e i salti pagina spariscono. */
+         tutto come un'unica immagine lunga e i salti pagina spariscono.
+         Sul preventivo la seconda copia non si accoda: stessa regola della
+         stampa normale, li' non si firma niente. */
+      var _doppia = (tipo !== 'preventivo');
       return PDFLib.PDFDocument.create().then(function(out){
         return PDFLib.PDFDocument.load(buf).then(function(d){
           var idx=d.getPageIndices();
           return out.copyPages(d, idx)
-            .then(function(pg1){ pg1.forEach(function(p){ out.addPage(p); }); return out.copyPages(d, idx); })
+            .then(function(pg1){ pg1.forEach(function(p){ out.addPage(p); }); return _doppia ? out.copyPages(d, idx) : []; })
             .then(function(pg2){ pg2.forEach(function(p){ out.addPage(p); }); return out; });
         });
       });
@@ -20880,8 +20883,11 @@ function cvStampaDoc(c, tipo){
     }catch(e){}
   }
   var html=(tipo==='fattura' && typeof cvFatturaHTML==='function')?cvFatturaHTML(c):cvBuildHTML(c, tipo);
-  /* la fattura no: quella e' un documento fiscale unico */
-  if(tipo!=='fattura') html=cvDoppiaCopia(html);
+  /* Due copie servono dove si firma: una resta al cliente, una alla
+     concessionaria. La fattura no, e' un documento fiscale unico. Il
+     preventivo nemmeno: li' si sta ancora trattando, non firma nessuno, e
+     due copie erano solo carta sprecata. */
+  if(tipo!=='fattura' && tipo!=='preventivo') html=cvDoppiaCopia(html);
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
@@ -29654,6 +29660,7 @@ function crmConsZonaToggle(){ _crmConsZona=!_crmConsZona; if(typeof crmRender===
    e poi si decide: diventa un cliente da seguire, oppure si scarta. */
 var _leadCache = [];
 var _leadFiltro = 'nuovo';
+var _leadCanale = 'tutti';   /* tutti | mail | tel */
 
 var _leadErrore = '';
 var _leadNoSessione = false;   /* niente accesso al database su QUESTO dispositivo */
@@ -29713,6 +29720,35 @@ function crmLeadSalva(rec){
 }
 
 function crmLeadFiltro(v){ _leadFiltro=v; crmRender(); }
+
+/* ===== SCRITTO O TELEFONATO =====
+   Le richieste arrivano tutte come email, ma non sono la stessa cosa: c'e'
+   chi scrive e c'e' chi ha chiamato e AutoScout ci gira la notifica. Sono due
+   code di lavoro diverse \u2014 a chi scrive si risponde, a chi ha chiamato e
+   non ha trovato nessuno si richiama \u2014 e vanno guardate separate.
+
+   Il canale lo scrive chi legge la posta e riempie contatti_in (campo
+   'canale'). Finche' non c'e', il contatto resta fra gli scritti: e' quello
+   che sono tutti quelli gia' in archivio. */
+function crmLeadCanale(l){
+  if(!l) return 'mail';
+  var c=String(l.canale||l.tipo||'').toLowerCase();
+  if(c.indexOf('tel')===0 || c==='chiamata' || c==='call' || c==='telefonata') return 'tel';
+  return 'mail';
+}
+/* Solo per le chiamate: risposta o persa. La persa e' quella che scotta,
+   perche' il cliente ha provato e non ha trovato nessuno. */
+function crmLeadEsito(l){
+  if(!l || crmLeadCanale(l)!=='tel') return '';
+  if(l.risposta===true) return 'risposta';
+  if(l.risposta===false) return 'persa';
+  var e=String(l.esito||'').toLowerCase();
+  if(!e) return '';
+  if(e.indexOf('pers')>=0 || e.indexOf('non risp')>=0 || e.indexOf('senza risp')>=0) return 'persa';
+  if(e.indexOf('rispost')>=0) return 'risposta';
+  return '';
+}
+function crmLeadCanaleFiltro(v){ _leadCanale=v; crmRender(); }
 
 function crmLeadQuando(ts){
   if(!ts) return '';
@@ -29825,10 +29861,21 @@ function crmLeadRiapri(id){
 
 function crmRenderLeadOnline(){
   var tutti=_leadCache||[];
-  var conta={ nuovo:0, inserito:0, scartato:0 };
-  tutti.forEach(function(l){ var st=l.stato||'nuovo'; if(conta[st]!=null) conta[st]++; });
 
-  var lista=tutti.filter(function(l){ return (l.stato||'nuovo')===_leadFiltro; });
+  /* Quanti sono da contattare su ciascun canale: e' il numero che serve
+     prima di scegliere quale coda aprire. */
+  var nuoviMail=0, nuoviTel=0, persePerse=0;
+  tutti.forEach(function(l){
+    if((l.stato||'nuovo')!=='nuovo') return;
+    if(crmLeadCanale(l)==='tel'){ nuoviTel++; if(crmLeadEsito(l)==='persa') persePerse++; }
+    else nuoviMail++;
+  });
+
+  var perCanale=tutti.filter(function(l){ return _leadCanale==='tutti' || crmLeadCanale(l)===_leadCanale; });
+  var conta={ nuovo:0, inserito:0, scartato:0 };
+  perCanale.forEach(function(l){ var st=l.stato||'nuovo'; if(conta[st]!=null) conta[st]++; });
+
+  var lista=perCanale.filter(function(l){ return (l.stato||'nuovo')===_leadFiltro; });
 
   var bott=function(v,et,n){
     var on=(_leadFiltro===v);
@@ -29839,7 +29886,17 @@ function crmRenderLeadOnline(){
      pipeline e va guardato li'. Tenerne una copia qui voleva dire due posti
      da controllare per la stessa persona. */
   if(_leadFiltro==='inserito') _leadFiltro='nuovo';
-  var h='<div style="margin-bottom:14px;">'+bott('nuovo','Da contattare',conta.nuovo)
+  var bcan=function(v,et,n,tit){
+    var on=(_leadCanale===v);
+    return '<button onclick="crmLeadCanaleFiltro(\''+v+'\')" title="'+(tit||'')+'" style="padding:8px 14px;border-radius:9px;border:1px solid '+(on?'#0f172a':'#e2e8f0')+';background:'+(on?'#0f172a':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;margin-right:6px;">'+et+(n!=null?(' <span style="opacity:.75;font-weight:700;">'+n+'</span>'):'')+'</button>';
+  };
+  var h='<div style="margin-bottom:10px;">'
+    +bcan('tutti','Tutti', nuoviMail+nuoviTel, 'Scritti e chiamate insieme')
+    +bcan('mail','\u2709\ufe0f Scritti', nuoviMail, 'Ci hanno scritto: richieste dal sito e da AutoScout')
+    +bcan('tel','\ud83d\udcde Chiamate', nuoviTel, 'Ci hanno chiamato: notifiche AutoScout')
+    +(persePerse?('<span style="display:inline-block;margin-left:2px;padding:5px 10px;border-radius:999px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:12px;font-weight:800;">'+persePerse+' senza risposta</span>'):'')
+    +'</div>';
+  h+='<div style="margin-bottom:14px;">'+bott('nuovo','Da contattare',conta.nuovo)
     +bott('scartato','Scartati',conta.scartato)
     +'<button onclick="crmLeadCarica(crmRender)" style="padding:7px 12px;border-radius:9px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">\u21bb Aggiorna</button></div>';
 
@@ -29891,12 +29948,16 @@ function crmRenderLeadOnline(){
         +(_mail?(': questo dispositivo \u00e8 collegato come <b>'+crmEsc(_mail)+'</b>'):'')+'.<br>'
         +'In quel caso sono i permessi (RLS) sulla tabella <code>contatti_in</code>.</span></div>';
     }
+    var _voce=(_leadCanale==='tel')?'chiamata da richiamare':((_leadCanale==='mail')?'richiesta scritta da contattare':'richiesta da contattare');
     return h+'<div style="text-align:center;color:#94a3b8;padding:40px 12px;font-size:14px;">'
-      +(_leadFiltro==='nuovo'?'Nessuna richiesta da contattare. \u2705':'Niente in questo elenco.')+'</div>';
+      +(_leadFiltro==='nuovo'?('Nessuna '+_voce+'. \u2705'):'Niente in questo elenco.')+'</div>';
   }
 
   lista.forEach(function(l){
     var nuovo=((l.stato||'nuovo')==='nuovo');
+    var cana=crmLeadCanale(l);
+    var esito=crmLeadEsito(l);
+    var icona=(cana==='tel')?'\ud83d\udcde':'\u2709\ufe0f';
     var fonte=l.fonte||'Altro';
     var col=(fonte==='AutoScout')?['#fef9c3','#854d0e']:((fonte==='Sito web')?['#dbeafe','#1e40af']:['#f1f5f9','#64748b']);
     var tel=String(l.telefono||'');
@@ -29905,11 +29966,14 @@ function crmRenderLeadOnline(){
     h+='<div style="background:#fff;border:1px solid '+(nuovo?'#fcd34d':'#e2e8f0')+';border-radius:12px;padding:14px;margin-bottom:12px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
       +'<div style="min-width:0;">'
-      +'<div style="font-size:16px;font-weight:800;color:#0f172a;">'+crmEsc(l.nome||'(senza nome)')+'</div>'
+      +'<div style="font-size:16px;font-weight:800;color:#0f172a;">'
+      +'<span title="'+(cana==='tel'?'Ci ha chiamato':'Ci ha scritto')+'" style="margin-right:6px;">'+icona+'</span>'
+      +crmEsc(l.nome||'(senza nome)')+'</div>'
       +(l.auto?('<div style="font-size:13px;color:#1a4fa0;font-weight:700;margin-top:2px;">'+crmEsc(l.auto)+'</div>'):'')
       +'</div>'
       +'<div style="text-align:right;flex:0 0 auto;">'
       +'<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:'+col[0]+';color:'+col[1]+';font-size:11px;font-weight:800;">'+crmEsc(fonte)+'</span>'
+      +(esito?('<div style="margin-top:4px;"><span style="display:inline-block;padding:3px 9px;border-radius:999px;background:'+(esito==='persa'?'#fef2f2':'#f0fdf4')+';color:'+(esito==='persa'?'#b91c1c':'#15803d')+';font-size:11px;font-weight:800;">'+(esito==='persa'?'Chiamata senza risposta':'Chiamata risposta')+'</span></div>'):'')
       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:3px;">'+crmLeadQuando(l.ricevutaTs)+'</div>'
       +'</div></div>';
 
