@@ -16379,7 +16379,11 @@ function gsearchRun(){
         +(prezzo?('<div style="font-size:12px;font-weight:700;color:#0f172a;flex:0 0 auto;">'+prezzo+'</div>'):'')
         +gsLibBtn(a.id)
         +gsVendBtn(a.id)
-        +'<span style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+st[2]+';color:'+st[1]+';">'+mzEsc(st[0])+'</span>'
+        /* Il pulsante Vendita dice gia' che l'auto e' venduta: ripeterlo nel
+           riquadro accanto occupava spazio per niente. Sulle altre auto il
+           pallino di stato resta, li' aggiunge qualcosa. */
+        +((a.stato==='venduta' && gsVendBtn(a.id)) ? '' :
+          ('<span style="flex:0 0 auto;font-size:10px;font-weight:800;padding:3px 8px;border-radius:20px;background:'+st[2]+';color:'+st[1]+';">'+mzEsc(st[0])+'</span>'))
         +'</div>';
     }).join('');
     if(tot>shown.length) h+='<div style="padding:8px 12px;font-size:11px;color:#94a3b8;">+'+(tot-shown.length)+' altri veicoli\u2026 affina la ricerca</div>';
@@ -27809,16 +27813,27 @@ function cvVendModificaLimitata(id){
     +'<div style="flex:1;">'+lab('P.IVA')+_ci('piva','P.IVA')+'</div></div>';
   h+='<div style="display:flex;gap:8px;"><div style="flex:2;">'+lab('Sede legale')+_ci('sedeLegale','Sede legale')+'</div>'
     +'<div style="flex:1;">'+lab('Codice SDI')+_ci('sdi','SDI / PEC')+'</div></div>';
+  /* Consegnata l'auto, gli importi non si toccano piu': da li' in avanti sono
+     la base delle provvigioni e della fatturazione. Chi vende puo' ancora
+     correggere i dati del cliente, che e' la cosa che scopre parlandoci.
+     L'amministrazione passa dalla scheda completa, non da qui. */
+  var _consegnata = (cv.statoVendita==='consegnato' || !!cv.consegnatoTs);
   h+='<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin:14px 0 4px;">Pagamenti / Finanziamento</div>';
+  if(_consegnata){
+    h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px 11px;font-size:12px;color:#64748b;line-height:1.5;margin-bottom:6px;">'
+      +'Auto consegnata: gli importi sono chiusi. Se qualcosa non torna, parlane con l\u2019amministrazione.</div>';
+  }
   _cvMod.pagamenti.forEach(function(p,i){
     h+='<div style="background:#eff6ff;border-radius:8px;padding:8px;margin-bottom:6px;"><div style="font-weight:700;font-size:13px;">'+cvEsc(p.tipo||'')+' &mdash; '+cvEsc(p.metodo||'')+'</div>';
-    h+='<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;"><input value="'+cvEsc(p.importo||'')+'" type="number" placeholder="importo €" oninput="_cvMod.pagamenti['+i+'].importo=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;">';
-    if(/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'){ h+='<input value="'+cvEsc(p.rate||'')+'" type="number" placeholder="n° rate" oninput="_cvMod.pagamenti['+i+'].rate=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;"><input value="'+cvEsc(p.importoRata||'')+'" type="number" placeholder="rata €" oninput="_cvMod.pagamenti['+i+'].importoRata=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;">'; }
+    var _roSt=(_consegnata?'background:#f1f5f9;color:#64748b;':'');
+    var _roAt=(_consegnata?' readonly':'');
+    h+='<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;"><input value="'+cvEsc(p.importo||'')+'" type="number" placeholder="importo €"'+_roAt+' oninput="_cvMod.pagamenti['+i+'].importo=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;'+_roSt+'">';
+    if(/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'){ h+='<input value="'+cvEsc(p.rate||'')+'" type="number" placeholder="n° rate"'+_roAt+' oninput="_cvMod.pagamenti['+i+'].rate=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;'+_roSt+'"><input value="'+cvEsc(p.importoRata||'')+'" type="number" placeholder="rata €" oninput="_cvMod.pagamenti['+i+'].importoRata=this.value" style="flex:1 1 30%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:0;">'; }
     h+='</div></div>';
   });
   h+='<div style="font-weight:800;color:#1a4fa0;font-size:13px;margin:12px 0 4px;">Assicurazione</div>';
-  h+='<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;"><input type="checkbox" '+(_cvMod.assicOn?'checked':'')+' onchange="_cvMod.assicOn=this.checked" style="width:18px;height:18px;"> Assicurazione inclusa</label>';
-  h+=lab('Importo assicurazione €')+'<input value="'+cvEsc(_cvMod.assicImporto||'')+'" type="number" oninput="_cvMod.assicImporto=this.value" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;box-sizing:border-box;">';
+  h+='<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;"><input type="checkbox" '+(_cvMod.assicOn?'checked':'')+(_consegnata?' disabled':'')+' onchange="_cvMod.assicOn=this.checked" style="width:18px;height:18px;"> Assicurazione inclusa</label>';
+  h+=lab('Importo assicurazione €')+'<input value="'+cvEsc(_cvMod.assicImporto||'')+'" type="number"'+(_consegnata?' readonly':'')+' oninput="_cvMod.assicImporto=this.value" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;box-sizing:border-box;'+(_consegnata?'background:#f1f5f9;color:#64748b;':'')+'">';
   h+=lab('Dettaglio assicurazione')+'<textarea oninput="_cvMod.assicDettaglio=this.value" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;min-height:70px;box-sizing:border-box;font-family:inherit;">'+cvEsc(_cvMod.assicDettaglio||'')+'</textarea>';
   h+='<div style="border-top:1px solid #e2e8f0;margin-top:14px;padding-top:6px;">'+docPannelloHTML('pratica', cv.id, 'cvmoddoc')+'</div>';
   h+='<button onclick="cvModSalva()" style="margin-top:16px;width:100%;padding:12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;cursor:pointer;font-family:inherit;">💾 Salva modifiche</button>';
@@ -27880,7 +27895,15 @@ function cvPropagaAnagrafica(cv){
 function cvModSalva(){
   if(!_cvMod) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cvMod.id;}); if(idx<0){ cvModChiudi(); return; }
-  list[idx].pagamenti=_cvMod.pagamenti; list[idx].assicOn=_cvMod.assicOn; list[idx].assicImporto=_cvMod.assicImporto; list[idx].assicDettaglio=_cvMod.assicDettaglio;
+  /* Sola lettura a video non basta: i campi si sbloccano dalla console del
+     browser. Consegnata l'auto, gli importi restano quelli salvati e chi non
+     e' amministratore non li riscrive nemmeno passando di qui. */
+  var _cons=(list[idx].statoVendita==='consegnato' || !!list[idx].consegnatoTs);
+  var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
+        || (typeof eaIsContabilita==='function' && eaIsContabilita());
+  if(!(_cons && !_adm)){
+    list[idx].pagamenti=_cvMod.pagamenti; list[idx].assicOn=_cvMod.assicOn; list[idx].assicImporto=_cvMod.assicImporto; list[idx].assicDettaglio=_cvMod.assicDettaglio;
+  }
   /* Solo i campi anagrafici: indirizzo, codice fiscale e dati di fatturazione
      restano di competenza dell'amministrazione e non vengono toccati qui. */
   if(_cvMod.cliente){
