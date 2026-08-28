@@ -6925,6 +6925,10 @@ function pVenditeAperte(){
       if(!cv || !cv.isContratto) return;
       if(typeof cvIsStorico==='function' && cvIsStorico(cv)) return;
       if(cv.origine==='sicom_ap' || cv.deleted) return;
+      /* Vendite chiuse fuori dal gestionale, o gia' pagate a mano: si tolgono
+         una per una dall'elenco. Il contratto resta dov'e', cambia solo che
+         non viene piu' sollecitato. */
+      if(cv.provvIgnorata) return;
       var t=+(cv.contrattoTs||cv.createdAt||0); if(t<limite) return;
       /* Il calcolo delle provvigioni dal gestionale e' partito ad agosto 2026:
          prima di allora si faceva fuori, quindi quelle vendite risultano
@@ -6958,6 +6962,9 @@ function pVenditeRender(){
     var box=document.getElementById('pDaVendite'); if(!box) return;
     var list=pVenditeAperte();
     if(!list.length){ box.style.display='none'; box.innerHTML=''; return; }
+    /* Mettere da parte una provvigione resta all'amministratore: chi vende
+       deve completarle tutte, non poterle far sparire. */
+    var _puoIgnorare = (typeof getCurrentRole==='function' && getCurrentRole()==='admin');
     var h='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:11px 12px;">'
       +'<div style="font-size:12px;font-weight:800;color:#1e40af;">Provvigioni da completare ('+list.length+')</div>'
       +'<div style="font-size:11px;color:#64748b;margin:2px 0 8px;">Le righe esistono gi\u00e0 nel registro con cliente e auto. Tocca per finirle.</div>'
@@ -6983,12 +6990,34 @@ function pVenditeRender(){
               : !fin      ? _pill('#dcfce7','#166534','25 \u20ac')
               : deliberata? _pill('#fff7ed','#9a3412','da completare')
                           : _pill('#fef2f2','#991b1b','manca delibera');
-      h+='<div onclick="pCaricaVendita(\''+cv.id+'\')" style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;">'
-        +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(nome)+'</div>'
-        +'<div style="font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(auto)+'</div></div>'+tag+'</div>';
+      h+='<div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+        +'<div onclick="pCaricaVendita(\''+cv.id+'\')" style="flex:1;min-width:0;cursor:pointer;"><div style="font-weight:700;font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(nome)+'</div>'
+        +'<div style="font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+docEsc(auto)+'</div></div>'+tag
+        +(_puoIgnorare?('<button type="button" title="Non contarla piu\u2019 fra quelle da completare" onclick="pIgnoraVendita(\''+cv.id+'\')" style="border:none;background:none;color:#94a3b8;font-family:inherit;font-size:15px;line-height:1;padding:4px 2px;cursor:pointer;flex:0 0 auto;">\u2715</button>'):'')
+        +'</div>';
     });
     box.innerHTML=h+'</div>'; box.style.display='block';
   }catch(e){}
+}
+/* Chiamata da un onclick: deve stare nello scope globale. */
+function pIgnoraVendita(cvId){
+  try{
+    if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')){
+      alert('Riservato all\u2019amministratore: le provvigioni vanno completate.');
+      return;
+    }
+    var cv=(typeof cvById==='function')?cvById(cvId):null;
+    if(!cv){ alert('Vendita non trovata.'); return; }
+    var cl=cv.cliente||{};
+    var nome=((cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()))||'questa vendita';
+    if(!confirm('Togliere '+nome+' dalle provvigioni da completare?\n\nIl contratto resta dov\u2019e\u2019: smette solo di essere segnalato qui.')) return;
+    cv.provvIgnorata=true;
+    cv.provvIgnorataTs=Date.now();
+    try{ cv.provvIgnorataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''); }catch(e){}
+    cvSave(cvLoad().map(function(x){ return x.id===cv.id ? cv : x; }));
+    if(typeof pVenditeRender==='function') pVenditeRender();
+    if(typeof tcToastNew==='function') tcToastNew('Tolta dalle provvigioni da completare', true);
+  }catch(e){ alert('Non riuscito: '+(e && e.message || e)); }
 }
 function pCaricaVendita(cvId){
   try{
@@ -18342,6 +18371,30 @@ function cvVistaModifica(id){ cvVistaChiudi(); if(typeof cvForm==='function') cv
    dato valido al momento di quella vendita e potrebbe essere diverso da oggi. */
 /* Chiamata da un onclick: deve restare globale, altrimenti il pulsante non
    trova niente e non succede nulla. */
+/* Quali riquadri di dettaglio pagamento sono aperti a video. Non finisce
+   nella pratica: e' solo come si sta guardando il modulo adesso. */
+var _cvPagAperti = {};
+function cvPagDettagli(i, apri){
+  try{
+    if(apri) _cvPagAperti[i]=true; else delete _cvPagAperti[i];
+    if(typeof cvRenderPag==='function') cvRenderPag();
+  }catch(e){}
+}
+/* Aperto per sbaglio si richiude, e i quattro campi si svuotano: altrimenti
+   una ragione sociale digitata a meta' resterebbe attaccata alla pratica e
+   finirebbe in fattura. Svuotandoli qui, cvSync li segna fra i campi tolti di
+   proposito e l'anagrafica non li riscrive. */
+function cvChiudiAzienda(){
+  try{
+    ['cv_ragSociale','cv_piva','cv_sedeLegale','cv_sdi'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.value='';
+    });
+    var b=document.getElementById('cv-azienda'); if(b) b.style.display='none';
+    var l=document.getElementById('cv-az-link'); if(l) l.style.display='';
+    if(typeof cvSync==='function') cvSync();
+    if(typeof cvLive==='function') cvLive();
+  }catch(e){}
+}
 function cvMostraAzienda(){
   try{
     var b=document.getElementById('cv-azienda'); if(b) b.style.display='';
@@ -18480,7 +18533,10 @@ function cvForm(id, fromVend){
   h+='<div id="cv-az-link" style="'+(_az?'display:none;':'')+'margin-top:10px;">'
     +'<button type="button" onclick="cvMostraAzienda()" style="padding:4px 0;border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;text-decoration:underline;">+ \u00e8 un\u2019azienda (ragione sociale, P.IVA, sede legale)</button></div>';
   h+='<div id="cv-azienda" style="'+(_az?'':'display:none;')+'">';
-  h+='<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin:12px 0 2px;">Se \u00e8 un\u2019azienda</div>';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 2px;">'
+    +'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#64748b;">Se \u00e8 un\u2019azienda</div>'
+    +'<button type="button" onclick="cvChiudiAzienda()" style="padding:2px 0;border:none;background:none;color:#dc2626;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;text-decoration:underline;">\u2715 non \u00e8 un\u2019azienda</button>'
+    +'</div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:2;">'+lab('Ragione sociale')+inp('cv_ragSociale',_cv.cliente.ragSociale)+'</div>'
     +'<div style="flex:1;">'+lab('P.IVA')+inp('cv_piva',_cv.cliente.piva)+'</div></div>';
   h+='<div style="display:flex;gap:10px;"><div style="flex:2;">'+lab('Sede legale')+inp('cv_sedeLegale',_cv.cliente.sedeLegale)+'</div>'
@@ -18963,6 +19019,11 @@ function cvRenderPag(){
   c.innerHTML=_cv.pagamenti.map(function(x,i){
     var isFin = x.tipo==='Finanziamento' || /finanziamento/i.test(x.metodo||'');
     var isPromo = /promo/i.test(x.metodo||'');
+    /* Scadenza, incasso e causale si compilano di rado: stanno chiusi. Se
+       pero' un dato c'e' gia' il riquadro resta aperto e non si puo' chiudere,
+       altrimenti si nasconderebbe un incasso gia' registrato. */
+    var _dati = !!(x.scadenza || cvPagDataIncasso(x) || String(x.note||'').trim() || x.confermato);
+    var _apri = _dati || !!_cvPagAperti[i];
     return '<div style="background:#eff6ff;border-radius:10px;padding:10px;margin-bottom:8px;">'
       +'<div style="display:flex;gap:8px;">'
       +'<select onchange="_cv.pagamenti['+i+'].tipo=this.value;cvRenderPag();cvLive()" style="flex:1;'+ss+'">'+(tipi.indexOf(x.tipo)<0&&x.tipo?tipi.concat([x.tipo]):tipi).map(function(t){return '<option'+(x.tipo===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select>'
@@ -18974,14 +19035,19 @@ function cvRenderPag(){
       +'</div>'
       +(isFin?('<div style="display:flex;gap:8px;margin-top:6px;"><input value="'+cvEsc(x.rate||'')+'" placeholder="n° rate" type="number" oninput="_cv.pagamenti['+i+'].rate=this.value" style="flex:1;'+ss+'"><input value="'+cvEsc(x.importoRata||'')+'" placeholder="importo rata €" type="number" oninput="_cv.pagamenti['+i+'].importoRata=this.value" style="flex:1;'+ss+'">'+'<button onclick="simDaPreventivo('+i+')" title="Calcola la rata col simulatore" style="flex:0 0 auto;padding:9px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">\uD83E\uDDEE Simula</button>'+'</div>'):'')
       +(isPromo?('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px;margin-top:6px;">'+'<div style="font-size:10px;font-weight:800;color:#92400e;margin-bottom:6px;">\u26a1 FINANZIAMENTO PROMO \u2014 da compilare</div>'+'<div style="display:flex;gap:8px;">'+'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:800;color:#92400e;margin-bottom:3px;">Mesi polizza</label>'+'<input id="cvp_assicMesi" type="number" inputmode="numeric" value="'+cvEsc(_cv.assicMesi||'')+'" placeholder="es. 60" oninput="cvPromoSet(\'assicMesi\',this.value)" style="width:100%;padding:9px;border:1px solid #f59e0b;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;font-weight:700;"></div>'+'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:800;color:#92400e;margin-bottom:3px;">Sconto \u20ac</label>'+'<input id="cvp_scontoImporto" type="number" inputmode="decimal" value="'+cvEsc(_cv.scontoImporto||'')+'" placeholder="obbligatorio" oninput="cvPromoSet(\'scontoImporto\',this.value)" style="width:100%;padding:9px;border:1px solid #f59e0b;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;font-weight:700;"></div>'+'</div>'+'<div style="font-size:10px;color:#92400e;margin-top:5px;">Gli stessi campi restano in alto nel preventivo: qui sono solo comodi da raggiungere.</div>'+'</div>'):'')
-      +'<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
+      +(_apri?(
+         '<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
         +'<div style="flex:1;"><div style="font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:2px;">Scadenza</div>'
         +'<input type="date" value="'+cvEsc(x.scadenza||'')+'" onchange="_cv.pagamenti['+i+'].scadenza=this.value;cvLive()" style="width:100%;'+ss+'"></div>'
         +'<div style="flex:1;"><div style="font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:2px;">Incassato il</div>'
         +'<input type="date" value="'+cvEsc(cvPagDataIncasso(x))+'" onchange="cvPagIncassoData('+i+',this.value)" style="width:100%;'+ss+(x.confermato?'border-color:#86efac;background:#f0fdf4;':'')+'"></div>'
-      +'</div>'
-      +(x.confermato?('<div style="font-size:11px;color:#166534;margin-top:4px;">\u2713 incassato'+(x.confermatoDa?(' \u00b7 confermato da '+cvEsc(x.confermatoDa)):'')+'. La data si pu\u00f2 correggere qui.</div>'):'')
-      +'<input value="'+cvEsc(x.note||'')+'" placeholder="note (es. causale)" oninput="_cv.pagamenti['+i+'].note=this.value" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;">'
+        +'</div>'
+        +(x.confermato?('<div style="font-size:11px;color:#166534;margin-top:4px;">\u2713 incassato'+(x.confermatoDa?(' \u00b7 confermato da '+cvEsc(x.confermatoDa)):'')+'. La data si pu\u00f2 correggere qui.</div>'):'')
+        +'<input value="'+cvEsc(x.note||'')+'" placeholder="note (es. causale)" oninput="_cv.pagamenti['+i+'].note=this.value" style="width:100%;margin-top:6px;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;">'
+        +(_dati?'':'<div style="margin-top:4px;"><button type="button" onclick="cvPagDettagli('+i+',0)" style="padding:2px 0;border:none;background:none;color:#64748b;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;text-decoration:underline;">nascondi</button></div>')
+       ):(
+         '<div style="margin-top:5px;"><button type="button" onclick="cvPagDettagli('+i+',1)" style="padding:2px 0;border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;text-decoration:underline;">+ scadenza, incasso, note</button></div>'
+       ))
       +'</div>';
   }).join('');
 }
