@@ -4510,7 +4510,20 @@ var EA_GS_URL_OLD = 'https://script.google.com/macros/s/AKfycbwCfryg_xOM5q3Awtew
     }
   } catch(e){}
 })();
-let GS_URL = localStorage.getItem('ea_gs_url') || EA_GS_URL_NEW;
+/* ===== GOOGLE APPS SCRIPT SPENTO =====
+   GS_URL vuota significa: nessuna lettura dal foglio e nessun invio verso
+   Apps Script. Tutte le funzioni che ci passavano hanno gia' il controllo
+   "se non c'e' l'indirizzo, non fare niente" \u2014 erano scritte cosi' da
+   quando il foglio era facoltativo \u2014 quindi si fermano da sole senza
+   bisogno di toccarle una per una.
+   Cosa non passa piu' di qui: le letture all'apertura di provvigioni,
+   richieste, sedi, presenze, appuntamenti, sinistri, permute, magazzino e
+   fornitori (i dati arrivano da Supabase), e le due riserve per il codice di
+   verifica e il link permuta (partono da Resend).
+   Per riaccendere tutto: rimettere EA_GS_URL_NEW al posto della stringa
+   vuota. L'indirizzo resta scritto qui sopra apposta. */
+let GS_URL = '';
+let GS_URL_ARCHIVIO = localStorage.getItem('ea_gs_url') || EA_GS_URL_NEW;
 let SHEET_URL = localStorage.getItem('ea_sheet_url') || 'https://docs.google.com/spreadsheets/d/1X9UC39V7Wm6p_a_0qfYqBMLPVLIWvGVOrEQh5AOCi3E/edit';
 
 function setGsUrl(url){
@@ -5527,7 +5540,8 @@ async function autoSyncOnLoad(){
   renderReady('');
   renderArchive('');
   const st = document.getElementById('gsStatus');
-  if(st && GS_URL){ st.textContent = '🟢 Google Sheets configurato'; st.style.color='#27ae60'; }
+  /* Lo stato del collegamento a Google non si mostra piu': non c'e' piu' un
+     collegamento da mostrare. */
 }
 
 
@@ -7686,7 +7700,10 @@ function pGsDelete(id) {
 }
 
 async function pGsSaveAndReload(entry, currentReg) {
-  if (!GS_URL) { alert('✅ Vendita salvata localmente (Google Sheets non configurato).'); return; }
+  /* Il foglio non c'e' piu': la provvigione e' gia' salvata in locale e su
+     Supabase da chi ha chiamato. Qui non resta niente da fare, e l'avviso su
+     Google avrebbe solo confuso chi sta salvando una vendita. */
+  if (!GS_URL) return;
   try {
     // Salva via fetch POST
     const payload = { action:'upsert', sheet:'Provvigioni', record:entry };
@@ -19700,7 +19717,9 @@ var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le rispost
 function eaMailEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function eaMailFooter(){ return '<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>'; }
 function cvEmailCaparraCliente(cv, importo){
-  if(typeof GS_URL==='undefined' || !GS_URL) return;
+  /* Il controllo su GS_URL e' stato tolto: la mail parte da Resend, e quella
+     riga avrebbe fatto uscire la funzione in silenzio il giorno in cui
+     spegniamo Apps Script. */
   var cl=cv.cliente||{}; if(!cl.email || !/.+@.+\..+/.test(cl.email)) return;
   var a=cv.autoSnapshot||{};
   var nome=((cl.nome||'')+(cl.nome&&cl.cognome?' ':'')+(cl.cognome||'')).trim()||cl.ragSociale||'Gentile Cliente';
@@ -19716,15 +19735,12 @@ function cvEmailCaparraCliente(cv, importo){
     +'<p>Grazie per aver scelto Europa Auto Srl.</p>'
     +eaMailFooter()
     +'</div></div>';
-  /* Passata a Resend: era l'ultima email al cliente che usciva da Apps
-     Script. Il disclaimer, che prima aggiungeva lo script, ora si accoda qui:
-     nessuno lo fa piu' per conto nostro. */
+  /* Passata a Resend. Il disclaimer non si accoda qui: lo mette gia'
+     eaMailFooter() poche righe sopra, e aggiungerlo di nuovo lo faceva
+     comparire due volte in fondo alla mail. */
   try{
-    var _htmlFin = html + (typeof EA_MAIL_DISCLAIMER!=='undefined' && EA_MAIL_DISCLAIMER
-      ? ('<div style="margin-top:18px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>')
-      : '');
     if(typeof eaInviaMessaggio==='function'){
-      eaInviaMessaggio({ to:cl.email, subject:oggetto, html:_htmlFin });
+      eaInviaMessaggio({ to:cl.email, subject:oggetto, html:html });
     }
   }catch(e){}
 }
