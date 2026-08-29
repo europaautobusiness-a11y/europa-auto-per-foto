@@ -13541,7 +13541,24 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof gsPost==='function'){ try{ gsPost({action:'promemoriaAppuntamento', email:c.email, tel:c.tel||'', cliente:c.titolo||'', tipo:c.tipo||'', data:c.data||'', ora:c.ora||'', veicolo:(c.veicolo||'')}); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof eaInviaMessaggio==='function'){
+          /* Ultima email uscita da Apps Script: ora passa da Resend. */
+          try{ eaInviaMessaggio({
+              to:c.email,
+              subject:'Promemoria appuntamento \u2014 Europa Auto',
+              html:'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+                  +'<p>Gentile '+ccEsc(c.titolo||'Cliente')+',</p>'
+                  +'<p>le ricordiamo il suo appuntamento'
+                  +(c.data?(' del <b>'+ccEsc(c.data)+'</b>'):'')
+                  +(c.ora?(' alle <b>'+ccEsc(c.ora)+'</b>'):'')+'.</p>'
+                  +(c.veicolo?('<p><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</p>'):'')
+                  +'<p>La aspettiamo in Via Nigra 4, Paderno Dugnano.<br>'
+                  +'Se non riesce a venire, ci avvisi al 02 9181820 e spostiamo.</p>'
+                  +'<p><b>Europa Auto</b></p></div>',
+              text:'Gentile '+(c.titolo||'Cliente')+', le ricordiamo il suo appuntamento'
+                  +(c.data?(' del '+c.data):'')+(c.ora?(' alle '+c.ora):'')+'.'
+                  +' La aspettiamo in Via Nigra 4, Paderno Dugnano. Se non riesce, ci avvisi al 02 9181820.'
+            }); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
           /* senza spingerlo sul cloud, "avvisato" resta solo qui: al primo
              ricaricamento vince la copia remota, che non ce l'ha, e il
              promemoria riparte all'infinito. */
@@ -15349,7 +15366,26 @@ function pmSalva(){
   var list=pmLoad(); var idx=list.findIndex(function(x){return x.id===rec.id;});
   if(idx>=0) list[idx]=rec; else list.push(rec);
   pmSave(list); pmPush(rec);
-  if(nuovaNotifica && typeof GS_URL!=='undefined' && GS_URL){ try{ var ns=document.createElement('script'); ns.src=GS_URL+'?action=notificaPermuta&cliente='+encodeURIComponent(rec.cliente||'')+'&modello='+encodeURIComponent(rec.modello||'')+'&id='+encodeURIComponent(rec.id||'')+'&callback=pmNoop'; document.body.appendChild(ns); }catch(e){} }
+  /* L'avviso all'amministrazione passa da Resend. Prima lo mandava Apps
+     Script e non si sapeva mai se fosse partito: qui almeno l'errore, se
+     c'e', finisce nella console. */
+  if(nuovaNotifica){
+    try{
+      if(typeof eaInviaMessaggio==='function'){
+        eaInviaMessaggio({
+          to:'amministrazione@europaautosrl.it',
+          subject:'Permuta da valutare \u2014 '+((rec.cliente||'cliente')+' \u00b7 '+(rec.modello||'')).trim(),
+          html:'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+              +'<p>\u00c8 arrivata una permuta da valutare.</p>'
+              +'<p><b>Cliente:</b> '+pmEsc(rec.cliente||'\u2014')+'<br>'
+              +'<b>Veicolo:</b> '+pmEsc(rec.modello||'\u2014')+'<br>'
+              +'<b>Targa:</b> '+pmEsc(rec.targa||'\u2014')+'</p>'
+              +'<p>La trovi nel gestionale, sezione Permute.</p></div>',
+          text:'Permuta da valutare \u2014 '+(rec.cliente||'')+' \u00b7 '+(rec.modello||'')+'. La trovi nel gestionale, sezione Permute.'
+        }).then(function(r){ if(r && r.error) try{ console.log('avviso permuta:', r.error); }catch(e){} });
+      }
+    }catch(e){}
+  }
   pmChiudi(); pmRender();
   if(typeof tcToastNew==='function') tcToastNew(nuovaNotifica?'💾 Salvata · notifica inviata':'💾 Perizia salvata',true);
 }
@@ -19680,7 +19716,17 @@ function cvEmailCaparraCliente(cv, importo){
     +'<p>Grazie per aver scelto Europa Auto Srl.</p>'
     +eaMailFooter()
     +'</div></div>';
-  try{ gsPost({ action:'emailCliente', email:cl.email, oggetto:oggetto, html:html, disclaimer:EA_MAIL_DISCLAIMER }); }catch(e){}
+  /* Passata a Resend: era l'ultima email al cliente che usciva da Apps
+     Script. Il disclaimer, che prima aggiungeva lo script, ora si accoda qui:
+     nessuno lo fa piu' per conto nostro. */
+  try{
+    var _htmlFin = html + (typeof EA_MAIL_DISCLAIMER!=='undefined' && EA_MAIL_DISCLAIMER
+      ? ('<div style="margin-top:18px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>')
+      : '');
+    if(typeof eaInviaMessaggio==='function'){
+      eaInviaMessaggio({ to:cl.email, subject:oggetto, html:_htmlFin });
+    }
+  }catch(e){}
 }
 /* Chi spedisce la mail del preventivo:
      false = ci pensa questo browser (serve il gestionale aperto)
