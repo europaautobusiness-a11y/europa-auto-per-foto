@@ -687,37 +687,14 @@ html, body{
       </div>
     
 
-    <!-- GOOGLE SHEETS -->
-    <div class="card" style="margin-top:14px;">
-      <div class="card-hd">☁️ Salvataggio Cloud — Google Sheets</div>
-      <div class="card-bd">
-        <div style="font-size:12px;color:var(--gray);margin-bottom:12px;line-height:1.6;">
-          Collega Google Sheets per salvare i report in modo permanente e condividerli tra tutti i dispositivi.
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-          <button id="btn-apri-sheet" onclick="openGoogleSheet()" style="padding:9px 18px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">📊 Apri Google Sheet</button>
-          <button onclick="syncFromSheets()" style="padding:9px 18px;background:white;border:1.5px solid var(--blue);color:var(--blue);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">🔄 Sincronizza ora</button>
-          <span id="gsStatus" style="font-size:12px;font-weight:600;"></span>
-        </div>
-        <div class="fg" style="margin-bottom:6px;">
-          <label>URL Google Apps Script</label>
-          <div style="position:relative;">
-            <input type="text" id="gsUrlInput" placeholder="https://script.google.com/macros/s/..." style="font-size:12px;">
-            <button onclick="gsUrlSave()" style="position:absolute;right:0;top:0;bottom:0;padding:0 12px;background:var(--blue);border:none;color:white;font-family:var(--font);font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;">💾 SALVA</button>
-          </div>
-          <div style="font-size:10px;color:var(--gray);margin-top:3px;">Incolla il nuovo URL Apps Script e clicca 💾 Salva.</div>
-        </div>
-        <div class="fg" style="margin-top:10px;">
-          <label>Link Google Sheet <span style="font-size:9px;color:var(--gray);font-weight:400;">(per il tasto 📊 Apri Google Sheet)</span></label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" id="gsSheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/..." style="flex:1;font-size:12px;">
-            <button onclick="saveGsUrl()" style="padding:9px 14px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">💾 Salva</button>
-      
-    </div>
+    <!-- Riquadro "Salvataggio Cloud - Google Sheets" rimosso: i report si
+         salvano su Supabase (rpSupaSalva). Il foglio Google era una copia in
+         piu' che nessuno leggeva. Restano su Apps Script solo gli invii email
+         della permuta, che passano da un'altra strada. -->
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px;">
-    <button class="dl-btn confirm-btn" id="confirmBtn" onclick="confirmReport()" style="background:#27ae60;font-size:16px;">✅ Conferma Report — Salva come Pronto &amp; su Google Sheet</button>
+    <button class="dl-btn confirm-btn" id="confirmBtn" onclick="confirmReport()" style="background:#27ae60;font-size:16px;">✅ Conferma Report — Salva come Pronto</button>
     <button class="dl-btn" id="dlBtn" onclick="downloadPDF()" style="background:var(--gray);font-size:16px;">⬇ Scarica PDF (già confermato)</button>
   </div>
   <div class="err-box" id="errBox"></div>
@@ -985,7 +962,10 @@ html, body{
     <div style="text-align:center;"><div id="pStatTot" style="font-size:1.7rem;font-weight:700;color:var(--blue);line-height:1;">€ 0</div><div style="font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Totale provvigioni</div></div>
     <div style="margin-left:auto;display:flex;gap:8px;">
       <button onclick="pNuovoMese()" style="padding:7px 14px;background:var(--blue);border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">🔄 Nuovo Mese</button>
-      <button onclick="pForzaAggiornamento(this)" style="padding:7px 14px;background:#27ae60;border:none;color:white;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">☁️ Aggiorna da Sheets</button>
+      <!-- Tolto "Aggiorna da Sheets": svuotava il registro locale e ci
+           rovesciava sopra il foglio Google, che e' fermo alla migrazione e
+           non sa nulla delle cancellazioni. Premerlo riportava indietro ogni
+           provvigione tolta. Le provvigioni arrivano da Supabase. -->
       <button onclick="pClearAll()" style="padding:7px 14px;background:none;border:1px solid var(--red);color:var(--red);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;">🗑 Svuota</button>
     </div>
   </div>
@@ -4593,7 +4573,20 @@ async function gsLoad(sheet){
   });
 }
 
+/* ===== IL FOGLIO GOOGLE NON RICEVE PIU' NIENTE =====
+   Ogni modulo scriveva su Supabase e poi ripeteva la stessa scrittura sul
+   foglio, come copia di sicurezza dei tempi in cui il foglio era la fonte
+   principale. Oggi non lo legge piu' nessuno, e ogni salvataggio si portava
+   dietro una chiamata in piu' che poteva fallire in silenzio.
+   Si spegne qui, in un punto solo, invece di togliere trentacinque chiamate
+   sparse: se un domani serve riaccenderlo basta rimettere false a true.
+   ATTENZIONE: questo blocca solo le SCRITTURE sul foglio. Gli invii email di
+   Apps Script \u2014 codice di verifica e link della permuta \u2014 passano da
+   un'altra strada e continuano a funzionare. */
+var EA_GS_SCRITTURA = false;
+
 function gsJsonp(payload){
+  if(!EA_GS_SCRITTURA) return;
   // Invia una richiesta JSONP a Google Apps Script
   const encoded = encodeURIComponent(JSON.stringify(payload));
   const url = GS_URL + '?payload=' + encoded;
@@ -5258,11 +5251,24 @@ function mzGeneraDotazioni(){
     .catch(function(){ alert('Errore di rete nella generazione dotazioni.'); fine(); });
 }
 function gsPost(payload){
+  /* Questa strada porta due cose diverse allo stesso indirizzo: le scritture
+     sul foglio (upsert, delete) e gli invii email di Apps Script. Le prime
+     sono spente, le seconde devono passare: spegnere tutto qui toglierebbe il
+     codice di verifica e il link della permuta ai clienti.
+     Si risponde comunque con una promessa risolta, perche' chi chiama si
+     aggancia con .then e resterebbe fermo. */
+  try{
+    var _az=String((payload && payload.action) || '').toLowerCase();
+    if(!EA_GS_SCRITTURA && (_az==='upsert' || _az==='delete' || _az==='save')){
+      return Promise.resolve(null);
+    }
+  }catch(e){}
   if(typeof GS_URL==='undefined' || !GS_URL) return Promise.reject(new Error('no GS_URL'));
   return fetch(GS_URL, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
 }
 
 function gsSave(sheet, data){
+  if(!EA_GS_SCRITTURA) return;
   if(!GS_URL || !data || !data.length) return;
   // Prova con upsert (nuovo script v6) E con save (compatibilità vecchio script)
   // Invia ogni record con upsert
@@ -5279,6 +5285,7 @@ function gsSave(sheet, data){
 }
 
 function gsDelete(sheet, id){
+  if(!EA_GS_SCRITTURA) return;
   // Elimina un record da Sheets per ID
   if(!GS_URL || !id) return;
   gsJsonp({ action:'delete', sheet, id });
@@ -5385,14 +5392,12 @@ function saveReady(d){
   else { try{ localStorage.setItem(READY_KEY, JSON.stringify(d)); }catch(e){} }
   updateCounts();
   rpSupaSalva('pronti', d);
-  gsSave('ReportPronti', d); // Sheets resta finche' non stacchiamo Google
 }
 function saveSent(d){
   if(typeof eaLsSet==='function') eaLsSet(SENT_KEY, JSON.stringify(d), 'report inviati');
   else { try{ localStorage.setItem(SENT_KEY, JSON.stringify(d)); }catch(e){} }
   updateCounts();
   rpSupaSalva('inviati', d);
-  gsSave('ReportInviati', d);
 }
 
 // Carica da Sheets e aggiorna localStorage (chiamato all'avvio)
@@ -5648,13 +5653,12 @@ function confirmReport(){
   else         { ready.unshift(entry); }
   saveReady(ready);
 
-  const gsOk = !!GS_URL;
   const cb = document.getElementById('confirmBox');
   cb.style.display = 'block';
   cb.style.background = '#27ae60';
   cb.innerHTML = (idx>=0 ? '✅ Report aggiornato' : '✅ Report salvato') +
     ' in "Report Pronti"' +
-    (gsOk ? ' &amp; su Google Sheet ☁️' : ' (Google Sheet non configurato)');
+    '';
   setTimeout(() => cb.style.display='none', 5000);
 }
 
@@ -7410,32 +7414,9 @@ function pSupaLoad(){
 }
 
 // Carica da Google Sheets e aggiorna locale
-function pForzaAggiornamento(btn) {
-  // Svuota cache locale e ricarica da Sheets
-  if (!GS_URL) { alert('Google Sheets non configurato'); return; }
-  if (btn) { btn.textContent = '⏳ Caricamento...'; btn.disabled = true; }
-  localStorage.removeItem('ea_provv3');
-  pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
-  // Ricarica da Sheets
-  var cb = 'pForzaCb_' + Date.now();
-  var script = document.createElement('script');
-  window[cb] = function(data) {
-    delete window[cb]; script.remove();
-    if (btn) { btn.textContent = '☁️ Aggiorna da Sheets'; btn.disabled = false; }
-    if (!data || !Array.isArray(data)) { alert('Nessun dato da Sheets'); return; }
-    // Filtra solo il mese corrente
-    var meseAtt = pGetMese();
-    // Salva tutti i dati in cache memoria per pModifica
-    _pRegCache = data;
-    // Salva solo il mese corrente in localStorage
-    var soloPresenteMese = data.filter(function(r){ return r.mese === meseAtt; });
-    localStorage.setItem('ea_provv3', JSON.stringify(soloPresenteMese));
-    pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
-    alert('✅ Provvigioni aggiornate: ' + soloPresenteMese.length + ' record per ' + meseAtt);
-  };
-  script.src = GS_URL + '?sheet=Provvigioni&callback=' + cb + '&_t=' + Date.now();
-  document.head.appendChild(script);
-}
+/* pForzaAggiornamento e' stata rimossa insieme al suo pulsante: rileggeva le
+   provvigioni dal foglio Google sovrascrivendo il registro locale. Per
+   ricaricare si usa "Aggiorna tutto", che legge da Supabase. */
 
 function pLoadFromGS() {
   if (!GS_URL) { pRenderReg(); pAggStats(); return; }
@@ -7695,7 +7676,7 @@ function pModifica(id){
       }
     });
   }
-  if(!r) { alert('Dati non trovati. Premi prima ☁️ Aggiorna da Sheets.'); return; }
+  if(!r) { alert('Dati non trovati.\n\nPremi \u201cAggiorna tutto\u201d nel men\u00f9 a sinistra per rileggere il registro dal database.'); return; }
   _pEditingId=id;
   // Naviga alla sezione provvigioni se non siamo già lì
   var viewProvv = document.getElementById('view-provv');
@@ -12281,8 +12262,8 @@ function sidebarNav(view,btn){
   if(view==='ready'){updateCounts();renderReady('');}
   if(view==='archive'){updateCounts();renderArchive('');}
   /* pLoadFromGS riscriveva tutto il registro con la copia del foglio Google,
-     cancellando le modifiche fatte altrove. Resta il pulsante manuale
-     "Aggiorna da Sheets" per chi deve ripescare lo storico. */
+     cancellando le modifiche fatte altrove. Anche il pulsante manuale che
+     faceva la stessa cosa e' stato tolto: il registro viene da Supabase. */
   if(view==='provv'){pSupaLoad();pCalcola();}
   if(view==='foto'){
     // Carica automaticamente da Drive se connesso
