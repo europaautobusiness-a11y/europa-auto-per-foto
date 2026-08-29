@@ -15252,13 +15252,34 @@ function pmSetMetodo(mtd){
 function pmInviaCodice(){
   var em=document.getElementById('pm_email'); em=em?em.value:''; var st=document.getElementById('pm-otp-stato');
   if(!em){ if(st)st.textContent='Inserisci prima l\'email del cliente.'; return; }
-  if(typeof GS_URL==='undefined' || !GS_URL){ if(st)st.textContent='Sincronizzazione non attiva: impossibile inviare il codice.'; return; }
   _pmOtpCode=String(Math.floor(100000+Math.random()*900000));
   document.getElementById('pm-otp-verifica').style.display='block';
   if(st) st.textContent='Invio del codice in corso…';
   pmOtpSend(em, _pmOtpCode, st);
 }
+/* ===== IL CODICE DI VERIFICA PASSA DA RESEND =====
+   Prima lo spediva Google Apps Script, e quando lo script non era aggiornato
+   o l'invio non era autorizzato il cliente restava senza codice, con un
+   avviso che parlava di fogli e autorizzazioni. Ora usa la stessa strada di
+   tutte le altre email del gestionale. */
 function pmOtpSend(em, code, st){
+  var _testo = 'Gentile cliente,\n\nil codice per firmare la perizia del suo veicolo \u00e8: '+code
+    + '\n\nIl codice vale per questa sessione. Se non ha richiesto nulla, ignori questo messaggio.'
+    + '\n\nEuropa Auto';
+  var _html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+    + '<p>Gentile cliente,</p>'
+    + '<p>il codice per firmare la perizia del suo veicolo \u00e8:</p>'
+    + '<div style="font-size:30px;font-weight:800;letter-spacing:.18em;color:#1a4fa0;margin:18px 0;">'+pmEsc(code)+'</div>'
+    + '<p style="font-size:13px;color:#64748b;">Il codice vale per questa sessione. Se non ha richiesto nulla, ignori questo messaggio.</p>'
+    + '<p><b>Europa Auto</b></p></div>';
+  if(typeof eaInviaMessaggio==='function'){
+    eaInviaMessaggio({ to:em, subject:'Codice di verifica \u2014 Europa Auto', html:_html, text:_testo })
+      .then(function(r){
+        if(r && r.error){ if(st) st.innerHTML='\u26a0\ufe0f Codice non inviato: '+pmEsc(String(r.error)); return; }
+        if(st) st.innerHTML='\u2705 Codice inviato via email a <b>'+pmEsc(em)+'</b>. Inserisci qui il codice ricevuto.';
+      }, function(){ if(st) st.innerHTML='\u26a0\ufe0f Codice non inviato: nessuna risposta dal servizio email.'; });
+    return;
+  }
   var cb='pmOtp_'+Date.now()+Math.floor(Math.random()*1000);
   var sc=document.createElement('script'); var done=false;
   var fine=function(){ if(sc.parentNode)sc.parentNode.removeChild(sc); try{delete window[cb];}catch(e){} };
@@ -15395,7 +15416,8 @@ function pmLinkCliente(){
   var list=pmLoad(); var idx=list.findIndex(function(x){return x.id===rec.id;});
   if(idx>=0) list[idx]=rec; else list.push(rec);
   pmSave(list); pmPush(rec); pmRender();
-  if(typeof GS_URL==='undefined' || !GS_URL){ alert('Per il link serve il collegamento al foglio (sincronizzazione).'); return; }
+  /* Il link non ha piu' bisogno del foglio: la pagina del cliente legge da
+     Supabase e l'email parte da Resend. */
   var box=document.getElementById('pm-linkbox');
   if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; var eml=document.getElementById('pm-link-email'); if(eml && !eml.value){ if(_pm.rec&&_pm.rec.email) eml.value=_pm.rec.email; } var sc=document.getElementById('pm-link-scad'); if(sc) sc.textContent='Il link scade il '+pmFmtDataOra(rec.linkTs+48*3600*1000)+' (48 ore).'; box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
 }
@@ -15403,11 +15425,33 @@ function pmInviaLinkEmail(){
   var inp=document.getElementById('pm-linkurl'); var emEl=document.getElementById('pm-link-email'); var st=document.getElementById('pm-link-stato');
   if(!inp||!inp.value){ if(st)st.textContent='Genera prima il link.'; return; }
   var em=emEl?emEl.value:''; if(!em){ if(st)st.textContent='Inserisci l\'email del cliente.'; return; }
-  if(typeof GS_URL==='undefined'||!GS_URL){ if(st)st.textContent='Sincronizzazione non attiva: impossibile inviare.'; return; }
   var cliente=(document.getElementById('pm_cliente')||{}).value||'';
   var scadTs=(_pm.rec&&_pm.rec.linkTs?_pm.rec.linkTs:Date.now())+48*3600*1000;
   var scad=pmFmtDataOra(scadTs);
-  if(st) st.textContent='Invio in corso…';
+  if(st) st.textContent='Invio in corso\u2026';
+
+  /* Anche questa passa da Resend. La scadenza si scrive nel testo: il link
+     dura 48 ore e il cliente deve saperlo prima di rimandare a domani. */
+  if(typeof eaInviaMessaggio==='function'){
+    var _lk=inp.value;
+    var _h='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+      + '<p>Gentile '+pmEsc(cliente||'cliente')+',</p>'
+      + '<p>da qui pu\u00f2 compilare e firmare la perizia del suo veicolo:</p>'
+      + '<p style="margin:20px 0;"><a href="'+pmEsc(_lk)+'" style="display:inline-block;background:#1a4fa0;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px;">Compila la perizia</a></p>'
+      + '<p style="font-size:13px;color:#64748b;">Il collegamento resta valido fino al <b>'+pmEsc(scad)+'</b>.<br>'
+      + 'Se il pulsante non funziona, copi questo indirizzo nel browser:<br>'+pmEsc(_lk)+'</p>'
+      + '<p><b>Europa Auto</b></p></div>';
+    var _t='Gentile '+(cliente||'cliente')+',\n\nda qui pu\u00f2 compilare e firmare la perizia del suo veicolo:\n'+_lk
+      + '\n\nIl collegamento resta valido fino al '+scad+'.\n\nEuropa Auto';
+    eaInviaMessaggio({ to:em, subject:'Perizia del suo veicolo \u2014 Europa Auto', html:_h, text:_t })
+      .then(function(r){
+        if(r && r.error){ if(st) st.innerHTML='\u26a0\ufe0f Invio non riuscito: '+pmEsc(String(r.error)); return; }
+        if(st) st.innerHTML='\u2705 Link inviato via email a <b>'+pmEsc(em)+'</b>.';
+        try{ var L=pmLoad(); var ix=L.findIndex(function(x){return x.id===(_pm.rec&&_pm.rec.id);});
+             if(ix>=0){ L[ix].linkInviatoA=em; L[ix].linkInviatoTs=Date.now(); pmSave(L); } }catch(e){}
+      }, function(){ if(st) st.innerHTML='\u26a0\ufe0f Invio non riuscito: nessuna risposta dal servizio email.'; });
+    return;
+  }
   var cb='pmLink_'+Date.now()+Math.floor(Math.random()*1000); var sc=document.createElement('script'); var done=false;
   var fine=function(){ if(sc.parentNode)sc.parentNode.removeChild(sc); try{delete window[cb];}catch(e){} };
   var to=setTimeout(function(){ if(done)return; done=true; fine(); if(st)st.innerHTML='⚠️ Invio non riuscito: lo script del foglio non è aggiornato o l\'email non è autorizzata.'; },10000);
