@@ -70,6 +70,10 @@ input,select,textarea,button{font-family:var(--font);}
 }
 .crm-due{ animation:crmPulse 1.2s ease-in-out infinite; will-change:box-shadow,transform; }
 @media (min-width:769px){#view-provv{max-width:1360px;}}
+/* La tabella delle vendite ha otto colonne di numeri: sui monitor larghi
+   restava stretta al centro con mezzo schermo grigio ai lati. Stessa
+   larghezza gia' data ai Compiti. */
+@media (min-width:769px){#view-vendite{max-width:1850px;padding-left:10px;padding-right:10px;}}
 .view.active{display:block !important;}
 .archive-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
 .archive-title{font-size:26px;font-weight:700;color:var(--blue);letter-spacing:.05em;text-transform:uppercase;}
@@ -10151,11 +10155,16 @@ function applyRoleUI() {
     var _doveA = 'vendite';
     if (!_accessoVeroA) {
       var _ultA=''; try{ _ultA=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
-      if (_ultA && allowed.indexOf(_ultA) !== -1) _doveA = _ultA;
+      /* Auto online e Simulatore non compaiono in ROLE_VIEWS nemmeno per
+         l'admin, quindi il controllo sull'elenco le scartava e la pagina
+         ripartiva dalle Vendite. Se il pulsante nella barra c'e' ed e' visibile
+         la sezione e' aperta a questa persona: tanto basta. */
+      var _visibile=false;
+      try{ var _bt=document.getElementById('si-'+_ultA); _visibile=!!(_bt && _bt.style.display!=='none'); }catch(e){}
+      if (_ultA && (allowed.indexOf(_ultA) !== -1 || _visibile)) _doveA = _ultA;
     }
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
-    var bV = document.getElementById('si-' + _doveA);
-    if (bV) setTimeout(function(){ try{ bV.click(); }catch(e){} }, 200);
+    setTimeout(function(){ try{ if(!eaVaiA(_doveA)) eaVaiA('vendite'); }catch(e){} }, 200);
     return;
   }
   /* ===== DOVE SI APRE =====
@@ -10177,8 +10186,10 @@ function applyRoleUI() {
       if (_ultima && allowed.indexOf(_ultima) !== -1) _dove = _ultima;
     }
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
-    var bP = document.getElementById('si-' + _dove);
-    if (bP) setTimeout(function(){ bP.click(); if(_dove==='presenze') setTimeout(presenzeInit, 150); }, 200);
+    setTimeout(function(){
+      try{ if(!eaVaiA(_dove)) eaVaiA('presenze'); }catch(e){}
+      if(_dove==='presenze') setTimeout(presenzeInit, 150);
+    }, 200);
     return;
   }
   var activeEl = document.querySelector('.view.active');
@@ -12107,6 +12118,48 @@ function eaBackAssicura(){ if(!_eaBackArmato) eaBackArma(); }
     if(eaHasBackTarget()){ try{ eaGoBack(); }catch(e){} }
   });
 })();
+/* ===== RITROVARE IL POSTO ESATTO =====
+   Salvare solo la sezione non bastava. Vendite e Compiti hanno delle schede
+   interne che stanno in una semplice variabile: ricaricata la pagina tornano
+   al valore di partenza, cioe' "in attesa pagamento" e "appuntamenti". Peggio,
+   il pulsante della barra le rimette al valore di partenza anche quando viene
+   premuto per ritrovare il proprio posto. Qui si tiene da parte anche quella. */
+function eaSalvaSotto(vista, valore){
+  try{ if(vista && valore) localStorage.setItem('ea_ultima_sotto_'+vista, String(valore)); }catch(e){}
+}
+function eaLeggiSotto(vista){
+  try{ return localStorage.getItem('ea_ultima_sotto_'+vista)||''; }catch(e){ return ''; }
+}
+/* Riporta alla sezione E alla scheda interna. Il pulsante della barra da solo
+   non basta: quello di Vendite chiama cvVendGo senza argomenti e riparte
+   sempre da "in attesa pagamento". */
+function eaVaiA(vista){
+  try{
+    if(!vista) return false;
+    if(vista==='vendite'){
+      var st=eaLeggiSotto('vendite')||'in_attesa_pagamento';
+      if(typeof cvVendGo==='function'){
+        cvVendGo(st);
+        try{ var bv=document.getElementById('si-vendite'); if(bv && typeof sidebarSetActive==='function') sidebarSetActive(bv); }catch(e){}
+        return true;
+      }
+    }
+    if(vista==='compiti'){
+      var cat=eaLeggiSotto('compiti')||'appuntamento';
+      var bc=document.getElementById('si-'+(cat==='task'?'task':'appuntamenti'));
+      if(typeof apriCalCat==='function'){ apriCalCat(cat, bc); return true; }
+    }
+    var b=document.getElementById('si-'+vista);
+    if(b){ b.click(); return true; }
+    /* Sezioni senza pulsante proprio nella barra: si apre la vista e basta. */
+    if(typeof sidebarNav==='function' && document.getElementById('view-'+vista)){
+      sidebarNav(vista); return true;
+    }
+  }catch(e){}
+  return false;
+}
+try{ window.eaVaiA=eaVaiA; }catch(e){}
+
 function apriCalCat(cat, btn){
   try{ if(typeof sidebarNav==='function') sidebarNav('compiti', btn); }catch(e){}
   setTimeout(function(){ try{ if(typeof ccSetCatFiltro==='function') ccSetCatFiltro(cat); }catch(e){} }, 130);
@@ -12513,6 +12566,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccCatOk(c){ if(!ccCatFiltro) return true; return (c.categoria||'appuntamento')===ccCatFiltro; }
   function ccSetCatFiltro(v){
     ccCatFiltro=v;
+    try{ if(typeof eaSalvaSotto==='function') eaSalvaSotto('compiti', v); }catch(e){}
     /* intestazione: le due viste devono riconoscersi al primo sguardo */
     try{
       var t=document.getElementById('cc-cat-titolo');
@@ -15643,14 +15697,6 @@ function mzFaiPreventivo(autoId){
 /* Salva l'auto e apre subito il preventivo con quel veicolo gia' scelto.
    Se il salvataggio non passa (campo obbligatorio mancante) non prosegue:
    mzSalva esce senza segnare nulla e la scheda resta aperta sull'errore. */
-function mzSalvaEVendi(){
-  window._mzUltimoSalvato=null;
-  try{ mzSalva(); }catch(e){ return; }
-  var id=window._mzUltimoSalvato;
-  if(!id) return;
-  if(typeof mzFaiPreventivo==='function') mzFaiPreventivo(id);
-}
-
 /* Dalla scheda del veicolo si torna alla pratica che lo ha venduto.
    Si apre sopra la scheda: chiudendola si ritrova il veicolo dov'era. */
 function mzPraticheDi(id){
@@ -16419,7 +16465,16 @@ function gsearchRun(){
       var st=gsearchStato(a);
       var titolo=((a.marca||'')+' '+(a.modello||'')).trim()||'Veicolo';
       var idv=a.targa?a.targa:(a.numero_interno?('N\u00b0 '+a.numero_interno):'');
-      var sub=(idv?(idv+' \u00b7 '):'')+(a.allestimento||a.anno||'');
+      /* Su un'auto venduta la domanda e' sempre "a chi?": il cognome vale piu'
+         dell'anno di immatricolazione. Dove non c'e' una vendita collegata
+         resta l'allestimento o l'anno, come prima. */
+      var chi='';
+      try{
+        var _cvv=(typeof gsVendPerAuto==='function')?gsVendPerAuto(a.id):null;
+        var _cl=(_cvv&&_cvv.cliente)||null;
+        if(_cl) chi=((_cl.business&&_cl.ragSociale)?_cl.ragSociale:(_cl.cognome||_cl.nome||'')).trim();
+      }catch(e){}
+      var sub=(idv?(idv+' \u00b7 '):'')+(chi||a.allestimento||a.anno||'');
       var prezzo=a.prezzoVen?('\u20ac '+parseFloat(a.prezzoVen).toLocaleString('it-IT')):'';
       return '<div onclick="gsearchApri(\''+a.id+'\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;background:#fff;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'#fff\'">'
         +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mzEsc(titolo)+'</div>'
@@ -17087,7 +17142,10 @@ function mzForm(id){
   /* Venduta subito: si salva e si passa al contratto senza rientrare
      nel magazzino a ricercare la stessa auto. Non compare su quelle
      gia' vendute, come per il pulsante nelle schede. */
-  if(!(a && a.stato==='venduta')) h+='<button onclick="mzSalvaEVendi()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83e\udd1d Vendita auto \u2014 salva e apri il contratto</button>';
+  /* Tolto il pulsante "Vendita auto \u2014 salva e apri il contratto": una vendita
+     nasce sempre da un preventivo, e il preventivo si apre dal pulsante verde
+     sulla scheda del veicolo in magazzino. Da qui era una seconda strada per
+     lo stesso posto, in un riquadro gia' lungo. */
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
   var m=document.getElementById('mz-modal');
@@ -18036,7 +18094,31 @@ function clRenderDettaglio(){
        riquadro non ha senso per chi guarda questa scheda. */
     box+='<div id="clTag_'+String(c.key||'').replace(/[^A-Za-z0-9_]/g,'')+'"></div>';
     try{ var _k=c.key; setTimeout(function(){ clTagliandiRender(_k); }, 250); }catch(e){}
-    if(!iv.length) return box+'<div style="font-size:13px;color:#94a3b8;">Nessun intervento registrato.</div></div>';
+    /* I sinistri stanno sotto gli interventi, nello stesso riquadro: per il
+       cliente sono la stessa cosa, un passaggio in officina. Toccandoli si
+       apre la scheda del sinistro, che e' una finestra sopra la pagina e si
+       apre da qualunque sezione. */
+    var _sin=(typeof clSinistriDi==='function')?clSinistriDi(c.key, nomeVis):[];
+    var _sinBox='';
+    if(_sin.length){
+      _sinBox='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;">'
+        +'<div style="font-weight:800;color:#1a4fa0;font-size:12.5px;margin-bottom:4px;">\ud83d\ude97 Sinistri ('+_sin.length+')</div>'
+        +_sin.map(function(x){
+          var _st=(typeof SIN_STATI!=='undefined' && SIN_STATI[x.stato])||x.stato||'';
+          var _ic=(typeof SIN_ICONS!=='undefined' && SIN_ICONS[x.stato])||'';
+          var _ts=x.apertoAt||x.createdAt||0;
+          var _d=_ts?new Date(_ts):null;
+          var _dIt=_d?(String(_d.getDate()).padStart(2,'0')+'/'+String(_d.getMonth()+1).padStart(2,'0')+'/'+_d.getFullYear()):'';
+          var _tit=x.numeroSinistro?('Sinistro n. '+x.numeroSinistro):'Sinistro (numero non ancora assegnato)';
+          var _sub=[_dIt, x.targa||'', x.compagnia||''].filter(function(v){ return v; }).join(' \u00b7 ');
+          return '<div onclick="sinApri(\''+x.id+'\')" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;">'
+            +'<div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;color:#0f172a;">'+_ic+' '+clEsc(_tit)+'</div>'
+            +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(_sub)+'</div></div>'
+            +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 9px;white-space:nowrap;">'+clEsc(_st)+'</div></div>';
+        }).join('')
+        +'</div>';
+    }
+    if(!iv.length) return box+'<div style="font-size:13px;color:#94a3b8;">Nessun intervento registrato.</div>'+_sinBox+'</div>';
     box+=iv.map(function(x){
       var f=x.fatturaTag||{};
       var d=String(x.data||'').split('-'); var dIt=(d.length===3)?(d[2]+'/'+d[1]+'/'+d[0]):(x.data||'');
@@ -18047,7 +18129,7 @@ function clRenderDettaglio(){
         +(f.numeroProforma?(' \u00b7 PF '+f.numeroProforma+'/'+(f.annoProforma||'')):'')+'</div></div>'
         +'<div style="font-weight:800;color:#334155;white-space:nowrap;">'+(f.totale?(typeof cvEuro==='function'?cvEuro(f.totale):f.totale):'\u2014')+'</div></div>';
     }).join('');
-    return box+'</div>';
+    return box+_sinBox+'</div>';
   })();
   h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
   /* Il contratto mostrava solo il modello: targa e numero interno servono per
@@ -22569,6 +22651,7 @@ function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefin
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
 function cvVendGo(stato){ window._vLim=40; _cvVendStato=stato||'in_attesa_pagamento';
   if(_cvVendStato==='in_attesa_firma') _cvVendStato='in_attesa_delibera';   /* scheda unificata */
+  try{ if(typeof eaSalvaSotto==='function') eaSalvaSotto('vendite', _cvVendStato); }catch(e){}
   sidebarNav('vendite'); }
 function cvVendAvanzaStato(cv){
   if(!cv || !cv.isContratto) return false;
@@ -23414,6 +23497,23 @@ function ivSupaLoad(){
 function ivChiaveCliente(nome, key){
   if(key) return key;
   return String(nome||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+/* I sinistri di un cliente, dal piu' recente. Un sinistro e' officina a tutti
+   gli effetti \u2014 l'auto entra, viene riparata, esce \u2014 e chi guarda la scheda
+   del cliente si aspetta di trovarlo li', non in un'altra sezione.
+   L'abbinamento passa per clienteKey; dove manca si ripiega sul nome, che e'
+   come lavora gia' ivChiaveCliente. */
+function clSinistriDi(key, nome){
+  try{
+    if(typeof sinLoad!=='function') return [];
+    var k=ivChiaveCliente(nome, key);
+    return sinLoad().filter(function(x){
+      if(!x || x.deleted) return false;
+      return ivChiaveCliente(x.nome, x.clienteKey)===k;
+    }).sort(function(a,b){
+      return (b.apertoAt||b.createdAt||0)-(a.apertoAt||a.createdAt||0);
+    });
+  }catch(e){ return []; }
 }
 function ivDelCliente(key, nome){
   var k=ivChiaveCliente(nome, key);
@@ -26669,7 +26769,7 @@ function cvVendRiga(cv, i){
       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'+cvEsc(targa)+'</div></td>'
     +'<td style="'+td+'"><div style="font-weight:700;">'+cvEsc(cliente)+'</div>'
       +(im.perm?('<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">permuta '+cvEuro(im.perm)+'</div>'):'')+'</td>'
-    +'<td style="'+num+'">'+cvEuro(im.tot)+'</td>'
+    +'<td style="'+num+'color:#0f172a;font-weight:700;">'+cvEuro(im.tot)+'</td>'
     +'<td style="'+num+'color:#16a34a;font-weight:700;">'+cvEuro(im.inc)+'</td>'
     +'<td style="'+num+'color:'+(im.dai>0?'#dc2626':'#94a3b8')+';font-weight:800;">'+cvEuro(im.dai)+'</td>'
     +'<td style="'+num+'color:#64748b;">'+(im.fin?cvEuro(im.fin):'\u2014')+'</td>'
