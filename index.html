@@ -6684,12 +6684,32 @@ function pSetTog(k,v){
   }catch(e){}
   return false;
 }
+/* Il TAN nelle provvigioni e' una tendina a mezzi punti (6, 6.5, 7 ...) perche'
+   le finanziarie riconoscono la provvigione a fasce. La delibera invece porta
+   il TAN reale, 9.51, che nella tendina non esiste: assegnarlo direttamente
+   lasciava il campo vuoto e il calcolo partiva da zero.
+   Qui si aggancia al passo piu' vicino: 9.51 -> 9.5. */
+function pTanVicino(tan){
+  try{
+    var v=parseFloat(String(tan).replace(',','.'));
+    if(!isFinite(v)) return '';
+    var sel=document.getElementById('pTan'); if(!sel) return '';
+    var best=null, dist=Infinity;
+    for(var i=0;i<sel.options.length;i++){
+      var o=sel.options[i].value; if(o==='') continue;
+      var n=parseFloat(o); if(!isFinite(n)) continue;
+      var d=Math.abs(n-v);
+      if(d<dist){ dist=d; best=o; }
+    }
+    return best||'';
+  }catch(e){ return ''; }
+}
 function pDaDelibera(){
   try{
     var r=pDiffDelibera(); var d=r.d;
     if(!d){ alert('Nessuna delibera confermata per questo cliente.\n\nControlla che il nome sia scritto come nel contratto.'); return; }
     var set=function(id,v){ var el=document.getElementById(id); if(el && v!==null && v!==undefined && v!=='') el.value=v; };
-    set('pTan', d.tan);
+    set('pTan', pTanVicino(d.tan));
     set('pComm', d.istruttoria);
     /* valore del veicolo e anticipo arrivano dalla delibera: se la delibera
        e' vecchia e non li ha, si ricavano dall'importo finanziato */
@@ -7089,7 +7109,11 @@ function pDiffDelibera(){
       if(a==null||b==null) return;
       if(Math.abs(a-b)>tol){ out.diff.push([et,a,b]); if(id) out.campi[id]=true; }
     };
-    cmp('TAN','pTan', nv('pTan'), d.tan, 0.01);
+    /* Tolleranza mezzo passo: il TAN in provvigione e' arrotondato di
+       proposito, e segnalare 9.5 contro 9.51 come differenza avrebbe fatto
+       comparire un avviso su ogni delibera. Oltre il quarto di punto invece
+       e' un'altra fascia, e li' la segnalazione serve. */
+    cmp('TAN','pTan', nv('pTan'), d.tan, 0.25);
     cmp('Commissioni','pComm', nv('pComm'), d.istruttoria, 1);
     var val=nv('pValore');
     if(val!==null) cmp('Importo finanziato','pValore', val-(nv('pAcconto')||0), d.importoFinanziato, 50);
@@ -7666,7 +7690,8 @@ function pModifica(id){
   }
   const sv=(eid,val)=>{const e=document.getElementById(eid);if(e&&val!=null)e.value=val;};
   sv('pCliente',r.cliente);sv('pMarca',r.marca);sv('pModello',r.modello);
-  sv('pValore',r.valore);sv('pAcconto',r.acconto);sv('pComm',r.comm);sv('pTan',r.tan);
+  sv('pValore',r.valore);sv('pAcconto',r.acconto);sv('pComm',r.comm);
+  sv('pTan', (typeof pTanVicino==='function') ? pTanVicino(r.tan) : r.tan);
   const ct=(gId,val)=>{
     if(!val) return;
     const g=document.getElementById(gId);
@@ -22655,6 +22680,21 @@ function cvFirmaMancante(cv){
   }catch(e){ return false; }
 }
 var _cvVendStato='in_attesa_pagamento';
+/* La scadenza dei pagamenti e' un campo data (2026-09-15), non un timestamp:
+   cvVendData non va bene, servirebbe l'ora che qui non esiste. */
+function cvVendScad(v){
+  var p=String(v||'').split('-');
+  return (p.length===3) ? (p[2]+'/'+p[1]+'/'+p[0]) : String(v||'');
+}
+/* Quanto manca alla scadenza, per capire a colpo d'occhio se e' passata. */
+function cvVendScadStato(v){
+  try{
+    var p=String(v||'').split('-'); if(p.length!==3) return null;
+    var d=new Date(+p[0], +p[1]-1, +p[2]);
+    var oggi=new Date(); oggi.setHours(0,0,0,0);
+    return Math.round((d-oggi)/86400000);
+  }catch(e){ return null; }
+}
 function cvVendData(ts){ if(!ts) return ''; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || eaIsContabilita(e) || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
@@ -26519,9 +26559,25 @@ function cvPagPannello(cv){
       if(!cvNum(p.importo)) return '';
       if(/permuta/i.test(p.metodo||'')) return '';
       var ok=p.confermato;
-      var meta = ok
+      /* Su un incasso non ancora arrivato la scadenza e' l'informazione che
+         serve: dice se si sta aspettando o si sta rincorrendo. Scaduta va in
+         rosso, gli altri casi restano in grigio per non allarmare a vuoto.
+         Su un pagamento gia' ricevuto non si scrive: e' storia. */
+      var _scad='';
+      if(!ok && p.scadenza){
+        var _gg=cvVendScadStato(p.scadenza);
+        var _txt='scadenza '+cvVendScad(p.scadenza);
+        var _col='#64748b';
+        if(_gg!==null){
+          if(_gg<0){ _txt+=' \u2014 scaduto da '+Math.abs(_gg)+(Math.abs(_gg)===1?' giorno':' giorni'); _col='#dc2626'; }
+          else if(_gg===0){ _txt+=' \u2014 oggi'; _col='#dc2626'; }
+          else if(_gg<=7){ _txt+=' \u2014 fra '+_gg+(_gg===1?' giorno':' giorni'); _col='#d97706'; }
+        }
+        _scad='<div style="font-size:11px;color:'+_col+';font-weight:700;margin-top:2px;">'+cvEsc(_txt)+'</div>';
+      }
+      var meta = (ok
         ? '<div style="font-size:11px;color:#16a34a;font-weight:700;margin-top:2px;">\u2713 ricevuto \u2014 '+cvEsc(p.confermatoDa||'\u2014')+(p.confermatoTs?(' \u00b7 '+cvVendData(p.confermatoTs)):'')+'</div>'
-        : '<div style="font-size:11px;color:#d97706;font-weight:700;margin-top:2px;">in attesa di conferma</div>';
+        : '<div style="font-size:11px;color:#d97706;font-weight:700;margin-top:2px;">in attesa di conferma</div>')+_scad;
       var btn=(!ok && puoConf)
         ? '<button onclick="event.stopPropagation();cvVendConfermaPag(\''+cv.id+'\','+ri+')" style="flex:0 0 auto;padding:8px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">Conferma ricezione</button>'
         : '';
