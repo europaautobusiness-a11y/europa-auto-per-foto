@@ -24754,7 +24754,48 @@ function simRendiTrascinabile(){
   /* doppio tocco sulla barra: rimette la finestra al centro */
   bar.ondblclick = function(){ dx=0; dy=0; applica(); };
 }
+/* ===== IL SIMULATORE SI RICORDA =====
+   Riaprendo Simula sullo stesso pagamento, il modulo ripartiva vuoto e TAN,
+   TAEG e anticipo andavano riscritti da capo. Chiudendo si fotografano i
+   campi; riaprendo si rimettono, e restano modificabili.
+   La fotografia sta in _cv, quindi segue la pratica anche fra una sessione e
+   l'altra invece di vivere solo finche' la pagina resta aperta. */
+function simFoto(){
+  try{
+    var box=document.getElementById(_simTargetId) || document.getElementById('sim-modal-box');
+    if(!box) return null;
+    var out={}, els=box.querySelectorAll('input,select');
+    for(var i=0;i<els.length;i++){
+      var e=els[i];
+      if(!e.id || e.id.indexOf('sim_')!==0) continue;
+      out[e.id]=(e.type==='checkbox')?(e.checked?1:0):e.value;
+    }
+    return Object.keys(out).length?out:null;
+  }catch(e){ return null; }
+}
+function simSalvaFoto(){
+  try{
+    if(_simPagIdx==null) return;
+    if(typeof _cv==='undefined' || !_cv || !_cv.pagamenti || !_cv.pagamenti[_simPagIdx]) return;
+    var f=simFoto(); if(f) _cv.pagamenti[_simPagIdx].simStato=f;
+  }catch(e){}
+}
+function simRimettiFoto(f){
+  try{
+    if(!f) return false;
+    var messi=0;
+    for(var k in f){
+      if(!Object.prototype.hasOwnProperty.call(f,k)) continue;
+      var e=(typeof simEl==='function')?simEl(k):document.getElementById(k);
+      if(!e) continue;
+      if(e.type==='checkbox') e.checked=!!f[k]; else e.value=f[k];
+      messi++;
+    }
+    return messi>0;
+  }catch(e){ return false; }
+}
 function simChiudiModal(){
+  simSalvaFoto();
   var m = document.getElementById('sim-modal');
   if(m){ m.style.display = 'none'; try{ m.parentNode.removeChild(m); }catch(e){} }
   _simTargetId = 'view-simulatore';
@@ -24810,7 +24851,10 @@ function simDaPreventivo(idx){
     _simCaricatoPrefill = {
       valoreBene: Math.round(_tot*100)/100,
       anticipo: Math.round((_tot-imp)*100)/100,
-      rate: (typeof cvNum==='function'?cvNum(pag.rate):parseFloat(pag.rate||0))
+      rate: (typeof cvNum==='function'?cvNum(pag.rate):parseFloat(pag.rate||0)),
+      /* Se su questo pagamento il simulatore era gia' stato usato, si riparte
+         da li': valore e anticipo dal preventivo servono solo la prima volta. */
+      foto: pag.simStato || null
     };
     simInit();
   }catch(e){ alert('Errore apertura simulatore: '+(e && e.message || e)); }
@@ -24820,6 +24864,14 @@ var _simCaricatoPrefill = null;
 function simApplicaPrefill(){
   try{
     if(!_simCaricatoPrefill) return;
+    /* Quando c'e' la fotografia di una simulazione precedente vince lei:
+       sovrascriverla col valore del preventivo cancellerebbe TAN, TAEG e
+       anticipo appena inseriti a mano. */
+    if(_simCaricatoPrefill.foto && simRimettiFoto(_simCaricatoPrefill.foto)){
+      _simCaricatoPrefill = null;
+      simCalcNow();
+      return;
+    }
     var i = simEl('sim_C10');   // valore bene
     var a = simEl('sim_C11');   // anticipo
     var d = simEl('sim_E10');   // durata
@@ -25721,6 +25773,7 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
       body='<style>@media(min-width:820px){.cv-vend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;}.cv-vend-grid>div{margin-bottom:0!important;height:100%;}}</style>'
         +'<div class="cv-vend-grid">'+list.slice(0,_vLim).map(cvVendCard).join('')+'</div>'+_vPiu;
       wrap.innerHTML='<div style="padding:4px;">'+tabs+_tot+_vCnt+body+'</div>';
+      try{ cvVendRiapri(); }catch(e){}
       return;
     }
     var _righe=list.slice(0,_vLim).map(cvVendRiga).join('');
@@ -25743,6 +25796,7 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
       +'</tr></thead><tbody>'+_righe+'</tbody></table></div></div>'+_vPiu;
   }
   wrap.innerHTML='<div style="padding:4px;">'+tabs+_tot+_vCnt+body+'</div>';
+  try{ cvVendRiapri(); }catch(e){}
 }
 
 function cvDeliberaForm(id){
@@ -26859,11 +26913,16 @@ function cvVendRiga(cv, i){
     +'</tr>';
 
   /* Il dettaglio e' la scheda di prima, intera: nessun pulsante perso. */
-  h+='<tr id="vd'+i+'" style="display:none;"><td colspan="8" style="background:#fbfdff;border-bottom:1px solid #e2e8f0;padding:0;">'
+  h+='<tr id="vd'+i+'" data-cv="'+cvEsc(cv.id)+'" style="display:none;"><td colspan="8" style="background:#fbfdff;border-bottom:1px solid #e2e8f0;padding:0;">'
     +'<div style="padding:12px;max-width:100%;">'+cvVendCard(cv)+'</div></td></tr>';
   return h;
 }
 
+/* Quali righe sono aperte, per identificativo della pratica e non per
+   posizione: la tabella si ridisegna da sola quando arrivano dati da Supabase,
+   e con la posizione l'apertura si perdeva. E' quello che faceva sembrare che
+   la riga si richiudesse da sola appena aperta. */
+var _cvVendAperte = {};
 function cvVendApri(i){
   var d=document.getElementById('vd'+i), r=document.getElementById('vr'+i), f=document.getElementById('vf'+i);
   if(!d) return;
@@ -26871,6 +26930,24 @@ function cvVendApri(i){
   d.style.display = chiuso ? '' : 'none';
   if(r) r.style.background = chiuso ? '#f8fafc' : '';
   if(f) f.textContent = chiuso ? '\u25be' : '\u25b8';
+  try{
+    var id=d.getAttribute('data-cv');
+    if(id){ if(chiuso) _cvVendAperte[id]=true; else delete _cvVendAperte[id]; }
+  }catch(e){}
+}
+/* Dopo ogni ridisegno le righe che erano aperte tornano aperte. */
+function cvVendRiapri(){
+  try{
+    for(var id in _cvVendAperte){
+      if(!Object.prototype.hasOwnProperty.call(_cvVendAperte,id)) continue;
+      var d=document.querySelector('tr[data-cv="'+id+'"]');
+      if(!d) continue;
+      var i=String(d.id||'').replace('vd','');
+      d.style.display='';
+      var r=document.getElementById('vr'+i); if(r) r.style.background='#f8fafc';
+      var f=document.getElementById('vf'+i); if(f) f.textContent='\u25be';
+    }
+  }catch(e){}
 }
 
 function cvVendCard(cv){
