@@ -21119,16 +21119,44 @@ function cvBuildHTML(c, tipo){
       var acconti=_pagAll.filter(function(x){ return x!==fp; }).reduce(function(s,x){ return s+cvNum(x.importo); },0);
       var kEst=parseInt(c.estinzioneMesi,10)||18;
       if(kEst>=mesi) kEst=Math.max(1,Math.round(mesi/3));
-      /* debito residuo stimato: valore attuale delle rate mancanti */
+      /* ===== CAPITALE RESIDUO =====
+         Prima si scontava al TAN la rata vera della delibera. Ma quella rata
+         comprende polizze, CPI e spese finanziate: trattarla come se fosse
+         tutta capitale e interessi dell'importo finanziato faceva uscire un
+         residuo piu' alto del debito reale, e lo scarto cresceva col tasso.
+         Su 20.000 a 60 mesi con TAN 8%, il debito dopo 18 mesi e' 14.813:
+         il vecchio calcolo ne dava quasi 17.800. Da li' il cerotto 0,96 che
+         c'era qui sotto, tarato su un caso solo e sbagliato su tutti gli altri.
+
+         La formula giusta guarda solo importo finanziato, TAN e durata, e da'
+         il capitale ancora dovuto dopo k rate. Verificata contro
+         l'ammortamento calcolato rata per rata: coincidono al centesimo.
+
+         Resta fuori la penale di estinzione, che si somma a parte. */
       var resid;
-      if(tan>0){ var i=tan/100/12, n=mesi-kEst; resid=rata*(1-Math.pow(1+i,-n))/i; }
-      else { resid=rata*(mesi-kEst); }
-      /* Il piano teorico sovrastima rispetto ai conteggi reali della finanziaria
-         (verificato col referente): riallineo la stima. Se e' stato inserito
-         l'importo letto sul piano di ammortamento, vince quello. */
+      if(tan>0){
+        var i=tan/100/12, q=Math.pow(1+i,mesi), qk=Math.pow(1+i,kEst);
+        resid=impFin*(q-qk)/(q-1);
+      } else {
+        resid=impFin*(mesi-kEst)/mesi;   /* senza interessi il capitale scende in parti uguali */
+      }
+      /* Riduzione commerciale voluta: meno 3% fino a 14.000, meno 4% sopra.
+         Nasce da una scelta di Davide (luglio 2026) per mostrare al cliente
+         una cifra piu' invitante.
+         ATTENZIONE a non confonderla con una correzione tecnica: prima
+         compensava una formula che gonfiava il residuo, ora si applica a un
+         calcolo corretto e quindi lo porta SOTTO il debito reale \u2014 circa
+         600 euro su 20.000 al 8%. E' voluto, ed e' il motivo per cui sotto
+         resta scritto "salvo conteggio della finanziaria".
+         Cambiare qui le due percentuali per rivedere la scelta. */
+      var EST_SCONTO_FINO_14K = 0.97;   /* meno 3% */
+      var EST_SCONTO_OLTRE_14K = 0.96;  /* meno 4% */
+      resid = resid * (resid > 14000 ? EST_SCONTO_OLTRE_14K : EST_SCONTO_FINO_14K);
+
+      /* L'importo letto sul piano di ammortamento della finanziaria vince
+         sempre, e non viene ridotto: quello e' il numero vero. */
       var residManuale=cvNum(c.estinzioneImporto)||0;
-      if(residManuale>0){ resid=Math.round(residManuale); }
-      else { resid=Math.round(resid*(resid>14000?0.96:0.97)); }
+      resid = Math.round(residManuale>0 ? residManuale : resid);
       var quotaPag=Math.round(rata*kEst);
       var totEst=quotaPag+acconti+resid;
       var totFin=Math.round(rata*mesi)+acconti;
