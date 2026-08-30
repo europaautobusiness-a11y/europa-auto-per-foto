@@ -508,6 +508,7 @@ html, body{
     <button class="sidebar-item si-provv" id="si-provv" onclick="sidebarNav('provv',this)"><span class="si-icon">&#128182;</span><span class="si-label"> Provvigioni</span></button>
     <button class="sidebar-item" id="si-presenze" onclick="sidebarNav('presenze',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Presenze</span></button>
     <button class="sidebar-item" id="si-fornitori" onclick="sidebarNav('fornitori',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127970;</span><span class="si-label"> Fornitori</span></button>
+    <button class="sidebar-item" id="si-welfare" onclick="sidebarNav('welfare',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127873;</span><span class="si-label"> Fringe benefit</span></button>
     <button class="sidebar-item" id="si-statistiche" onclick="sidebarNav('statistiche',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128202;</span><span class="si-label"> Statistiche</span></button>
     <button class="sidebar-item" id="si-clienti" onclick="sidebarNav('clienti',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Clienti</span></button>
     <button class="sidebar-item" id="si-impostazioni" onclick="apriGestioneCredenziali()" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9881;&#65039;</span><span class="si-label"> Impostazioni</span></button>
@@ -1265,6 +1266,8 @@ html, body{
 </div>
 
 <!-- PERMESSI -->
+<div class="view" id="view-welfare" style="padding:22px 16px;"></div>
+
 <div class="view" id="view-permessi" style="padding:22px 16px;">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
     <div>
@@ -10237,7 +10240,9 @@ function applyRoleUI() {
   try{ var _rg=document.getElementById('mz-tab-reg'); if(_rg) _rg.style.display=(role==='admin')?'':'none'; }catch(e){}
   try{ var _bc=document.getElementById('btnContabApp'); if(_bc){ var _em=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); _bc.style.display=(role==='admin'||eaIsContabilita(_em))?'block':'none'; } }catch(e){}
   var ROLE_VIEWS = {
-    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
+    /* 'welfare' compare solo qui: i fringe benefit sono dati di retribuzione
+       e li vede soltanto l'amministratore. Nemmeno la contabilita'. */
+    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare'],
     /* staff = il venditore: tutto tranne la parte amministrativa. Magazzino,
        CRM e Clienti mancavano da questo elenco, ed e' meta' del motivo per
        cui a Rudy sparivano. */
@@ -10498,6 +10503,246 @@ function presenzeRenderDipendentiAdmin() {
 
 var PRESENZE_KEY     = 'ea_presenze_v2';
 var PRESENZE_DEL_KEY = 'ea_presenze_del_v1';
+
+/* ============================================================================
+   FRINGE BENEFIT — contatore per dipendente
+   ----------------------------------------------------------------------------
+   A cosa serve. La soglia annua e' 1.000 euro, 2.000 per chi ha figli
+   fiscalmente a carico (Legge di Bilancio 2025, confermata per il triennio
+   2025-2027). Superandola anche di un solo euro diventa imponibile TUTTO
+   l'importo erogato nell'anno, non l'eccedenza: e' una franchigia impropria,
+   la regola del tutto o niente. Da qui il blocco, che non e' un avviso
+   ignorabile ma un rifiuto.
+
+   Cosa NON e'. Non e' la busta paga. Le paghe le fa uno studio esterno e la
+   verita' sta li': questo serve a decidere prima di erogare e a mandare allo
+   studio il riepilogo. Se i due numeri divergono, vince il loro.
+
+   La soglia da 2.000 non e' automatica: serve la dichiarazione scritta del
+   dipendente col codice fiscale dei figli. Senza quella agli atti, qui si
+   conta 1.000 anche se i figli esistono.
+
+   Visibile solo all'amministratore: sono dati di retribuzione.
+============================================================================ */
+var WF_KEY = 'ea_welfare_v1';
+var WF_SOGLIA_BASE = 1000;
+var WF_SOGLIA_FIGLI = 2000;
+var WF_TIPI = ['Buono carburante','Buono spesa','Altro buono','Altro benefit'];
+
+function wfLoad(){
+  try{ return JSON.parse(localStorage.getItem(WF_KEY)||'{}')||{}; }catch(e){ return {}; }
+}
+function wfSave(d){
+  try{
+    if(typeof eaLsSet==='function') eaLsSet(WF_KEY, JSON.stringify(d), 'fringe benefit');
+    else localStorage.setItem(WF_KEY, JSON.stringify(d));
+  }catch(e){}
+  try{ if(typeof supaUpsert==='function') supaUpsert('welfare_app', { id:'welfare', data:d, updatedAt:Date.now() }); }catch(e){}
+}
+function wfSupaLoad(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('welfare_app').select('id,data').eq('id','welfare').limit(1).then(function(res){
+      if(!res || res.error) return;
+      var r=(res.data||[])[0]; var d=r&&r.data;
+      if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+      if(!d) return;
+      /* vince la copia piu' recente: qui si lavora da un dispositivo solo,
+         ma se domani ne useremo due non si perde niente */
+      var loc=wfLoad();
+      if((+(d.updatedAt||0)) >= (+(loc.updatedAt||0))){
+        try{ localStorage.setItem(WF_KEY, JSON.stringify(d)); }catch(e){}
+        var v=document.getElementById('view-welfare');
+        if(v && v.classList.contains('active')) wfRender();
+      }
+    });
+  }catch(e){}
+}
+function wfEsc(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function wfEuro(n){ n=Number(n)||0; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' \u20ac'; }
+function wfAnno(){ return (new Date()).getFullYear(); }
+
+/* chiave stabile per dipendente: l'email, che non cambia come il nome */
+function wfChiave(d){ return String((d&&d.email)||'').toLowerCase().trim(); }
+
+function wfDati(k){
+  var tutto=wfLoad(); var a=String(wfAnno());
+  tutto[a]=tutto[a]||{};
+  tutto[a][k]=tutto[a][k]||{ figli:false, figliData:'', figliNote:'', voci:[] };
+  return tutto[a][k];
+}
+function wfScrivi(k, rec){
+  var tutto=wfLoad(); var a=String(wfAnno());
+  tutto[a]=tutto[a]||{}; tutto[a][k]=rec; tutto.updatedAt=Date.now();
+  wfSave(tutto);
+}
+function wfSoglia(rec){ return rec && rec.figli ? WF_SOGLIA_FIGLI : WF_SOGLIA_BASE; }
+function wfErogato(rec){
+  return ((rec&&rec.voci)||[]).reduce(function(s,v){ return s + (Number(v.importo)||0); }, 0);
+}
+
+/* ---- schermata ---- */
+function wfRender(){
+  var wrap=document.getElementById('view-welfare'); if(!wrap) return;
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')){
+    wrap.innerHTML='<div style="padding:40px;text-align:center;color:#94a3b8;">Sezione riservata.</div>';
+    return;
+  }
+  var dip=(typeof tcLoadDip==='function')?tcLoadDip():[];
+  dip=dip.filter(function(d){ return d && d.nome && wfChiave(d); });
+
+  var h='<div style="max-width:900px;margin:0 auto;">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px;">'
+    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit '+wfAnno()+'</h2>'
+    +'<button onclick="wfRiepilogo()" style="padding:8px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Riepilogo per lo studio paghe</button>'
+    +'</div>'
+    +'<div style="font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:16px;">'
+    +'Soglia annua <b>'+wfEuro(WF_SOGLIA_BASE)+'</b>, <b>'+wfEuro(WF_SOGLIA_FIGLI)+'</b> con figli fiscalmente a carico. '
+    +'Superandola anche di un euro diventa imponibile <b>l\u2019intero importo</b> dell\u2019anno, non l\u2019eccedenza. '
+    +'La busta paga resta quella dello studio: qui si decide prima di erogare.</div>';
+
+  if(!dip.length){
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;text-align:center;color:#94a3b8;font-size:14px;">'
+      +'Nessun dipendente in anagrafica. Aggiungili da <b>Presenze</b>.</div></div>';
+    wrap.innerHTML=h; return;
+  }
+
+  dip.forEach(function(d){
+    var k=wfChiave(d), rec=wfDati(k);
+    var soglia=wfSoglia(rec), erog=wfErogato(rec), res=soglia-erog;
+    var perc=Math.min(100, soglia>0 ? Math.round(erog/soglia*100) : 0);
+    var col = res<0 ? '#dc2626' : (perc>=85 ? '#d97706' : '#16a34a');
+
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:12px;">'
+      +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+      +'<div style="font-weight:800;font-size:15px;color:#0f172a;">'+wfEsc(d.nome)+'</div>'
+      +'<div style="font-size:13px;color:'+col+';font-weight:800;">'+wfEuro(erog)+' su '+wfEuro(soglia)
+      +' <span style="font-weight:600;color:#64748b;">\u00b7 restano '+wfEuro(Math.max(0,res))+'</span></div>'
+      +'</div>'
+      +'<div style="height:7px;background:#f1f5f9;border-radius:99px;margin:8px 0 6px;overflow:hidden;">'
+      +'<div style="height:100%;width:'+perc+'%;background:'+col+';"></div></div>';
+
+    if(res<0){
+      h+='<div style="background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:8px;padding:9px 11px;font-size:12.5px;font-weight:700;margin-bottom:8px;">'
+        +'Soglia superata di '+wfEuro(-res)+'. L\u2019intero importo di '+wfEuro(erog)+' \u00e8 imponibile, non solo l\u2019eccedenza. Avvisa subito lo studio paghe.</div>';
+    }
+
+    /* dichiarazione figli a carico */
+    h+='<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:6px 0;">'
+      +'<input type="checkbox" '+(rec.figli?'checked':'')+' onchange="wfFigli(\''+wfEsc(k)+'\',this.checked)" style="width:17px;height:17px;">'
+      +'Dichiarazione figli a carico agli atti \u2014 soglia '+wfEuro(WF_SOGLIA_FIGLI)+'</label>'
+      +(rec.figli
+        ? '<div style="font-size:11.5px;color:#64748b;margin:-2px 0 8px 25px;">Consegnata il '+wfEsc(rec.figliData||'\u2014')+'. Serve il codice fiscale dei figli: senza, la soglia resta '+wfEuro(WF_SOGLIA_BASE)+'.</div>'
+        : '<div style="font-size:11.5px;color:#64748b;margin:-2px 0 8px 25px;">Senza dichiarazione scritta la soglia resta '+wfEuro(WF_SOGLIA_BASE)+', anche se i figli ci sono.</div>');
+
+    /* voci gia' erogate */
+    if((rec.voci||[]).length){
+      h+='<div style="border-top:1px solid #f1f5f9;padding-top:8px;">';
+      rec.voci.forEach(function(v,i){
+        h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:13px;">'
+          +'<div style="min-width:0;"><b>'+wfEsc(v.tipo)+'</b>'
+          +'<span style="color:#94a3b8;"> \u00b7 '+wfEsc(v.data||'')+(v.note?(' \u00b7 '+wfEsc(v.note)):'')+'</span></div>'
+          +'<div style="white-space:nowrap;"><b>'+wfEuro(v.importo)+'</b>'
+          +' <button onclick="wfTogliVoce(\''+wfEsc(k)+'\','+i+')" title="Togli" style="border:none;background:none;color:#94a3b8;font-size:14px;cursor:pointer;padding:2px 4px;">\u2715</button></div>'
+          +'</div>';
+      });
+      h+='</div>';
+    }
+
+    /* nuova erogazione */
+    h+='<div style="border-top:1px solid #f1f5f9;margin-top:8px;padding-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+      +'<select id="wf_t_'+wfEsc(k)+'" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      + WF_TIPI.map(function(t){ return '<option>'+wfEsc(t)+'</option>'; }).join('')
+      +'</select>'
+      +'<input id="wf_i_'+wfEsc(k)+'" type="number" step="0.01" placeholder="importo \u20ac" style="flex:0 1 110px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_n_'+wfEsc(k)+'" type="text" placeholder="note" style="flex:1 1 130px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<button onclick="wfAggiungi(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:8px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Aggiungi</button>'
+      +'</div>'
+      +'</div>';
+  });
+
+  h+='</div>';
+  wrap.innerHTML=h;
+}
+
+function wfFigli(k, on){
+  var rec=wfDati(k);
+  rec.figli=!!on;
+  rec.figliData = on ? (new Date()).toLocaleDateString('it-IT') : '';
+  wfScrivi(k, rec);
+  wfRender();
+}
+
+function wfAggiungi(k){
+  var t=document.getElementById('wf_t_'+k), i=document.getElementById('wf_i_'+k), n=document.getElementById('wf_n_'+k);
+  var imp=parseFloat((i&&i.value)||'0');
+  if(!(imp>0)){ alert('Scrivi l\u2019importo.'); return; }
+  var rec=wfDati(k), soglia=wfSoglia(rec), erog=wfErogato(rec);
+  /* Il blocco: qui non basta avvisare. Sopra la soglia diventa imponibile
+     tutto l'erogato dell'anno, quindi il danno non e' proporzionale
+     all'errore ed e' giusto che l'operazione non passi. */
+  if(erog+imp > soglia){
+    alert('Non si puo\u2019 registrare: si supererebbe la soglia.\n\n'
+      +'Gia\u2019 erogato: '+wfEuro(erog)+'\n'
+      +'Questa voce: '+wfEuro(imp)+'\n'
+      +'Totale: '+wfEuro(erog+imp)+' su un tetto di '+wfEuro(soglia)+'\n\n'
+      +'Superando la soglia diventerebbe imponibile l\u2019INTERO importo dell\u2019anno, non solo l\u2019eccedenza.\n'
+      +'Restano disponibili '+wfEuro(soglia-erog)+'.');
+    return;
+  }
+  rec.voci=rec.voci||[];
+  rec.voci.push({
+    tipo:(t&&t.value)||'Altro benefit',
+    importo:Math.round(imp*100)/100,
+    note:((n&&n.value)||'').trim(),
+    data:(new Date()).toLocaleDateString('it-IT'),
+    ts:Date.now()
+  });
+  wfScrivi(k, rec);
+  wfRender();
+  if(typeof tcToastNew==='function') tcToastNew('Registrato \u00b7 restano '+wfEuro(soglia-wfErogato(rec)), true);
+}
+
+function wfTogliVoce(k, idx){
+  var rec=wfDati(k);
+  var v=(rec.voci||[])[idx]; if(!v) return;
+  if(!confirm('Togliere '+v.tipo+' da '+wfEuro(v.importo)+'?')) return;
+  rec.voci.splice(idx,1);
+  wfScrivi(k, rec);
+  wfRender();
+}
+
+/* Riepilogo da girare allo studio paghe: i fringe benefit devono comparire in
+   busta, quindi chi le elabora deve saperlo. */
+function wfRiepilogo(){
+  var dip=(typeof tcLoadDip==='function')?tcLoadDip():[];
+  var righe=[], tot=0;
+  dip.forEach(function(d){
+    var k=wfChiave(d); if(!k) return;
+    var rec=wfDati(k), e=wfErogato(rec);
+    if(!(e>0)) return;
+    righe.push(d.nome+' \u2014 soglia '+wfEuro(wfSoglia(rec))+', erogato '+wfEuro(e));
+    (rec.voci||[]).forEach(function(v){
+      righe.push('    \u00b7 '+v.data+'  '+v.tipo+'  '+wfEuro(v.importo)+(v.note?('  ('+v.note+')'):''));
+    });
+    tot+=e;
+  });
+  if(!righe.length){ alert('Nessuna erogazione registrata quest\u2019anno.'); return; }
+  var testo='Fringe benefit '+wfAnno()+' \u2014 Europa Auto Srl\n\n'
+    + righe.join('\n')
+    + '\n\nTotale erogato: '+wfEuro(tot)
+    + '\n\nSoglie applicate: '+wfEuro(WF_SOGLIA_BASE)+' (base), '+wfEuro(WF_SOGLIA_FIGLI)+' con figli a carico dichiarati.';
+  if(typeof eaComponiMessaggio==='function'){ eaComponiMessaggio(testo); return; }
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(testo);
+      alert('Riepilogo copiato: incollalo nella mail allo studio paghe.\n\n'+testo);
+      return;
+    }
+  }catch(e){}
+  alert(testo);
+}
+
 var PRESENZE_DIP_KEY = 'ea_presenze_dipendenti';
 var PRESENZE_SHEET   = 'Presenze';
 var DIPENDENTI_SHEET = 'Dipendenti';
@@ -12366,6 +12611,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
+  if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='bmvalue'){ try{ if(typeof bmRender==='function') bmRender(); }catch(e){} }
