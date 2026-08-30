@@ -7448,17 +7448,25 @@ function pSupaLoad(){
         if(res && res.error && typeof supaSegnalaErrore==='function') supaSegnalaErrore('provvigioni_app', res.error.message);
         return;
       }
-      var byId={};
+      var byId={}, tomb=pTombLoad();
       (res.data||[]).forEach(function(r){
         var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
-        if(d && d.id!=null) byId[String(d.id)]=d;
+        if(!d || d.id==null) return;
+        /* Lapide arrivata dal cloud: qualcuno l'ha cancellata altrove. Si
+           registra anche qui, cosi' questo dispositivo smette di rimandarla su. */
+        if(d.deleted){ tomb[String(d.id)]=d.updatedAt||Date.now(); return; }
+        byId[String(d.id)]=d;
       });
-      /* quello che c'e' solo qui sul telefono torna su: nessuna riga si perde */
+      pTombSave(tomb);
+      /* quello che c'e' solo qui sul telefono torna su: nessuna riga si perde,
+         tranne quelle cancellate di proposito \u2014 quelle restano cancellate. */
       var locals=(_pRegCache && _pRegCache.length) ? _pRegCache : pLoadReg();
       var ts=function(r){ return +((r && r.updatedAt) || 0); };
       locals.forEach(function(r){
         if(!r || r.id==null) return;
-        var k=String(r.id), ex=byId[k];
+        var k=String(r.id);
+        if(tomb[k]) return;              /* cancellata: non torna su e non ricompare */
+        var ex=byId[k];
         if(!ex){ byId[k]=r; pSupaUpsert(r); return; }
         if(ts(r) > ts(ex)){ byId[k]=r; pSupaUpsert(r); }
       });
@@ -7788,6 +7796,35 @@ function pModifica(id){
   }, 300);
 }
 
+/* ===== LAPIDI DELLE PROVVIGIONI CANCELLATE =====
+   pSupaLoad e' scritto per non perdere niente: se trova una riga presente in
+   locale e assente sul cloud la considera nuova e la rimanda su. Ottimo finche'
+   si aggiunge, disastroso quando si cancella \u2014 basta un altro dispositivo o
+   un'altra scheda con la vecchia copia e la provvigione torna.
+   La lapide e' il segno che dice "questa e' stata cancellata di proposito".
+   Vive in due posti: qui in locale, e su Supabase come riga con deleted:true,
+   cosi' la cancellazione arriva anche agli altri dispositivi. */
+/* La chiave e' scritta dentro le funzioni e non in una costante: queste
+   vengono chiamate anche da pSupaLoad, che nel file sta piu' in alto, e una
+   costante dichiarata qui sarebbe ancora vuota in quel momento. */
+function pTombLoad(){
+  try{ return JSON.parse(localStorage.getItem('ea_provv_tomb')||'{}')||{}; }catch(e){ return {}; }
+}
+function pTombSave(t){
+  try{
+    if(typeof eaLsSet==='function') eaLsSet('ea_provv_tomb', JSON.stringify(t), 'provvigioni cancellate');
+    else localStorage.setItem('ea_provv_tomb', JSON.stringify(t));
+  }catch(e){}
+}
+function pTombAdd(id){
+  if(id==null) return;
+  var t=pTombLoad(); t[String(id)]=Date.now(); pTombSave(t);
+}
+function pTombHa(id){
+  if(id==null) return false;
+  return !!pTombLoad()[String(id)];
+}
+
 function pElimina(id) {
   /* La domanda diceva "Eliminare questa vendita?" e non era vero: qui si
      toglie solo la riga dal registro provvigioni. Il contratto resta dov'e'.
@@ -7795,7 +7832,13 @@ function pElimina(id) {
   if (!confirm('Togliere questa provvigione dal registro?\n\nLa vendita non viene toccata: contratto, fattura e scheda cliente restano come sono.')) return;
   pSaveReg(pLoadReg().filter(r => r.id !== id));
   try{ _pRegCache = _pRegCache.filter(function(r){ return String(r.id) !== String(id); }); }catch(e){}
-  pSupaDelete(id);
+  pTombAdd(id);
+  /* Prima la lapide sul cloud, poi la cancellazione vera. Se scrivessimo solo
+     la cancellazione, un altro dispositivo con la copia vecchia la
+     ripescherebbe come riga nuova. Con la lapide sa che e' stata tolta. */
+  try{
+    if(typeof supaUpsert==='function') supaUpsert('provvigioni_app', { id:String(id), deleted:true, updatedAt:Date.now() });
+  }catch(e){}
   pGsDelete(id);
   pRenderReg(); pAggStats(); try{pRenderFonteChart();}catch(e){} try{pRenderStorico();}catch(e){} try{pRenderFinStats();}catch(e){}
 }
