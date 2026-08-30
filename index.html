@@ -21120,25 +21120,28 @@ function cvBuildHTML(c, tipo){
       var kEst=parseInt(c.estinzioneMesi,10)||18;
       if(kEst>=mesi) kEst=Math.max(1,Math.round(mesi/3));
       /* ===== CAPITALE RESIDUO =====
-         Prima si scontava al TAN la rata vera della delibera. Ma quella rata
-         comprende polizze, CPI e spese finanziate: trattarla come se fosse
-         tutta capitale e interessi dell'importo finanziato faceva uscire un
-         residuo piu' alto del debito reale, e lo scarto cresceva col tasso.
-         Su 20.000 a 60 mesi con TAN 8%, il debito dopo 18 mesi e' 14.813:
-         il vecchio calcolo ne dava quasi 17.800. Da li' il cerotto 0,96 che
-         c'era qui sotto, tarato su un caso solo e sbagliato su tutti gli altri.
-
-         La formula giusta guarda solo importo finanziato, TAN e durata, e da'
-         il capitale ancora dovuto dopo k rate. Verificata contro
-         l'ammortamento calcolato rata per rata: coincidono al centesimo.
-
-         Resta fuori la penale di estinzione, che si somma a parte. */
-      var resid;
-      if(tan>0){
-        var i=tan/100/12, q=Math.pow(1+i,mesi), qk=Math.pow(1+i,kEst);
-        resid=impFin*(q-qk)/(q-1);
-      } else {
-        resid=impFin*(mesi-kEst)/mesi;   /* senza interessi il capitale scende in parti uguali */
+         In ordine di attendibilita':
+         1. il piano di ammortamento del simulatore, salvato quando si preme
+            "Usa nel preventivo". E' il file Excel della finanziaria, quindi e'
+            il numero vero: si sviluppa sul montante e comprende polizze, CPI
+            e spese.
+         2. in mancanza, una stima sul solo importo finanziato. Esce piu'
+            bassa del vero \u2014 di parecchio quando ci sono polizze dentro \u2014
+            perche' ignora tutto cio' che non e' capitale. Serve solo a non
+            lasciare vuoto il confronto: appena si passa dal simulatore viene
+            sostituita dal dato buono. */
+      var resid=null, _daPiano=false;
+      try{
+        var _cr=(fp.finDati && fp.finDati.capitaleResiduo) || null;
+        if(_cr && _cr[kEst]!=null){ resid=Number(_cr[kEst]); _daPiano=true; }
+      }catch(e){}
+      if(resid===null){
+        if(tan>0){
+          var i=tan/100/12, q=Math.pow(1+i,mesi), qk=Math.pow(1+i,kEst);
+          resid=impFin*(q-qk)/(q-1);
+        } else {
+          resid=impFin*(mesi-kEst)/mesi;
+        }
       }
       /* Riduzione commerciale voluta: meno 3% fino a 14.000, meno 4% sopra.
          Nasce da una scelta di Davide (luglio 2026) per mostrare al cliente
@@ -25309,6 +25312,26 @@ function simUsaNelPreventivo(){
       (_cv.pagamenti[_simPagIdx].finDati.polizzaCpi||0)
       + (_cv.pagamenti[_simPagIdx].finDati.polizzaCvt||0)
       + (_cv.pagamenti[_simPagIdx].finDati.polizzaEasyCare||0);
+
+    /* ===== CAPITALE RESIDUO DAL PIANO DI AMMORTAMENTO =====
+       L'estinzione anticipata non si puo' ricavare dall'importo finanziato:
+       il piano della finanziaria si sviluppa sul montante, che comprende
+       polizze, CPI e spese. Per questo una stima fatta sul solo finanziato
+       usciva molto piu' bassa del vero.
+       Qui si prende il numero dal piano che il simulatore ha appena
+       calcolato \u2014 e' lo stesso file Excel della finanziaria, quindi e' il
+       dato buono. Si salva l'intera colonna del capitale residuo, cosi' la
+       stampa funziona a qualunque mese di estinzione e anche a simulatore
+       chiuso. */
+    try{
+      var _piano=(typeof simPianoDati==='function')?simPianoDati():[];
+      var _res={};
+      _piano.forEach(function(r){
+        var _n=parseInt(r.n,10);
+        if(_n>0 && typeof r.res==='number') _res[_n]=Math.round(r.res*100)/100;
+      });
+      _cv.pagamenti[_simPagIdx].finDati.capitaleResiduo = _res;
+    }catch(e){}
     simChiudiModal();
     if(typeof cvRenderPag==='function') cvRenderPag();
     if(typeof cvLive==='function') cvLive();
