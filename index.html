@@ -18932,6 +18932,47 @@ function clMostraRecapiti2(){
   }catch(e){}
 }
 
+/* ===== I DATI IDENTIFICATIVI VIAGGIANO NEI DUE SENSI =====
+   Nome, cognome, ragione sociale, codice fiscale, P.IVA, SDI, telefono e mail
+   sono la stessa persona ovunque compaia: correggendoli in un posto vanno
+   corretti anche nell'altro, altrimenti la fattura esce con un codice fiscale
+   sbagliato che qualcuno aveva gia' corretto in anagrafica.
+
+   La residenza NO, ed e' voluto: sul contratto resta quella del giorno della
+   firma. Se il cliente trasloca, il contratto vecchio deve continuare a dire
+   dove abitava allora — e' un documento, non una scheda.
+
+   Non si toccano le pratiche gia' fatturate: li' l'anagrafica e' finita su un
+   documento fiscale trasmesso allo SDI, e cambiarla nel gestionale creerebbe
+   una differenza fra quello che vedi e quello che e' stato inviato. */
+var CL_CAMPI_IDENTITA = ['nome','cognome','ragSociale','cf','piva','sdi','telefono','email','telefono2','email2','business'];
+
+function clPropagaAPratiche(key, dati){
+  try{
+    if(typeof cvLoad!=='function' || typeof cvSave!=='function') return 0;
+    var list=cvLoad(), toccate=0;
+    list.forEach(function(cv){
+      if(!cv || cv.deleted || !cv.cliente) return;
+      /* la pratica appartiene a questo cliente? */
+      var k=cv.cliente.clienteKey || ((typeof clKeyOf==='function')?clKeyOf(cv.cliente):'');
+      if(k!==key) return;
+      if(cv.fattura){ return; }   /* gia' fatturata: non si tocca */
+      var cambiato=false;
+      CL_CAMPI_IDENTITA.forEach(function(c){
+        if(dati[c]===undefined) return;
+        if(String(cv.cliente[c]||'')!==String(dati[c]||'')){ cv.cliente[c]=dati[c]; cambiato=true; }
+      });
+      if(cambiato){
+        cv.updatedAt=Date.now();
+        toccate++;
+        try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+      }
+    });
+    if(toccate) cvSave(list);
+    return toccate;
+  }catch(e){ return 0; }
+}
+
 function clSalvaAnagrafica(keyEnc){
   var key=decodeURIComponent(keyEnc); var ov=clStore(); var e=ov[key]||{};
   var g=function(id){var el=document.getElementById(id);return el?el.value.trim():'';};
@@ -18941,7 +18982,11 @@ function clSalvaAnagrafica(keyEnc){
   e.telefono2=g('cl_telefono2'); e.email2=g('cl_email2');
   e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
   clSupaUpsert(key);
-  if(typeof tcToastNew==='function') tcToastNew('\ud83d\udcbe Anagrafica salvata',true);
+  var _n=clPropagaAPratiche(key, e);
+  if(typeof tcToastNew==='function'){
+    tcToastNew('\ud83d\udcbe Anagrafica salvata'
+      + (_n ? (' \u00b7 aggiornate '+_n+(_n===1?' pratica':' pratiche')) : ''), true);
+  }
   clRender();
 }
 function clAddIndForm(keyEnc){
@@ -21268,6 +21313,10 @@ function cvLogMostra(id){
   m.innerHTML=h; m.style.display='flex';
 }
 function cvLogChiudi(){ var m=document.getElementById('cvLogModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+/* Il senso opposto \u2014 dalla pratica all'anagrafica \u2014 lo fa gia'
+   cvPropagaAnagrafica, scritta per la scheda ridotta. Ne avevo aggiunta una
+   quasi uguale con un nome quasi uguale: in questo file i doppioni si
+   sovrascrivono in silenzio ed e' come nascono i guai. Si usa quella. */
 function cvSalva(){
   cvSync();
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
@@ -21284,6 +21333,12 @@ function cvSalva(){
   var _prima=(idx>=0)?JSON.parse(JSON.stringify(list[idx])):null;
   _cv.updatedAt=Date.now();
   if(idx>=0) list[idx]=_cv; else list.push(_cv);
+  /* Nome, codice fiscale, SDI, telefono e mail corretti qui valgono anche in
+     anagrafica: senza questo la correzione resterebbe su una pratica sola. */
+  try{
+    var _kAn=cvPropagaAnagrafica(_cv);
+    if(_kAn && !_cv.clienteKey){ _cv.clienteKey=_kAn; if(idx>=0) list[idx]=_cv; }
+  }catch(e){}
   /* Modificando la pratica, il titolare ha per definizione dato risposta alle
      richieste in sospeso: si chiudono da sole e il riquadro torna bianco.
      Nessun pulsante da premere, nessun segnale che resta acceso per mesi. */
@@ -27680,7 +27735,11 @@ function cvVendRiga(cv, i){
   var fisso='position:sticky;left:0;background:#fff;z-index:2;box-shadow:1px 0 0 #e2e8f0;';
 
   var h='<tr id="vr'+i+'" onclick="cvVendApri('+i+')" style="cursor:pointer;">'
-    +'<td id="vf'+i+'" style="'+td+'color:#94a3b8;font-size:11px;width:24px;">\u25b8</td>'
+    /* La freccetta era 11px in una cella da 24: un bersaglio difficile col
+       dito, e sul telefono si finiva per aprire la scheda dell'auto invece
+       della pratica. Ora e' grande il doppio, piu' scura, e la cella e' larga
+       abbastanza da essere toccabile senza mirare. */
+    +'<td id="vf'+i+'" style="'+td+'color:#64748b;font-size:20px;line-height:1;width:38px;text-align:center;padding-left:6px;padding-right:6px;user-select:none;">\u25b8</td>'
     +'<td style="'+td+fisso+'"><div style="font-weight:800;color:#1a4fa0;">'+cvEsc(auto)+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'+cvEsc(targa)+'</div></td>'
     +'<td style="'+td+'"><div style="font-weight:700;">'+cvEsc(cliente)+'</div>'
