@@ -5289,6 +5289,36 @@ function waProvaApri(numero, nome){ waChatApri(numero, nome); }
 function eaInviaMessaggio(msg){
   // msg = {to, subject, html?, text?, canale?} — canale default 'email'
   if(!msg || !msg.to) return Promise.reject(new Error('no destinatario'));
+
+  /* ===== L'AVVISO IN FONDO A OGNI EMAIL =====
+     "Generata automaticamente, le risposte non verranno gestite." Prima lo
+     metteva una mail sola, quella della caparra, perche' andava aggiunto a
+     mano ogni volta e ce ne si dimenticava. Qui passano tutte le email del
+     gestionale, quindi si aggiunge una volta per sempre.
+     Se il testo c'e' gia' non si ripete: la mail della caparra lo ha dentro
+     e ne uscirebbero due. */
+  try{
+    /* Testo di riserva: EA_MAIL_DISCLAIMER e' dichiarata nell'altro blocco di
+       codice. A runtime c'e', ma se un domani quel blocco si rompesse le mail
+       uscirebbero senza avviso senza che nessuno se ne accorga. */
+    var _dis=(typeof EA_MAIL_DISCLAIMER!=='undefined' && EA_MAIL_DISCLAIMER)
+      ? EA_MAIL_DISCLAIMER
+      : 'Questa email \u00e8 generata automaticamente: per contattarci scriva a vendita@europaautosrl.it o chiami il 02 9181820.';
+    if(_dis){
+      var _chiave='generata automaticamente';
+      if(msg.html && String(msg.html).toLowerCase().indexOf(_chiave)<0){
+        /* Si usa eaMailFooter quando c'e': ha i contatti cliccabili e il
+           pulsante WhatsApp. Il testo semplice resta come ripiego. */
+        msg.html = String(msg.html) + ((typeof eaMailFooter==='function')
+          ? eaMailFooter()
+          : ('<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+_dis+'</div>'));
+      }
+      if(msg.text && String(msg.text).toLowerCase().indexOf(_chiave)<0){
+        msg.text = String(msg.text) + '\n\n---\n' + _dis;
+      }
+    }
+  }catch(e){}
+
   return fetch(EA_MSG_URL, {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
@@ -13938,9 +13968,11 @@ document.addEventListener('DOMContentLoaded',function(){
       +'<p>La aspettiamo in <b>Via Nigra 4, Paderno Dugnano</b>.</p>'
       +'<div style="margin:20px 0;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">'
       +'<div style="font-weight:700;margin-bottom:4px;">Non riesce a venire?</div>'
-      +'<div style="font-size:13.5px;color:#475569;margin-bottom:12px;">Nessun problema, capita. '
-      +'Ci avvisi anche solo con un messaggio e spostiamo l\u2019appuntamento al primo momento che le va bene.</div>'
-      +ccBtnMail('\uD83D\uDCDE Chiama','tel:0362285390','#1a4fa0')
+      +'<div style="font-size:13.5px;color:#475569;margin-bottom:12px;">'
+      +'Ci avvisi con un messaggio e spostiamo l\u2019appuntamento.</div>'
+      /* Il numero era 0362285390: quello dell'altra sede, non quello a cui
+         rispondete. Ora e' il 02 9181820, lo stesso del pulsante WhatsApp. */
+      +ccBtnMail('\uD83D\uDCDE Chiama 02 9181820','tel:+390291818200','#1a4fa0')
       +ccBtnMail('\uD83D\uDCAC WhatsApp','https://wa.me/39029181820','#25D366')
       +'</div>'
       +'<p>A presto,<br><b>Europa Auto</b></p>';
@@ -13996,11 +14028,11 @@ document.addEventListener('DOMContentLoaded',function(){
                   +(c.ora?(' alle <b>'+ccEsc(c.ora)+'</b>'):'')+'.</p>'
                   +(c.veicolo?('<p><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</p>'):'')
                   +'<p>La aspettiamo in Via Nigra 4, Paderno Dugnano.<br>'
-                  +'Se non riesce a venire, ci avvisi al 02 9181820 e spostiamo.</p>'
+                  +'Non riesce a venire? Ci avvisi con un messaggio al 02 9181820 e spostiamo l\u2019appuntamento.</p>'
                   +'<p><b>Europa Auto</b></p></div>',
               text:'Gentile '+(c.titolo||'Cliente')+', le ricordiamo il suo appuntamento'
                   +(c.data?(' del '+c.data):'')+(c.ora?(' alle '+c.ora):'')+'.'
-                  +' La aspettiamo in Via Nigra 4, Paderno Dugnano. Se non riesce, ci avvisi al 02 9181820.'
+                  +' La aspettiamo in Via Nigra 4, Paderno Dugnano. Non riesce a venire? Ci avvisi con un messaggio al 02 9181820 e spostiamo l\u2019appuntamento.'
             });
             /* Segnata anche qui, cosi' la funzione su Supabase non la rimanda
                se dovesse girare dopo. Il segno vale in entrambe le direzioni. */
@@ -17941,6 +17973,69 @@ function mzAllineaImpegno(a){
   return a;
 }
 
+/* ===== TARGA O TELAIO GIA' VISTI =====
+   Due casi diversi che si somigliano:
+   — l'errore: la stessa auto inserita due volte, e da li' in avanti due
+     schede da tenere allineate a mano;
+   — il ritorno: un'auto venduta e ricomprata dopo qualche anno, che e'
+     legittimo e va inserita comunque.
+   Non si puo' distinguere dall'esterno, quindi non si blocca: si mostra cosa
+   c'e' gia' — quando e' stata venduta, a chi — e si lascia decidere.
+   Il confronto ignora spazi e trattini: "GD 566 LH" e "GD566LH" sono la
+   stessa targa. */
+function mzNorm(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+
+function mzGiaVisto(campo, valore, idCorrente){
+  var v=mzNorm(valore); if(!v) return [];
+  var out=[];
+  try{
+    (mzLoad()||[]).forEach(function(a){
+      if(!a || a.deleted) return;
+      if(idCorrente && a.id===idCorrente) return;   /* se stessa, non conta */
+      if(mzNorm(a[campo])===v) out.push(a);
+    });
+  }catch(e){}
+  return out;
+}
+
+function mzDescriviDuplicato(a){
+  var d=[(a.marca||'')+' '+(a.modello||'')].join('').trim() || '(veicolo)';
+  var st = a.stato==='venduta' ? 'venduta' : (a.impegnata?'opzionata':'in magazzino');
+  var extra='';
+  try{
+    if(a.stato==='venduta' && typeof mzPraticheDi==='function'){
+      var pr=mzPraticheDi(a.id)||[];
+      var cv=pr[0];
+      if(cv && cv.cliente){
+        var nome=((cv.cliente.business&&cv.cliente.ragSociale)?cv.cliente.ragSociale
+                 :(((cv.cliente.cognome||'')+' '+(cv.cliente.nome||'')).trim()));
+        var ts=cv.consegnatoTs||cv.contrattoTs||0;
+        var qd=ts?(new Date(ts)).toLocaleDateString('it-IT'):'';
+        if(nome) extra=' a '+nome+(qd?(' il '+qd):'');
+      }
+    }
+  }catch(e){}
+  var carico='';
+  try{ if(a.dataCarico) carico=' · caricata il '+a.dataCarico; }catch(e){}
+  return '• '+d+' — '+st+extra+carico;
+}
+
+/* Restituisce true se si puo' proseguire. */
+function mzControllaDuplicati(targa, telaio, idCorrente){
+  var msg=[];
+  var dt=mzGiaVisto('targa', targa, idCorrente);
+  var dl=mzGiaVisto('telaio', telaio, idCorrente);
+  var A='\\n';   /* a capo dentro il messaggio, non nel codice */
+  if(dt.length) msg.push('La targa '+String(targa).toUpperCase()+' risulta gi\u00e0 inserita:'+A
+    + dt.map(mzDescriviDuplicato).join(A));
+  if(dl.length) msg.push('Il telaio '+String(telaio).toUpperCase()+' risulta gi\u00e0 inserito:'+A
+    + dl.map(mzDescriviDuplicato).join(A));
+  if(!msg.length) return true;
+  return confirm(msg.join(A+A)
+    + A+A+'Pu\u00f2 essere un doppione, oppure un veicolo che avete ricomprato: in quel caso \u00e8 corretto inserirlo di nuovo.'
+    + A+A+'OK per proseguire, Annulla per fermarsi e controllare.');
+}
+
 function mzSalva(){
   if(typeof _mzFotoBusy!=='undefined' && _mzFotoBusy){ alert('Caricamento foto ancora in corso: attendi che finisca prima di salvare.'); return; }
   /* Targa di partenza: serve a capire se con questo salvataggio un'auto estera
@@ -17961,6 +18056,9 @@ function mzSalva(){
     if(mzPuoPrezzoAcq()) _reqEst.push(['prezzoAcq','Prezzo acquisto']);
     for(var _e=0;_e<_reqEst.length;_e++){ if(!g(_reqEst[_e][0])){ alert('Auto estera: il campo «'+_reqEst[_e][1]+'» è obbligatorio (per un veicolo estero sono richiesti tutti i campi, tranne la targa).'); return; } }
   }
+  /* Prima di scrivere: targa o telaio gia' presenti in magazzino? */
+  if(!mzControllaDuplicati(g('targa'), g('telaio'), (typeof _mzId!=='undefined'?_mzId:null))) return;
+
   var _fsel=document.getElementById('mz_fornitore'); var _fid=_fsel?_fsel.value:'';
   var _fidPrivato='';
   if(_fid.indexOf('privato:')===0){ _fidPrivato=_fid.slice(8); _fid=''; }
@@ -20214,9 +20312,22 @@ function cvLive(){
     if(_mw){ var _po=document.getElementById('cv_permutaOn'); _mw.style.display=(_po&&_po.checked)?'block':'none'; }
   }catch(e){}
 }
-var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente. Le risposte inviate a questo indirizzo non verranno gestite.';
+/* Non dice piu' che le risposte non vengono gestite: non era vero, in
+   amministrazione le leggono. Dice invece dove scrivere davvero, cosi' chi ha
+   bisogno non rinuncia a farsi sentire. */
+var EA_MAIL_DISCLAIMER='Questa email \u00e8 generata automaticamente: per contattarci scriva a vendita@europaautosrl.it o chiami il 02 9181820.';
 function eaMailEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function eaMailFooter(){ return '<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;">'+EA_MAIL_DISCLAIMER+'</div>'; }
+/* Il pie' di pagina di tutte le email: avviso, contatti cliccabili e il
+   pulsante WhatsApp, che e' il canale da cui i clienti rispondono davvero. */
+function eaMailFooter(){
+  return '<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.6;">'
+    + 'Questa email \u00e8 generata automaticamente. Per contattarci: '
+    + '<a href="mailto:vendita@europaautosrl.it" style="color:#1a4fa0;text-decoration:none;font-weight:700;">vendita@europaautosrl.it</a>'
+    + ' \u00b7 <a href="tel:+390291818200" style="color:#1a4fa0;text-decoration:none;font-weight:700;">02 9181820</a>'
+    + '<div style="margin-top:10px;">'
+    + '<a href="https://wa.me/39029181820" style="display:inline-block;background:#25D366;color:#fff;text-decoration:none;font-weight:700;font-size:12.5px;padding:9px 16px;border-radius:8px;">\ud83d\udcac Scrivici su WhatsApp</a>'
+    + '</div></div>';
+}
 function cvEmailCaparraCliente(cv, importo){
   /* Il controllo su GS_URL e' stato tolto: la mail parte da Resend, e quella
      riga avrebbe fatto uscire la funzione in silenzio il giorno in cui
