@@ -19298,8 +19298,23 @@ function cvCalcola(c){
   var totaleVendita=veicolo+passaggio+gar+assic+extra+minivolt-permVal;
   var totaleScontato = c.legge104On ? totaleVendita : (totaleVendita - sconto);
   var pagTot=cvPagIncasso(c.pagamenti).reduce(function(s,x){return s+cvNum(x.importo);},0);
+  /* saldoDovuto: quanto manca a coprire il totale contando TUTTO, saldo
+     compreso. Serve al controllo che impedisce di stampare una pratica dove i
+     conti non tornano, e a pratica completa vale zero.
+
+     daSaldare: quanto resta dopo caparra, integrazioni e finanziamento, cioe'
+     quello che il saldo deve coprire. E' il numero da mostrare accanto alla
+     voce "Saldo dovuto": prima li' compariva saldoDovuto, che a conti fatti
+     era sempre zero e non diceva niente. */
   var saldoDovuto=totaleScontato-pagTot;
-  return { prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, permVal:permVal, minivolt:minivolt, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
+  var pagSenzaSaldo=cvPagIncasso(c.pagamenti).reduce(function(s,x){
+    return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? 0 : cvNum(x.importo));
+  },0);
+  var daSaldare=Math.round((totaleScontato-pagSenzaSaldo)*100)/100;
+  var saldoInserito=cvPagIncasso(c.pagamenti).reduce(function(s,x){
+    return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? cvNum(x.importo) : 0);
+  },0);
+  return { daSaldare:daSaldare, saldoInserito:saldoInserito, prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, permVal:permVal, minivolt:minivolt, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
 }
 
 /* ===== APERTURA IN SOLA LETTURA =====
@@ -19474,7 +19489,7 @@ function cvRecuperaAnagrafica(cv){
 
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
-  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Acconto',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
+  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Integrazione caparra 1',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
   cvRecuperaAnagrafica(_cv);
   /* Da Vendite i non amministratori vedono la versione ridotta del contratto.
      La contabilita' invece lavora sulla pratica intera: fatturazione, dati
@@ -20045,9 +20060,43 @@ function cvPagIncassoData(i,v){
     cvRenderPag(); cvLive();
   }catch(e){}
 }
+/* ===== INTEGRAZIONI DELLA CAPARRA =====
+   L'acconto e' un semplice anticipo sul prezzo: se l'affare salta va
+   restituito comunque, chiunque sia venuto meno. La caparra confirmatoria
+   (art. 1385 c.c.) garantisce: se si tira indietro il cliente resta
+   all'azienda, se si tira indietro l'azienda si restituisce il doppio.
+   Chiamare "acconto" i versamenti successivi lasciava senza garanzia proprio
+   la parte piu' grossa. Ora sono integrazioni della caparra, numerate secondo
+   l'ordine in cui compaiono.
+   Perche' regga, le condizioni del contratto devono dire che le somme sono
+   versate a titolo di caparra confirmatoria ai sensi dell'art. 1385 c.c.:
+   l'etichetta da sola non basta. */
+function cvTipoIntegr(n){ return 'Integrazione caparra ' + n; }
+
+/* Le voci disponibili su una riga: la sua integrazione se ce l'ha, piu' la
+   prima numerazione libera. Le integrazioni usate nelle altre righe non si
+   ripropongono, cosi' non si creano doppioni scegliendo dalla tendina. */
+function cvTipiPagamento(idxRiga){
+  var usate={}, miaI=null;
+  try{
+    (_cv.pagamenti||[]).forEach(function(pg,k){
+      var m=String((pg&&pg.tipo)||'').match(/^Integrazione caparra (\d+)$/);
+      if(!m) return;
+      if(k===idxRiga) miaI=parseInt(m[1],10); else usate[m[1]]=true;
+    });
+  }catch(e){}
+  var libera=1; while(usate[String(libera)]) libera++;
+  var integr=[];
+  if(miaI!=null) integr.push(cvTipoIntegr(miaI));
+  if(miaI===null || miaI!==libera) integr.push(cvTipoIntegr(libera));
+  /* Finanziamento come voce a se': tolto l'acconto, l'importo che mette la
+     finanziaria ha bisogno di una riga propria e non e' una caparra. */
+  return ['Caparra'].concat(integr, ['Finanziamento','Saldo']);
+}
+
 function cvRenderPag(){
   var c=document.getElementById('cv-pag'); if(!c)return;
-  var tipi=['Caparra','Acconto','Saldo'];
+  var tipi=['Caparra','Saldo'];
   var metodi=['Bonifico','Contanti','Assegno','POS','Finanziamento','Finanziamento PROMO'];
   var ss='padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-width:0;box-sizing:border-box;';
   c.innerHTML=_cv.pagamenti.map(function(x,i){
@@ -20060,7 +20109,16 @@ function cvRenderPag(){
     var _apri = _dati || !!_cvPagAperti[i];
     return '<div style="background:#eff6ff;border-radius:10px;padding:10px;margin-bottom:8px;">'
       +'<div style="display:flex;gap:8px;">'
-      +'<select onchange="_cv.pagamenti['+i+'].tipo=this.value;cvRenderPag();cvLive()" style="flex:1;'+ss+'">'+(tipi.indexOf(x.tipo)<0&&x.tipo?tipi.concat([x.tipo]):tipi).map(function(t){return '<option'+(x.tipo===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select>'
+      +'<select onchange="_cv.pagamenti['+i+'].tipo=this.value;cvRenderPag();cvLive()" style="flex:1;'+ss+'">'+(function(){
+          /* le voci di QUESTA riga: caparra, l'integrazione che le compete,
+             la prima libera, e il saldo. Un tipo gia' salvato che non e' fra
+             questi \u2014 per esempio "Acconto" su una pratica vecchia \u2014 resta
+             selezionabile, altrimenti riaprendo il preventivo il pagamento
+             cambierebbe tipo da solo. */
+          var el=cvTipiPagamento(i);
+          if(x.tipo && el.indexOf(x.tipo)<0) el=el.concat([x.tipo]);
+          return el.map(function(t){return '<option'+(x.tipo===t?' selected':'')+'>'+t+'</option>';}).join('');
+        })()+'</select>'
       +'<select onchange="cvPagMetodo('+i+',this.value)" style="flex:1;'+ss+'">'+metodi.map(function(t){return '<option'+(x.metodo===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select>'
       +'</div>'
       +'<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
@@ -20233,7 +20291,10 @@ function cvLive(){
     +'</div>';
   var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
   var _pagamenti=function(){
-    cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
+    /* Il saldo non compare qui: e' la riga "Saldo dovuto" in fondo. Elencarlo
+       due volte faceva finire il riepilogo sempre a zero, che non diceva
+       niente a nessuno. */
+    cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(/^saldo$/i.test(String(x.tipo||'').trim())) return; if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
   };
   var _extra=function(){
     if(t.gar) h+=r('Garanzia',t.gar);
@@ -20298,7 +20359,14 @@ function cvLive(){
     h+=r('Totale vendita',t.totaleVendita,true);
     if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Totale valido solo con finanziamento',t.totaleScontato,true); }
     _pagamenti();
-    h+=r('Saldo dovuto',t.saldoDovuto,true);
+    h+=r('Saldo dovuto',t.daSaldare,true);
+    /* Se il saldo scritto nei pagamenti non copre quel residuo, va detto:
+       prima la differenza restava nascosta dentro uno zero. */
+    if(t.saldoInserito>0 && Math.abs(t.saldoInserito-t.daSaldare)>0.01){
+      h+='<div style="font-size:12px;color:#dc2626;font-weight:700;padding:4px 0;">'
+        +'Attenzione: nei pagamenti il saldo \u00e8 '+cvEuro(t.saldoInserito)
+        +', qui ne servirebbero '+cvEuro(t.daSaldare)+'.</div>';
+    }
   }
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
   /* Scelto il PROMO fra i metodi di pagamento, la polizza si attiva subito:
@@ -21107,14 +21175,18 @@ function cvTrasformaContrattoFinale(){
   if(_cv.autoId && typeof mzById==='function'){ var _av2=mzById(_cv.autoId); if(_av2 && ((_av2.impegnata && _av2.impegnataDa && _av2.impegnataDa!==_cv.id) || _av2.stato==='venduta')){ alert('\u26a0\ufe0f Nel frattempo questo veicolo \u00e8 stato opzionato in un altro proposta d’acquisto: impossibile procedere.'); return; } }
   if(Array.isArray(_cv.pagamenti)){
     var _conta={}, _dup=null;
-    _cv.pagamenti.forEach(function(pg){ var t=(pg&&pg.tipo)||''; if(['Saldo','Caparra','Acconto','Finanziamento'].indexOf(t)>=0){ _conta[t]=(_conta[t]||0)+1; if(_conta[t]>1 && !_dup) _dup=t; } });
+    /* Ogni voce una volta sola, integrazioni comprese: due "Integrazione
+       caparra 1" sarebbero un errore di battitura, non due versamenti. */
+    _cv.pagamenti.forEach(function(pg){ var t=(pg&&pg.tipo)||'';
+      if(['Saldo','Caparra','Acconto','Finanziamento'].indexOf(t)>=0 || /^Integrazione caparra \d+$/.test(t)){
+        _conta[t]=(_conta[t]||0)+1; if(_conta[t]>1 && !_dup) _dup=t; } });
     /* Il divieto di doppioni protegge chi vende da errori di battitura, ma su
        alcune pratiche gli acconti sono davvero piu' d'uno — versamenti a rate
        nel tempo. Amministrazione e titolare devono poterli registrare come
        sono andati davvero, senza dover forzare la realta' in una riga sola. */
     var _puoDoppi=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
                 || (typeof eaIsContabilita==='function' && eaIsContabilita());
-    if(_dup && !_puoDoppi){ alert('\u26a0\ufe0f Pagamenti non validi: \u00e8 presente un doppio "'+_dup+'".\n\nOgni tipo (Caparra, Acconto, Saldo, Finanziamento) pu\u00f2 comparire una sola volta. Correggi i pagamenti prima di confermare.'); return; }
+    if(_dup && !_puoDoppi){ alert('\u26a0\ufe0f Pagamenti non validi: \u00e8 presente un doppio "'+_dup+'".\n\nOgni voce pu\u00f2 comparire una sola volta. Se il cliente versa pi\u00f9 volte, usa le integrazioni della caparra: la successiva si numera da s\u00e9.'); return; }
   }
   try{ var _pr=JSON.parse(JSON.stringify(_cv)); }catch(e){ var _pr=null; }
   /* Correzione di una pratica gia' esistente: si salvano i dati anagrafici e
