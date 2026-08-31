@@ -11829,7 +11829,10 @@ function tcPermCodice(cat){
 }
 
 // Dipendenti che NON usano l'app: colonne fisse nel file riepilogo (ore da compilare a mano)
-var DIPENDENTI_EXTRA = ['Renato'];
+/* Compaiono solo nel file scaricato, non nella schermata delle presenze:
+   non timbrano, ma allo studio paghe servono. Le loro ore stanno in
+   TC_ORE_RIEPILOGO. */
+var DIPENDENTI_EXTRA = ['Renato','Davide'];
 
 /* ===== Ore da mettere nel riepilogo per il commercialista =====
    Valgono SOLO nel file scaricato: dentro l'app le timbrature restano quelle
@@ -11844,8 +11847,11 @@ var TC_ORE_RIEPILOGO = [
     nota:'pausa di 30 minuti non timbrata' },
   { chi:['renato'],
     fisse:{1:5*60, 2:5*60, 3:5*60, 4:5*60, 5:5*60, 6:5*60} },
-  /* Davide titolare: solo la sua mail, per non prendere anche Davide Basso */
-  { chi:['europaautobusiness@gmail.com'],
+  /* Davide titolare: sette ore da lunedi' a venerdi', cinque il sabato.
+     La riga vale per la sua mail e per la colonna "Davide" del file scaricato,
+     dove l'email non c'e'. Il confronto sul nome e' ESATTO, altrimenti
+     prenderebbe anche Davide Basso, che invece timbra davvero. */
+  { chi:['europaautobusiness@gmail.com','davide'], esatto:true,
     fisse:{1:7*60, 2:7*60, 3:7*60, 4:7*60, 5:7*60, 6:5*60} }
 ];
 function tcRegolaRiepilogo(email, nome){
@@ -11857,6 +11863,7 @@ function tcRegolaRiepilogo(email, nome){
       for(var j=0;j<r.chi.length;j++){
         var k=String(r.chi[j]).toLowerCase();
         if(k.indexOf('@')>=0){ if(e && e===k) return r; }
+        else if(r.esatto){ if(n && n===k) return r; }
         else if(n && n.indexOf(k)>=0) return r;
       }
     }
@@ -19489,7 +19496,7 @@ function cvRecuperaAnagrafica(cv){
 
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
-  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Integrazione caparra 1',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
+  _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'1\u00aa integrazione caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
   cvRecuperaAnagrafica(_cv);
   /* Da Vendite i non amministratori vedono la versione ridotta del contratto.
      La contabilita' invece lavora sulla pratica intera: fatturazione, dati
@@ -20071,7 +20078,17 @@ function cvPagIncassoData(i,v){
    Perche' regga, le condizioni del contratto devono dire che le somme sono
    versate a titolo di caparra confirmatoria ai sensi dell'art. 1385 c.c.:
    l'etichetta da sola non basta. */
-function cvTipoIntegr(n){ return 'Integrazione caparra ' + n; }
+function cvTipoIntegr(n){ return n + '\u00aa integrazione caparra'; }
+/* Riconosce sia la forma nuova ("1\u00aa integrazione caparra") sia quella breve
+   usata per qualche ora ("Integrazione caparra 1"): le pratiche salvate nel
+   frattempo devono continuare a essere lette come integrazioni. */
+function cvNumIntegr(t){
+  var v=String(t||'').trim();
+  var m=v.match(/^(\d+)\s*[\u00aa\u00b0a]?\s*integrazione caparra$/i);
+  if(m) return parseInt(m[1],10);
+  m=v.match(/^integrazione caparra\s*(\d+)$/i);
+  return m ? parseInt(m[1],10) : null;
+}
 
 /* Le voci disponibili su una riga: la sua integrazione se ce l'ha, piu' la
    prima numerazione libera. Le integrazioni usate nelle altre righe non si
@@ -20080,9 +20097,9 @@ function cvTipiPagamento(idxRiga){
   var usate={}, miaI=null;
   try{
     (_cv.pagamenti||[]).forEach(function(pg,k){
-      var m=String((pg&&pg.tipo)||'').match(/^Integrazione caparra (\d+)$/);
-      if(!m) return;
-      if(k===idxRiga) miaI=parseInt(m[1],10); else usate[m[1]]=true;
+      var n=cvNumIntegr(pg&&pg.tipo);
+      if(n===null) return;
+      if(k===idxRiga) miaI=n; else usate[String(n)]=true;
     });
   }catch(e){}
   var libera=1; while(usate[String(libera)]) libera++;
@@ -21176,9 +21193,10 @@ function cvTrasformaContrattoFinale(){
   if(Array.isArray(_cv.pagamenti)){
     var _conta={}, _dup=null;
     /* Ogni voce una volta sola, integrazioni comprese: due "Integrazione
-       caparra 1" sarebbero un errore di battitura, non due versamenti. */
+       integrazione caparra" sarebbero un errore di battitura, non due
+       versamenti. */
     _cv.pagamenti.forEach(function(pg){ var t=(pg&&pg.tipo)||'';
-      if(['Saldo','Caparra','Acconto','Finanziamento'].indexOf(t)>=0 || /^Integrazione caparra \d+$/.test(t)){
+      if(['Saldo','Caparra','Acconto','Finanziamento'].indexOf(t)>=0 || (typeof cvNumIntegr==='function' && cvNumIntegr(t)!==null)){
         _conta[t]=(_conta[t]||0)+1; if(_conta[t]>1 && !_dup) _dup=t; } });
     /* Il divieto di doppioni protegge chi vende da errori di battitura, ma su
        alcune pratiche gli acconti sono davvero piu' d'uno — versamenti a rate
@@ -30929,11 +30947,31 @@ function crmRenderDashboard(){
   var cnt={}; CRM_STATI.forEach(function(s){cnt[s]=0;});
   leads.forEach(function(l){ var st=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); l._stato=st; if(cnt[st]!=null)cnt[st]++; });
   var tot=leads.length, vinti=cnt['chiuso vinto'], persi=cnt['chiuso perso'], chiusi=vinti+persi;
-  var tasso=chiusi?Math.round(vinti/chiusi*100):0;
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var cvAll=(typeof cvLoad==='function'?cvLoad():[]);
   var contratti=cvAll.filter(function(x){return x.isContratto && !eaCvTest(x);});
-  var venduto=contratti.reduce(function(s,x){ return s+((typeof cvCalcola==='function')?(cvCalcola(x).totaleScontato||0):0); },0);
+  /* Il totale di sempre non si calcola piu': la dashboard mostra l'anno in
+     corso, e sommare dieci anni di storico a ogni apertura costava tempo per
+     un numero che nessuno guardava. */
+
+  /* ===== ANNO IN CORSO =====
+     Il totale di sempre comprendeva dieci anni importati da SICOM: un numero
+     che non si muove e non dice come sta andando adesso. Qui si guarda solo
+     l'anno corrente, con lo stesso criterio delle Statistiche \u2014 filtro su
+     createdAt e tasso come contratti su preventivi \u2014 cosi' i due posti
+     dicono la stessa cosa invece di due numeri diversi. */
+  var _anno=(new Date()).getFullYear();
+  var _pratiche=cvAll.filter(function(x){
+    if(!x || x.deleted || eaCvTest(x)) return false;
+    var d=new Date(x.createdAt||x.contrattoTs||0);
+    return d.getFullYear()===_anno;
+  });
+  var _nPrev=_pratiche.length;
+  var _nVend=_pratiche.filter(function(x){ return x.isContratto; }).length;
+  var tasso=_nPrev?Math.round(_nVend/_nPrev*100):0;
+  var _vendutoAnno=_pratiche.reduce(function(sm,x){
+    return sm + (x.isContratto ? ((typeof cvCalcola==='function')?(cvCalcola(x).totaleScontato||0):0) : 0);
+  },0);
   var oggi=crmOggiISO(); var rit=0,ogg=0; var prossime=[];
   Object.keys(store).forEach(function(k){ var arr=(store[k]&&store[k].attivita)||[]; arr.forEach(function(a){ if(a.fatto) return; if(a.scad&&a.scad<oggi) rit++; else if(a.scad&&a.scad===oggi) ogg++; if(a.scad) prossime.push({key:k,a:a}); }); });
   prossime.sort(function(x,y){ return (x.a.scad||'').localeCompare(y.a.scad||''); });
@@ -30943,10 +30981,13 @@ function crmRenderDashboard(){
   var kpi=function(icon,bg,val,lab){ return '<div style="flex:1;min-width:146px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="width:38px;height:38px;border-radius:10px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:12px;">'+icon+'</div><div style="font-size:25px;font-weight:800;color:#0f172a;line-height:1;">'+val+'</div><div style="font-size:12px;color:#94a3b8;margin-top:5px;">'+lab+'</div></div>'; };
   var h='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">'
     +kpi('\uD83D\uDC65','#eef2ff',tot,'Contatti')
-    +kpi('\uD83D\uDD25','#eff6ff',cnt['trattativa'],'In trattativa')
+    /* Conta solo la fase "trattativa": la lista sotto e' piu' larga perche'
+       comprende anche nuovo e ricontattare. Due numeri diversi nella stessa
+       pagina confondevano, quindi ognuno dice cosa conta. */
+    +kpi('\uD83D\uDD25','#eff6ff',cnt['trattativa'],'In trattativa \u00b7 fase avanzata')
     +kpi('\uD83D\uDE97','#ecfdf5',contratti.length,'Auto vendute')
-    +kpi('\uD83D\uDCB6','#fefce8',cvEuro(venduto),'Venduto')
-    +kpi('\u2705','#f0fdf4',tasso+'%','Tasso chiusura')
+    +kpi('\uD83D\uDCB6','#fefce8',cvEuro(_vendutoAnno),'Venduto '+_anno)
+    +kpi('\u2705','#f0fdf4',tasso+'%','Chiusura '+_anno+' \u00b7 '+_nVend+' su '+_nPrev+' preventivi')
     +kpi('\u23F0','#fff7ed',(ogg+rit),'Promemoria')
     +'</div>';
 
@@ -30972,7 +31013,7 @@ function crmRenderDashboard(){
   // Riga: trattative in corso + prossimi promemoria
   var prob={'nuovo':20,'ricontattare':45,'trattativa':75};
   var aperte=leads.filter(function(l){ return prob[l._stato]!=null; }).sort(function(a,b){ return (prob[b._stato]||0)-(prob[a._stato]||0); });
-  var oppCard='<div style="flex:2;min-width:300px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Trattative in corso</div>';
+  var oppCard='<div style="flex:2;min-width:300px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Trattative aperte</div>';
   if(!aperte.length){ oppCard+='<div style="font-size:13px;color:#94a3b8;">Nessuna trattativa aperta.</div>'; }
   aperte.slice(0,6).forEach(function(l){ var pr=prob[l._stato]||0;
     oppCard+='<div style="padding:9px 0;border-bottom:1px solid #f1f5f9;"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[l.key]||l.key)+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(l.auto||'\u2014')+'</div></div><div style="text-align:right;flex:0 0 auto;"><span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:'+col[l._stato]+'22;color:'+col[l._stato]+';text-transform:capitalize;">'+l._stato+'</span></div></div><div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><div style="flex:1;background:#f1f5f9;border-radius:6px;height:6px;"><div style="width:'+pr+'%;height:6px;background:'+col[l._stato]+';border-radius:6px;"></div></div><span style="font-size:11px;font-weight:700;color:#64748b;">'+pr+'%</span></div></div>';
@@ -30981,7 +31022,7 @@ function crmRenderDashboard(){
 
   var promCard='<div style="flex:1;min-width:220px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Prossimi promemoria</div>';
   if(!prossime.length){ promCard+='<div style="font-size:13px;color:#94a3b8;">Nessun promemoria programmato.</div>'; }
-  prossime.slice(0,6).forEach(function(pp){ var stt=crmAttStato(pp.a); var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b'); promCard+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;"><div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[pp.key]||pp.key)+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+'</div></div><div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>'; });
+  prossime.slice(0,6).forEach(function(pp){ var stt=crmAttStato(pp.a); var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b'); promCard+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;"><div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[pp.key]||(String(pp.key).indexOf('@')>0?(String(pp.key)+' \u2014 contatto senza nome'):pp.key))+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+'</div></div><div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>'; });
   promCard+='</div>';
 
   h+='<div style="display:flex;gap:16px;flex-wrap:wrap;">'+oppCard+promCard+'</div>';
