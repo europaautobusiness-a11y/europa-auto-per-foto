@@ -10529,6 +10529,54 @@ var WF_SOGLIA_BASE = 1000;
 var WF_SOGLIA_FIGLI = 2000;
 var WF_TIPI = ['Buono carburante','Buono spesa','Altro buono','Altro benefit'];
 
+/* ===== TRASFERTE =====
+   Art. 51 comma 5 TUIR. Vale anche per i collaboratori coordinati e
+   continuativi, perche' i loro compensi sono assimilati al lavoro dipendente.
+   L'indennita' giornaliera e' esente fino a queste soglie; sopra, l'eccedenza
+   e' imponibile. La soglia scende se l'azienda rimborsa anche vitto o
+   alloggio, perche' l'indennita' serve proprio a coprirli.
+   Viaggio e trasporto documentati si rimborsano a parte e non intaccano
+   queste soglie. */
+var WF_TRASF = {
+  italia: { pieno:46.48, uno:30.99, due:15.49 },
+  estero: { pieno:77.47, uno:51.65, due:25.82 }
+};
+function wfLimiteTrasferta(estero, vittoAll){
+  var t = estero ? WF_TRASF.estero : WF_TRASF.italia;
+  if(vittoAll==='due') return t.due;      /* vitto E alloggio a carico azienda */
+  if(vittoAll==='uno') return t.uno;      /* uno dei due */
+  return t.pieno;
+}
+
+/* Le persone da seguire: i dipendenti dell'anagrafica presenze, piu' i
+   collaboratori aggiunti qui a mano. Un co.co.co. non timbra e non sta in
+   quell'elenco, ma fringe benefit e trasferte gli spettano lo stesso. */
+function wfPersone(){
+  var out=[];
+  try{
+    ((typeof tcLoadDip==='function')?tcLoadDip():[]).forEach(function(d){
+      if(d && d.nome && wfChiave(d)) out.push({ nome:d.nome, chiave:wfChiave(d), collab:false });
+    });
+  }catch(e){}
+  var extra=(wfLoad().collaboratori)||[];
+  extra.forEach(function(c){
+    if(c && c.nome && c.chiave) out.push({ nome:c.nome, chiave:c.chiave, collab:true });
+  });
+  return out;
+}
+function wfAggiungiCollab(){
+  var nome=prompt('Nome e cognome del collaboratore:');
+  if(!nome || !nome.trim()) return;
+  var ch='collab_'+nome.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  var tutto=wfLoad();
+  tutto.collaboratori=tutto.collaboratori||[];
+  if(tutto.collaboratori.some(function(c){ return c.chiave===ch; })){ alert('C\u2019\u00e8 gi\u00e0.'); return; }
+  tutto.collaboratori.push({ nome:nome.trim(), chiave:ch });
+  tutto.updatedAt=Date.now();
+  wfSave(tutto);
+  wfRender();
+}
+
 function wfLoad(){
   try{ return JSON.parse(localStorage.getItem(WF_KEY)||'{}')||{}; }catch(e){ return {}; }
 }
@@ -10588,14 +10636,15 @@ function wfRender(){
     wrap.innerHTML='<div style="padding:40px;text-align:center;color:#94a3b8;">Sezione riservata.</div>';
     return;
   }
-  var dip=(typeof tcLoadDip==='function')?tcLoadDip():[];
-  dip=dip.filter(function(d){ return d && d.nome && wfChiave(d); });
+  var dip=wfPersone();
 
   var h='<div style="max-width:900px;margin:0 auto;">'
     +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px;">'
-    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit '+wfAnno()+'</h2>'
+    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit e trasferte '+wfAnno()+'</h2>'
+    +'<div style="display:flex;gap:6px;">'
+    +'<button onclick="wfAggiungiCollab()" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">+ collaboratore</button>'
     +'<button onclick="wfRiepilogo()" style="padding:8px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Riepilogo per lo studio paghe</button>'
-    +'</div>'
+    +'</div></div>'
     +'<div style="font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:16px;">'
     +'Soglia annua <b>'+wfEuro(WF_SOGLIA_BASE)+'</b>, <b>'+wfEuro(WF_SOGLIA_FIGLI)+'</b> con figli fiscalmente a carico. '
     +'Superandola anche di un euro diventa imponibile <b>l\u2019intero importo</b> dell\u2019anno, non l\u2019eccedenza. '
@@ -10615,7 +10664,9 @@ function wfRender(){
 
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:12px;">'
       +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;">'
-      +'<div style="font-weight:800;font-size:15px;color:#0f172a;">'+wfEsc(d.nome)+'</div>'
+      +'<div style="font-weight:800;font-size:15px;color:#0f172a;">'+wfEsc(d.nome)
+      +(d.collab?'<span style="margin-left:7px;font-size:10.5px;font-weight:800;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:99px;padding:2px 8px;">collaboratore</span>':'')
+      +'</div>'
       +'<div style="font-size:13px;color:'+col+';font-weight:800;">'+wfEuro(erog)+' su '+wfEuro(soglia)
       +' <span style="font-weight:600;color:#64748b;">\u00b7 restano '+wfEuro(Math.max(0,res))+'</span></div>'
       +'</div>'
@@ -10657,6 +10708,56 @@ function wfRender(){
       +'<input id="wf_i_'+wfEsc(k)+'" type="number" step="0.01" placeholder="importo \u20ac" style="flex:0 1 110px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_n_'+wfEsc(k)+'" type="text" placeholder="note" style="flex:1 1 130px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<button onclick="wfAggiungi(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:8px 14px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Aggiungi</button>'
+      +'</div>';
+
+    /* ---- trasferte, conteggio annuale ---- */
+    var _tr=(rec.trasferte||[]);
+    var _trTot=0, _trEsente=0, _trImpon=0, _trGiorni=0;
+    _tr.forEach(function(t){
+      var lim=wfLimiteTrasferta(t.estero, t.coperto), gg=Number(t.giorni)||0, ind=Number(t.indennita)||0;
+      _trGiorni+=gg; _trTot+=ind*gg;
+      _trEsente+=Math.min(ind,lim)*gg;
+      _trImpon+=Math.max(0,ind-lim)*gg;
+    });
+
+    h+='<div style="border-top:1px solid #f1f5f9;margin-top:12px;padding-top:10px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">'
+      +'<div style="font-weight:800;font-size:12.5px;color:#1a4fa0;text-transform:uppercase;">\u2708\ufe0f Trasferte '+wfAnno()+'</div>'
+      +'<div style="font-size:12.5px;color:#64748b;">'+_trGiorni+' giorni \u00b7 erogato <b>'+wfEuro(_trTot)+'</b>'
+      +' \u00b7 esente <b style="color:#16a34a;">'+wfEuro(_trEsente)+'</b>'
+      +(_trImpon>0?(' \u00b7 imponibile <b style="color:#dc2626;">'+wfEuro(_trImpon)+'</b>'):'')
+      +'</div></div>';
+
+    if(_tr.length){
+      _tr.forEach(function(t,i){
+        var lim=wfLimiteTrasferta(t.estero, t.coperto);
+        var ecc=Math.max(0,(Number(t.indennita)||0)-lim)*(Number(t.giorni)||0);
+        h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:12.5px;">'
+          +'<div style="min-width:0;"><b>'+wfEsc(t.data||'')+'</b> \u00b7 '+(Number(t.giorni)||0)+'gg '
+          +(t.estero?'estero':'Italia')
+          +(t.coperto==='due'?' \u00b7 vitto e alloggio a carico azienda':(t.coperto==='uno'?' \u00b7 vitto o alloggio a carico azienda':''))
+          +(t.note?(' \u00b7 '+wfEsc(t.note)):'')
+          +'<div style="color:#94a3b8;font-size:11.5px;">'+wfEuro(t.indennita)+'/giorno \u00b7 soglia esente '+wfEuro(lim)
+          +(ecc>0?(' \u2192 imponibile '+wfEuro(ecc)):'')+'</div></div>'
+          +'<button onclick="wfTogliTrasferta(\''+wfEsc(k)+'\','+i+')" style="border:none;background:none;color:#94a3b8;font-size:14px;cursor:pointer;padding:2px 4px;">\u2715</button>'
+          +'</div>';
+      });
+    }
+
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
+      +'<input id="wf_td_'+wfEsc(k)+'" type="text" placeholder="quando (es. 12-14 marzo)" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_tg_'+wfEsc(k)+'" type="number" min="1" step="1" placeholder="giorni" style="flex:0 1 80px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_ti_'+wfEsc(k)+'" type="number" step="0.01" placeholder="\u20ac/giorno" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<select id="wf_te_'+wfEsc(k)+'" style="flex:0 1 110px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><option value="">Italia</option><option value="1">Estero</option></select>'
+      +'<select id="wf_tc_'+wfEsc(k)+'" style="flex:1 1 190px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<option value="">Nessun rimborso vitto/alloggio</option>'
+      +'<option value="uno">Rimborso vitto oppure alloggio</option>'
+      +'<option value="due">Rimborso vitto e alloggio</option></select>'
+      +'<button onclick="wfAggiungiTrasferta(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:8px 14px;border-radius:7px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Aggiungi</button>'
+      +'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.45;">'
+      +'Fuori dal Comune. Viaggio e trasporto documentati si rimborsano a parte e non riducono la soglia. '
+      +'Vitto, alloggio, taxi e NCC vanno pagati con mezzi tracciabili: in contanti perdono l\u2019esenzione.</div>'
       +'</div>'
       +'</div>';
   });
@@ -10703,6 +10804,37 @@ function wfAggiungi(k){
   if(typeof tcToastNew==='function') tcToastNew('Registrato \u00b7 restano '+wfEuro(soglia-wfErogato(rec)), true);
 }
 
+function wfAggiungiTrasferta(k){
+  var g=parseFloat((document.getElementById('wf_tg_'+k)||{}).value||'0');
+  var i=parseFloat((document.getElementById('wf_ti_'+k)||{}).value||'0');
+  if(!(g>0)){ alert('Scrivi quanti giorni.'); return; }
+  if(!(i>0)){ alert('Scrivi l\u2019indennit\u00e0 giornaliera.'); return; }
+  var est=!!((document.getElementById('wf_te_'+k)||{}).value);
+  var cop=((document.getElementById('wf_tc_'+k)||{}).value)||'';
+  var lim=wfLimiteTrasferta(est, cop);
+  var ecc=Math.max(0, i-lim)*g;
+  /* Qui non si blocca: sforare la soglia di trasferta e' legittimo, rende
+     solo imponibile l'eccedenza. E' l'opposto dei fringe benefit, dove
+     superare rende imponibile tutto. Basta che sia chiaro prima. */
+  if(ecc>0 && !confirm('L\u2019indennit\u00e0 supera la soglia esente di '+wfEuro(lim)+' al giorno.\n\n'
+      +'Diventerebbe imponibile '+wfEuro(ecc)+' (solo l\u2019eccedenza, non tutto).\n\nRegistro lo stesso?')) return;
+  var rec=wfDati(k);
+  rec.trasferte=rec.trasferte||[];
+  rec.trasferte.push({
+    data:((document.getElementById('wf_td_'+k)||{}).value||'').trim() || (new Date()).toLocaleDateString('it-IT'),
+    giorni:g, indennita:Math.round(i*100)/100, estero:est, coperto:cop, ts:Date.now()
+  });
+  wfScrivi(k, rec);
+  wfRender();
+}
+function wfTogliTrasferta(k, idx){
+  var rec=wfDati(k);
+  var t=(rec.trasferte||[])[idx]; if(!t) return;
+  if(!confirm('Togliere la trasferta del '+(t.data||'')+'?')) return;
+  rec.trasferte.splice(idx,1);
+  wfScrivi(k, rec);
+  wfRender();
+}
 function wfTogliVoce(k, idx){
   var rec=wfDati(k);
   var v=(rec.voci||[])[idx]; if(!v) return;
@@ -13847,7 +13979,12 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){
       if (c.ricorda && !c.avvisato && !c.fatto){
         var t=new Date(c.ricorda).getTime();
-        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && typeof eaInviaMessaggio==='function'){
+        /* Il promemoria al cliente lo manda la funzione su Supabase 24 ore
+           prima, anche a gestionale chiuso, e segna promClienteAt sulla riga.
+           Qui si avvisa comunque a video chi sta lavorando, ma la mail non
+           parte una seconda volta: al cliente ne arriverebbero due. */
+        var _giaMandata = !!c.promClienteAt;
+        if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && !_giaMandata && typeof eaInviaMessaggio==='function'){
           /* Ultima email uscita da Apps Script: ora passa da Resend. */
           try{ eaInviaMessaggio({
               to:c.email,
@@ -13864,7 +14001,11 @@ document.addEventListener('DOMContentLoaded',function(){
               text:'Gentile '+(c.titolo||'Cliente')+', le ricordiamo il suo appuntamento'
                   +(c.data?(' del '+c.data):'')+(c.ora?(' alle '+c.ora):'')+'.'
                   +' La aspettiamo in Via Nigra 4, Paderno Dugnano. Se non riesce, ci avvisi al 02 9181820.'
-            }); }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
+            });
+            /* Segnata anche qui, cosi' la funzione su Supabase non la rimanda
+               se dovesse girare dopo. Il segno vale in entrambe le direzioni. */
+            c.promClienteAt = Date.now(); cambiato = true;
+          }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
           /* senza spingerlo sul cloud, "avvisato" resta solo qui: al primo
              ricaricamento vince la copia remota, che non ce l'ha, e il
              promemoria riparte all'infinito. */
