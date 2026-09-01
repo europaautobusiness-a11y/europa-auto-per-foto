@@ -10350,9 +10350,20 @@ function applyRoleUI() {
   }
   if (!allowed.length) allowed = ['presenze'];
 
-  ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'].forEach(function(v){
-    var btn = document.getElementById('si-' + v);
-    if (btn) btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
+  /* Anche qui c'era la lista scritta a mano, e una voce non elencata restava
+     visibile a chiunque: Fringe benefit e Noleggio comparivano a tutti.
+     Si guardano invece i pulsanti presenti nella barra: quello che non e'
+     fra le sezioni permesse si nasconde, senza doverlo ricordare. */
+  Array.prototype.slice.call(document.querySelectorAll('.sidebar-item')).forEach(function(btn){
+    var v=String(btn.id||'').replace(/^si-/,'');
+    if(!v) return;
+    /* Auto online e Simulatore non compaiono negli elenchi dei ruoli: prima
+       nessuno li toccava e restavano visibili. Se li trattassimo come gli
+       altri sparirebbero a tutti, amministratore compreso. */
+    if(v==='online' || v==='simulatore') return;
+    /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
+    if(v==='appuntamenti' || v==='task'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
+    btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
   try{ eaSidebarGruppi(); }catch(e){}
 
@@ -12694,28 +12705,139 @@ function tcScaricaRiepilogoXLS(){
     setTimeout(function(){URL.revokeObjectURL(url);},1000);
   }
 
+  /* Il foglio si costruisce cella per cella invece di convertire l'HTML:
+     e' l'unico modo per decidere grassetti, bordi, colonne unite e larghezze.
+     La struttura e' quella del foglio in uso: titolo, riga dei nomi con ORE e
+     PERM/FERIE sotto ciascuno, un rigo per giorno, i totali in fondo. */
   function _scaricaXlsx(){
     try{
-      var cont=document.createElement('div');
-      cont.style.display='none'; cont.innerHTML=H;
-      document.body.appendChild(cont);
-      var tab=cont.querySelector('table');
-      if(!tab){ document.body.removeChild(cont); _scaricaVecchioModo(); return; }
-      /* raw:true fa rispettare data-v: senza, la libreria rilegge il testo
-         visibile e la virgola torna a fare danni. */
-      var wb=XLSX.utils.table_to_book(tab, { sheet:'Presenze', raw:true });
-      document.body.removeChild(cont);
-      XLSX.writeFile(wb, _nomeBase+'.xlsx');
+      var X=XLSXS;
+      var BORDO={style:'thin',color:{rgb:'FF9AA5B1'}};
+      var box={top:BORDO,bottom:BORDO,left:BORDO,right:BORDO};
+      var ws={}, merges=[], R=0;
+      var put=function(r,c,v,st,t,z){
+        var ref=X.utils.encode_cell({r:r,c:c});
+        var cel={ t:(t||'s'), v:v };
+        if(z) cel.z=z;
+        if(st) cel.s=st;
+        ws[ref]=cel;
+      };
+      var nCol=2+nomi.length*2;
+
+      /* titolo */
+      put(R,0,'FOGLIO PRESENZE \u2014 '+tcMeseLabel(mese),
+        { font:{bold:true,sz:14,color:{rgb:'FF1A4FA0'}}, alignment:{vertical:'center'} });
+      merges.push({s:{r:R,c:0},e:{r:R,c:nCol-1}});
+      R+=2;
+
+      /* riga dei nomi: ognuno sopra le sue due colonne */
+      var rNomi=R;
+      nomi.forEach(function(n,i){
+        var c=2+i*2;
+        put(rNomi,c,n,{ font:{bold:true,sz:12}, fill:{fgColor:{rgb:'FFDBE5F1'}},
+                        alignment:{horizontal:'center'}, border:box });
+        put(rNomi,c+1,'',{ fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box });
+        merges.push({s:{r:rNomi,c:c},e:{r:rNomi,c:c+1}});
+      });
+      R++;
+
+      /* intestazioni di colonna */
+      var rInt=R;
+      put(rInt,0,'DIPENDENTE',{ font:{bold:true}, border:box });
+      put(rInt,1,'',{ border:box });
+      nomi.forEach(function(n,i){
+        var c=2+i*2;
+        put(rInt,c,'ORE',{ font:{bold:true}, fill:{fgColor:{rgb:'FFEEF3FA'}},
+                           alignment:{horizontal:'center'}, border:box });
+        put(rInt,c+1,'PERM/FERIE',{ font:{bold:true}, fill:{fgColor:{rgb:'FFEEF3FA'}},
+                           alignment:{horizontal:'center'}, border:box });
+      });
+      R++;
+
+      /* un rigo per giorno */
+      var tot2={}, totExtra2={};
+      cols.forEach(function(d){ tot2[d.email]=0; });
+      for(var g=1; g<=giorni; g++){
+        var dataStr=mese+'-'+String(g).padStart(2,'0');
+        var dow=new Date(anno,mIdx,g).getDay();
+        var festivo=(dow===0||dow===6);
+        var sfondo=festivo?{fgColor:{rgb:'FFF3F4F6'}}:null;
+        var stBase=function(extra){
+          var o={ border:box };
+          if(sfondo) o.fill=sfondo;
+          if(extra) for(var k in extra) o[k]=extra[k];
+          return o;
+        };
+        put(R,0,'GIORNO '+g, stBase({ font:{bold:true} }));
+        put(R,1,sett[dow], stBase(festivo?{ font:{color:{rgb:'FFB91C1C'}} }:null));
+
+        cols.forEach(function(d,i){
+          var c=2+i*2;
+          var r0=map[d.email+'|'+dataStr];
+          var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r0):0;
+          var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
+          var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
+          min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
+          if(min) tot2[d.email]+=min;
+          if(min) put(R,c,Math.round(min/60*100)/100, stBase({ alignment:{horizontal:'center'} }), 'n','0.00');
+          else    put(R,c,'', stBase());
+          put(R,c+1,pc||'', stBase({ alignment:{horizontal:'center'} }));
+        });
+        extra.forEach(function(nome,i){
+          var c=2+(cols.length+i)*2;
+          var pce=(dow===0?'/':'');
+          var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+          if(mine) totExtra2[nome]=(totExtra2[nome]||0)+mine;
+          if(mine) put(R,c,Math.round(mine/60*100)/100, stBase({ alignment:{horizontal:'center'} }), 'n','0.00');
+          else     put(R,c,'', stBase());
+          put(R,c+1,pce, stBase({ alignment:{horizontal:'center'} }));
+        });
+        R++;
+      }
+
+      /* totali */
+      var stTot={ font:{bold:true}, fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box,
+                  alignment:{horizontal:'center'} };
+      put(R,0,'TOTALE ORE',{ font:{bold:true}, fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box });
+      put(R,1,'',{ fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box });
+      cols.forEach(function(d,i){
+        var c=2+i*2;
+        put(R,c, Math.round((tot2[d.email]||0)/60*100)/100, stTot, 'n','0.00');
+        put(R,c+1,'',{ fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box });
+      });
+      extra.forEach(function(nome,i){
+        var c=2+(cols.length+i)*2;
+        put(R,c, Math.round((totExtra2[nome]||0)/60*100)/100, stTot, 'n','0.00');
+        put(R,c+1,'',{ fill:{fgColor:{rgb:'FFDBE5F1'}}, border:box });
+      });
+      R+=2;
+
+      /* legenda */
+      put(R,0,'LEGENDA',{ font:{bold:true} }); R++;
+      ['F = FERIE','P = PERMESSO RETRIBUITO','PN = PERMESSO NON RETRIBUITO',
+       'C = CONGEDO','ROL = ROL','/ = GIORNO DI RIPOSO'].forEach(function(l){
+        put(R,0,l,null); R++;
+      });
+
+      ws['!ref']=X.utils.encode_range({s:{r:0,c:0},e:{r:R,c:Math.max(nCol-1,3)}});
+      ws['!merges']=merges;
+      var larg=[{wch:12},{wch:14}];
+      nomi.forEach(function(){ larg.push({wch:9}); larg.push({wch:13}); });
+      ws['!cols']=larg;
+      /* le prime tre righe restano visibili scorrendo l'elenco dei giorni */
+      ws['!freeze']={xSplit:2,ySplit:rInt+1};
+
+      var wb=X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, 'Presenze');
+      X.writeFile(wb, _nomeBase+'.xlsx');
     }catch(e){
       try{ console.log('xlsx presenze:', e && e.message || e); }catch(e2){}
       _scaricaVecchioModo();
     }
   }
 
-  if(typeof mzLoadXlsx==='function'){
-    mzLoadXlsx(function(ok){ if(ok) _scaricaXlsx(); else _scaricaVecchioModo(); });
-  } else if(typeof XLSX!=='undefined'){
-    _scaricaXlsx();
+  if(typeof tcLoadXlsxStyle==='function'){
+    tcLoadXlsxStyle(function(ok){ if(ok) _scaricaXlsx(); else _scaricaVecchioModo(); });
   } else {
     _scaricaVecchioModo();
   }
@@ -13460,9 +13582,14 @@ function sidebarNav(view,btn){
   try{ if(typeof eaBackAssicura==='function') eaBackAssicura(); }catch(e){}
   if(!_navBack){ if(_navCurrent && _navCurrent!==view) _navHistory.push(_navCurrent); } _navBack=false; _navCurrent=view; if(typeof eaBackShow==='function') eaBackShow();
   // Usa solo classList — il CSS usa .view.active{display:block !important}
-  ['editor','ready','archive','provv','foto','permessi','presenze','sinistri','permute','bmvalue','magazzino','online','preventivi','simulatore','crm','vendite','fornitori','parametri','statistiche','clienti','whatsapp'].forEach(function(v){
-    var el = document.getElementById('view-' + v);
-    if (!el) return;
+  /* ===== SI SPENGONO TUTTE, NON QUELLE DI UN ELENCO =====
+     Qui c'era la lista delle sezioni scritta a mano. Ogni sezione nuova
+     andava aggiunta anche qui, e chi se ne dimenticava otteneva una vista che
+     non si spegneva piu': aperta una volta, restava visibile sotto tutte le
+     altre. E' successo con Noleggio e Fringe benefit.
+     Ora si spengono tutte quelle presenti nella pagina: aggiungendone una
+     domani, funziona senza toccare niente. */
+  Array.prototype.slice.call(document.querySelectorAll('.view')).forEach(function(el){
     el.classList.remove('active');
   });
   var activeEl = document.getElementById('view-' + view);
@@ -17453,6 +17580,26 @@ function mzFiltro(s){ _mzFiltro=s; window._mzLim=60; mzRenderFiltri(); mzRender(
 
 /* SheetJS solo quando serve davvero (l'export rimanenze). Non tira dentro
    HyperFormula come simLoadLibs: qui servono solo le celle. */
+/* ===== LA LIBRERIA CHE SA SCRIVERE GLI STILI =====
+   SheetJS nella versione libera scrive i valori ma non grassetti, bordi e
+   sfondi: il foglio usciva corretto nei numeri e illeggibile nella forma.
+   xlsx-js-style e' la stessa libreria con gli stili, e si usa allo stesso
+   modo. Si carica solo quando serve, come l'altra. */
+function tcLoadXlsxStyle(cb){
+  if(typeof XLSXS!=='undefined'){ cb(true); return; }
+  try{
+    var sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+    sc.onload=function(){
+      /* la libreria si registra come XLSX e sovrascriverebbe l'altra: si
+         mette da parte con un nome suo e si rimette a posto l'originale */
+      try{ window.XLSXS=window.XLSX; }catch(e){}
+      cb(typeof XLSXS!=='undefined');
+    };
+    sc.onerror=function(){ cb(false); };
+    document.head.appendChild(sc);
+  }catch(e){ cb(false); }
+}
 function mzLoadXlsx(cb){
   if(typeof XLSX!=='undefined'){ cb(true); return; }
   try{
