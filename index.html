@@ -9746,12 +9746,15 @@ var SEZIONI_DEFS = [
   {v:'statistiche', label:'Statistiche'}
 ];
 var SEZIONI_DEFAULT_RUOLO = {
-  'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp'],
+  /* 'welfare' \u2014 i fringe benefit \u2014 solo qui: sono importi di retribuzione e
+     li vede il solo amministratore. Non compare nemmeno fra le sezioni
+     assegnabili dai Permessi, quindi non e' concedibile a nessun altro. */
+  'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare'],
   /* Tenere allineato con ROLE_VIEWS in applyRoleUI: uno decide cosa si vede
      nel menu, questo se la sezione si apre davvero. Se divergono, le voci
      compaiono ma rispondono "Sezione riservata". */
   'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti'],
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
 };
@@ -10243,6 +10246,15 @@ function eaSpazioAvviso(d){
 }
 try{ window.eaSpazioApri=eaSpazioApri; window.eaSpazioCopia=eaSpazioCopia; window.eaLsSet=eaLsSet; window.eaSpazioDettaglio=eaSpazioDettaglio; window.eaSpazioAvviso=eaSpazioAvviso; }catch(e){}
 
+/* ===== PERCHE' UNA SEZIONE SPARIVA A INTERMITTENZA =====
+   I permessi personali arrivano da Supabase con qualche istante di ritardo.
+   Nel frattempo vale l'elenco del ruolo: se la sezione non c'e', la voce non
+   compare, e ricompare solo quando i permessi personali sono arrivati. Se
+   quella lettura tarda o fallisce in silenzio, resta nascosta per tutta la
+   sessione \u2014 ed e' quello che succedeva ad Arianna con i Clienti.
+   Regola da tenere: se una persona deve vedere una sezione stabilmente, la
+   sezione va nel suo RUOLO. Il permesso personale serve per le eccezioni, non
+   per reggere l'uso quotidiano. */
 /* Nascondendo le singole voci restavano in piedi le intestazioni vuote:
    "CRM" e "Magazzino" scritti nel menu senza niente sotto, che e' peggio di
    non vederli affatto — sembra un guasto. Un gruppo senza voci visibili
@@ -10277,7 +10289,7 @@ function applyRoleUI() {
        CRM e Clienti mancavano da questo elenco, ed e' meta' del motivo per
        cui a Rudy sparivano. */
     'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti'],
     'manager':    ['editor','ready','archive','provv','presenze','compiti'],
     'dipendente': ['presenze','compiti']
   };
@@ -10346,12 +10358,21 @@ function applyRoleUI() {
      pagina si e' semplicemente ricaricata — scheda cambiata e ripresa,
      telefono che libera memoria, rientro dopo il giro su Google — si torna
      dove si era: chi stava in magazzino ritrova il magazzino. */
-  var landing = (role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0];
-  if (role !== 'admin' && !_landingApplied && allowed.indexOf('presenze') !== -1) {
+  /* ===== DA DOVE PARTE OGNI RUOLO =====
+     Le Timbrature vanno bene per chi entra e per prima cosa timbra. Per la
+     contabilita' no: Arianna apre il gestionale per lavorare sui clienti, e
+     trovarsi ogni volta le presenze significava un passaggio in piu' venti
+     volte al giorno. Chi non e' qui dentro parte dalle Presenze come prima. */
+  var LANDING_RUOLO = { 'contabilita':'clienti' };
+  var _landingRuolo = LANDING_RUOLO[role];
+  if(_landingRuolo && allowed.indexOf(_landingRuolo)===-1) _landingRuolo=null;  /* non permessa: si ripiega */
+
+  var landing = _landingRuolo || ((role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0]);
+  if (role !== 'admin' && !_landingApplied && (_landingRuolo || allowed.indexOf('presenze') !== -1)) {
     _landingApplied = true;
     var _accessoVero = false;
     try{ _accessoVero = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
-    var _dove = 'presenze';
+    var _dove = landing;
     if (!_accessoVero) {
       var _ultima=''; try{ _ultima=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
       /* si ripristina solo se quella sezione e' ancora permessa a questa
@@ -10360,7 +10381,7 @@ function applyRoleUI() {
     }
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
     setTimeout(function(){
-      try{ if(!eaVaiA(_dove)) eaVaiA('presenze'); }catch(e){}
+      try{ if(!eaVaiA(_dove)) eaVaiA(landing); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
     return;
@@ -12013,11 +12034,48 @@ function tcScaricaRiepilogoXLS(){
   });
   H+='</table></body></html>';
 
-  var blob=new Blob(['\uFEFF'+H],{type:'application/vnd.ms-excel;charset=utf-8;'});
-  var url=URL.createObjectURL(blob), a=document.createElement('a');
-  a.href=url; a.download='riepilogo_presenze_'+mese+'.xls';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  /* ===== .XLSX VERO, NON HTML TRAVESTITO =====
+     Prima si scaricava una pagina HTML chiamata .xls: Excel un tempo la
+     apriva lo stesso, le versioni recenti si accorgono che il contenuto non
+     corrisponde all'estensione e avvisano o si rifiutano.
+     Ora la tabella HTML \u2014 che resta comoda perche' porta con se' colori,
+     colonne unite e larghezze \u2014 viene convertita da SheetJS in un file
+     .xlsx vero. La libreria si carica solo quando serve.
+     Se non si riuscisse a caricarla (rete assente), si ripiega sul vecchio
+     formato: meglio un file scomodo che nessun file. */
+  var _nomeBase='riepilogo_presenze_'+mese;
+
+  function _scaricaVecchioModo(){
+    var blob=new Blob(['\uFEFF'+H],{type:'application/vnd.ms-excel;charset=utf-8;'});
+    var url=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=url; a.download=_nomeBase+'.xls';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }
+
+  function _scaricaXlsx(){
+    try{
+      var cont=document.createElement('div');
+      cont.style.display='none'; cont.innerHTML=H;
+      document.body.appendChild(cont);
+      var tab=cont.querySelector('table');
+      if(!tab){ document.body.removeChild(cont); _scaricaVecchioModo(); return; }
+      var wb=XLSX.utils.table_to_book(tab, { sheet:'Presenze', raw:false });
+      document.body.removeChild(cont);
+      XLSX.writeFile(wb, _nomeBase+'.xlsx');
+    }catch(e){
+      try{ console.log('xlsx presenze:', e && e.message || e); }catch(e2){}
+      _scaricaVecchioModo();
+    }
+  }
+
+  if(typeof mzLoadXlsx==='function'){
+    mzLoadXlsx(function(ok){ if(ok) _scaricaXlsx(); else _scaricaVecchioModo(); });
+  } else if(typeof XLSX!=='undefined'){
+    _scaricaXlsx();
+  } else {
+    _scaricaVecchioModo();
+  }
 }
 
 // Timbrature dettagliate del mese
