@@ -507,6 +507,7 @@ html, body{
     <button class="sidebar-item" id="si-sinistri" onclick="sidebarNav('sinistri',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128663;</span><span class="si-label"> Sinistri</span></button>
     <button class="sidebar-item si-provv" id="si-provv" onclick="sidebarNav('provv',this)"><span class="si-icon">&#128182;</span><span class="si-label"> Provvigioni</span></button>
     <button class="sidebar-item" id="si-presenze" onclick="sidebarNav('presenze',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Presenze</span></button>
+    <button class="sidebar-item" id="si-noleggio" onclick="sidebarNav('noleggio',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Noleggio / cortesia</span></button>
     <button class="sidebar-item" id="si-fornitori" onclick="sidebarNav('fornitori',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127970;</span><span class="si-label"> Fornitori</span></button>
     <button class="sidebar-item" id="si-welfare" onclick="sidebarNav('welfare',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127873;</span><span class="si-label"> Fringe benefit</span></button>
     <button class="sidebar-item" id="si-statistiche" onclick="sidebarNav('statistiche',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128202;</span><span class="si-label"> Statistiche</span></button>
@@ -1266,6 +1267,8 @@ html, body{
 </div>
 
 <!-- PERMESSI -->
+<div class="view" id="view-noleggio" style="padding:22px 16px;"></div>
+
 <div class="view" id="view-welfare" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-permessi" style="padding:22px 16px;">
@@ -9749,12 +9752,12 @@ var SEZIONI_DEFAULT_RUOLO = {
   /* 'welfare' \u2014 i fringe benefit \u2014 solo qui: sono importi di retribuzione e
      li vede il solo amministratore. Non compare nemmeno fra le sezioni
      assegnabili dai Permessi, quindi non e' concedibile a nessun altro. */
-  'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare'],
+  'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare','noleggio'],
   /* Tenere allineato con ROLE_VIEWS in applyRoleUI: uno decide cosa si vede
      nel menu, questo se la sezione si apre davvero. Se divergono, le voci
      compaiono ma rispondono "Sezione riservata". */
-  'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti'],
+  'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp','noleggio'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti','noleggio'],
   'manager':    ['editor','ready','archive','provv','presenze','compiti','sinistri','permute'],
   'dipendente': ['presenze','compiti']
 };
@@ -10284,12 +10287,12 @@ function applyRoleUI() {
   var ROLE_VIEWS = {
     /* 'welfare' compare solo qui: i fringe benefit sono dati di retribuzione
        e li vede soltanto l'amministratore. Nemmeno la contabilita'. */
-    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare'],
+    'admin':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','bmvalue','magazzino','preventivi','crm','vendite','impostazioni','fornitori','parametri','statistiche','clienti','whatsapp','welfare','noleggio'],
     /* staff = il venditore: tutto tranne la parte amministrativa. Magazzino,
        CRM e Clienti mancavano da questo elenco, ed e' meta' del motivo per
        cui a Rudy sparivano. */
-    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp'],
-  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti'],
+    'staff':      ['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','vendite','preventivi','magazzino','crm','clienti','whatsapp','noleggio'],
+  'contabilita':['editor','ready','archive','provv','foto','permessi','presenze','compiti','sinistri','permute','magazzino','fornitori','vendite','preventivi','clienti','noleggio'],
     'manager':    ['editor','ready','archive','provv','presenze','compiti'],
     'dipendente': ['presenze','compiti']
   };
@@ -10554,6 +10557,514 @@ function presenzeRenderDipendentiAdmin() {
 
 var PRESENZE_KEY     = 'ea_presenze_v2';
 var PRESENZE_DEL_KEY = 'ea_presenze_del_v1';
+
+
+/* ============================================================================
+   NOLEGGIO / AUTO DI CORTESIA
+   ----------------------------------------------------------------------------
+   Le vetture a noleggio lungo termine non sono merce nostra: nel magazzino
+   sono marcate con nlt e restano fuori da vendite, preventivi e registro di
+   carico. Ma vanno affidate ai clienti, e quell'affidamento e' un contratto
+   con obblighi precisi \u2014 responsabilita', sanzioni, riconsegna \u2014 che vanno
+   stampati e firmati.
+
+   Qui si tiene: l'elenco delle vetture disponibili, i contratti aperti e
+   chiusi, e la possibilita' di dismettere una vettura quando torna al
+   noleggiatore, cosi' smette di comparire fra quelle affidabili senza
+   cancellare i contratti che l'hanno riguardata.
+
+   A volte il noleggio e' gratuito (auto di cortesia durante un intervento),
+   a volte si paga: il prezzo giornaliero a zero e' un caso normale, non un
+   dato mancante.
+============================================================================ */
+var NL_KEY = 'ea_noleggi_v1';
+
+function nlLoad(){
+  try{ return JSON.parse(localStorage.getItem(NL_KEY)||'[]')||[]; }catch(e){ return []; }
+}
+function nlSave(l){
+  try{
+    if(typeof eaLsSet==='function') eaLsSet(NL_KEY, JSON.stringify(l), 'contratti di noleggio');
+    else localStorage.setItem(NL_KEY, JSON.stringify(l));
+  }catch(e){}
+}
+function nlUpsert(rec){
+  var l=nlLoad(), i=l.findIndex(function(x){ return x.id===rec.id; });
+  rec.updatedAt=Date.now();
+  if(i>=0) l[i]=rec; else l.push(rec);
+  nlSave(l);
+  try{ if(typeof supaUpsert==='function') supaUpsert('noleggi_app', rec); }catch(e){}
+}
+function nlSupaLoad(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    if(typeof supaSelectAll!=='function') return;
+    supaSelectAll(sb,'noleggi_app',function(res){
+      if(!res || res.error) return;
+      var byId={};
+      nlLoad().forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+      (res.data||[]).forEach(function(row){
+        var d=row&&row.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        if(!d || !d.id) return;
+        var cur=byId[d.id];
+        if(!cur || (+(d.updatedAt||0)) >= (+(cur.updatedAt||0))) byId[d.id]=d;
+      });
+      nlSave(Object.keys(byId).map(function(k){ return byId[k]; }));
+      var v=document.getElementById('view-noleggio');
+      if(v && v.classList.contains('active')) nlRender();
+    });
+  }catch(e){}
+}
+function nlEsc(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function nlEuro(n){ return (typeof cvEuro==='function')?cvEuro(n):((Number(n)||0).toFixed(2)+' \u20ac'); }
+function nlData(v){ var p=String(v||'').split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v||''); }
+
+/* Le vetture affidabili: quelle a noleggio non ancora rese al noleggiatore. */
+function nlVetture(){
+  try{
+    return (mzLoad()||[]).filter(function(a){ return a && a.nlt && !a.deleted && !a.nltReso; });
+  }catch(e){ return []; }
+}
+function nlVettureRese(){
+  try{
+    return (mzLoad()||[]).filter(function(a){ return a && a.nlt && !a.deleted && a.nltReso; });
+  }catch(e){ return []; }
+}
+function nlAutoLabel(a){
+  if(!a) return '';
+  return ((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' \u00b7 '+a.targa):'');
+}
+/* Contratto in corso su quella vettura, se c'e'. */
+function nlInCorso(autoId){
+  return nlLoad().filter(function(n){ return n && !n.deleted && n.autoId===autoId && !n.chiusoTs; })[0] || null;
+}
+
+/* ---- rendere una vettura al noleggiatore ---- */
+function nlRendiVettura(autoId){
+  var a=(typeof mzById==='function')?mzById(autoId):null;
+  if(!a){ alert('Vettura non trovata.'); return; }
+  if(nlInCorso(autoId)){ alert('Questa vettura risulta affidata a un cliente.\n\nChiudi prima il contratto di noleggio.'); return; }
+  if(!confirm('Segnare '+nlAutoLabel(a)+' come resa al noleggiatore?\n\n'
+    +'Non comparir\u00e0 pi\u00f9 fra quelle affidabili. I contratti gi\u00e0 fatti restano.')) return;
+  a.nltReso=true; a.nltResoTs=Date.now();
+  try{ a.updatedAt=Date.now(); }catch(e){}
+  try{
+    var l=mzLoad().map(function(x){ return x.id===a.id ? a : x; });
+    mzSave(l);
+    if(typeof mzSupaUpsert==='function') mzSupaUpsert(a);
+  }catch(e){}
+  nlRender();
+}
+function nlRiprendiVettura(autoId){
+  var a=(typeof mzById==='function')?mzById(autoId):null; if(!a) return;
+  if(!confirm('Rimettere '+nlAutoLabel(a)+' fra le vetture disponibili?')) return;
+  a.nltReso=false; try{ delete a.nltResoTs; }catch(e){}
+  a.updatedAt=Date.now();
+  try{
+    mzSave(mzLoad().map(function(x){ return x.id===a.id ? a : x; }));
+    if(typeof mzSupaUpsert==='function') mzSupaUpsert(a);
+  }catch(e){}
+  nlRender();
+}
+
+
+/* ---- il contratto: compilazione ---- */
+var _nl = null;
+
+function nlNuovo(autoId){
+  _nl = {
+    id:'nl_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+    createdAt:Date.now(),
+    creatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+    autoId:autoId||'', autoDesc:'',
+    cognome:'', nome:'', ragSociale:'', indirizzo:'', cap:'', citta:'', prov:'',
+    telefono:'', telefono2:'', email:'', cf:'', piva:'', sdi:'', pec:'',
+    patente:'', patenteScad:'', patenteEnte:'',
+    dataInizio:(new Date()).toISOString().slice(0,10), dataFine:'',
+    prezzoGiorno:'', cauzione:'', modalitaPag:'',
+    ritiroData:(new Date()).toISOString().slice(0,10),
+    ritiroOra:(new Date()).toTimeString().slice(0,5),
+    kmConsegna:'', carburante:'', statoAuto:'AUTO IN PERFETTE CONDIZIONI',
+    note:''
+  };
+  if(autoId){ var a=(typeof mzById==='function')?mzById(autoId):null; if(a) _nl.autoDesc=nlAutoLabel(a); }
+  nlForm();
+}
+function nlApri(id){
+  var n=nlLoad().filter(function(x){ return x.id===id; })[0];
+  if(!n){ alert('Contratto non trovato.'); return; }
+  _nl=JSON.parse(JSON.stringify(n));
+  nlForm();
+}
+
+function nlForm(){
+  var m=document.getElementById('nlModal');
+  if(!m){ m=document.createElement('div'); m.id='nlModal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
+    document.body.appendChild(m); }
+
+  var lab=function(t){ return '<label style="display:block;font-size:10.5px;font-weight:800;text-transform:uppercase;color:#64748b;margin:9px 0 3px;">'+t+'</label>'; };
+  var inp=function(id,v,ph,tipo){ return '<input id="'+id+'" type="'+(tipo||'text')+'" value="'+nlEsc(v||'')+'" placeholder="'+nlEsc(ph||'')+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13.5px;box-sizing:border-box;">'; };
+  var due=function(a,b){ return '<div style="display:flex;gap:10px;"><div style="flex:1;">'+a+'</div><div style="flex:1;">'+b+'</div></div>'; };
+
+  /* le vetture selezionabili: quelle libere, piu' quella gia' su questo contratto */
+  var vet=nlVetture().filter(function(a){
+    var c=nlInCorso(a.id);
+    return !c || c.id===_nl.id;
+  });
+
+  var h='<div style="max-width:640px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
+    +'<span style="font-weight:800;">'+(_nl.chiusoTs?'Contratto chiuso':'Contratto di noleggio')+'</span>'
+    +'<button onclick="nlChiudiForm()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
+    +'<div style="padding:16px 18px;max-height:76vh;overflow:auto;">';
+
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;">Veicolo</div>'
+    +'<select id="nl_auto" onchange="nlAutoSel()" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13.5px;margin-top:4px;">'
+    +'<option value="">\u2014 scegli la vettura \u2014</option>'
+    + vet.map(function(a){ return '<option value="'+nlEsc(a.id)+'"'+(a.id===_nl.autoId?' selected':'')+'>'+nlEsc(nlAutoLabel(a))+'</option>'; }).join('')
+    +'</select>';
+
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:14px;">Cliente</div>'
+    +'<div style="font-size:11.5px;color:#64748b;margin:2px 0 4px;">Scrivi il cognome: se il cliente c\u2019\u00e8 gi\u00e0, i suoi dati si compilano da soli.</div>'
+    + due(lab('Cognome')+'<input id="nl_cognome" list="nl-clienti" value="'+nlEsc(_nl.cognome)+'" oninput="nlClienteCerca()" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13.5px;box-sizing:border-box;">',
+            lab('Nome')+inp('nl_nome',_nl.nome))
+    + '<datalist id="nl-clienti">'
+    + (function(){
+        try{
+          return (clAggrega()||[]).slice(0,400).map(function(c){
+            return '<option value="'+nlEsc((c.cognome||'')+' '+(c.nome||''))+'"></option>';
+          }).join('');
+        }catch(e){ return ''; }
+      })()
+    + '</datalist>'
+    + lab('Ragione sociale')+inp('nl_ragSociale',_nl.ragSociale)
+    + lab('Indirizzo')+inp('nl_indirizzo',_nl.indirizzo)
+    + '<div style="display:flex;gap:10px;"><div style="flex:0 0 90px;">'+lab('CAP')+inp('nl_cap',_nl.cap)+'</div>'
+    + '<div style="flex:1;">'+lab('Citt\u00e0')+inp('nl_citta',_nl.citta)+'</div>'
+    + '<div style="flex:0 0 80px;">'+lab('Prov.')+inp('nl_prov',_nl.prov)+'</div></div>'
+    + due(lab('Telefono')+inp('nl_telefono',_nl.telefono), lab('Secondo telefono')+inp('nl_telefono2',_nl.telefono2))
+    + lab('Email')+inp('nl_email',_nl.email,'','email')
+    + due(lab('Codice fiscale')+inp('nl_cf',_nl.cf), lab('Partita IVA')+inp('nl_piva',_nl.piva))
+    + due(lab('Codice SDI')+inp('nl_sdi',_nl.sdi), lab('PEC')+inp('nl_pec',_nl.pec));
+
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:14px;">Patente</div>'
+    + lab('Numero patente')+inp('nl_patente',_nl.patente)
+    + due(lab('Scadenza')+inp('nl_patenteScad',_nl.patenteScad,'','date'),
+          lab('Rilasciata da')+inp('nl_patenteEnte',_nl.patenteEnte,'es. MC-MI'));
+
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:14px;">Noleggio</div>'
+    + due(lab('Data inizio')+inp('nl_dataInizio',_nl.dataInizio,'','date'),
+          lab('Data fine prevista')+inp('nl_dataFine',_nl.dataFine,'','date'))
+    + due(lab('Ritiro \u2014 data')+inp('nl_ritiroData',_nl.ritiroData,'','date'),
+          lab('Ritiro \u2014 ora')+inp('nl_ritiroOra',_nl.ritiroOra,'','time'))
+    + due(lab('Prezzo giornaliero \u20ac')+inp('nl_prezzoGiorno',_nl.prezzoGiorno,'0 = gratuito','number'),
+          lab('Cauzione \u20ac')+inp('nl_cauzione',_nl.cauzione,'','number'))
+    + lab('Modalit\u00e0 di pagamento')+inp('nl_modalitaPag',_nl.modalitaPag,'contanti, bonifico, gratuito\u2026')
+    + due(lab('Km alla consegna')+inp('nl_kmConsegna',_nl.kmConsegna,'','number'),
+          lab('Carburante alla consegna')+inp('nl_carburante',_nl.carburante,'es. 1/2, pieno'))
+    + lab('Stato del veicolo')+inp('nl_statoAuto',_nl.statoAuto)
+    + lab('Note')+inp('nl_note',_nl.note);
+
+  /* riconsegna: compare quando il contratto e' aperto */
+  if(_nl.createdAt && !_nl.chiusoTs){
+    h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:16px;">'
+      +'<div style="font-weight:800;font-size:12px;color:#334155;text-transform:uppercase;margin-bottom:2px;">Riconsegna</div>'
+      +'<div style="font-size:11.5px;color:#64748b;margin-bottom:4px;">Da compilare quando la vettura torna. Il ritardo si calcola sulla data di fine prevista, e le condizioni prevedono 30 \u20ac + IVA al giorno.</div>'
+      + due(lab('Km al rientro')+inp('nl_kmRientro',_nl.kmRientro,'','number'),
+            lab('Carburante al rientro')+inp('nl_carbRientro',_nl.carbRientro,''))
+      + lab('Danni riscontrati')+inp('nl_danni',_nl.danni,'nessuno')
+      +'<button onclick="nlChiudiContratto()" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Registra la riconsegna e chiudi</button>'
+      +'</div>';
+  }
+  if(_nl.chiusoTs){
+    var dc=new Date(_nl.chiusoTs);
+    h+='<div style="background:#f1f5f9;border-radius:10px;padding:11px 13px;margin-top:14px;font-size:12.5px;color:#475569;">'
+      +'Chiuso il '+dc.toLocaleDateString('it-IT')+(_nl.kmRientro?(' \u00b7 '+nlEsc(_nl.kmRientro)+' km'):'')
+      +(_nl.danni?(' \u00b7 danni: '+nlEsc(_nl.danni)):'')+'</div>';
+  }
+
+  h+='<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">'
+    +'<button onclick="nlSalva()" style="flex:1 1 160px;padding:11px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udcbe Salva</button>'
+    +'<button onclick="nlStampa()" style="flex:1 1 160px;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udda8\ufe0f Stampa contratto</button>'
+    +'</div>'
+    +'<button onclick="nlElimina()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:none;background:none;color:#dc2626;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Elimina contratto</button>';
+
+  h+='</div></div>';
+  m.innerHTML=h; m.style.display='flex';
+}
+function nlChiudiForm(){ var m=document.getElementById('nlModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+
+function nlAutoSel(){
+  var el=document.getElementById('nl_auto'); if(!el) return;
+  _nl.autoId=el.value;
+  var a=(typeof mzById==='function')?mzById(el.value):null;
+  _nl.autoDesc=a?nlAutoLabel(a):'';
+}
+
+/* Cliente gia' in anagrafica: si compila da solo. Cosi' non si riscrive un
+   indirizzo che il gestionale conosce gia', e non nascono due versioni dello
+   stesso cliente. */
+function nlClienteCerca(){
+  try{
+    var el=document.getElementById('nl_cognome'); if(!el) return;
+    var v=String(el.value||'').trim().toLowerCase(); if(v.length<3) return;
+    var hit=(clAggrega()||[]).filter(function(c){
+      return (((c.cognome||'')+' '+(c.nome||'')).trim().toLowerCase())===v;
+    })[0];
+    if(!hit) return;
+    var set=function(id,val){ var e=document.getElementById(id); if(e && !e.value) e.value=val||''; };
+    var e1=document.getElementById('nl_cognome'); if(e1) e1.value=hit.cognome||'';
+    set('nl_nome',hit.nome); set('nl_ragSociale',hit.ragSociale);
+    set('nl_telefono',hit.telefono); set('nl_email',hit.email);
+    set('nl_cf',hit.cf); set('nl_piva',hit.piva); set('nl_sdi',hit.sdi);
+    var ind=(hit.indirizzi&&hit.indirizzi[0])||null;
+    if(ind){ set('nl_indirizzo',((ind.via||'')+' '+(ind.civico||'')).trim()); set('nl_cap',ind.cap); set('nl_citta',ind.citta); set('nl_prov',ind.prov); }
+  }catch(e){}
+}
+
+function nlLeggiForm(){
+  var g=function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  ['cognome','nome','ragSociale','indirizzo','cap','citta','prov','telefono','telefono2','email',
+   'cf','piva','sdi','pec','patente','patenteScad','patenteEnte','dataInizio','dataFine',
+   'prezzoGiorno','cauzione','modalitaPag','ritiroData','ritiroOra','kmConsegna','carburante',
+   'statoAuto','note','kmRientro','carbRientro','danni'].forEach(function(k){
+    var e=document.getElementById('nl_'+k); if(e) _nl[k]=String(e.value||'').trim();
+  });
+  nlAutoSel();
+}
+
+function nlSalva(){
+  nlLeggiForm();
+  if(!_nl.autoId){ alert('Scegli la vettura.'); return; }
+  if(!_nl.cognome && !_nl.ragSociale){ alert('Serve almeno il cognome o la ragione sociale.'); return; }
+  if(!_nl.dataFine){ alert('Serve la data di fine prevista: senza, il ritardo nella riconsegna non si pu\u00f2 contestare.'); return; }
+  nlUpsert(_nl);
+  nlChiudiForm();
+  nlRender();
+  if(typeof tcToastNew==='function') tcToastNew('Contratto salvato', true);
+}
+
+function nlChiudiContratto(){
+  nlLeggiForm();
+  if(!confirm('Registrare la riconsegna e chiudere il contratto?\n\nLa vettura torna disponibile per un nuovo affidamento.')) return;
+  _nl.chiusoTs=Date.now();
+  _nl.chiusoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  nlUpsert(_nl);
+  nlChiudiForm();
+  nlRender();
+  if(typeof tcToastNew==='function') tcToastNew('Riconsegna registrata', true);
+}
+
+function nlElimina(){
+  if(!_nl || !_nl.id) return;
+  if(!confirm('Eliminare questo contratto di noleggio?')) return;
+  _nl.deleted=true;
+  nlUpsert(_nl);
+  nlChiudiForm();
+  nlRender();
+}
+
+
+/* ---- stampa ----
+   Le condizioni sono quelle del contratto cartaceo in uso: impegni del
+   firmatario, dichiarazioni, guasti e incidenti. Stanno in una costante sola
+   perche' cambiano di rado e vanno cambiate in un punto solo.
+   Due copie, come per gli altri documenti che si firmano: una al cliente,
+   una in concessionaria. */
+var NL_IMPEGNI = [
+ 'A non cedere a terzi il veicolo di cui sopra e a non utilizzarlo per recarsi in altro Stato.',
+ 'Ad utilizzare a sue spese e custodire con la massima diligenza il veicolo, tenendo indenne la Societ\u00e0 concedente il veicolo da ogni e qualsiasi responsabilit\u00e0 civile, penale ed amministrativa per infortuni, incidenti, danni a se stesso ed a terzi, a persone e cose trasportate, nonch\u00e9 furti, incendi e quanto altro possa derivare dall\u2019uso di detta vettura, anche indipendentemente dalla sua volont\u00e0.',
+ 'In caso di furto, a sporgere tempestivamente denuncia alle competenti Autorit\u00e0, inviandone copia entro 8 ore alla societ\u00e0 concedente, insieme con le chiavi del veicolo.',
+ 'In caso di incidente, a raccogliere tutta la documentazione necessaria per l\u2019avvio delle pratiche assicurative, ivi inclusa l\u2019eventuale constatazione amichevole del danno. Il firmatario risponde inoltre di tutti i danni occorsi al bene durante la sua detenzione.',
+ 'A sostenere in proprio la franchigia del 10% del danno in caso di incendio e/o di furto.',
+ 'A rispondere in proprio per le sanzioni di ogni tipo e natura derivanti dall\u2019uso del veicolo. Prende atto che per le contravvenzioni con decurtazione del punteggio della patente, stante l\u2019obbligo della societ\u00e0 concedente di fornire all\u2019Autorit\u00e0 richiedente le informazioni circa l\u2019utilizzatore del veicolo al momento dell\u2019infrazione, la societ\u00e0 concedente fornir\u00e0 le sue generalit\u00e0 entro 30 giorni dalla notifica del verbale.',
+ 'Ad esibire copia della presente lettera di presa in carico e autorizzazione alla guida ad ogni richiesta delle competenti Autorit\u00e0.',
+ 'A rispettare la data di riconsegna del veicolo, sia essa vettura sostitutiva o a nolo; in caso contrario il locatore si riserva di addebitare il prezzo giornaliero di 30,00 \u20ac + IVA al giorno.'
+];
+var NL_DICHIARA = [
+ 'Di assumersi ogni e qualsiasi responsabilit\u00e0 per sinistri di qualsiasi tipo e natura, per eventuali danni cagionati a s\u00e9, a persone trasportate, a terzi e/o a cose, nonch\u00e9 per tutte le violazioni di disposizioni di legge e/o regolamenti, manlevando espressamente la Europa Auto S.r.l. e/o l\u2019effettivo proprietario del veicolo, senza riserva alcuna.',
+ 'Di riconoscersi debitore nei confronti della Europa Auto S.r.l. di tutte le somme contestate e richieste in pagamento a mezzo di verbale di accertamento della violazione notificato alla Europa Auto S.r.l. o all\u2019effettivo proprietario del veicolo, per tutto il periodo in cui detto veicolo rimane nella sua disponibilit\u00e0.',
+ 'Di prendere atto che il veicolo sopra descritto gli \u00e8 stato consegnato in ottimo stato di conservazione, esente da vizi e del tutto idoneo alla funzione, dotato dei prescritti documenti di circolazione e in copertura assicurativa come specificato e accettato.',
+ 'Di prendere atto che il veicolo andr\u00e0 riconsegnato nelle medesime condizioni e con la quantit\u00e0 di carburante presente all\u2019atto del ritiro, essendo inteso che il consumo di carburante \u00e8 a carico del firmatario.'
+];
+
+function nlStampa(){
+  nlLeggiForm();
+  if(!_nl.autoId){ alert('Scegli la vettura prima di stampare.'); return; }
+  nlUpsert(_nl);
+
+  var a=(typeof mzById==='function')?mzById(_nl.autoId):null; a=a||{};
+  var E=nlEsc;
+  var gg=(function(){
+    try{
+      if(!_nl.dataInizio || !_nl.dataFine) return 0;
+      var d1=new Date(_nl.dataInizio), d2=new Date(_nl.dataFine);
+      return Math.max(0, Math.round((d2-d1)/86400000));
+    }catch(e){ return 0; }
+  })();
+  var pg=Number(_nl.prezzoGiorno)||0;
+  var tot=pg*gg;
+
+  var riga=function(et,v){ return '<tr><td class="et">'+E(et)+'</td><td class="vl">'+E(v||'\u2014')+'</td></tr>'; };
+
+  var corpo=''
+   +'<div class="tit">Contratto di noleggio / auto di cortesia</div>'
+   +'<div class="sub">Europa Auto S.r.l. \u00b7 Via Nigra 4, Paderno Dugnano (MI) \u00b7 C.F./P.IVA 06440210968</div>'
+   +'<div class="sub">Data contratto: '+E(nlData(_nl.dataInizio))+' \u00b7 Creato da: '+E(_nl.creatoDa||'')+'</div>'
+
+   +'<div class="sez">Dati automobilista</div><table>'
+   + riga('Cognome e nome', ((_nl.cognome||'')+' '+(_nl.nome||'')).trim())
+   + (_nl.ragSociale?riga('Ragione sociale',_nl.ragSociale):'')
+   + riga('Indirizzo', ((_nl.indirizzo||'')+' \u2014 '+(_nl.cap||'')+' '+(_nl.citta||'')+' '+(_nl.prov?('('+_nl.prov+')'):'')).trim())
+   + riga('Telefono', (_nl.telefono||'')+(_nl.telefono2?(' // '+_nl.telefono2):''))
+   + riga('Email', _nl.email)
+   + riga('Codice fiscale', _nl.cf) + (_nl.piva?riga('P.IVA',_nl.piva):'')
+   + (_nl.sdi?riga('SDI',_nl.sdi):'') + (_nl.pec?riga('PEC',_nl.pec):'')
+   + riga('Patente n.', (_nl.patente||'')+(_nl.patenteScad?(' \u00b7 scadenza '+nlData(_nl.patenteScad)):'')+(_nl.patenteEnte?(' \u00b7 rilasciata da '+_nl.patenteEnte):''))
+   +'</table>'
+
+   +'<div class="sez">Dati veicolo</div><table>'
+   + riga('Modello', ((a.marca||'')+' '+(a.modello||'')).trim())
+   + riga('Targa', a.targa||'')
+   + riga('Alimentazione', a.alimentazione||'')
+   + riga('Cilindrata', a.cilindrata||'') + riga('Potenza (kW)', a.potenza||'')
+   + riga('Stato del veicolo', _nl.statoAuto)
+   + riga('Km alla consegna', _nl.kmConsegna)
+   + riga('Carburante alla consegna', _nl.carburante)
+   +'</table>'
+
+   +'<div class="sez">Dati contratto</div><table>'
+   + riga('Data inizio', nlData(_nl.dataInizio))
+   + riga('Data fine prevista', nlData(_nl.dataFine))
+   + riga('Giorni', gg?String(gg):'\u2014')
+   + riga('Data e ora ritiro', nlData(_nl.ritiroData)+(_nl.ritiroOra?(' '+_nl.ritiroOra):''))
+   + riga('Prezzo giornaliero', pg>0?nlEuro(pg):'gratuito')
+   + riga('Cauzione', Number(_nl.cauzione)>0?nlEuro(_nl.cauzione):'\u2014')
+   + riga('Modalit\u00e0 di pagamento', _nl.modalitaPag)
+   + riga('Totale noleggio', tot>0?nlEuro(tot):'gratuito')
+   + (_nl.note?riga('Note',_nl.note):'')
+   +'</table>'
+
+   +'<div class="sez">Il firmatario si impegna</div><ol>'
+   + NL_IMPEGNI.map(function(t){ return '<li>'+t+'</li>'; }).join('')
+   +'</ol>'
+   +'<div class="sez">Il firmatario dichiara</div><ol>'
+   + NL_DICHIARA.map(function(t){ return '<li>'+t+'</li>'; }).join('')
+   +'</ol>'
+
+   +'<div class="sez">Guasti meccanici</div>'
+   +'<p>In caso di problemi dovuti a guasti meccanici o incidenti, contattare l\u2019Assistenza Stradale di Emergenza ACI al numero 803.116. Il servizio \u00e8 incluso nel noleggio, ma se il guasto \u00e8 stato provocato dal firmatario, questi \u00e8 tenuto a rimborsare i costi dell\u2019intervento. Non \u00e8 consentito far ispezionare o riparare il veicolo senza autorizzazione.</p>'
+   +'<div class="sez">Incidenti</div>'
+   +'<p>Il locatore deve essere informato in qualsiasi caso. In presenza di danni al veicolo occorre contattare anche l\u2019Assistenza Stradale al numero 803.116, e denunciare l\u2019incidente alle Autorit\u00e0 se vi sono lesioni o danni a cose.</p>'
+   +'<p>Restano sempre esclusi da ogni copertura pneumatici e tappezzeria interna; eventuali difetti riscontrati alla riconsegna vengono valutati e addebitati sottraendoli dal deposito cauzionale. Non sono previsti limiti di chilometraggio, salvo diversa indicazione nel presente contratto.</p>'
+
+   +'<table class="firme"><tr>'
+   +'<td>Firma del cliente per accettazione<div class="riga"></div></td>'
+   +'<td>Firma dell\u2019addetto<div class="riga"></div></td>'
+   +'</tr></table>';
+
+  var css='<style>'
+   +'@page{size:A4;margin:14mm}'
+   +'body{font-family:Arial,Helvetica,sans-serif;font-size:10pt;color:#111;line-height:1.45;}'
+   +'.tit{font-size:16pt;font-weight:bold;color:#1a4fa0;}'
+   +'.sub{font-size:9pt;color:#555;}'
+   +'.sez{margin-top:12px;margin-bottom:4px;font-weight:bold;font-size:10.5pt;color:#1a4fa0;border-bottom:1px solid #ccd;padding-bottom:2px;}'
+   +'table{width:100%;border-collapse:collapse;}'
+   +'td.et{width:34%;color:#555;padding:2px 8px 2px 0;vertical-align:top;}'
+   +'td.vl{font-weight:bold;padding:2px 0;}'
+   +'ol{margin:4px 0 0 16px;padding:0;} li{margin-bottom:4px;text-align:justify;}'
+   +'p{text-align:justify;margin:4px 0;}'
+   +'.firme{margin-top:22px;} .firme td{width:50%;font-size:9pt;color:#555;padding-right:14px;vertical-align:top;}'
+   +'.riga{border-bottom:1px solid #333;height:34px;margin-top:4px;}'
+   +'.copia{page-break-after:always;}'
+   +'.et2{font-size:8pt;color:#888;text-align:right;margin-bottom:6px;}'
+   +'</style>';
+
+  var doc='<html><head><meta charset="utf-8"><title>Noleggio '+E((_nl.cognome||'')+' '+(_nl.nome||''))+'</title>'+css+'</head><body>'
+   +'<div class="copia"><div class="et2">Copia per il cliente</div>'+corpo+'</div>'
+   +'<div><div class="et2">Copia per la concessionaria</div>'+corpo+'</div>'
+   +'</body></html>';
+
+  try{
+    var w=window.open('','_blank');
+    if(!w){ alert('Il browser ha bloccato la finestra di stampa. Consenti le finestre pop-up per questo sito.'); return; }
+    w.document.write(doc); w.document.close();
+    setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 400);
+  }catch(e){ alert('Stampa non riuscita: '+(e&&e.message||e)); }
+}
+
+/* ---- schermata ---- */
+function nlRender(){
+  var wrap=document.getElementById('view-noleggio'); if(!wrap) return;
+  var vet=nlVetture(), rese=nlVettureRese();
+  var contratti=nlLoad().filter(function(n){ return n && !n.deleted; })
+    .sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+  var aperti=contratti.filter(function(n){ return !n.chiusoTs; });
+  var chiusi=contratti.filter(function(n){ return n.chiusoTs; });
+
+  var h='<div style="max-width:1000px;margin:0 auto;">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
+    +'<div><h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83d\ude9a Noleggio / auto di cortesia</h2>'
+    +'<div style="font-size:12.5px;color:#64748b;margin-top:3px;">Vetture a noleggio lungo termine affidate ai clienti. Non entrano nel magazzino di vendita n\u00e9 nel registro di carico.</div></div>'
+    +'<button onclick="nlNuovo()" style="padding:9px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">+ Nuovo contratto</button>'
+    +'</div>';
+
+  /* vetture */
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
+    +'<div style="font-weight:800;font-size:12.5px;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Vetture a noleggio ('+vet.length+')</div>';
+  if(!vet.length){
+    h+='<div style="font-size:13px;color:#94a3b8;">Nessuna vettura a noleggio. Si marcano dalla scheda del veicolo in Magazzino, con la spunta \u201cNoleggio a lungo termine\u201d.</div>';
+  } else {
+    vet.forEach(function(a){
+      var n=nlInCorso(a.id);
+      h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9;flex-wrap:wrap;">'
+        +'<div style="min-width:0;"><div style="font-weight:700;font-size:14px;color:#0f172a;">'+nlEsc(nlAutoLabel(a))+'</div>'
+        +'<div style="font-size:12px;color:'+(n?'#d97706':'#16a34a')+';font-weight:700;">'
+        +(n?('affidata a '+nlEsc(n.cognome+' '+n.nome).trim()+' fino al '+nlData(n.dataFine)):'disponibile')+'</div></div>'
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+        +(n?('<button onclick="nlApri(\''+nlEsc(n.id)+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Apri contratto</button>')
+            :('<button onclick="nlNuovo(\''+nlEsc(a.id)+'\')" style="padding:7px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Affida</button>'))
+        +'<button onclick="nlRendiVettura(\''+nlEsc(a.id)+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Resa al noleggiatore</button>'
+        +'</div></div>';
+    });
+  }
+  if(rese.length){
+    h+='<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f1f5f9;">'
+      +'<div style="font-size:11.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;margin-bottom:4px;">Rese al noleggiatore ('+rese.length+')</div>';
+    rese.forEach(function(a){
+      h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:13px;color:#94a3b8;">'
+        +'<span>'+nlEsc(nlAutoLabel(a))+'</span>'
+        +'<button onclick="nlRiprendiVettura(\''+nlEsc(a.id)+'\')" style="border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;">rimetti disponibile</button>'
+        +'</div>';
+    });
+    h+='</div>';
+  }
+  h+='</div>';
+
+  /* contratti */
+  var lista=function(titolo, arr, colore){
+    var b='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
+      +'<div style="font-weight:800;font-size:12.5px;color:'+colore+';text-transform:uppercase;margin-bottom:8px;">'+titolo+' ('+arr.length+')</div>';
+    if(!arr.length) b+='<div style="font-size:13px;color:#94a3b8;">Nessuno.</div>';
+    arr.forEach(function(n){
+      var scaduto=(!n.chiusoTs && n.dataFine && n.dataFine < (new Date()).toISOString().slice(0,10));
+      b+='<div onclick="nlApri(\''+nlEsc(n.id)+'\')" style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #f1f5f9;cursor:pointer;flex-wrap:wrap;">'
+        +'<div style="min-width:0;"><div style="font-weight:700;font-size:14px;color:#0f172a;">'+nlEsc((n.cognome+' '+n.nome).trim()||'(senza nome)')+'</div>'
+        +'<div style="font-size:12px;color:#64748b;">'+nlEsc(n.autoDesc||'')+' \u00b7 dal '+nlData(n.dataInizio)+' al '+nlData(n.dataFine)+'</div></div>'
+        +'<div style="text-align:right;white-space:nowrap;">'
+        +'<div style="font-size:13px;font-weight:800;color:#0f172a;">'+(Number(n.prezzoGiorno)>0?(nlEuro(n.prezzoGiorno)+'/giorno'):'gratuito')+'</div>'
+        +(scaduto?'<div style="font-size:11.5px;color:#dc2626;font-weight:800;">riconsegna scaduta</div>':'')
+        +'</div></div>';
+    });
+    return b+'</div>';
+  };
+  h+=lista('Contratti in corso', aperti, '#166534');
+  h+=lista('Chiusi', chiusi.slice(0,20), '#64748b');
+
+  h+='</div>';
+  wrap.innerHTML=h;
+}
 
 /* ============================================================================
    FRINGE BENEFIT — contatore per dipendente
@@ -12850,6 +13361,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){buildEditor();buildSubjGroup(testGroups,'testGrid');buildSubjGroup(roadGroups,'roadGrid');updateSummary();}
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
+  if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
   if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
@@ -21519,6 +22031,25 @@ function cvLogChi(){
   }catch(e){}
   return 'sconosciuto';
 }
+/* Scrive nello storico una voce gia' pronta, senza confronto fra due
+   versioni: serve per i fatti che non sono una modifica di campo, come la
+   conferma di un incasso. */
+function cvLogVoce(cv, evento, diff){
+  try{
+    if(!cv || !cv.id) return;
+    var ts=Date.now();
+    var rec={
+      id:'log_'+cv.id+'_'+ts+'_'+Math.random().toString(36).slice(2,7),
+      cvId:cv.id, ts:ts, updatedAt:ts, chi:cvLogChi(),
+      evento:evento||'modifica', diff:diff||[],
+      cliente:((((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim())
+              ||((cv.cliente&&cv.cliente.ragSociale)||''),
+      auto:String((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'')
+    };
+    var l=cvLogLoad(); l.push(rec); cvLogSave(l);
+    if(typeof supaUpsert==='function') supaUpsert('cv_log_app', rec);
+  }catch(e){}
+}
 function cvLogRegistra(prima, dopo, evento){
   try{
     if(!dopo || !dopo.id) return;
@@ -21533,6 +22064,31 @@ function cvLogRegistra(prima, dopo, evento){
         if(String(a)===String(b)) return;
         diff.push({c:c[1], da:cvLogFmt(a), a:cvLogFmt(b)});
       });
+      /* ===== I PAGAMENTI =====
+         Sono un elenco, non un campo, quindi il confronto per percorso non li
+         vedeva: cambiare un importo o confermare un incasso non lasciava
+         traccia. Qui si confrontano riga per riga: importo, metodo, tipo e
+         soprattutto la conferma, che e' quella che sposta i soldi. */
+      try{
+        var _pa=(prima&&prima.pagamenti)||[], _pb=(dopo&&dopo.pagamenti)||[];
+        var _et=function(x,i){ return (x&&x.tipo) ? x.tipo : ('Pagamento '+(i+1)); };
+        var _eu=function(v){ return (typeof cvEuro==='function')?cvEuro(v):String(v||''); };
+        var _n=Math.max(_pa.length,_pb.length);
+        for(var _i=0;_i<_n;_i++){
+          var _a=_pa[_i], _b=_pb[_i];
+          if(_a && !_b){ diff.push({c:'Pagamento tolto', da:_et(_a,_i)+' '+_eu(_a.importo), a:'\u2014'}); continue; }
+          if(!_a && _b){ diff.push({c:'Pagamento aggiunto', da:'\u2014', a:_et(_b,_i)+' '+_eu(_b.importo)}); continue; }
+          if(!_a || !_b) continue;
+          if(String(_a.tipo||'')!==String(_b.tipo||''))
+            diff.push({c:'Tipo pagamento', da:String(_a.tipo||'\u2014'), a:String(_b.tipo||'\u2014')});
+          if(String(_a.importo||'')!==String(_b.importo||''))
+            diff.push({c:_et(_b,_i)+' \u2014 importo', da:_eu(_a.importo), a:_eu(_b.importo)});
+          if(String(_a.metodo||'')!==String(_b.metodo||''))
+            diff.push({c:_et(_b,_i)+' \u2014 metodo', da:String(_a.metodo||'\u2014'), a:String(_b.metodo||'\u2014')});
+          if(!!_a.confermato!==!!_b.confermato)
+            diff.push({c:_et(_b,_i)+' \u2014 incasso', da:(_a.confermato?'confermato':'da confermare'), a:(_b.confermato?'CONFERMATO':'conferma annullata')});
+        }
+      }catch(e){}
       if(!diff.length && evento==='modifica') return;   /* nulla di sostanziale */
     }
     var ts=Date.now();
@@ -21559,7 +22115,8 @@ var CVLOG_ETICHETTE={ creazione:['#dcfce7','#166534','Creato'], modifica:['#e0e7
   proposta:['#ede9fe','#5b21b6','Trasformato in proposta'], delibera:['#ffedd5','#9a3412','Delibera confermata'],
   delibera_annullata:['#fee2e2','#991b1b','Delibera annullata'], consegna:['#dbeafe','#1e40af','Consegnato'],
   fattura:['#f0fdf4','#166534','Fattura generata'], fattura_annullata:['#fee2e2','#991b1b','Fattura annullata'],
-  eliminato:['#fee2e2','#991b1b','Eliminato'] };
+  eliminato:['#fee2e2','#991b1b','Eliminato'],
+  pagamento:['#f0fdf4','#166534','Pagamento'] };
 function cvLogMostra(id){
   var righe=cvLogDi(id);
   var m=document.getElementById('cvLogModal');
@@ -21571,6 +22128,31 @@ function cvLogMostra(id){
    +'<span style="font-weight:800;">Storico modifiche</span>'
    +'<button onclick="cvLogChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
    +'<div style="padding:14px 18px;max-height:74vh;overflow:auto;">';
+
+  /* ===== INCASSI CONFERMATI, CON LA VIA D'USCITA =====
+     Confermare e' rapido e si sbaglia riga. Prima non si tornava indietro:
+     il pagamento restava incassato e la pratica avanzava di stato. Qui sono
+     elencati in cima, con il pulsante per annullare la conferma. */
+  try{
+    var _cvL=(typeof cvById==='function')?cvById(id):null;
+    var _conf=[];
+    ((_cvL&&_cvL.pagamenti)||[]).forEach(function(pg,pi){ if(pg&&pg.confermato) _conf.push({p:pg,i:pi}); });
+    if(_conf.length && typeof cvPuoConfermarePagamenti==='function' && cvPuoConfermarePagamenti()){
+      h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:11px 13px;margin-bottom:14px;">'
+        +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;margin-bottom:6px;">Incassi confermati</div>';
+      _conf.forEach(function(o){
+        var d=o.p.confermatoTs?new Date(o.p.confermatoTs):null;
+        h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-top:1px solid #dcfce7;">'
+          +'<div style="min-width:0;font-size:13px;"><b>'+cvEsc(o.p.tipo||'Pagamento')+'</b> \u00b7 '+cvEuro(o.p.importo)
+          +'<div style="font-size:11px;color:#64748b;">'+cvEsc(o.p.confermatoDa||'')
+          +(d?(' \u00b7 '+d.toLocaleDateString('it-IT')+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})):'')+'</div></div>'
+          +'<button onclick="cvPagAnnullaConferma(\''+cvEsc(id)+'\','+o.i+')" style="flex:0 0 auto;padding:6px 11px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Annulla conferma</button>'
+          +'</div>';
+      });
+      h+='</div>';
+    }
+  }catch(e){}
+
   if(!righe.length){
     h+='<div style="color:#94a3b8;font-size:13px;padding:14px 0;">Nessuna modifica registrata per questa pratica. Lo storico parte dalle modifiche fatte da qui in avanti.</div>';
   } else {
@@ -28228,6 +28810,54 @@ function cvAutoLabel(cv){
     return (base+(id?(' ('+id+')'):'')).trim();
   }catch(e){ return ''; }
 }
+/* ===== ANNULLARE UNA CONFERMA =====
+   Confermare un incasso e' un gesto rapido e si sbaglia riga con facilita'.
+   Finora non si tornava indietro: il pagamento restava incassato e la pratica
+   avanzava di stato. Qui si riporta indietro tutto \u2014 conferma, data,
+   stato \u2014 e resta scritto nello storico chi lo ha fatto e quando, perche'
+   togliere un incasso e' un'operazione che qualcuno potrebbe dover spiegare. */
+function cvPagAnnullaConferma(id, ri){
+  if(!cvPuoConfermarePagamenti()){ alert('Solo Amministrazione e Contabilit\u00e0 possono toccare i pagamenti.'); return; }
+  var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  var cv=list[idx]; var p=cv.pagamenti&&cv.pagamenti[ri];
+  if(!p){ alert('Pagamento non trovato.'); return; }
+  if(!p.confermato){ alert('Questo pagamento non risulta confermato.'); return; }
+  if(!confirm('Annullare la conferma di '+(p.tipo||'pagamento')+' da '+cvEuro(p.importo)+'?\n\n'
+    +'Torna fra quelli da confermare e la pratica pu\u00f2 tornare indietro di stato.\n'
+    +'Resta scritto nello storico chi ha annullato e quando.')) return;
+
+  var _era=cv.statoVendita||'';
+  p.confermato=false;
+  try{ delete p.confermatoDa; delete p.confermatoTs; }catch(e){ p.confermatoDa=''; p.confermatoTs=0; }
+  /* La data di incasso si toglie: era la data di un incasso che non risulta piu'. */
+  try{ delete p.data; }catch(e){ p.data=''; }
+
+  /* Lo stato si ricalcola da zero: se mancava solo questo incasso per passare
+     a "da consegnare", si deve tornare indietro. */
+  try{
+    cv.statoVendita='in_attesa_pagamento';
+    if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(cv);
+  }catch(e){}
+
+  cv.updatedAt=Date.now();
+  cvSave(list);
+  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+  try{
+    if(typeof cvLogVoce==='function'){
+      cvLogVoce(cv, 'pagamento', [{
+        c:(p.tipo||'Pagamento')+' \u00b7 conferma annullata',
+        da:'incassato '+cvEuro(p.importo),
+        a:'da confermare'
+      }].concat(_era!==cv.statoVendita ? [{c:'Stato vendita', da:_era, a:cv.statoVendita}] : []));
+    }
+  }catch(e){}
+
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+  try{ var _mm=document.getElementById('cv-mod-modal'); if(_mm && _mm.style.display==='block' && typeof cvVendDettagli==='function') cvVendDettagli(id); }catch(e){}
+  try{ cvLogChiudi(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('Conferma annullata \u00b7 '+(p.tipo||'pagamento'), true);
+}
+
 function cvVendConfermaPag(id, ri){
   if(!cvPuoConfermarePagamenti()){ alert('Solo Amministrazione e Contabilità possono confermare i pagamenti.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
@@ -28243,6 +28873,17 @@ function cvVendConfermaPag(id, ri){
   cvVendAvanzaStato(cv);
   var dopo=cv.statoVendita;
   cv.updatedAt=Date.now(); cvSave(list); supaUpsert('preventivi', cv);
+  /* La conferma di un incasso e' la cosa piu' importante che succede a una
+     pratica: va scritta nello storico con nome e ora, non solo sulla riga. */
+  try{
+    if(typeof cvLogVoce==='function'){
+      cvLogVoce(cv, 'pagamento', [{
+        c:(p.tipo||'Pagamento')+' \u00b7 '+(p.metodo||''),
+        da:'da confermare',
+        a:'incassato '+cvEuro(p.importo)
+      }]);
+    }
+  }catch(e){}
   cvVendNotificaMail(cv,p);
   if(/caparra/i.test(p.tipo||'') && !cv.caparraMailInviata){ try{ cvEmailCaparraCliente(cv, cvNum(p.importo)); }catch(e){} cv.caparraMailInviata=true; cvSave(cvLoad().map(function(x){return x.id===cv.id?cv:x;})); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }
   cvVendRender();
