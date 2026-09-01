@@ -10307,6 +10307,16 @@ function eaSidebarGruppi(){
 }
 try{ window.eaSidebarGruppi=eaSidebarGruppi; }catch(e){}
 
+/* La sezione scritta nell'indirizzo, se c'e' ed e' una sezione vera. */
+var _landingUrlFatto = false;
+function eaVistaDaUrl(){
+  try{
+    var h=String(location.hash||'').replace(/^#/,'');
+    h=decodeURIComponent(h).trim();
+    if(!h) return '';
+    return document.getElementById('view-'+h) ? h : '';
+  }catch(e){ return ''; }
+}
 function applyRoleUI() {
   var role = getCurrentRole();
   try{ var _rg=document.getElementById('mz-tab-reg'); if(_rg) _rg.style.display=(role==='admin')?'':'none'; }catch(e){}
@@ -10414,7 +10424,11 @@ function applyRoleUI() {
     var _accessoVero = false;
     try{ _accessoVero = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
     var _dove = landing;
-    if (!_accessoVero) {
+    /* L'indirizzo comanda su tutto: se la scheda e' stata aperta con
+       #vendite, si va li' anche se l'ultima sezione era un'altra. */
+    var _daUrl=eaVistaDaUrl();
+    if(_daUrl && allowed.indexOf(_daUrl)!==-1) _dove=_daUrl;
+    else if (!_accessoVero) {
       var _ultima=''; try{ _ultima=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
       /* si ripristina solo se quella sezione e' ancora permessa a questa
          persona: i permessi possono essere cambiati nel frattempo */
@@ -10425,6 +10439,13 @@ function applyRoleUI() {
       try{ if(!eaVaiA(_dove)) eaVaiA(landing); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
+    return;
+  }
+  /* Stessa cosa per l'amministratore, che passa da un ramo diverso. */
+  var _urlAdmin=eaVistaDaUrl();
+  if(_urlAdmin && allowed.indexOf(_urlAdmin)!==-1 && !_landingUrlFatto){
+    _landingUrlFatto=true;
+    setTimeout(function(){ try{ eaVaiA(_urlAdmin); }catch(e){} }, 200);
     return;
   }
   var activeEl = document.querySelector('.view.active');
@@ -13563,6 +13584,94 @@ function eaSezioniMie(){
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
    servizio raggiungibili da tutti): non vanno bloccate. */
 var EA_SEZIONI_LIBERE=['impostazioni'];
+/* ===== DUE SEZIONI IN DUE SCHEDE =====
+   Capita di dover guardare una cosa mentre se ne lavora un'altra. Finora
+   serviva aprire il gestionale in una seconda scheda e ritrovare la sezione
+   a mano.
+   Ora Ctrl+clic (Cmd sul Mac) o il clic con la rotella su una voce del menu
+   la aprono in una scheda nuova, gia' su quella sezione: e' lo stesso gesto
+   che si usa con qualunque collegamento, quindi non c'e' niente da imparare.
+   L'accesso non viene richiesto: la sessione e' condivisa fra le schede
+   dello stesso sito. */
+function eaApriInNuovaScheda(vista){
+  try{
+    var url=location.origin+location.pathname+location.search+'#'+encodeURIComponent(vista);
+    window.open(url,'_blank');
+  }catch(e){}
+}
+(function(){
+  try{
+    var gestisci=function(ev){
+      var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
+      if(!b || !b.id) return;
+      var vista=String(b.id).replace(/^si-/,'');
+      if(!vista) return;
+      /* rotella = tasto centrale; ctrl/cmd = nuova scheda */
+      var nuova=(ev.type==='auxclick' && ev.button===1) || ev.ctrlKey || ev.metaKey;
+      if(!nuova) return;
+      ev.preventDefault(); ev.stopPropagation();
+      eaApriInNuovaScheda(vista);
+    };
+    document.addEventListener('click', gestisci, true);
+    document.addEventListener('auxclick', gestisci, true);
+
+    /* ===== TASTO DESTRO SULLE VOCI DI MENU =====
+       Ctrl+clic funziona ma bisogna saperlo. Il tasto destro e' il gesto che
+       viene naturale, quindi qui compare un menu con due sole voci. Si
+       sostituisce quello del browser soltanto sulle voci della barra: nel
+       resto della pagina resta il suo, che serve per copiare e incollare. */
+    var menu=null;
+    var chiudiMenu=function(){ if(menu && menu.parentNode){ menu.parentNode.removeChild(menu); } menu=null; };
+    document.addEventListener('contextmenu', function(ev){
+      var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
+      if(!b || !b.id) return;
+      var vista=String(b.id).replace(/^si-/,'');
+      if(!vista) return;
+      ev.preventDefault();
+      chiudiMenu();
+      var etichetta='';
+      try{ var l=b.querySelector('.si-label'); etichetta=l?String(l.textContent||'').trim():''; }catch(e){}
+      menu=document.createElement('div');
+      menu.style.cssText='position:fixed;z-index:100000;background:#fff;border:1px solid #cbd5e1;'
+        +'border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:6px;min-width:210px;'
+        +'font-family:inherit;font-size:13.5px;color:#0f172a;';
+      var voce=function(testo, azione, primaria){
+        var d=document.createElement('div');
+        d.textContent=testo;
+        d.style.cssText='padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;'
+          +(primaria?'font-weight:700;':'');
+        d.onmouseenter=function(){ d.style.background='#f1f5f9'; };
+        d.onmouseleave=function(){ d.style.background=''; };
+        d.onclick=function(e){ e.stopPropagation(); chiudiMenu(); azione(); };
+        menu.appendChild(d);
+      };
+      if(etichetta){
+        var t=document.createElement('div');
+        t.textContent=etichetta;
+        t.style.cssText='padding:4px 12px 6px;font-size:11px;font-weight:800;text-transform:uppercase;color:#94a3b8;';
+        menu.appendChild(t);
+      }
+      voce('Apri in una nuova scheda', function(){ eaApriInNuovaScheda(vista); }, true);
+      voce('Apri qui', function(){ try{ b.click(); }catch(e){} });
+      document.body.appendChild(menu);
+      /* se il menu uscirebbe dallo schermo, si sposta dentro */
+      var x=ev.clientX, y=ev.clientY, r=menu.getBoundingClientRect();
+      if(x+r.width>window.innerWidth-8) x=Math.max(8, window.innerWidth-r.width-8);
+      if(y+r.height>window.innerHeight-8) y=Math.max(8, window.innerHeight-r.height-8);
+      menu.style.left=x+'px'; menu.style.top=y+'px';
+    }, true);
+    document.addEventListener('click', function(){ chiudiMenu(); });
+    document.addEventListener('scroll', function(){ chiudiMenu(); }, true);
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape') chiudiMenu(); });
+    /* senza questo il browser apre il suo menu di scorrimento col tasto centrale */
+    document.addEventListener('mousedown', function(ev){
+      if(ev.button!==1) return;
+      var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
+      if(b) ev.preventDefault();
+    }, true);
+  }catch(e){}
+})();
+
 function sidebarNav(view,btn){
   /* la porta, non solo il bottone: le sezioni vietate non si aprono
      nemmeno chiamando questa funzione a mano */
@@ -13599,7 +13708,14 @@ function sidebarNav(view,btn){
      spesso anche il computer buttano via la pagina e la rifanno da capo. Da
      fuori sembra di non essersi mai mossi, ma per il gestionale e' un avvio
      nuovo, e finiva sempre sulle timbrature. */
-  try{ if(view) localStorage.setItem('ea_ultima_vista', view); }catch(e){}
+  /* La scheda aperta con una sezione nell'indirizzo non registra dove si
+     trova: altrimenti due schede aperte su sezioni diverse si
+     sovrascriverebbero a vicenda, e al ricaricamento una delle due si
+     ritroverebbe nella sezione dell'altra. */
+  try{
+    if(view && !(typeof eaVistaDaUrl==='function' && eaVistaDaUrl()))
+      localStorage.setItem('ea_ultima_vista', view);
+  }catch(e){}
   document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
   var t = document.getElementById('contentTitle');
