@@ -11981,6 +11981,16 @@ function tcScaricaRiepilogoXLS(){
   var giorni=new Date(anno,mIdx+1,0).getDate();
   var sett=['domenica',"LUNEDI'","MARTEDI'","MERCOLEDI'","GIOVEDI'","VENERDI'",'sabato'];
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  /* La cella delle ore porta due cose: il testo all'italiana (6,50) per il
+     ripiego .xls, e il valore numerico col punto in data-v per SheetJS.
+     Senza data-v la libreria leggeva "6,50", scambiava la virgola per
+     separatore delle migliaia e scriveva 650. Con data-t="n" e il formato
+     0.00 la cella e' un numero vero: si somma e si formatta in Excel. */
+  function cellaOre(min){
+    if(!min) return '<td></td>';
+    var v=Math.round(min/60*100)/100;
+    return '<td data-t="n" data-v="'+v+'" data-z="0.00">'+esc(tcOreDecimali(min))+'</td>';
+  }
   var nomi = cols.map(function(d){return tcGetNome(d.email);}).concat(extra);
   var nCols = 2 + nomi.length*2;
 
@@ -12011,20 +12021,20 @@ function tcScaricaRiepilogoXLS(){
       var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
       min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
       if(min) tot[d.email]+=min;
-      H+='<td>'+(min?esc(tcOreDecimali(min)):'')+'</td><td>'+esc(pc)+'</td>';
+      H+=cellaOre(min)+'<td>'+esc(pc)+'</td>';
     });
     extra.forEach(function(nome){
       var pce=(dow===0?'/':'');
       var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
       if(mine) totExtra[nome]=(totExtra[nome]||0)+mine;
-      H+='<td>'+(mine?esc(tcOreDecimali(mine)):'')+'</td><td>'+pce+'</td>';
+      H+=cellaOre(mine)+'<td>'+pce+'</td>';
     });
     H+='</tr>';
   }
   // totale
   H+='<tr style="font-weight:bold;background:#dbe5f1;"><td style="text-align:left;">TOTALE ORE</td><td></td>';
-  cols.forEach(function(d){ H+='<td>'+(tot[d.email]?esc(tcOreDecimali(tot[d.email])):'0')+'</td><td></td>'; });
-  extra.forEach(function(nome){ H+='<td>'+(totExtra[nome]?esc(tcOreDecimali(totExtra[nome])):'')+'</td><td></td>'; });
+  cols.forEach(function(d){ H+=(tot[d.email]?cellaOre(tot[d.email]):'<td data-t="n" data-v="0" data-z="0.00">0,00</td>')+'<td></td>'; });
+  extra.forEach(function(nome){ H+=cellaOre(totExtra[nome]||0)+'<td></td>'; });
   H+='</tr>';
   // legenda
   H+='<tr><td colspan="'+nCols+'"></td></tr>';
@@ -12060,7 +12070,9 @@ function tcScaricaRiepilogoXLS(){
       document.body.appendChild(cont);
       var tab=cont.querySelector('table');
       if(!tab){ document.body.removeChild(cont); _scaricaVecchioModo(); return; }
-      var wb=XLSX.utils.table_to_book(tab, { sheet:'Presenze', raw:false });
+      /* raw:true fa rispettare data-v: senza, la libreria rilegge il testo
+         visibile e la virgola torna a fare danni. */
+      var wb=XLSX.utils.table_to_book(tab, { sheet:'Presenze', raw:true });
       document.body.removeChild(cont);
       XLSX.writeFile(wb, _nomeBase+'.xlsx');
     }catch(e){
