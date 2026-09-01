@@ -8806,6 +8806,9 @@ function getPermessiBody()  { return localStorage.getItem(PERMESSI_BODY_KEY)||PE
 function setPermessiBody(v) { localStorage.setItem(PERMESSI_BODY_KEY, v); }
 
 function updatePermessiBadge() {
+  /* Prima si conta, poi si mostra: contare senza aver tolto gli scaduti
+     faceva comparire un numero che la sezione poi smentiva. */
+  try{ if(typeof pulisciPermessiScaduti==='function') pulisciPermessiScaduti(); }catch(e){}
   var l = loadPermessi();
   var b = document.getElementById('permessi-badge');
   if (!b) return;
@@ -8814,18 +8817,42 @@ function updatePermessiBadge() {
 }
 
 // ── Pulizia automatica scaduti ─────────────────────────────────
+/* La pulizia salva, il salvataggio aggiorna il numero, il numero richiama la
+   pulizia. Si fermerebbe da sola al secondo giro, ma un blocco esplicito
+   costa una riga e toglie ogni dubbio. */
+var _permPulizia = false;
 function pulisciPermessiScaduti() {
+  if (_permPulizia) return;
+  _permPulizia = true;
+  try { _pulisciPermessiScadutiOra(); } finally { _permPulizia = false; }
+}
+function _pulisciPermessiScadutiOra() {
   var list = loadPermessi(), now = Date.now();
+  /* ===== I PERMESSINI SCADUTI TORNAVANO =====
+     Venivano tolti solo dal dispositivo. Sul cloud restavano, e alla lettura
+     successiva permSupaLoad li riuniva ai locali: il numero nel menu tornava
+     a cinque anche con la sezione vuota. Vanno cancellati anche di la',
+     altrimenti e' una pulizia che dura fino al ricaricamento. */
+  var tolti = [];
   var validi = list.filter(function(p) {
     if ((now - p.ricevutoMs) / 86400000 >= PERMESSI_DAYS) {
       if (p.driveFileId && isDriveConnected())
         fetch('https://www.googleapis.com/drive/v3/files/' + p.driveFileId,
           { method:'DELETE', headers:{ Authorization:'Bearer '+_driveAccessToken } }).catch(function(){});
+      if (p.id) tolti.push(p.id);
       return false;
     }
     return true;
   });
-  if (validi.length !== list.length) savePermessi(validi);
+  if (validi.length !== list.length) {
+    tolti.forEach(function(id){
+      try{ if(typeof supaDelete==='function') supaDelete('ferie', id); }catch(e){}
+      /* si toglie anche dalla memoria degli invii, se no un permessino con lo
+         stesso identificativo non verrebbe piu' rimandato su */
+      try{ delete _permInviati[id]; }catch(e){}
+    });
+    savePermessi(validi);
+  }
 }
 
 // ── Estrai targa e intestatario da testo PDF ──────────────────
@@ -10677,6 +10704,7 @@ function nlNuovo(autoId){
     createdAt:Date.now(),
     creatoDa:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
     autoId:autoId||'', autoDesc:'',
+    azienda:false,
     cognome:'', nome:'', ragSociale:'', indirizzo:'', cap:'', citta:'', prov:'',
     telefono:'', telefono2:'', email:'', cf:'', piva:'', sdi:'', pec:'',
     patente:'', patenteScad:'', patenteEnte:'',
@@ -10738,6 +10766,10 @@ function nlForm(){
         }catch(e){ return ''; }
       })()
     + '</datalist>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:10px 0 2px;">'
+    + '<input type="checkbox" id="nl_azienda" '+(_nl.azienda?'checked':'')+' onchange="nlAziendaCambio()" style="width:17px;height:17px;"> \u00c8 un\u2019azienda'
+    + '</label>'
+    + '<div id="nl-az-box" style="display:'+(_nl.azienda?'block':'none')+';">'
     + lab('Ragione sociale')+inp('nl_ragSociale',_nl.ragSociale)
     + lab('Indirizzo')+inp('nl_indirizzo',_nl.indirizzo)
     + '<div style="display:flex;gap:10px;"><div style="flex:0 0 90px;">'+lab('CAP')+inp('nl_cap',_nl.cap)+'</div>'
@@ -10745,8 +10777,10 @@ function nlForm(){
     + '<div style="flex:0 0 80px;">'+lab('Prov.')+inp('nl_prov',_nl.prov)+'</div></div>'
     + due(lab('Telefono')+inp('nl_telefono',_nl.telefono), lab('Secondo telefono')+inp('nl_telefono2',_nl.telefono2))
     + lab('Email')+inp('nl_email',_nl.email,'','email')
-    + due(lab('Codice fiscale')+inp('nl_cf',_nl.cf), lab('Partita IVA')+inp('nl_piva',_nl.piva))
-    + due(lab('Codice SDI')+inp('nl_sdi',_nl.sdi), lab('PEC')+inp('nl_pec',_nl.pec));
+    + lab('Codice fiscale')+inp('nl_cf',_nl.cf)
+    + lab('Partita IVA')+inp('nl_piva',_nl.piva)
+    + due(lab('Codice SDI')+inp('nl_sdi',_nl.sdi), lab('PEC')+inp('nl_pec',_nl.pec))
+    + '</div>';
 
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:14px;">Patente</div>'
     + lab('Numero patente')+inp('nl_patente',_nl.patente)
@@ -10771,6 +10805,8 @@ function nlForm(){
     h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:16px;">'
       +'<div style="font-weight:800;font-size:12px;color:#334155;text-transform:uppercase;margin-bottom:2px;">Riconsegna</div>'
       +'<div style="font-size:11.5px;color:#64748b;margin-bottom:4px;">Da compilare quando la vettura torna. Il ritardo si calcola sulla data di fine prevista, e le condizioni prevedono 30 \u20ac + IVA al giorno.</div>'
+      + due(lab('Riconsegna \u2014 data')+inp('nl_rientroData',_nl.rientroData||(new Date()).toISOString().slice(0,10),'','date'),
+            lab('Riconsegna \u2014 ora')+inp('nl_rientroOra',_nl.rientroOra||(new Date()).toTimeString().slice(0,5),'','time'))
       + due(lab('Km al rientro')+inp('nl_kmRientro',_nl.kmRientro,'','number'),
             lab('Carburante al rientro')+inp('nl_carbRientro',_nl.carbRientro,''))
       + lab('Danni riscontrati')+inp('nl_danni',_nl.danni,'nessuno')
@@ -10795,6 +10831,22 @@ function nlForm(){
 }
 function nlChiudiForm(){ var m=document.getElementById('nlModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 
+/* Apre e chiude i dati aziendali. Chiudendoli si svuotano: una ragione
+   sociale scritta a meta' e poi nascosta finirebbe comunque sul contratto. */
+function nlAziendaCambio(){
+  try{
+    var c=document.getElementById('nl_azienda');
+    var on=!!(c&&c.checked);
+    _nl.azienda=on;
+    var b=document.getElementById('nl-az-box'); if(b) b.style.display=on?'block':'none';
+    if(!on){
+      ['nl_ragSociale','nl_piva','nl_sdi','nl_pec'].forEach(function(id){
+        var e=document.getElementById(id); if(e) e.value='';
+      });
+      _nl.ragSociale=''; _nl.piva=''; _nl.sdi=''; _nl.pec='';
+    }
+  }catch(e){}
+}
 function nlAutoSel(){
   var el=document.getElementById('nl_auto'); if(!el) return;
   _nl.autoId=el.value;
@@ -10828,17 +10880,59 @@ function nlLeggiForm(){
   ['cognome','nome','ragSociale','indirizzo','cap','citta','prov','telefono','telefono2','email',
    'cf','piva','sdi','pec','patente','patenteScad','patenteEnte','dataInizio','dataFine',
    'prezzoGiorno','cauzione','modalitaPag','ritiroData','ritiroOra','kmConsegna','carburante',
-   'statoAuto','note','kmRientro','carbRientro','danni'].forEach(function(k){
+   'statoAuto','note','kmRientro','carbRientro','danni','rientroData','rientroOra'].forEach(function(k){
     var e=document.getElementById('nl_'+k); if(e) _nl[k]=String(e.value||'').trim();
   });
+  try{ var _az=document.getElementById('nl_azienda'); if(_az) _nl.azienda=!!_az.checked; }catch(e){}
   nlAutoSel();
+}
+
+/* ===== COSA SERVE PER FORZA =====
+   Questo non e' un preventivo: e' l'affidamento di un veicolo a una persona
+   che poi guidera' per strada. Se arriva una multa, la societa' deve
+   comunicare le generalita' del conducente entro 30 giorni, e senza codice
+   fiscale, indirizzo e patente non si comunica niente.
+   Per questo qui si blocca invece di avvisare, e si elenca tutto quello che
+   manca in una volta sola: chiedere un campo alla volta con la persona
+   davanti allo sportello e' il modo migliore per farla aspettare tre volte. */
+var NL_OBBLIGATORI = [
+  ['autoId','Vettura'],
+  ['cognome','Cognome'], ['nome','Nome'],
+  ['indirizzo','Indirizzo'], ['cap','CAP'], ['citta','Citt\u00e0'], ['prov','Provincia'],
+  ['telefono','Telefono'], ['email','Email'], ['cf','Codice fiscale'],
+  ['patente','Numero patente'], ['patenteScad','Scadenza patente'], ['patenteEnte','Patente rilasciata da'],
+  ['dataInizio','Data inizio'], ['dataFine','Data fine prevista'],
+  ['ritiroData','Data ritiro'], ['ritiroOra','Ora ritiro'],
+  ['prezzoGiorno','Prezzo giornaliero'], ['cauzione','Cauzione'],
+  ['modalitaPag','Modalit\u00e0 di pagamento'],
+  ['kmConsegna','Km alla consegna'], ['carburante','Carburante alla consegna']
+];
+/* Per un'azienda si aggiungono i dati fiscali suoi. */
+var NL_OBBLIGATORI_AZIENDA = [
+  ['ragSociale','Ragione sociale'], ['piva','Partita IVA'], ['sdi','Codice SDI']
+];
+
+function nlMancanti(){
+  var req=NL_OBBLIGATORI.slice();
+  if(_nl.azienda) req=req.concat(NL_OBBLIGATORI_AZIENDA);
+  var out=[];
+  req.forEach(function(r){
+    var v=_nl[r[0]];
+    /* Prezzo e cauzione a zero sono risposte valide \u2014 l'auto di cortesia e'
+       gratuita \u2014 quindi conta che il campo sia compilato, non che sia > 0. */
+    if(v===undefined || v===null || String(v).trim()==='') out.push(r[1]);
+  });
+  return out;
 }
 
 function nlSalva(){
   nlLeggiForm();
-  if(!_nl.autoId){ alert('Scegli la vettura.'); return; }
-  if(!_nl.cognome && !_nl.ragSociale){ alert('Serve almeno il cognome o la ragione sociale.'); return; }
-  if(!_nl.dataFine){ alert('Serve la data di fine prevista: senza, il ritardo nella riconsegna non si pu\u00f2 contestare.'); return; }
+  var manca=nlMancanti();
+  if(manca.length){
+    alert('Per il contratto di noleggio servono tutti i dati.\n\nMancano:\n\u2022 '+manca.join('\n\u2022 ')
+      +'\n\nSe arriva una multa dobbiamo comunicare le generalit\u00e0 del conducente entro 30 giorni: senza questi dati non si pu\u00f2 fare.');
+    return;
+  }
   nlUpsert(_nl);
   nlChiudiForm();
   nlRender();
@@ -10847,6 +10941,10 @@ function nlSalva(){
 
 function nlChiudiContratto(){
   nlLeggiForm();
+  if(!_nl.rientroData || !_nl.rientroOra){
+    alert('Servono data e ora effettive della riconsegna.\n\nSono quelle su cui si calcola l\u2019eventuale ritardo.');
+    return;
+  }
   if(!confirm('Registrare la riconsegna e chiudere il contratto?\n\nLa vettura torna disponibile per un nuovo affidamento.')) return;
   _nl.chiusoTs=Date.now();
   _nl.chiusoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
@@ -10945,6 +11043,28 @@ function nlStampa(){
    + riga('Totale noleggio', tot>0?nlEuro(tot):'gratuito')
    + (_nl.note?riga('Note',_nl.note):'')
    +'</table>'
+
+   /* La riconsegna si stampa solo se avvenuta. Il ritardo si calcola sulla
+      data di fine prevista: e' il numero su cui si fondano i 30 euro al
+      giorno del punto 8, e averlo scritto sul documento evita di doverlo
+      ricostruire a memoria mesi dopo. */
+   + (function(){
+       if(!_nl.rientroData) return '';
+       var rit=0;
+       try{
+         if(_nl.dataFine){
+           var d1=new Date(_nl.dataFine), d2=new Date(_nl.rientroData);
+           rit=Math.max(0, Math.round((d2-d1)/86400000));
+         }
+       }catch(e){}
+       return '<div class="sez">Riconsegna</div><table>'
+         + riga('Data e ora', nlData(_nl.rientroData)+(_nl.rientroOra?(' '+_nl.rientroOra):''))
+         + riga('Km al rientro', _nl.kmRientro)
+         + riga('Carburante al rientro', _nl.carbRientro)
+         + riga('Danni riscontrati', _nl.danni||'nessuno')
+         + (rit>0 ? riga('Giorni di ritardo', rit+' \u00b7 addebito previsto '+nlEuro(rit*30)+' + IVA') : '')
+         +'</table>';
+     })()
 
    +'<div class="sez">Il firmatario si impegna</div><ol>'
    + NL_IMPEGNI.map(function(t){ return '<li>'+t+'</li>'; }).join('')
@@ -15196,7 +15316,19 @@ function sinFmtApp(v){ try{ var d=new Date(v); if(isNaN(d.getTime())) return v; 
 function sinAppuntamento(s){
   try{
     if(!s || typeof window.ccLoad!=='function') return null;
-    var tg=String(s.targa||'').toUpperCase().replace(/\s/g,'');
+    var tg=String(s.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    /* ===== LA TARGA DEVE SEMBRARE UNA TARGA =====
+       Il campo a volte contiene altro: su una pratica c'era scritto PEUGEOT.
+       Cercando quella parola dentro titoli e note degli appuntamenti si
+       agganciava il primo che nominasse una Peugeot \u2014 e la pratica di un
+       cliente mostrava l'appuntamento di un altro.
+       Si pretende quindi la forma di una targa vera: AA123BB di oggi, oppure
+       i formati vecchi con la sigla della provincia. "FIAT500L" ha lettere e
+       cifre ma non e' una targa, e con un controllo generico sarebbe passata. */
+    if(!(/^[A-Z]{2}[0-9]{3}[A-Z]{2}$/.test(tg)          /* AA123BB, dal 1994 */
+      || /^[A-Z]{2}[0-9]{5}$/.test(tg)                   /* AA12345, provinciale */
+      || /^[A-Z]{2}[0-9]{4}[A-Z]{2}$/.test(tg)           /* rimorchi */
+      || /^[A-Z]{1,2}[0-9]{5,6}$/.test(tg))) tg='';      /* formati piu' vecchi */
     var nm=String(s.nome||'').toLowerCase().trim();
     if(!tg && !nm) return null;
     var oggi=new Date(); oggi.setHours(0,0,0,0);
