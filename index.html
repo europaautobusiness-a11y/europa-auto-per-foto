@@ -6739,7 +6739,13 @@ function pSottoPrezzo(cv){
     var acq=Number(String(a.prezzoAcq||'').replace(',','.'))||0;
     if(!acq) return null;
 
-    /* quello che entra davvero per l'auto: prezzo meno lo sconto concesso */
+    /* ===== SI GUARDA IL CONTRATTO, NON LA DELIBERA =====
+       Il valore del veicolo dichiarato alla finanziaria puo' essere gonfiato
+       apposta, per far quadrare un finanziamento al cento per cento con un
+       anticipo che lo compensa. Se il sottocosto si calcolasse su quello, una
+       vettura venduta in perdita risulterebbe in guadagno.
+       Si usa quindi il prezzo scritto sul contratto, meno lo sconto concesso:
+       e' quello che incassiamo davvero. */
     var lordo=(typeof cvNum==='function'?cvNum(cv.prezzo):0);
     if(cv.scontoOn) lordo -= (typeof cvNum==='function'?cvNum(cv.scontoImporto):0);
     if(lordo<=0) return null;
@@ -6821,8 +6827,8 @@ function pAggiornaSottocosto(cv){
     }
     if(pz){
       var _sc = pz.esposta
-        ? ('venduta '+pEuro(pz.lordo)+' ivata \u2192 '+pEuro(pz.netto)+' netti')
-        : ('venduta '+pEuro(pz.lordo)+' (regime del margine, nessuno scorporo)');
+        ? ('contratto '+pEuro(pz.lordo)+' ivato \u2192 '+pEuro(pz.netto)+' netti')
+        : ('contratto '+pEuro(pz.lordo)+' (regime del margine, nessuno scorporo)');
       /* Sotto i 500 di margine si scrive "in perdita" anche quando il numero
          e' positivo: con i costi di trasporto quella vendita perde davvero, e
          chiamarla "margine basso" la fa sembrare accettabile. */
@@ -22220,8 +22226,8 @@ function cvLive(){
         if(_vedeTutto && _sotto){
           h+='<div style="font-size:11.5px;color:#9a3412;margin-top:4px;">'
             + (_sotto.esposta
-                ? ('Venduta '+cvEuro(_sotto.lordo)+' ivata \u2192 '+cvEuro(_sotto.netto)+' netti')
-                : ('Venduta '+cvEuro(_sotto.lordo)+' (regime del margine)'))
+                ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' ivato \u2192 '+cvEuro(_sotto.netto)+' netti')
+                : ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' (regime del margine)'))
             + ', acquistata '+cvEuro(_sotto.acquisto)
             + ': margine '+cvEuro(_sotto.margine)
             +'.</div>';
@@ -27955,13 +27961,69 @@ function simUsaNellaDelibera(){
     var cv=(typeof cvById==='function')?cvById(_simDelibId):null;
     var valore=parseFloat((simEl('sim_C10')||{}).value)||0;
     var anticipo=parseFloat((simEl('sim_C11')||{}).value)||0;
+    /* ===== TAN E TAEG =====
+       Nel foglio della finanziaria si calcolano con IRR, il tasso interno di
+       rendimento: una funzione che risolve per tentativi su 148 righe di
+       flussi, e che il motore di calcolo in pagina non esegue. Restavano
+       vuoti, e da li' arrivavano vuoti anche in delibera, dove sono
+       obbligatori: la pratica si bloccava.
+
+       Il TAN non serve calcolarlo: e' un dato che si sceglie, sta nel campo
+       in alto del simulatore. Si legge da li'.
+
+       Il TAEG invece si calcola qui, per bisezione: si cerca il tasso mensile
+       che rende il netto erogato uguale alla somma delle rate scontate, poi
+       lo si porta ad anno. E' la definizione stessa del TAEG, e per un piano
+       a rate costanti converge in poche decine di passi. */
+    var _taegCalc=(function(){
+      try{
+        var netto=Math.round((valore-anticipo)*100)/100;   /* quanto esce davvero */
+        var nr=parseInt((simEl('sim_E10')||{}).value,10)||0;
+        var r=Math.round(rata*100)/100;
+        var spese=im('C12');                               /* istruttoria a carico cliente */
+        var erogato=netto-spese;                           /* il cliente riceve meno le spese */
+        if(!(erogato>0) || !(nr>0) || !(r>0)) return null;
+
+        var vanA=function(i){
+          if(i<=-0.9999) return Infinity;
+          var v=0;
+          for(var k=1;k<=nr;k++) v += r/Math.pow(1+i,k);
+          return v-erogato;
+        };
+        /* il tasso mensile sta fra 0 e 100% al mese: piu' che abbastanza */
+        var lo=0.0000001, hi=1.0;
+        if(vanA(lo)<0) return null;      /* rate troppo basse: nessun tasso lo spiega */
+        for(var n=0;n<200;n++){
+          var mid=(lo+hi)/2;
+          if(vanA(mid)>0) lo=mid; else hi=mid;
+        }
+        var mensile=(lo+hi)/2;
+        var annuo=(Math.pow(1+mensile,12)-1)*100;
+        if(!isFinite(annuo) || annuo<=0 || annuo>100) return null;
+        return Math.round(annuo*100)/100;
+      }catch(e){ return null; }
+    })();
+
+    /* Il TAN e' quello scritto nel simulatore, campo "Tasso (TAN)", che nel
+       foglio e' la cella E7. */
+    var _tanCalc=(function(){
+      var v=parseFloat((simEl('sim_E7')||{}).value);
+      if(!isNaN(v) && v>0) return Math.round(v*100)/100;
+      var d=pc(simNum(simGet('I9')));
+      return (d===null||d===undefined)?null:d;
+    })();
+
     window._delibDaSim={
       /* Provvigione dell'AZIENDA, cella I24 del modello della finanziaria:
          e' quella che il simulatore mostra in viola. Fin qui restava solo a
          schermo e si perdeva chiudendo la finestra, mentre e' il dato che
          dice quanto rende davvero un finanziamento. */
       provvAzienda:im('I24'),
-      tan:pc(simNum(simGet('I9'))), taeg:pc(simNum(simGet('I10'))),
+      tan:(_tanCalc!==null ? _tanCalc : pc(simNum(simGet('I9')))),
+      taeg:(function(){ var d=pc(simNum(simGet('I10'))); return (d!==null&&d!==undefined&&d>0)?d:_taegCalc; })(),
+      valoreVeicolo:Math.round(valore*100)/100,
+      anticipo:Math.round(anticipo*100)/100,
+      polizzaMesi:(parseInt((simEl('sim_D24')||{}).value,10)||null),   /* durata CVT */
       istruttoria:im('C12'), polizze:(im('C21')+im('C24')+im('D26')),
       rata:Math.round(rata*100)/100,
       durata:parseInt((simEl('sim_E10')||{}).value,10)||null,
@@ -27985,7 +28047,34 @@ function simUsaNelPreventivo(){
     var durata = parseInt((simEl('sim_E10')||{}).value, 10) || 0;
     _cv.pagamenti[_simPagIdx].rate = durata || _cv.pagamenti[_simPagIdx].rate;
     _cv.pagamenti[_simPagIdx].importoRata = Math.round(rata*100)/100;
+    /* ===== TAN E TAEG QUANDO IL FOGLIO NON LI CALCOLA =====
+       Nel modello della finanziaria si ottengono con IRR, che il motore in
+       pagina non esegue: I9 e I10 restano vuote. Il TAN pero' e' un dato
+       scritto, sta nel campo "Tasso (TAN)"; il TAEG si ricava dal piano.
+       Senza questi due il finanziamento risultava senza tasso, e la delibera
+       si bloccava perche' li' sono obbligatori. */
     var tan = simNum(simGet('I9')), taeg = simNum(simGet('I10'));
+    if(tan===null || tan===undefined || !(tan>0)){
+      var _tv=parseFloat((simEl('sim_E7')||{}).value);
+      if(!isNaN(_tv) && _tv>0) tan=_tv/100;          /* il campo e' in percento */
+    }
+    if(taeg===null || taeg===undefined || !(taeg>0)){
+      taeg = (function(){
+        try{
+          var _sp=simNum(simGet('C12')); _sp=(_sp===null||_sp===undefined)?0:_sp;
+          var _fin=simNum(simGet('C6'));
+          if(_fin===null||_fin===undefined) return null;
+          var _er=_fin-_sp, _n=durata, _r=rata;
+          if(!(_er>0) || !(_n>0) || !(_r>0)) return null;
+          var van=function(i){ var v=0; for(var k=1;k<=_n;k++) v+=_r/Math.pow(1+i,k); return v-_er; };
+          if(van(0.0000001)<0) return null;
+          var lo=0.0000001, hi=1.0;
+          for(var q=0;q<200;q++){ var m=(lo+hi)/2; if(van(m)>0) lo=m; else hi=m; }
+          var a=Math.pow(1+(lo+hi)/2,12)-1;
+          return (isFinite(a) && a>0 && a<1) ? a : null;
+        }catch(e){ return null; }
+      })();
+    }
     var nota = 'TAN '+(tan!==null?(tan*100).toFixed(2).replace('.',','):'-')+'% \u00b7 TAEG '+(taeg!==null?(taeg*100).toFixed(2).replace('.',','):'-')+'%';
     var vecchia = String(_cv.pagamenti[_simPagIdx].note||'').replace(/TAN [^\u00b7]*\u00b7 TAEG [^%]*%/,'').trim();
     _cv.pagamenti[_simPagIdx].note = (vecchia? (vecchia+' \u2014 ') : '') + nota;
@@ -29139,6 +29228,54 @@ function cvDeliberaSalva(id){
   var _daSim=(g('daSim')==='1');
   if(!_daSim && !g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
+  /* ===== I CONTI DELLA DELIBERA DEVONO TORNARE COL CONTRATTO =====
+     Il valore del veicolo in delibera puo' legittimamente essere piu' alto
+     del prezzo di vendita: quando il cliente finanzia tutto, alla finanziaria
+     si dichiara un valore maggiore con un anticipo che lo compensa, cosi' che
+     la differenza torni all'importo davvero finanziato.
+     Quindi non si controlla il valore da solo \u2014 sarebbe un falso allarme ogni
+     volta \u2014 ma la sottrazione: valore meno anticipo deve fare l'importo
+     finanziato, e quell'importo deve coincidere con quanto il contratto si
+     aspetta dalla finanziaria.
+     Se non torna, si sbaglia una provvigione o si scopre a consegna avvenuta
+     che manca del denaro. */
+  try{
+    var _V=n('valore'), _A=n('anticipo'), _I=n('importo');
+    var _q=function(x){ return Math.round((Number(x)||0)*100)/100; };
+
+    /* quanto il contratto aspetta dalla finanziaria */
+    var _finAtteso=0;
+    (cv.pagamenti||[]).forEach(function(pg){
+      if(pg && /finanziamento/i.test(pg.metodo||'')) _finAtteso += (typeof cvNum==='function'?cvNum(pg.importo):0);
+    });
+    _finAtteso=_q(_finAtteso);
+
+    var _avvisi=[];
+
+    if(_V!==null && _A!==null && _I!==null){
+      var _diff=_q(_V-_A-_I);
+      if(Math.abs(_diff)>1){
+        _avvisi.push('Valore veicolo '+cvEuro(_V)+' meno anticipo '+cvEuro(_A)
+          +' fa '+cvEuro(_V-_A)+', ma l\u2019importo finanziato dice '+cvEuro(_I)
+          +' (differenza '+cvEuro(Math.abs(_diff))+').');
+      }
+    }
+
+    if(_I!==null && _finAtteso>0 && Math.abs(_q(_I-_finAtteso))>1){
+      _avvisi.push('Il contratto aspetta '+cvEuro(_finAtteso)+' dalla finanziaria, '
+        +'la delibera ne finanzia '+cvEuro(_I)
+        +' (differenza '+cvEuro(Math.abs(_q(_I-_finAtteso)))+').');
+    }
+
+    if(_avvisi.length){
+      alert('I conti della delibera non tornano con il contratto.\n\n\u2022 '
+        +_avvisi.join('\n\n\u2022 ')
+        +'\n\nSe il cliente finanzia tutto e alla finanziaria hai dichiarato un valore '
+        +'pi\u00f9 alto, ricordati di mettere l\u2019anticipo che compensa: la differenza deve '
+        +'tornare all\u2019importo finanziato.\n\nControlla prima di confermare.');
+    }
+  }catch(e){}
+
   /* ===== IL CONTROLLO PRIMA DI CONFERMARE =====
      La delibera e' il momento in cui la provvigione viene caricata: dopo,
      correggerla significa rimetterci le mani. Qui si guarda se la vettura e'
@@ -29163,9 +29300,11 @@ function cvDeliberaSalva(id){
       var _det='';
       if(_vedeTutto && _pz && _pz.sotto){
         _det='\n\n'+(_pz.esposta
-            ? ('Venduta '+cvEuro(_pz.lordo)+' ivata, che al netto sono '+cvEuro(_pz.netto))
-            : ('Venduta '+cvEuro(_pz.lordo)+' in regime del margine'))
-          +'.\nAcquistata '+cvEuro(_pz.acquisto)+': margine '+cvEuro(_pz.margine)+'.';
+            ? ('Prezzo a contratto '+cvEuro(_pz.lordo)+' ivato, che al netto sono '+cvEuro(_pz.netto))
+            : ('Prezzo a contratto '+cvEuro(_pz.lordo)+' in regime del margine'))
+          +'.\nAcquistata '+cvEuro(_pz.acquisto)+': margine '+cvEuro(_pz.margine)+'.'
+          +'\n\nIl conto e\u2019 fatto sul prezzo di contratto, non sul valore dichiarato '
+          +'alla finanziaria.';
       }
       /* Si informa, non si chiede: la vendita e' gia' fatta e la delibera va
          inserita comunque. Una domanda a cui c'e' una risposta sola e' solo
