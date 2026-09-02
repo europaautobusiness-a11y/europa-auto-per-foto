@@ -32775,23 +32775,49 @@ function crmRenderLead(){
    Per allargare o stringere la zona basta togliere o aggiungere una sigla. */
 var CRM_PROV_ZONA = ['MI','MB','CO','LC','VA','BG','PV','NO','LO','CR'];
 
-/* La citta' seguiva una strada diversa dalla provincia: veniva letta solo
-   dalla pratica, senza ripiego sull'anagrafica. Sui contratti importati il
-   dato sta in anagrafica e non nella pratica, quindi il CRM diceva "residenza
-   non indicata" per clienti la cui residenza e' scritta e visibile altrove. */
+/* ===== TROVARE L'ANAGRAFICA DI UNA PRATICA =====
+   crmKey mette insieme cognome, nome ed email. Basta un'email diversa fra
+   pratica e anagrafica \u2014 o assente su una delle due, come sui contratti
+   importati \u2014 e l'aggancio fallisce: da li' il CRM dichiarava "residenza non
+   indicata" per clienti la cui residenza e' scritta e ben visibile in scheda.
+   Si cerca quindi prima per codice fiscale, che e' univoco, e solo dopo per
+   cognome e nome. L'email resta l'ultima spiaggia. */
+function crmAnagraficaDi(cl){
+  cl=cl||{};
+  try{
+    if(typeof clLoad!=='function') return null;
+    var tutti=clLoad()||[];
+    var norm=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
+
+    var cf=norm(cl.cf||cl.piva);
+    if(cf.length>=11){
+      var perCf=tutti.filter(function(x){ return x && (norm(x.cf)===cf || norm(x.piva)===cf); })[0];
+      if(perCf) return perCf;
+    }
+    var nn=norm((cl.cognome||'')+(cl.nome||''));
+    if(nn.length>=5){
+      var perNome=tutti.filter(function(x){ return x && norm((x.cognome||'')+(x.nome||''))===nn; })[0];
+      if(perNome) return perNome;
+    }
+    var em=String(cl.email||'').toLowerCase().trim();
+    if(em){
+      var perMail=tutti.filter(function(x){ return x && String(x.email||'').toLowerCase().trim()===em; })[0];
+      if(perMail) return perMail;
+    }
+  }catch(e){}
+  return null;
+}
+
 function crmCittaCliente(cl){
   cl=cl||{};
   var c0=String(cl.citta||'').trim();
   if(c0) return c0;
   try{
-    if(typeof clLoad==='function'){
-      var k=(typeof crmKey==='function')?crmKey(cl):'';
-      var c=clLoad().filter(function(x){ return x && typeof crmKey==='function' && crmKey(x)===k; })[0];
-      if(c){
-        if(c.citta) return String(c.citta).trim();
-        var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
-        if(ind.length && ind[ind.length-1].citta) return String(ind[ind.length-1].citta).trim();
-      }
+    var c=crmAnagraficaDi(cl);
+    if(c){
+      if(c.citta) return String(c.citta).trim();
+      var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
+      if(ind.length && ind[ind.length-1].citta) return String(ind[ind.length-1].citta).trim();
     }
   }catch(e){}
   return '';
@@ -32800,12 +32826,11 @@ function crmProvCliente(cl){
   cl=cl||{};
   var p=String(cl.prov||'').trim().toUpperCase();
   if(p) return p;
-  /* Sui contratti importati la provincia spesso manca: si prova a
-     recuperarla dall'anagrafica del cliente. */
+  /* Sui contratti importati la provincia spesso manca: si recupera
+     dall'anagrafica, cercata per codice fiscale e non per email. */
   try{
-    if(typeof clLoad==='function'){
-      var k=(typeof crmKey==='function')?crmKey(cl):'';
-      var c=clLoad().filter(function(x){ return x && typeof crmKey==='function' && crmKey(x)===k; })[0];
+    {
+      var c=crmAnagraficaDi(cl);
       if(c){
         if(c.prov) return String(c.prov).trim().toUpperCase();
         var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
@@ -33207,8 +33232,12 @@ function crmRenderConsegnate(){
           var _citta=crmCittaCliente(cl);
           if(!_pv && !_citta) return '<div style="font-size:12px;color:#cbd5e1;margin-top:2px;">\ud83d\udccd residenza non indicata</div>';
           var _in=crmInZona(_pv);
+          /* Qui serve sapere se il cliente e' vicino, e per quello basta la
+             provincia: se la citta' manca si mostra la sola provincia invece
+             di un trattino che sembra un dato perso. */
+          var _dove = _citta ? (_citta + (_pv?(' ('+_pv+')'):'')) : _pv;
           return '<div style="font-size:12px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
-            +'\ud83d\udccd '+crmEsc(_citta||'\u2014')+(_pv?(' ('+crmEsc(_pv)+')'):'')
+            +'\ud83d\udccd '+crmEsc(_dove)
             +(_in?'':' \u00b7 fuori zona')+'</div>';
         })()
       +'</div>'
