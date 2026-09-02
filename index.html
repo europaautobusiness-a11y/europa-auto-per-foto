@@ -6712,6 +6712,12 @@ function pEuro(n){ n=Number(n)||0; return n.toLocaleString('it-IT',{minimumFract
    confrontabili come stanno. Scorporare anche quelle farebbe risultare
    sottocosto mezzo magazzino. */
 var EA_IVA = 0.22;
+/* ===== IL MARGINE MINIMO =====
+   Non basta stare sopra il prezzo di acquisto: fra quel prezzo e il ricavo ci
+   sono costi che non compaiono da nessuna parte, il trasporto per primo.
+   Sotto i 500 euro di margine la vendita non paga nemmeno quelli, quindi
+   conta come sottocosto anche se il numero e' positivo. */
+var EA_MARGINE_MINIMO = 500;
 
 function pIvaEsposta(a){
   if(!a) return false;
@@ -6739,13 +6745,16 @@ function pSottoPrezzo(cv){
     if(lordo<=0) return null;
 
     var netto=pNettoVendita(a, lordo);
+    var margine=Math.round((netto-acq)*100)/100;
     return {
       acquisto: acq,
       lordo: Math.round(lordo*100)/100,
       netto: netto,
       esposta: pIvaEsposta(a),
-      sotto: (netto < acq),
-      differenza: Math.round((netto-acq)*100)/100
+      margine: margine,
+      sotto: (margine < EA_MARGINE_MINIMO),
+      inPerdita: (margine < 0),          /* sotto il prezzo pagato davvero */
+      differenza: margine
     };
   }catch(e){ return null; }
 }
@@ -6814,11 +6823,14 @@ function pAggiornaSottocosto(cv){
       var _sc = pz.esposta
         ? ('venduta '+pEuro(pz.lordo)+' ivata \u2192 '+pEuro(pz.netto)+' netti')
         : ('venduta '+pEuro(pz.lordo)+' (regime del margine, nessuno scorporo)');
-      righe.push(perPrezzo
-        ? ('<span style="color:#b45309;font-weight:700;">'+_sc+', acquistata '+pEuro(pz.acquisto)
-           +': sotto di '+pEuro(Math.abs(pz.differenza))+'.</span>')
-        : ('<span style="color:#16a34a;font-weight:700;">'+_sc+', acquistata '+pEuro(pz.acquisto)
-           +': sopra di '+pEuro(pz.differenza)+'.</span>'));
+      /* Sotto i 500 di margine si scrive "in perdita" anche quando il numero
+         e' positivo: con i costi di trasporto quella vendita perde davvero, e
+         chiamarla "margine basso" la fa sembrare accettabile. */
+      var _esito = pz.sotto
+        ? ('in perdita \u00b7 margine '+pEuro(pz.margine)+' sotto i '+pEuro(EA_MARGINE_MINIMO))
+        : ('margine '+pEuro(pz.margine));
+      righe.push('<span style="color:'+(perPrezzo?'#b45309':'#16a34a')+';font-weight:700;">'
+        +_sc+', acquistata '+pEuro(pz.acquisto)+': '+_esito+'.</span>');
     }
     righe.push(sotto
       ? '<span style="color:#b45309;font-weight:700;">Sottocosto: provvigione dimezzata.</span>'
@@ -22173,6 +22185,50 @@ function cvLive(){
         +'Attenzione: nei pagamenti il saldo \u00e8 '+cvEuro(t.saldoInserito)
         +', qui ne servirebbero '+cvEuro(t.daSaldare)+'.</div>';
     }
+
+    /* ===== SOTTOCOSTO: SI DICE QUI, NON NELLE PROVVIGIONI =====
+       Prima l'avviso compariva solo quando si calcolava la provvigione, cioe'
+       a vendita gia' fatta. Serve invece adesso, mentre si decide il prezzo.
+
+       Chi vende vede che e' sottocosto e perche' \u2014 giacenza o prezzo \u2014 ma non
+       i numeri di acquisto: quelli restano di amministrazione e contabilita'.
+       Sapere che si sta scendendo sotto basta per fermarsi e chiedere; sapere
+       a quanto e' stata pagata l'auto e' un'altra cosa. */
+    try{
+      var _sotto=(typeof pSottoPrezzo==='function') ? pSottoPrezzo(_cv) : null;
+      var _ggSt=null;
+      try{ if(typeof pGiacenzaVeicolo==='function') _ggSt=pGiacenzaVeicolo(_cv); }catch(e){}
+      var _perGg = (_ggSt!==null && _ggSt>180);
+      var _perPz = !!(_sotto && _sotto.sotto);
+
+      /* Solo sul contratto. Sul preventivo il prezzo si sta ancora trattando
+         e un avviso a ogni cifra provata diventa rumore: si guarda quando la
+         vendita e' definita. */
+      if((_perGg || _perPz) && _cv.isContratto){
+        var _vedeTutto = (typeof getCurrentRole==='function' && getCurrentRole()==='admin')
+                      || (typeof eaIsContabilita==='function' && eaIsContabilita());
+        var _perche=[];
+        if(_perPz) _perche.push(_sotto.inPerdita
+          ? 'in perdita, sotto il prezzo di acquisto'
+          : ('in perdita: margine sotto i '+cvEuro(EA_MARGINE_MINIMO)));
+        if(_perGg) _perche.push('in stock da '+_ggSt+' giorni');
+
+        h+='<div style="margin-top:8px;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:9px 11px;">'
+          +'<div style="font-size:12.5px;font-weight:800;color:#7c2d12;">\u26a0\ufe0f Vendita sottocosto</div>'
+          +'<div style="font-size:11.5px;color:#7c2d12;margin-top:2px;">'+cvEsc(_perche.join(' \u00b7 '))+'. '
+          +'La provvigione su questa vendita \u00e8 dimezzata.</div>';
+        if(_vedeTutto && _sotto){
+          h+='<div style="font-size:11.5px;color:#9a3412;margin-top:4px;">'
+            + (_sotto.esposta
+                ? ('Venduta '+cvEuro(_sotto.lordo)+' ivata \u2192 '+cvEuro(_sotto.netto)+' netti')
+                : ('Venduta '+cvEuro(_sotto.lordo)+' (regime del margine)'))
+            + ', acquistata '+cvEuro(_sotto.acquisto)
+            + ': margine '+cvEuro(_sotto.margine)
+            +'.</div>';
+        }
+        h+='</div>';
+      }
+    }catch(e){}
   }
   var box=document.getElementById('cv-riepilogo'); if(box) box.innerHTML=h;
   /* Scelto il PROMO fra i metodi di pagamento, la polizza si attiva subito:
@@ -29083,6 +29139,42 @@ function cvDeliberaSalva(id){
   var _daSim=(g('daSim')==='1');
   if(!_daSim && !g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
+  /* ===== IL CONTROLLO PRIMA DI CONFERMARE =====
+     La delibera e' il momento in cui la provvigione viene caricata: dopo,
+     correggerla significa rimetterci le mani. Qui si guarda se la vettura e'
+     sottocosto \u2014 per giacenza o per prezzo \u2014 e lo si dice prima, non dopo.
+     Non si blocca: vendere sottocosto e' una scelta legittima, purche' sia
+     una scelta. */
+  try{
+    var _gg=(typeof pGiacenzaVeicolo==='function')?pGiacenzaVeicolo(cv):null;
+    var _pz=(typeof pSottoPrezzo==='function')?pSottoPrezzo(cv):null;
+    var _perGg=(_gg!==null && _gg>180);
+    var _perPz=!!(_pz && _pz.sotto);
+    if(_perGg || _perPz){
+      var _mot=[];
+      if(_perPz) _mot.push(_pz.inPerdita
+        ? 'venduta in perdita, sotto il prezzo di acquisto'
+        : ('venduta in perdita: margine '+cvEuro(_pz.margine)+', sotto i '
+           +cvEuro(EA_MARGINE_MINIMO)+' che coprono il trasporto'));
+      if(_perGg) _mot.push('in stock da '+_gg+' giorni');
+      /* i numeri di acquisto solo a chi li puo' vedere */
+      var _vedeTutto=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
+                  || (typeof eaIsContabilita==='function' && eaIsContabilita());
+      var _det='';
+      if(_vedeTutto && _pz && _pz.sotto){
+        _det='\n\n'+(_pz.esposta
+            ? ('Venduta '+cvEuro(_pz.lordo)+' ivata, che al netto sono '+cvEuro(_pz.netto))
+            : ('Venduta '+cvEuro(_pz.lordo)+' in regime del margine'))
+          +'.\nAcquistata '+cvEuro(_pz.acquisto)+': margine '+cvEuro(_pz.margine)+'.';
+      }
+      /* Si informa, non si chiede: la vendita e' gia' fatta e la delibera va
+         inserita comunque. Una domanda a cui c'e' una risposta sola e' solo
+         un clic in piu' che dopo tre volte si preme senza leggere. */
+      alert('Questa vettura risulta SOTTOCOSTO.\n\n\u2022 '+_mot.join('\n\u2022 ')+_det
+        +'\n\nLa provvigione su questa vendita viene caricata dimezzata.');
+    }
+  }catch(e){}
+
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   list[i].finDelibera={ confermata:true, finanziaria:_fin, tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
