@@ -10838,7 +10838,6 @@ function nlNuovo(autoId){
     patente:'', patenteScad:'', patenteEnte:'',
     dataInizio:(new Date()).toISOString().slice(0,10), dataFine:'',
     prezzoGiorno:'', cauzione:'', modalitaPag:'',
-    ritiroData:(new Date()).toISOString().slice(0,10),
     ritiroOra:(new Date()).toTimeString().slice(0,5),
     kmConsegna:'', carburante:'', statoAuto:'AUTO IN PERFETTE CONDIZIONI',
     note:''
@@ -10894,11 +10893,10 @@ function nlForm(){
         }catch(e){ return ''; }
       })()
     + '</datalist>'
-    + '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:10px 0 2px;">'
-    + '<input type="checkbox" id="nl_azienda" '+(_nl.azienda?'checked':'')+' onchange="nlAziendaCambio()" style="width:17px;height:17px;"> \u00c8 un\u2019azienda'
-    + '</label>'
-    + '<div id="nl-az-box" style="display:'+(_nl.azienda?'block':'none')+';">'
-    + lab('Ragione sociale')+inp('nl_ragSociale',_nl.ragSociale)
+    /* I dati della persona restano sempre visibili: indirizzo, telefono,
+       email e codice fiscale servono al privato quanto all'azienda. Erano
+       finiti dentro il riquadro dell'azienda e senza la spunta sparivano
+       tutti. Dentro il riquadro ci va solo cio' che riguarda l'azienda. */
     + lab('Indirizzo')+inp('nl_indirizzo',_nl.indirizzo)
     + '<div style="display:flex;gap:10px;"><div style="flex:0 0 90px;">'+lab('CAP')+inp('nl_cap',_nl.cap)+'</div>'
     + '<div style="flex:1;">'+lab('Citt\u00e0')+inp('nl_citta',_nl.citta)+'</div>'
@@ -10906,6 +10904,11 @@ function nlForm(){
     + due(lab('Telefono')+inp('nl_telefono',_nl.telefono), lab('Secondo telefono')+inp('nl_telefono2',_nl.telefono2))
     + lab('Email')+inp('nl_email',_nl.email,'','email')
     + lab('Codice fiscale')+inp('nl_cf',_nl.cf)
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:12px 0 2px;">'
+    + '<input type="checkbox" id="nl_azienda" '+(_nl.azienda?'checked':'')+' onchange="nlAziendaCambio()" style="width:17px;height:17px;"> \u00c8 un\u2019azienda'
+    + '</label>'
+    + '<div id="nl-az-box" style="display:'+(_nl.azienda?'block':'none')+';">'
+    + lab('Ragione sociale')+inp('nl_ragSociale',_nl.ragSociale)
     + lab('Partita IVA')+inp('nl_piva',_nl.piva)
     + due(lab('Codice SDI')+inp('nl_sdi',_nl.sdi), lab('PEC')+inp('nl_pec',_nl.pec))
     + '</div>';
@@ -10916,10 +10919,12 @@ function nlForm(){
           lab('Rilasciata da')+inp('nl_patenteEnte',_nl.patenteEnte,'es. MC-MI'));
 
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:14px;">Noleggio</div>'
-    + due(lab('Data inizio')+inp('nl_dataInizio',_nl.dataInizio,'','date'),
-          lab('Data fine prevista')+inp('nl_dataFine',_nl.dataFine,'','date'))
-    + due(lab('Ritiro \u2014 data')+inp('nl_ritiroData',_nl.ritiroData,'','date'),
-          lab('Ritiro \u2014 ora')+inp('nl_ritiroOra',_nl.ritiroOra,'','time'))
+    /* Una data sola: il ritiro avviene il giorno di inizio, e chiederla due
+       volte significava solo poterle scrivere diverse per sbaglio. Resta
+       l'ora, che invece serve: il contratto la riporta. */
+    + due(lab('Data inizio \u2014 ritiro')+inp('nl_dataInizio',_nl.dataInizio,'','date'),
+          lab('Ora di ritiro')+inp('nl_ritiroOra',_nl.ritiroOra,'','time'))
+    + lab('Data fine prevista')+inp('nl_dataFine',_nl.dataFine,'','date')
     + due(lab('Prezzo giornaliero \u20ac')+inp('nl_prezzoGiorno',_nl.prezzoGiorno,'0 = gratuito','number'),
           lab('Cauzione \u20ac')+inp('nl_cauzione',_nl.cauzione,'','number'))
     + lab('Modalit\u00e0 di pagamento')+inp('nl_modalitaPag',_nl.modalitaPag,'contanti, bonifico, gratuito\u2026')
@@ -11025,7 +11030,7 @@ function nlLeggiForm(){
   var g=function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
   ['cognome','nome','ragSociale','indirizzo','cap','citta','prov','telefono','telefono2','email',
    'cf','piva','sdi','pec','patente','patenteScad','patenteEnte','dataInizio','dataFine',
-   'prezzoGiorno','cauzione','modalitaPag','ritiroData','ritiroOra','kmConsegna','carburante',
+   'prezzoGiorno','cauzione','modalitaPag','ritiroOra','kmConsegna','carburante',
    'statoAuto','note','kmRientro','carbRientro','danni','rientroData','rientroOra'].forEach(function(k){
     var e=document.getElementById('nl_'+k); if(e) _nl[k]=String(e.value||'').trim();
   });
@@ -11060,7 +11065,7 @@ var NL_OBBLIGATORI = [
 ];
 /* Solo al momento in cui la vettura viene consegnata. */
 var NL_OBBLIGATORI_ATTIVA = [
-  ['ritiroData','Data ritiro'], ['ritiroOra','Ora ritiro'],
+  ['ritiroOra','Ora di ritiro'],
   ['kmConsegna','Km alla consegna'], ['carburante','Carburante alla consegna']
 ];
 function nlStato(n){
@@ -11111,8 +11116,8 @@ function nlAttiva(){
       +'\n\nSono quelli del momento della consegna: senza, alla riconsegna non si pu\u00f2 confrontare niente.');
     return;
   }
-  if(!confirm('Attivare il noleggio?\n\nLa vettura risulta consegnata al cliente da '
-    + nlData(_nl.ritiroData) + (_nl.ritiroOra?(' alle '+_nl.ritiroOra):'') + '.')) return;
+  if(!confirm('Attivare il noleggio?\n\nLa vettura risulta consegnata al cliente il '
+    + nlData(_nl.dataInizio) + (_nl.ritiroOra?(' alle '+_nl.ritiroOra):'') + '.')) return;
   _nl.attivoTs=Date.now();
   _nl.attivatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
   nlUpsert(_nl);
@@ -11297,7 +11302,7 @@ function nlStampa(){
    + riga('Data inizio', nlData(_nl.dataInizio))
    + riga('Data fine prevista', nlData(_nl.dataFine))
    + riga('Giorni', gg?String(gg):'\u2014')
-   + riga('Data e ora ritiro', nlData(_nl.ritiroData)+(_nl.ritiroOra?(' '+_nl.ritiroOra):''))
+   + riga('Data e ora ritiro', nlData(_nl.dataInizio)+(_nl.ritiroOra?(' '+_nl.ritiroOra):''))
    + riga('Prezzo giornaliero', pg>0?nlEuro(pg):'gratuito')
    + riga('Cauzione', Number(_nl.cauzione)>0?nlEuro(_nl.cauzione):'\u2014')
    + riga('Modalit\u00e0 di pagamento', _nl.modalitaPag)
@@ -24177,13 +24182,25 @@ function docCarica(tipo, id, pfx){
     var dest=docSmista(tipo, id, cat);
     var destSafe=String(dest.id==null?'':dest.id).replace(/[^\w.\-]/g,'_').replace(/_+/g,'_').slice(0,120) || idSafe;
     var path=dest.tipo+'/'+destSafe+'/'+Date.now()+'_'+safe;
+    /* ===== GLI ERRORI VANNO DETTI =====
+       Finivano nella riga di stato, che sta sotto il riquadro e spesso fuori
+       schermo: il file spariva e sembrava non fosse successo niente. Ora si
+       vedono, il file resta selezionato e il motivo esatto finisce anche
+       nella console. */
+    var _fallito=function(dove, err){
+      var msg=(err && (err.message||err.error||err.statusText)) || 'errore sconosciuto';
+      try{ console.log('documenti \u2014 '+dove+':', err); }catch(e){}
+      if(st) st.innerHTML='\u26a0\ufe0f Non caricato ('+dove+'): '+docEsc(String(msg));
+      try{ alert('Il documento non \u00e8 stato caricato.\n\n'+dove+': '+msg
+        +'\n\nIl file resta selezionato: si pu\u00f2 riprovare.'); }catch(e){}
+    };
     sb.storage.from('documenti').upload(path, file, {upsert:false}).then(function(up){
-      if(up.error){ if(st)st.textContent='⚠️ '+(up.error.message||'errore upload'); return; }
+      if(up.error){ _fallito('archivio', up.error); return; }
       sb.from('documenti').insert({entita_tipo:dest.tipo, entita_id:dest.id, categoria:cat, nome_file:file.name, storage_path:path, mime:file.type, dimensione:file.size}).then(function(ins){
-        if(ins.error){ if(st)st.textContent='⚠️ '+(ins.error.message||'errore salvataggio'); return; }
+        if(ins.error){ _fallito('registrazione', ins.error); return; }
         next();
-      });
-    }, function(err){ if(st)st.textContent='⚠️ '+(err&&err.message||'errore rete'); });
+      }, function(err){ _fallito('registrazione', err); });
+    }, function(err){ _fallito('rete', err); });
   };
   next();
 }
@@ -25133,7 +25150,14 @@ function cvVendAvanzaStato(cv){
   var incassato=pags.filter(function(x){return x.confermato;}).reduce(function(s,x){return s+cvNum(x.importo);},0);
   var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0};
   var saldata = pags.length>0 && incassato >= ((t.totaleScontato||0)-0.01);
-  var cap=pags.filter(function(x){return /caparra/i.test(x.tipo||'');});
+  /* ===== LA CAPARRA E LE SUE INTEGRAZIONI =====
+     Il controllo cercava la parola "caparra" dentro il tipo e pretendeva che
+     tutte le voci trovate fossero confermate. Con le integrazioni \u2014 che
+     quella parola ce l'hanno dentro \u2014 la pratica restava in attesa di
+     pagamento anche a caparra incassata, finche' non arrivava tutto il resto.
+     Quello che sblocca la pratica e' la caparra vera: le integrazioni sono
+     versamenti successivi, e concorrono al saldo come tutti gli altri. */
+  var cap=pags.filter(function(x){ return /^caparra$/i.test(String(x.tipo||'').trim()); });
   var caparraConf = cap.length ? cap.every(function(x){return x.confermato;}) : pags.some(function(x){return x.confermato;});
   var nuovo;
   /* Il cliente che finanzia tutto non versa caparra: la pratica parte
