@@ -10971,8 +10971,15 @@ function nlForm(){
 
   h+='<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">'
     +'<button onclick="nlSalva()" style="flex:1 1 160px;padding:11px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udcbe Salva</button>'
-    +'<button onclick="nlStampa()" style="flex:1 1 160px;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udda8\ufe0f Stampa contratto</button>'
+    +'<button onclick="nlStampa(\'consegna\')" style="flex:1 1 160px;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udda8\ufe0f Stampa contratto</button>'
     +'</div>'
+    /* Il verbale di riconsegna e' un secondo foglio da far firmare quando la
+       vettura torna: senza una firma sullo stato del rientro, i danni
+       riscontrati restano una nostra affermazione. Compare quando il rientro
+       e' stato compilato. */
+    +(_nl.rientroData
+      ? ('<button onclick="nlStampa(\'riconsegna\')" style="width:100%;margin-top:8px;padding:11px;border-radius:9px;border:1px solid #b45309;background:#fff;color:#b45309;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udda8\ufe0f Stampa verbale di riconsegna</button>')
+      : '')
     +'<button onclick="nlElimina()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:none;background:none;color:#dc2626;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Elimina contratto</button>';
 
   h+='</div></div>';
@@ -11232,13 +11239,32 @@ var NL_DICHIARA = [
  'Di prendere atto che il veicolo andr\u00e0 riconsegnato nelle medesime condizioni e con la quantit\u00e0 di carburante presente all\u2019atto del ritiro, essendo inteso che il consumo di carburante \u00e8 a carico del firmatario.'
 ];
 
-function nlStampa(){
+function nlStampa(fase){
+  /* ===== DUE DOCUMENTI, UN LAYOUT SOLO =====
+     fase 'consegna'   \u2014 il contratto che si firma quando la vettura esce
+     fase 'riconsegna' \u2014 il foglio che si firma quando torna, con km, danni
+                          e l'eventuale ritardo
+
+     L'impaginazione ricalca il contratto cartaceo in uso: firma in alto a
+     destra, dati dell'azienda a sinistra, poi i blocchi "Dati automobilista",
+     "Dati auto", "Dati contratto", "Valore noleggio" scritti come righe di
+     etichetta e valore, non come tabelle a due colonne.
+
+     Lo schema dell'auto si stampa SEMPRE, anche senza danni segnati: e' un
+     foglio che il cliente firma, e uno schema vuoto dice "consegnata senza
+     danni". Ometterlo lascerebbe il dubbio che nessuno abbia guardato. */
+  fase = fase || 'consegna';
   nlLeggiForm();
   if(!_nl.autoId){ alert('Scegli la vettura prima di stampare.'); return; }
+  if(fase==='riconsegna' && !_nl.rientroData){
+    alert('Per stampare la riconsegna servono data e ora del rientro.');
+    return;
+  }
   nlUpsert(_nl);
 
   var a=(typeof mzById==='function')?mzById(_nl.autoId):null; a=a||{};
   var E=nlEsc;
+
   var gg=(function(){
     try{
       if(!_nl.dataInizio || !_nl.dataFine) return 0;
@@ -11249,23 +11275,32 @@ function nlStampa(){
   var pg=Number(_nl.prezzoGiorno)||0;
   var tot=pg*gg;
 
-  var riga=function(et,v){ return '<tr><td class="et">'+E(et)+'</td><td class="vl">'+E(v||'\u2014')+'</td></tr>'; };
+  var ritardo=(function(){
+    try{
+      if(!_nl.rientroData || !_nl.dataFine) return 0;
+      var d1=new Date(_nl.dataFine), d2=new Date(_nl.rientroData);
+      return Math.max(0, Math.round((d2-d1)/86400000));
+    }catch(e){ return 0; }
+  })();
 
-  /* Lo schema dei danni entra in stampa come immagine vettoriale, la stessa
-     che si vede a video. Se non c'e' nessun segno non si stampa: un disegno
-     vuoto occuperebbe mezza pagina senza dire niente. */
-  var schema=function(titolo, fase){
-    var pins=(_nl[(fase==='rientro')?'pinsRientro':'pinsConsegna'])||[];
-    if(!pins.length) return '';
-    var righe=pins.map(function(pn,i){
-      return '<li>'+E(pn.desc||'(senza descrizione)')+'</li>';
-    }).join('');
+  /* una riga "etichetta: valore", come nel contratto cartaceo */
+  var c=function(et,v){ return '<span class="c"><b>'+E(et)+':</b> '+E(v||'')+'</span>'; };
+
+  var schema=function(titolo, quali){
+    var pins=(_nl[quali]||[]);
+    var elenco = pins.length
+      ? '<ol class="danni">'+pins.map(function(pn){ return '<li>'+E(pn.desc||'(senza descrizione)')+'</li>'; }).join('')+'</ol>'
+      : '<div class="nodanni">Nessun danno rilevato.</div>';
     return '<div class="sez">'+E(titolo)+'</div>'
       +'<div class="car">'+((typeof pmCarSVG==='function')?pmCarSVG(pins):'')+'</div>'
-      +'<ol class="danni">'+righe+'</ol>';
+      + elenco;
   };
 
-  var corpo=''
+  var titolo = (fase==='riconsegna')
+    ? 'Verbale di riconsegna del veicolo'
+    : 'Contratto di noleggio / auto di cortesia';
+
+  var testa=''
    +'<table class="testa"><tr>'
    +'<td class="tsx"><div class="az">EUROPA AUTO S.r.l.</div>'
    +'<div class="sub">Via Nigra 4 \u2014 20037 Paderno Dugnano (MI)</div>'
@@ -11275,110 +11310,117 @@ function nlStampa(){
    +'<div class="sub">Creato da: '+E(_nl.creatoDa||'')+'</div>'
    +'<div class="sub">Data contratto: '+E(nlData(_nl.dataInizio))+'</div></td>'
    +'</tr></table>'
-   +'<div class="tit">Contratto di noleggio / auto di cortesia</div>'
+   +'<div class="tit">'+E(titolo)+'</div>';
 
-   +'<div class="sez">Dati automobilista</div><table>'
-   + riga('Cognome e nome', ((_nl.cognome||'')+' '+(_nl.nome||'')).trim())
-   + (_nl.ragSociale?riga('Ragione sociale',_nl.ragSociale):'')
-   + riga('Indirizzo', ((_nl.indirizzo||'')+' \u2014 '+(_nl.cap||'')+' '+(_nl.citta||'')+' '+(_nl.prov?('('+_nl.prov+')'):'')).trim())
-   + riga('Telefono', (_nl.telefono||'')+(_nl.telefono2?(' // '+_nl.telefono2):''))
-   + riga('Email', _nl.email)
-   + riga('Codice fiscale', _nl.cf) + (_nl.piva?riga('P.IVA',_nl.piva):'')
-   + (_nl.sdi?riga('SDI',_nl.sdi):'') + (_nl.pec?riga('PEC',_nl.pec):'')
-   + riga('Patente n.', (_nl.patente||'')+(_nl.patenteScad?(' \u00b7 scadenza '+nlData(_nl.patenteScad)):'')+(_nl.patenteEnte?(' \u00b7 rilasciata da '+_nl.patenteEnte):''))
-   +'</table>'
+  var automobilista=''
+   +'<div class="sez">Dati automobilista</div>'
+   +'<div class="riga">'+c('nome',_nl.nome)+c('cognome',_nl.cognome)+c('rag. sociale',_nl.ragSociale)+'</div>'
+   +'<div class="riga">'+c('indirizzo',_nl.indirizzo)+c('cap',_nl.cap)+c('citt\u00e0',_nl.citta)+c('provincia',(_nl.prov?('('+_nl.prov+')'):''))+'</div>'
+   +'<div class="riga">'+c('telefono',(_nl.telefono||'')+(_nl.telefono2?(' // '+_nl.telefono2):''))+c('email',_nl.email)+'</div>'
+   +'<div class="riga">'+c('CF',_nl.cf)+c('P.IVA',_nl.piva)+c('Sdi',_nl.sdi)+c('Pec',_nl.pec)+'</div>'
+   +'<div class="riga">'+c('Numero patente',_nl.patente)+c('Scadenza',nlData(_nl.patenteScad))+c('Rilasciata da',_nl.patenteEnte)+'</div>';
 
-   +'<div class="sez">Dati veicolo</div><table>'
-   + riga('Modello', ((a.marca||'')+' '+(a.modello||'')).trim())
-   + riga('Targa', a.targa||'')
-   + riga('Alimentazione', a.alimentazione||'')
-   + riga('Cilindrata', a.cilindrata||'') + riga('Potenza (kW)', a.potenza||'')
-   + riga('Stato del veicolo', _nl.statoAuto)
-   + riga('Km alla consegna', _nl.kmConsegna)
-   + riga('Carburante alla consegna', _nl.carburante)
-   +'</table>'
+  var veicolo=''
+   +'<div class="sez">Dati auto</div>'
+   +'<div class="riga">'+c('Modello',((a.marca||'')+' '+(a.modello||'')).trim())
+   +c('Alimentazione',a.alimentazione)+c('Cilindrata',a.cilindrata)+c('Potenza',a.potenza)+'</div>'
+   +'<div class="riga">'+c('Targa',a.targa)+'</div>'
+   +'<div class="riga"><b>Stato auto:</b></div>'
+   +'<div class="statoauto">'+E(_nl.statoAuto||'')+'</div>';
 
-   +'<div class="sez">Dati contratto</div><table>'
-   + riga('Data inizio', nlData(_nl.dataInizio))
-   + riga('Data fine prevista', nlData(_nl.dataFine))
-   + riga('Giorni', gg?String(gg):'\u2014')
-   + riga('Data e ora ritiro', nlData(_nl.dataInizio)+(_nl.ritiroOra?(' '+_nl.ritiroOra):''))
-   + riga('Prezzo giornaliero', pg>0?nlEuro(pg):'gratuito')
-   + riga('Cauzione', Number(_nl.cauzione)>0?nlEuro(_nl.cauzione):'\u2014')
-   + riga('Modalit\u00e0 di pagamento', _nl.modalitaPag)
-   + riga('Totale noleggio', tot>0?nlEuro(tot):'gratuito')
-   + (_nl.note?riga('Note',_nl.note):'')
-   +'</table>'
+  var contratto=''
+   +'<div class="sez">Dati contratto</div>'
+   +'<div class="riga"><b>'+(_nl.attivoTs?'Noleggio':'Prenotazione noleggio')+'</b></div>'
+   +'<div class="riga">'+c('Data inizio',nlData(_nl.dataInizio))+c('Data fine',nlData(_nl.dataFine))+(gg?c('Giorni',String(gg)):'')+'</div>'
+   +'<div class="riga">'+c('Prezzo giornaliero',(pg>0?nlEuro(pg):'0,00 \u20ac'))+c('Cauzione',(Number(_nl.cauzione)>0?nlEuro(_nl.cauzione):'0,00 \u20ac'))+'</div>'
+   +'<div class="riga">'+c('Modalit\u00e0 pagamento',_nl.modalitaPag)+'</div>'
+   +'<div class="riga">'+c('Data e ora ritiro',nlData(_nl.dataInizio)+(_nl.ritiroOra?(' '+_nl.ritiroOra):''))+'</div>'
+   +'<div class="riga">'+c('Km alla consegna',_nl.kmConsegna)+c('Carburante alla consegna',_nl.carburante)+'</div>'
+   +(_nl.note?('<div class="riga">'+c('Note',_nl.note)+'</div>'):'');
 
-   /* La riconsegna si stampa solo se avvenuta. Il ritardo si calcola sulla
-      data di fine prevista: e' il numero su cui si fondano i 30 euro al
-      giorno del punto 8, e averlo scritto sul documento evita di doverlo
-      ricostruire a memoria mesi dopo. */
-   + (function(){
-       if(!_nl.rientroData) return '';
-       var rit=0;
-       try{
-         if(_nl.dataFine){
-           var d1=new Date(_nl.dataFine), d2=new Date(_nl.rientroData);
-           rit=Math.max(0, Math.round((d2-d1)/86400000));
-         }
-       }catch(e){}
-       return '<div class="sez">Riconsegna</div><table>'
-         + riga('Data e ora', nlData(_nl.rientroData)+(_nl.rientroOra?(' '+_nl.rientroOra):''))
-         + riga('Km al rientro', _nl.kmRientro)
-         + riga('Carburante al rientro', _nl.carbRientro)
-         + riga('Danni riscontrati', _nl.danni||'nessuno')
-         + (rit>0 ? riga('Giorni di ritardo', rit+' \u00b7 addebito previsto '+nlEuro(rit*30)+' + IVA') : '')
-         +'</table>'
-         + schema('Danni rilevati alla riconsegna','rientro');
-     })()
+  var valore=''
+   +'<div class="sez">Valore noleggio</div>'
+   +'<table class="val">'
+   +'<tr><td>Prezzo noleggio</td><td class="num">'+E(pg>0?nlEuro(pg*gg):'0,00 \u20ac')+'</td></tr>'
+   +'<tr class="tot"><td>Totale noleggio</td><td class="num">'+E(tot>0?nlEuro(tot):'0,00 \u20ac')+'</td></tr>'
+   +'</table>';
 
-   + schema('Danni rilevati alla consegna','consegna')
+  var riconsegna=''
+   +'<div class="sez">Riconsegna</div>'
+   +'<div class="riga">'+c('Data e ora',nlData(_nl.rientroData)+(_nl.rientroOra?(' '+_nl.rientroOra):''))+'</div>'
+   +'<div class="riga">'+c('Km al rientro',_nl.kmRientro)+c('Carburante al rientro',_nl.carbRientro)
+   +((_nl.kmConsegna&&_nl.kmRientro)?c('Km percorsi',String(Math.max(0,(parseInt(_nl.kmRientro,10)||0)-(parseInt(_nl.kmConsegna,10)||0)))):'')+'</div>'
+   +'<div class="riga">'+c('Danni riscontrati',_nl.danni||'nessuno')+'</div>'
+   +(ritardo>0
+      ? '<div class="ritardo"><b>Riconsegna oltre il termine:</b> '+ritardo+' giorni di ritardo. '
+        +'In base al punto 8 delle condizioni, addebito di 30,00 \u20ac + IVA al giorno, '
+        +'pari a '+E(nlEuro(ritardo*30))+' + IVA.</div>'
+      : '');
+
+  var condizioni=''
    +'<div class="sez">Il firmatario si impegna</div><ol>'
    + NL_IMPEGNI.map(function(t){ return '<li>'+t+'</li>'; }).join('')
    +'</ol>'
    +'<div class="sez">Il firmatario dichiara</div><ol>'
    + NL_DICHIARA.map(function(t){ return '<li>'+t+'</li>'; }).join('')
    +'</ol>'
-
    +'<div class="sez">Guasti meccanici</div>'
    +'<p>In caso di problemi dovuti a guasti meccanici o incidenti, contattare l\u2019Assistenza Stradale di Emergenza ACI al numero 803.116. Il servizio \u00e8 incluso nel noleggio, ma se il guasto \u00e8 stato provocato dal firmatario, questi \u00e8 tenuto a rimborsare i costi dell\u2019intervento. Non \u00e8 consentito far ispezionare o riparare il veicolo senza autorizzazione.</p>'
    +'<div class="sez">Incidenti</div>'
    +'<p>Il locatore deve essere informato in qualsiasi caso. In presenza di danni al veicolo occorre contattare anche l\u2019Assistenza Stradale al numero 803.116, e denunciare l\u2019incidente alle Autorit\u00e0 se vi sono lesioni o danni a cose.</p>'
-   +'<p>Restano sempre esclusi da ogni copertura pneumatici e tappezzeria interna; eventuali difetti riscontrati alla riconsegna vengono valutati e addebitati sottraendoli dal deposito cauzionale. Non sono previsti limiti di chilometraggio, salvo diversa indicazione nel presente contratto.</p>'
+   +'<p>Restano sempre esclusi da ogni copertura pneumatici e tappezzeria interna; eventuali difetti riscontrati alla riconsegna vengono valutati e addebitati sottraendoli dal deposito cauzionale. Non sono previsti limiti di chilometraggio, salvo diversa indicazione nel presente contratto.</p>';
 
-   +'<table class="firme"><tr>'
-   +'<td>Firma del cliente per accettazione<div class="riga"></div></td>'
-   +'<td>Firma dell\u2019addetto<div class="riga"></div></td>'
-   +'</tr></table>';
+  var firme=function(sinistra){
+    return '<table class="firme"><tr>'
+      +'<td>'+sinistra+'<div class="riga2"></div></td>'
+      +'<td>Firma dell\u2019addetto<div class="riga2"></div></td>'
+      +'</tr></table>';
+  };
+
+  var corpo = (fase==='riconsegna')
+    ? (testa + automobilista + veicolo + contratto
+       + riconsegna
+       + schema('Stato del veicolo alla consegna','pinsConsegna')
+       + schema('Stato del veicolo alla riconsegna','pinsRientro')
+       + '<div class="dich">Il firmatario dichiara di riconsegnare il veicolo nello stato sopra descritto e di aver preso atto dei rilievi effettuati.</div>'
+       + firme('Firma del cliente per la riconsegna'))
+    : (testa + automobilista + veicolo + contratto + valore
+       + schema('Stato del veicolo alla consegna','pinsConsegna')
+       + condizioni
+       + firme('Firma del cliente per accettazione'));
 
   var css='<style>'
    +'@page{size:A4;margin:12mm}'
-   +'body{font-family:Arial,Helvetica,sans-serif;font-size:9.5pt;color:#111;line-height:1.4;}'
-   +'.testa{width:100%;border-collapse:collapse;margin-bottom:10px;}'
+   +'body{font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#111;line-height:1.35;}'
+   +'.testa{width:100%;border-collapse:collapse;margin-bottom:8px;}'
    +'.testa td{vertical-align:top;}'
    +'.tsx{width:58%;} .tdx{width:42%;text-align:right;}'
    +'.az{font-size:13pt;font-weight:bold;color:#1a4fa0;letter-spacing:.5px;}'
-   +'.rigafirma{border-bottom:1px solid #333;height:28px;margin:2px 0 4px;}'
-   +'.tit{font-size:14pt;font-weight:bold;color:#1a4fa0;border-top:2px solid #1a4fa0;padding-top:6px;margin-bottom:2px;}'
-   +'.sub{font-size:8.5pt;color:#555;}'
-   +'.car{width:74%;margin:6px auto 4px;}'
+   +'.rigafirma{border-bottom:1px solid #333;height:26px;margin:2px 0 4px;}'
+   +'.tit{font-size:13pt;font-weight:bold;color:#1a4fa0;border-top:2px solid #1a4fa0;padding-top:5px;margin-bottom:4px;}'
+   +'.sub{font-size:8pt;color:#555;}'
+   +'.sez{margin-top:9px;margin-bottom:3px;font-weight:bold;font-size:10pt;color:#1a4fa0;border-bottom:1px solid #ccd;padding-bottom:1px;}'
+   +'.riga{margin:2px 0;}'
+   +'.c{margin-right:16px;white-space:nowrap;}'
+   +'.statoauto{border:1px solid #ccc;padding:4px 6px;margin-top:2px;min-height:16px;}'
+   +'.val{width:100%;border-collapse:collapse;margin-top:3px;}'
+   +'.val td{padding:2px 0;} .val .num{text-align:right;width:120px;}'
+   +'.val .tot td{font-weight:bold;border-top:1px solid #999;}'
+   +'.car{width:66%;margin:5px auto 3px;}'
    +'.car svg{width:100%;height:auto;}'
-   +'ol.danni{margin:2px 0 0 18px;padding:0;font-size:9pt;}'
-   +'ol.danni li{margin-bottom:2px;}'
-   +'.sez{margin-top:12px;margin-bottom:4px;font-weight:bold;font-size:10.5pt;color:#1a4fa0;border-bottom:1px solid #ccd;padding-bottom:2px;}'
-   +'table{width:100%;border-collapse:collapse;}'
-   +'td.et{width:34%;color:#555;padding:2px 8px 2px 0;vertical-align:top;}'
-   +'td.vl{font-weight:bold;padding:2px 0;}'
-   +'ol{margin:4px 0 0 16px;padding:0;} li{margin-bottom:3px;text-align:justify;font-size:8.5pt;}'
-   +'p{text-align:justify;margin:4px 0;}'
-   +'.firme{margin-top:22px;} .firme td{width:50%;font-size:9pt;color:#555;padding-right:14px;vertical-align:top;}'
-   +'.riga{border-bottom:1px solid #333;height:34px;margin-top:4px;}'
+   +'ol.danni{margin:2px 0 0 18px;padding:0;} ol.danni li{margin-bottom:2px;}'
+   +'.nodanni{font-size:8.5pt;color:#555;text-align:center;margin-top:2px;}'
+   +'ol{margin:3px 0 0 16px;padding:0;} li{margin-bottom:2px;text-align:justify;font-size:8pt;}'
+   +'p{text-align:justify;margin:3px 0;font-size:8pt;}'
+   +'.ritardo{border:1px solid #c00;color:#900;padding:5px 7px;margin-top:5px;font-size:8.5pt;}'
+   +'.dich{margin-top:8px;font-size:8.5pt;text-align:justify;}'
+   +'.firme{margin-top:16px;width:100%;} .firme td{width:50%;font-size:8.5pt;color:#555;padding-right:14px;vertical-align:top;}'
+   +'.riga2{border-bottom:1px solid #333;height:30px;margin-top:4px;}'
    +'.copia{page-break-after:always;}'
-   +'.et2{font-size:8pt;color:#888;text-align:right;margin-bottom:6px;}'
+   +'.et2{font-size:8pt;color:#888;text-align:right;margin-bottom:4px;}'
    +'</style>';
 
-  var doc='<html><head><meta charset="utf-8"><title>Noleggio '+E((_nl.cognome||'')+' '+(_nl.nome||''))+'</title>'+css+'</head><body>'
+  var doc='<html><head><meta charset="utf-8"><title>'+E(titolo)+' \u2014 '+E((_nl.cognome||'')+' '+(_nl.nome||''))+'</title>'+css+'</head><body>'
    +'<div class="copia"><div class="et2">Copia per il cliente</div>'+corpo+'</div>'
    +'<div><div class="et2">Copia per la concessionaria</div>'+corpo+'</div>'
    +'</body></html>';
@@ -32733,6 +32775,27 @@ function crmRenderLead(){
    Per allargare o stringere la zona basta togliere o aggiungere una sigla. */
 var CRM_PROV_ZONA = ['MI','MB','CO','LC','VA','BG','PV','NO','LO','CR'];
 
+/* La citta' seguiva una strada diversa dalla provincia: veniva letta solo
+   dalla pratica, senza ripiego sull'anagrafica. Sui contratti importati il
+   dato sta in anagrafica e non nella pratica, quindi il CRM diceva "residenza
+   non indicata" per clienti la cui residenza e' scritta e visibile altrove. */
+function crmCittaCliente(cl){
+  cl=cl||{};
+  var c0=String(cl.citta||'').trim();
+  if(c0) return c0;
+  try{
+    if(typeof clLoad==='function'){
+      var k=(typeof crmKey==='function')?crmKey(cl):'';
+      var c=clLoad().filter(function(x){ return x && typeof crmKey==='function' && crmKey(x)===k; })[0];
+      if(c){
+        if(c.citta) return String(c.citta).trim();
+        var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
+        if(ind.length && ind[ind.length-1].citta) return String(ind[ind.length-1].citta).trim();
+      }
+    }
+  }catch(e){}
+  return '';
+}
 function crmProvCliente(cl){
   cl=cl||{};
   var p=String(cl.prov||'').trim().toUpperCase();
@@ -33141,7 +33204,7 @@ function crmRenderConsegnate(){
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div>'
       +(function(){
           var _pv=crmProvCliente(cl);
-          var _citta=String(cl.citta||'').trim();
+          var _citta=crmCittaCliente(cl);
           if(!_pv && !_citta) return '<div style="font-size:12px;color:#cbd5e1;margin-top:2px;">\ud83d\udccd residenza non indicata</div>';
           var _in=crmInZona(_pv);
           return '<div style="font-size:12px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
