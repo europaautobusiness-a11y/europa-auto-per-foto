@@ -32785,8 +32785,15 @@ var CRM_PROV_ZONA = ['MI','MB','CO','LC','VA','BG','PV','NO','LO','CR'];
 function crmAnagraficaDi(cl){
   cl=cl||{};
   try{
-    if(typeof clLoad!=='function') return null;
-    var tutti=clLoad()||[];
+    /* L'anagrafica sta in clStore(), un oggetto con una scheda per chiave.
+       Qui prima si chiamava clLoad(), che non esiste: il controllo
+       "typeof !== function" usciva subito e il ripiego non e' mai partito.
+       Da qui il "residenza non indicata" su clienti che la residenza ce
+       l'hanno \u2014 nessun errore a video, semplicemente non cercava. */
+    if(typeof clStore!=='function') return null;
+    var st=clStore()||{};
+    var tutti=Object.keys(st).map(function(k){ return st[k]; }).filter(Boolean);
+    if(!tutti.length) return null;
     var norm=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
 
     var cf=norm(cl.cf||cl.piva);
@@ -32808,18 +32815,32 @@ function crmAnagraficaDi(cl){
   return null;
 }
 
+/* La residenza in anagrafica sta in due forme: campi piatti (via, citta,
+   prov) sulle schede vecchie, ed elenco "indirizzi" su quelle sincronizzate
+   con Supabase. clIndirizziBase guarda solo la prima forma, quindi sulle
+   seconde non trovava niente. Qui si guardano entrambe. */
+function crmResidenzaScheda(c){
+  if(!c) return {citta:'', prov:''};
+  var citta=String(c.citta||'').trim();
+  var prov=String(c.prov||'').trim().toUpperCase();
+  if(citta || prov) return {citta:citta, prov:prov};
+  try{
+    var arr=Array.isArray(c.indirizzi)?c.indirizzi:[];
+    if(!arr.length && typeof clIndirizziBase==='function') arr=clIndirizziBase(c)||[];
+    for(var i=arr.length-1;i>=0;i--){
+      var v=arr[i]||{};
+      var ct=String(v.citta||'').trim(), pv=String(v.prov||'').trim().toUpperCase();
+      if(ct || pv) return {citta:ct, prov:pv};
+    }
+  }catch(e){}
+  return {citta:'', prov:''};
+}
+
 function crmCittaCliente(cl){
   cl=cl||{};
   var c0=String(cl.citta||'').trim();
   if(c0) return c0;
-  try{
-    var c=crmAnagraficaDi(cl);
-    if(c){
-      if(c.citta) return String(c.citta).trim();
-      var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
-      if(ind.length && ind[ind.length-1].citta) return String(ind[ind.length-1].citta).trim();
-    }
-  }catch(e){}
+  try{ return crmResidenzaScheda(crmAnagraficaDi(cl)).citta; }catch(e){}
   return '';
 }
 function crmProvCliente(cl){
@@ -32829,14 +32850,7 @@ function crmProvCliente(cl){
   /* Sui contratti importati la provincia spesso manca: si recupera
      dall'anagrafica, cercata per codice fiscale e non per email. */
   try{
-    {
-      var c=crmAnagraficaDi(cl);
-      if(c){
-        if(c.prov) return String(c.prov).trim().toUpperCase();
-        var ind=(typeof clIndirizziBase==='function')?clIndirizziBase(c):[];
-        if(ind.length && ind[ind.length-1].prov) return String(ind[ind.length-1].prov).trim().toUpperCase();
-      }
-    }
+    return crmResidenzaScheda(crmAnagraficaDi(cl)).prov;
   }catch(e){}
   return '';
 }
