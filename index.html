@@ -6696,6 +6696,59 @@ const PS = {fin:'SI', eta:'nuova', sotto:'NO', rate:'36-59', cpi:'NO', fi:'NO', 
    Resta modificabile finche' non c'e' un veicolo agganciato: su una vendita
    inserita a mano nessuno puo' sapere da quanto era in casa. */
 var _pSottoBloccato = false;
+function pEuro(n){ n=Number(n)||0; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' \u20ac'; }
+
+/* ===== CONFRONTARE MELE CON MELE =====
+   Il prezzo di acquisto di un'auto estera e' al netto dell'IVA: si compra
+   intracomunitario e l'imposta si assolve qui. Il prezzo di vendita sul
+   contratto e' invece ivato.
+   Confrontarli cosi' come sono fa sembrare in guadagno una vendita che in
+   realta' e' sottocosto: su 20.000 di vendita, al netto restano 16.393.
+   Quindi prima si scorpora, e poi si confronta.
+
+   Vale per le auto estere e per le aziendali con IVA esposta. Per quelle in
+   regime del margine (art. 36) no: li' l'IVA si paga solo sul margine e il
+   prezzo di acquisto e' gia' comprensivo, quindi i due numeri sono
+   confrontabili come stanno. Scorporare anche quelle farebbe risultare
+   sottocosto mezzo magazzino. */
+var EA_IVA = 0.22;
+
+function pIvaEsposta(a){
+  if(!a) return false;
+  return (a.estera===true || a.ivaEsposta===true);
+}
+
+function pNettoVendita(a, lordo){
+  var v=Number(lordo)||0;
+  if(!v) return 0;
+  return pIvaEsposta(a) ? Math.round(v/(1+EA_IVA)*100)/100 : v;
+}
+
+/* Sotto il prezzo di acquisto? Restituisce null quando non si puo' sapere:
+   senza prezzo d'acquisto o senza veicolo agganciato non si inventa. */
+function pSottoPrezzo(cv){
+  try{
+    if(!cv || !cv.autoId || typeof mzById!=='function') return null;
+    var a=mzById(cv.autoId); if(!a) return null;
+    var acq=Number(String(a.prezzoAcq||'').replace(',','.'))||0;
+    if(!acq) return null;
+
+    /* quello che entra davvero per l'auto: prezzo meno lo sconto concesso */
+    var lordo=(typeof cvNum==='function'?cvNum(cv.prezzo):0);
+    if(cv.scontoOn) lordo -= (typeof cvNum==='function'?cvNum(cv.scontoImporto):0);
+    if(lordo<=0) return null;
+
+    var netto=pNettoVendita(a, lordo);
+    return {
+      acquisto: acq,
+      lordo: Math.round(lordo*100)/100,
+      netto: netto,
+      esposta: pIvaEsposta(a),
+      sotto: (netto < acq),
+      differenza: Math.round((netto-acq)*100)/100
+    };
+  }catch(e){ return null; }
+}
 
 function pGiacenzaVeicolo(cv){
   try{
@@ -6718,6 +6771,7 @@ function pAggiornaSottocosto(cv){
   try{
     var box=document.getElementById('ptg-sotto'); if(!box) return;
     var gg=pGiacenzaVeicolo(cv);
+    var pz=pSottoPrezzo(cv || (function(){ try{ var r=pDiffDelibera(); return r&&r.cv; }catch(e){ return null; } })());
     var nota=document.getElementById('pSottoNota');
     if(!nota){
       nota=document.createElement('div');
@@ -6729,14 +6783,18 @@ function pAggiornaSottocosto(cv){
        qui si romperebbe in silenzio lasciando il pulsante cliccabile. */
     var btns=Array.prototype.slice.call(box.querySelectorAll('.ptb'));
 
-    if(gg===null){
+    if(gg===null && !pz){
       _pSottoBloccato=false;
       btns.forEach(function(b){ b.disabled=false; b.style.opacity=''; b.style.cursor=''; b.title=''; });
       nota.innerHTML='<span style="color:#94a3b8;">Nessun veicolo agganciato: il sottocosto va indicato a mano.</span>';
       return;
     }
 
-    var sotto=(gg>180);
+    /* Due strade portano al sottocosto: la giacenza oltre i 180 giorni, e la
+       vendita sotto il prezzo di acquisto. Basta una delle due. */
+    var perGiacenza = (gg!==null && gg>180);
+    var perPrezzo   = !!(pz && pz.sotto);
+    var sotto = perGiacenza || perPrezzo;
     PS.sotto = sotto?'SI':'NO';
     btns.forEach(function(b){
       var suo=(String(b.textContent||'').trim().toLowerCase()==='s\u00ec');
@@ -6745,9 +6803,27 @@ function pAggiornaSottocosto(cv){
       b.title='Deciso dalla giacenza: '+gg+' giorni in stock';
     });
     _pSottoBloccato=true;
-    nota.innerHTML = sotto
-      ? '<span style="color:#b45309;font-weight:700;">In stock da '+gg+' giorni: oltre 180, quindi sottocosto. La provvigione \u00e8 dimezzata.</span>'
-      : '<span style="color:#16a34a;font-weight:700;">In stock da '+gg+' giorni: sotto i 180, provvigione piena.</span>';
+
+    var righe=[];
+    if(gg!==null){
+      righe.push(perGiacenza
+        ? '<span style="color:#b45309;font-weight:700;">In stock da '+gg+' giorni: oltre 180.</span>'
+        : '<span style="color:#16a34a;font-weight:700;">In stock da '+gg+' giorni: sotto i 180.</span>');
+    }
+    if(pz){
+      var _sc = pz.esposta
+        ? ('venduta '+pEuro(pz.lordo)+' ivata \u2192 '+pEuro(pz.netto)+' netti')
+        : ('venduta '+pEuro(pz.lordo)+' (regime del margine, nessuno scorporo)');
+      righe.push(perPrezzo
+        ? ('<span style="color:#b45309;font-weight:700;">'+_sc+', acquistata '+pEuro(pz.acquisto)
+           +': sotto di '+pEuro(Math.abs(pz.differenza))+'.</span>')
+        : ('<span style="color:#16a34a;font-weight:700;">'+_sc+', acquistata '+pEuro(pz.acquisto)
+           +': sopra di '+pEuro(pz.differenza)+'.</span>'));
+    }
+    righe.push(sotto
+      ? '<span style="color:#b45309;font-weight:700;">Sottocosto: provvigione dimezzata.</span>'
+      : '<span style="color:#16a34a;font-weight:700;">Provvigione piena.</span>');
+    nota.innerHTML = righe.join('<br>');
   }catch(e){}
 }
 
