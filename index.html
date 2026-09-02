@@ -517,7 +517,11 @@ html, body{
   </div>
 
   <div class="sidebar-sync">
-    <button onclick="manualSync(this)">🔄 Aggiorna Tutto</button>
+    <!-- "Aggiorna Tutto" tolto: serviva a rimediare al fatto che i dati di
+         base non si caricavano da soli. Ora si caricano all'avvio, e per
+         rileggere tutto basta ricaricare la pagina.
+         La funzione manualSync resta nel codice: e' richiamata da altri punti
+         e togliendola si romperebbero. -->
     <button id="btn-credenziali" onclick="apriGestioneCredenziali()" style="display:none;margin-top:6px;width:100%;padding:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;cursor:pointer;border-radius:3px;">🔑 Credenziali Utenti</button>
   </div>
 
@@ -7855,7 +7859,7 @@ function pModifica(id){
       }
     });
   }
-  if(!r) { alert('Dati non trovati.\n\nPremi \u201cAggiorna tutto\u201d nel men\u00f9 a sinistra per rileggere il registro dal database.'); return; }
+  if(!r) { alert('Dati non trovati.\n\nRicarica la pagina per rileggere il registro dal database.'); return; }
   _pEditingId=id;
   // Naviga alla sezione provvigioni se non siamo già lì
   var viewProvv = document.getElementById('view-provv');
@@ -10533,6 +10537,7 @@ function applyRoleUI() {
     setTimeout(function(){
       try{ if(!eaVaiA(_dove)) eaVaiA(landing); }catch(e){}
       try{ eaApriSotto(); }catch(e){}
+      try{ eaCaricaBase(); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
     return;
@@ -10541,9 +10546,12 @@ function applyRoleUI() {
   var _urlAdmin=eaVistaDaUrl();
   if(_urlAdmin && allowed.indexOf(_urlAdmin)!==-1 && !_landingUrlFatto){
     _landingUrlFatto=true;
-    setTimeout(function(){ try{ eaVaiA(_urlAdmin); eaApriSotto(); }catch(e){} }, 200);
+    setTimeout(function(){ try{ eaVaiA(_urlAdmin); eaApriSotto(); eaCaricaBase(); }catch(e){} }, 200);
     return;
   }
+  /* Anche quando la sezione era gia' aperta \u2014 ricaricamento della pagina,
+     ritorno da un'altra scheda \u2014 i dati di base vanno riletti. */
+  try{ eaCaricaBase(); }catch(e){}
   var activeEl = document.querySelector('.view.active');
   if (activeEl) {
     var activeId = activeEl.id.replace('view-','');
@@ -11734,6 +11742,49 @@ function wfRender(){
       +(_trImpon>0?(' \u00b7 imponibile <b style="color:#dc2626;">'+wfEuro(_trImpon)+'</b>'):'')
       +'</div></div>';
 
+    /* Il riquadro dell'inserimento mensile: sta prima dell'elenco perche' e'
+       la cosa che si fa piu' spesso. */
+    h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;margin-top:8px;">'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Registra un mese intero</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+      +'<select id="wf_tm_'+wfEsc(k)+'" style="flex:1 1 110px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
+      +'<option value="-1">mese\u2026</option>'
+      + WF_MESI.map(function(m,n){ return '<option value="'+n+'">'+m+'</option>'; }).join('')
+      +'</select>'
+      +'<input id="wf_tn_'+wfEsc(k)+'" type="number" min="1" placeholder="quante" style="flex:1 1 80px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
+      +'<input id="wf_tmi_'+wfEsc(k)+'" type="number" step="0.01" placeholder="\u20ac/giorno" style="flex:1 1 90px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
+      +'<input id="wf_tdove_'+wfEsc(k)+'" type="text" placeholder="dove (es. carrozzeria Novate)" style="flex:2 1 170px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
+      +'<button onclick="wfMeseTrasferte(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:7px 13px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">Registra</button>'
+      +'</div></div>';
+
+    /* ---- riepilogo per mese ---- */
+    if(_tr.length){
+      var perMese={};
+      _tr.forEach(function(t){
+        var m=(t.mese!=null)?t.mese:null;
+        if(m===null){
+          /* righe vecchie con una data vera: si ricava il mese da li' */
+          var q=String(t.data||'').split('/');
+          if(q.length===3) m=parseInt(q[1],10)-1;
+        }
+        var et=(m!=null && WF_MESI[m])?WF_MESI[m]:'senza mese';
+        perMese[et]=perMese[et]||{gg:0, tot:0};
+        perMese[et].gg  += Number(t.giorni)||0;
+        perMese[et].tot += (Number(t.indennita)||0)*(Number(t.giorni)||0);
+      });
+      var ordine=WF_MESI.concat(['senza mese']);
+      var presenti=ordine.filter(function(m){ return perMese[m]; });
+      if(presenti.length>1){
+        h+='<div style="margin-top:9px;padding:8px 11px;background:#eff6ff;border-radius:9px;">'
+          +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Riepilogo per mese</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;">';
+        presenti.forEach(function(m){
+          h+='<span><b>'+m+'</b> '+perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)+'</span>';
+        });
+        h+='</div></div>';
+      }
+    }
+
     if(_tr.length){
       _tr.forEach(function(t,i){
         var lim=wfLimiteTrasferta(t.estero, t.coperto);
@@ -11833,6 +11884,53 @@ function wfAggiungiTrasferta(k){
   wfScrivi(k, rec);
   wfRender();
 }
+var WF_MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
+               'luglio','agosto','settembre','ottobre','novembre','dicembre'];
+
+/* ===== UN MESE ALLA VOLTA =====
+   Le trasferte qui sono ripetitive: lo stesso tragitto, dieci volte al mese,
+   verso la carrozzeria o a ritirare un'auto. Registrarle una per una vuol
+   dire quaranta righe l'anno per persona, e nessuno lo fa.
+   Si inserisce quindi il mese: quante uscite, con quale indennita', per dove.
+   Restano comunque righe singole nel registro, cosi' il conteggio annuale e
+   le soglie continuano a funzionare come prima. */
+function wfMeseTrasferte(k){
+  var mese=parseInt((document.getElementById('wf_tm_'+k)||{}).value||'-1', 10);
+  var n=parseInt((document.getElementById('wf_tn_'+k)||{}).value||'0', 10);
+  var i=parseFloat((document.getElementById('wf_tmi_'+k)||{}).value||'0');
+  var dove=((document.getElementById('wf_tdove_'+k)||{}).value||'').trim();
+
+  if(mese<0){ alert('Scegli il mese.'); return; }
+  if(!(n>0)){ alert('Scrivi quante trasferte.'); return; }
+  if(!(i>0)){ alert('Scrivi l\u2019indennit\u00e0 giornaliera.'); return; }
+
+  var rec=wfDati(k);
+  var nome=String(rec.nome||k);
+
+  /* Agosto e' il mese in cui l'officina esterna e' chiusa: se qualcuno lo
+     sceglie, quasi sempre e' una svista. Si chiede conferma, non si vieta. */
+  if(mese===7 && !confirm('Agosto: sicuro?\n\nDi solito ad agosto le trasferte non si fanno.')) return;
+
+  var lim=wfLimiteTrasferta(false, '');
+  var ecc=Math.max(0, i-lim)*n;
+  if(ecc>0 && !confirm('L\u2019indennit\u00e0 supera la soglia esente di '+wfEuro(lim)+' al giorno.\n\n'
+      +'Su '+n+' trasferte diventerebbe imponibile '+wfEuro(ecc)+'.\n\nRegistro lo stesso?')) return;
+
+  rec.trasferte=rec.trasferte||[];
+  rec.trasferte.push({
+    data: WF_MESI[mese]+' '+wfAnno(),
+    mese: mese,
+    giorni: n,
+    indennita: Math.round(i*100)/100,
+    estero: false, coperto: '',
+    note: dove,
+    ts: Date.now()
+  });
+  wfScrivi(k, rec);
+  wfRender();
+  if(typeof tcToastNew==='function') tcToastNew(n+' trasferte di '+WF_MESI[mese]+' registrate \u00b7 '+nome, true);
+}
+
 function wfTogliTrasferta(k, idx){
   var rec=wfDati(k);
   var t=(rec.trasferte||[])[idx]; if(!t) return;
@@ -23430,7 +23528,33 @@ function cvBuildHTML(c, tipo){
     doc+='</div>';   /* chiude il blocco pagamenti che non si spezza */
   }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
-  if(_haPenale){ var _finImp=_finPromoImp; { var _pen=_finImp>=15000?4000:(_finImp>10000?3000:2000); doc+='<div class="cvh" style="page-break-after:avoid;">Penale per estinzione anticipata</div><div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">Il presente finanziamento in promozione (PROMO) è comprensivo di polizza assicurativa. In caso di <b>ESTINZIONE ANTICIPATA</b> del finanziamento, l\'acquirente riconoscerà al venditore una penale di importo <b>minimo pari a '+cvEuro(_pen)+'</b> e comunque <b>non superiore alla provvigione</b> che la società finanziaria tratterrà al concessionario in conseguenza dell\'estinzione anticipata.</div>'; doc+=cvFirmaHTML(); } }
+  if(_haPenale){
+    /* ===== LO SCONTO PROMOZIONALE, NON UNA PENALE =====
+       Chiamarla "penale per estinzione anticipata" faceva sembrare che
+       estinguere prima fosse vietato o sanzionato. Non e' cosi': il cliente
+       puo' estinguere quando vuole, ed e' un suo diritto.
+       Quello che cambia e' un'altra cosa: il prezzo promozionale e' un
+       beneficio commerciale a se', concesso in cambio dell'impegno a tenere
+       il finanziamento per almeno 18 mesi. Se quell'impegno viene meno, viene
+       meno anche lo sconto, e il cliente lo riconosce al venditore.
+       L'importo e' lo sconto davvero applicato su questo contratto, non una
+       cifra a scaglioni: e' l'unica somma che si possa chiedere indietro. */
+    var _scPromo = (typeof t!=='undefined' && t && cvNum(t.sconto)>0) ? cvNum(t.sconto) : 0;
+    doc+='<div class="cvh" style="page-break-after:avoid;">Sconto promozionale \u2014 condizioni</div>'
+      +'<div class="cvbox" style="background:#fff7ed;border:1px solid #fed7aa;font-size:11px;font-weight:600;color:#7c2d12;">'
+      +'Il prezzo indicato comprende uno <b>sconto promozionale'
+      + (_scPromo>0 ? (' di '+cvEuro(_scPromo)) : '')
+      +'</b>, riconosciuto a fronte della sottoscrizione del finanziamento in promozione (PROMO) '
+      +'comprensivo di polizza assicurativa, e subordinato al mantenimento del piano rateale '
+      +'per almeno <b>18 mesi</b>.<br><br>'
+      +'L\'acquirente resta libero di estinguere anticipatamente il finanziamento in qualsiasi '
+      +'momento. In tal caso, se l\'estinzione avviene prima dei 18 mesi, viene meno la condizione '
+      +'a cui lo sconto era subordinato e l\'acquirente <b>riconosce al venditore lo sconto '
+      +'promozionale applicato'
+      + (_scPromo>0 ? (', pari a '+cvEuro(_scPromo)) : '')
+      +'</b>.</div>';
+    doc+=cvFirmaHTML();
+  }
   /* La doppia chiave si scrive SOLO se viene consegnata: se non c'e', il
      cliente non deve leggerlo sul contratto: resta un'informazione interna
      al gestionale (la trovi nella scheda della vendita). */
@@ -23464,7 +23588,7 @@ function cvBuildHTML(c, tipo){
       +(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')
       +_testa
       +'</div></div>'
-      +(_resto?('<div class="cvbox cvcond" style="background:#fff;border:none;padding:0 0 8px;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_resto+'</div>'):''); doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di pagamento rateale per promozione PROMO;</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+      +(_resto?('<div class="cvbox cvcond" style="background:#fff;border:none;padding:0 0 8px;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_resto+'</div>'):''); doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di 18 mesi e riconoscimento dello sconto promozionale in caso di estinzione anticipata (clausola 8);</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -24410,8 +24534,8 @@ function fnOptions(selId, extraNome){
 /* ===================== PARAMETRI ===================== */
 var PARAM_KEY='ea_parametri_v1';
 var PARAM_ASSIC_DEF='• Furto Incendio parziale, totale.\n• Valore a NUOVO fino a 36 mesi\n• Ricorso terzi da incendio\n• Atti Vandalici e sociopolitici\n• Eventi naturali\n• Cristalli\n• Urto con animale selvatico\n• Soccorso stradale\n• Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300€';
-var PARAM_CONDIZIONI_DEF = "1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna stessa, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi, prendendosi carico delle modifiche eventuali e delle spese da esse derivanti.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta dallo stesso; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale derivante da tale promozione. La durata minima del pagamento rateale per il mantenimento di tale promozione \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica. In caso di rinuncia al piano di finanziamento sottoscritto, il costo del veicolo non potr\u00e0 essere rispettato dalla parte venditrice.\n11. L'importo della rata indicato non include le eventuali spese di incasso, le quali potranno essere applicate in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni previste dalla societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori sopra riportati: la mancata consegna di uno o pi\u00f9 accessori comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso. L'acquirente riconosce di rispondere civilmente presso il foro del venditore in caso di mancate comunicazioni dei difetti del veicolo ceduto in permuta.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
-var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT\u00c0 prevista dall'articolo 128, comma c del D.LGS. 206/2005 (Codice del Consumo) e condizioni di garanzia.\n\nVeicolo in condizioni d'uso pregresso, coerente con lo stato della manutenzione ordinaria dichiarata; saranno quindi necessari solo marginali interventi di manutenzione straordinaria, durante il periodo di Garanzia, nell'arco della percorrenza prevista, purch\u00e9 il veicolo sia correttamente usato e non vi sia negligenza o imperizia da parte del conducente.\nL'auto \u00e8 un bene complesso composto di sottosistemi con ciclo di vita definito dalla qualit\u00e0 intrinseca della costruzione e del processo di produzione, e influenzato dalla condotta di guida e dalla qualit\u00e0 della manutenzione ordinaria. La Garanzia Legale di Conformit\u00e0 garantisce quindi la conformit\u00e0 del veicolo, rispondente alla valutazione dello stato di utilizzo pregresso, ai cicli di vita delle parti meccaniche, compresi i dispositivi elettrici ed elettronici utilizzati per il controllo delle parti meccaniche, definiti dalla Norma UNC DOC A01, emanata da Unione Nazionale Consumatori.\nLa Garanzia Legale di Conformit\u00e0 \u00e8 applicabile a partire dalla data di consegna del veicolo oggetto della compravendita, esclusivamente mediante riparazioni delle parti difettose, con espressa esclusione di ogni altro rimedio. Copre i costi strettamente necessari ad eliminare la causa dell'evento anomalo, mediante riparazione o sostituzione delle unit\u00e0 difettose, col criterio di ripristinare la conformit\u00e0 del veicolo alle condizioni coerenti con la percorrenza e l'anzianit\u00e0 al momento della vendita. Condizione essenziale \u00e8 l'esecuzione della manutenzione ordinaria secondo le prescrizioni del costruttore e degli interventi di ripristino da parte di Officine qualificate. \u00c8 applicabile esclusivamente previa autorizzazione.\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se qui diversamente riportato.\n\nQUOTA 'MAGGIOR VALORE'\nQualora si dovesse ristabilire l'intero ciclo di vita di riferimento, mediante la sostituzione dell'intero sottosistema con un altro nuovo, o 'al nuovo', ne risulterebbe un maggior valore del veicolo rispetto a quello dell'acquisto. In questo caso l'acquirente dovr\u00e0 corrispondere una quota parte del costo della riparazione, corrispondente alla porzione di maggiore percorrenza acquisita. La riparazione sar\u00e0 soggetta a specifica garanzia legale per 24 mesi dalla data di riconsegna del veicolo, a carico della parte che fattura il corrispettivo a carico dell'Acquirente.\n\nGARANZIA SULLE RIPARAZIONI\nLe riparazioni a carico totale o parziale dell'acquirente saranno coperte da Garanzia per ulteriori 24 mesi a carico dell'Officina che ha eseguito il ripristino, dalla riconsegna del veicolo.\n\nESCLUSIONI\nIn nessun caso sar\u00e0 possibile riconoscere il rimborso di quanto pagato per interventi non previamente concordati. I difetti causati da imperizia o negligenza del conducente o da responsabilit\u00e0 di terzi non rientrano nella Garanzia Legale. La sostituzione di parti di consumo (lubrificanti, oli, liquidi, filtri e simili) non \u00e8 compresa nella garanzia, cos\u00ec come cristalli, tappezzeria, parti interne ed estetiche in materiale plastico. I difetti apparenti riportati nella proposta di vendita sono parte integrante della trattativa e non possono essere oggetto di garanzia.\nServizio vettura sostitutiva a pagamento offerto in fase di acquisto, solo in caso di fermo veicolo, previa autorizzazione preventiva di 7 giorni lavorativi e con deposito cauzionale di 500,00\u20ac. Valido per le sole auto scoperte da garanzia della casa madre.\n\nCONDIZIONI CONTRATTUALI\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato all'offerta di credito + polizza CVT sottoscritta; in caso di rifiuto o chiusura anticipata del credito l'offerta non sar\u00e0 pi\u00f9 valida ed il cliente riconoscer\u00e0 al venditore la quota provvigionale. La durata minima del pagamento rateale \u00e8 di 18 mesi.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica.\n11. L'importo della rata indicato non include le eventuali spese di incasso, applicabili in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni della societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di pagamento rateale per promozione PROMO; variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori: la mancata consegna comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
+var PARAM_CONDIZIONI_DEF = "1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna stessa, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi, prendendosi carico delle modifiche eventuali e delle spese da esse derivanti.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato alla sottoscrizione dell\'offerta di credito e della polizza CVT, con una durata minima del piano rateale di 18 mesi. Lo sconto promozionale costituisce un beneficio commerciale distinto, concesso a fronte di tale impegno. L'acquirente resta libero di estinguere anticipatamente il finanziamento in qualsiasi momento; qualora l'estinzione avvenga prima dei 18 mesi, oppure in caso di rifiuto del credito, viene meno la condizione a cui lo sconto era subordinato e l'acquirente riconosce al venditore lo sconto promozionale applicato, nella misura indicata nel riquadro \"Sconto promozionale \u2014 condizioni\" del presente contratto.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica. In caso di rinuncia al piano di finanziamento sottoscritto, il costo del veicolo non potr\u00e0 essere rispettato dalla parte venditrice.\n11. L'importo della rata indicato non include le eventuali spese di incasso, le quali potranno essere applicate in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni previste dalla societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di 18 mesi e riconoscimento dello sconto promozionale in caso di estinzione anticipata (clausola 8); variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori sopra riportati: la mancata consegna di uno o pi\u00f9 accessori comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso. L'acquirente riconosce di rispondere civilmente presso il foro del venditore in caso di mancate comunicazioni dei difetti del veicolo ceduto in permuta.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
+var PARAM_CONDIZIONI_FINALI_DEF = "DICHIARAZIONE DI GARANZIA LEGALE DI CONFORMIT\u00c0 prevista dall'articolo 128, comma c del D.LGS. 206/2005 (Codice del Consumo) e condizioni di garanzia.\n\nVeicolo in condizioni d'uso pregresso, coerente con lo stato della manutenzione ordinaria dichiarata; saranno quindi necessari solo marginali interventi di manutenzione straordinaria, durante il periodo di Garanzia, nell'arco della percorrenza prevista, purch\u00e9 il veicolo sia correttamente usato e non vi sia negligenza o imperizia da parte del conducente.\nL'auto \u00e8 un bene complesso composto di sottosistemi con ciclo di vita definito dalla qualit\u00e0 intrinseca della costruzione e del processo di produzione, e influenzato dalla condotta di guida e dalla qualit\u00e0 della manutenzione ordinaria. La Garanzia Legale di Conformit\u00e0 garantisce quindi la conformit\u00e0 del veicolo, rispondente alla valutazione dello stato di utilizzo pregresso, ai cicli di vita delle parti meccaniche, compresi i dispositivi elettrici ed elettronici utilizzati per il controllo delle parti meccaniche, definiti dalla Norma UNC DOC A01, emanata da Unione Nazionale Consumatori.\nLa Garanzia Legale di Conformit\u00e0 \u00e8 applicabile a partire dalla data di consegna del veicolo oggetto della compravendita, esclusivamente mediante riparazioni delle parti difettose, con espressa esclusione di ogni altro rimedio. Copre i costi strettamente necessari ad eliminare la causa dell'evento anomalo, mediante riparazione o sostituzione delle unit\u00e0 difettose, col criterio di ripristinare la conformit\u00e0 del veicolo alle condizioni coerenti con la percorrenza e l'anzianit\u00e0 al momento della vendita. Condizione essenziale \u00e8 l'esecuzione della manutenzione ordinaria secondo le prescrizioni del costruttore e degli interventi di ripristino da parte di Officine qualificate. \u00c8 applicabile esclusivamente previa autorizzazione.\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se qui diversamente riportato.\n\nQUOTA 'MAGGIOR VALORE'\nQualora si dovesse ristabilire l'intero ciclo di vita di riferimento, mediante la sostituzione dell'intero sottosistema con un altro nuovo, o 'al nuovo', ne risulterebbe un maggior valore del veicolo rispetto a quello dell'acquisto. In questo caso l'acquirente dovr\u00e0 corrispondere una quota parte del costo della riparazione, corrispondente alla porzione di maggiore percorrenza acquisita. La riparazione sar\u00e0 soggetta a specifica garanzia legale per 24 mesi dalla data di riconsegna del veicolo, a carico della parte che fattura il corrispettivo a carico dell'Acquirente.\n\nGARANZIA SULLE RIPARAZIONI\nLe riparazioni a carico totale o parziale dell'acquirente saranno coperte da Garanzia per ulteriori 24 mesi a carico dell'Officina che ha eseguito il ripristino, dalla riconsegna del veicolo.\n\nESCLUSIONI\nIn nessun caso sar\u00e0 possibile riconoscere il rimborso di quanto pagato per interventi non previamente concordati. I difetti causati da imperizia o negligenza del conducente o da responsabilit\u00e0 di terzi non rientrano nella Garanzia Legale. La sostituzione di parti di consumo (lubrificanti, oli, liquidi, filtri e simili) non \u00e8 compresa nella garanzia, cos\u00ec come cristalli, tappezzeria, parti interne ed estetiche in materiale plastico. I difetti apparenti riportati nella proposta di vendita sono parte integrante della trattativa e non possono essere oggetto di garanzia.\nServizio vettura sostitutiva a pagamento offerto in fase di acquisto, solo in caso di fermo veicolo, previa autorizzazione preventiva di 7 giorni lavorativi e con deposito cauzionale di 500,00\u20ac. Valido per le sole auto scoperte da garanzia della casa madre.\n\nCONDIZIONI CONTRATTUALI\n1. Il presente contratto si traduce in impegno di definizione del medesimo da ambo le parti anche senza versamento di anticipo/caparra.\n2. L'acquirente riconosce che il veicolo rimarr\u00e0 di propriet\u00e0 del venditore fino al completo pagamento.\n3. L'acquirente versa a titolo di caparra confirmatoria la cifra sopra riportata, riconoscendo di non poterla richiedere come reso nel caso in cui egli stesso risulti inadempiente.\n4. L'acquirente accetta come data di consegna massima del veicolo giorni 60; nel caso in cui intervengano forze maggiori a ritardare o rendere impossibile la consegna, il venditore provveder\u00e0 alla sostituzione del veicolo o al reso della caparra versata.\n5. Il venditore declina ogni responsabilit\u00e0 nel caso in cui terze parti siano responsabili del ritardo alla immatricolazione o al trasferimento di propriet\u00e0.\n6. Pagamenti accettati: Bonifico anticipato con conferma ricezione.\n7. L'acquirente conferma che i \"Dati acquirente\" da egli indicati risultano veritieri e rispondenti alla realt\u00e0, sollevando il venditore da errori o mancato aggiornamento degli stessi.\n8. Nel caso di acquisto in promozione finanziaria (PROMO), il prezzo scontato \u00e8 subordinato alla sottoscrizione dell'offerta di credito e della polizza CVT, con una durata minima del piano rateale di 18 mesi. Lo sconto promozionale costituisce un beneficio commerciale distinto, concesso a fronte di tale impegno. L'acquirente resta libero di estinguere anticipatamente il finanziamento in qualsiasi momento; qualora l'estinzione avvenga prima dei 18 mesi, oppure in caso di rifiuto del credito, viene meno la condizione a cui lo sconto era subordinato e l'acquirente riconosce al venditore lo sconto promozionale applicato, nella misura indicata nel riquadro \"Sconto promozionale \u2014 condizioni\" del presente contratto.\n9. In caso di acquisto con finanziamento e di esito negativo dovuto ad informazioni incomplete/omesse in fase di raccolta informazioni, il venditore ha diritto a trattenere la caparra versata.\n10. In caso di rinuncia spontanea al piano finanziario sottoscritto, l'acquirente si impegna a versare al venditore l'importo corrispondente ai \"Costi di istruttoria\" per il caricamento e la gestione della pratica.\n11. L'importo della rata indicato non include le eventuali spese di incasso, applicabili in misura variabile fino a un massimo di \u20ac 6,00, in base alle condizioni della societ\u00e0 finanziaria erogante.\n12. L'importo della rata indicato nel presente contratto \u00e8 puramente indicativo ed \u00e8 calcolato sulla base delle condizioni disponibili al momento della proposta. L'importo definitivo della rata potr\u00e0 subire una variazione massima compresa tra l'1% e il 2%, in conseguenza delle condizioni applicate dalla societ\u00e0 finanziaria al momento dell'erogazione del credito. Tale variazione, entro il predetto limite, non costituisce modifica sostanziale delle condizioni contrattuali e non d\u00e0 diritto all'annullamento o alla risoluzione del presente contratto.\n13. Le garanzie assicurative incluse nella promozione sono regolate dalle condizioni della compagnia partner al momento dell'emissione della polizza. Poich\u00e9 i dettagli specifici (es. massimali, franchigie ed esclusioni) variano in base alla finanziaria scelta, eventuali aggiornamenti o differenze nelle prestazioni non costituiranno una modifica del presente contratto n\u00e9 motivo di risoluzione, a condizione che venga mantenuta la tipologia essenziale di copertura promossa.\n\nL'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonch\u00e9 in virt\u00f9 della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente: riserva di propriet\u00e0; dazione di caparra; limitazione di responsabilit\u00e0 per fatto di terzi; termine minimo di 18 mesi e riconoscimento dello sconto promozionale in caso di estinzione anticipata (clausola 8); variazione indicativa dell'importo della rata (clausola 12); condizioni delle garanzie assicurative incluse in promozione (clausola 13).\n\nNOTE PER PERMUTA\nIl possessore del veicolo dichiara che l'oggetto \u00e8 esente da vincoli e ipoteche e di fornire al momento della consegna 2 CHIAVI AUTO, ULTIMO BOLLO, CERTIFICATO DI PROPRIET\u00c0, LIBRETTO ORIGINALE. Si impegna a consegnare la vettura ceduta in permuta ad Europa Auto Srl; nel caso decidesse di venderla a terzi, riconoscer\u00e0 ad Europa Auto Srl la cifra di 1.000,00 \u20ac, salvo diversi accordi. La valutazione del veicolo \u00e8 subordinata alla consegna di tutti gli accessori: la mancata consegna comporter\u00e0 una pena pecuniaria pari al valore dell'accessorio stesso.\n\nALTRE CONDIZIONI\nI difetti apparenti (carrozzeria, tappezzeria, pneumatici) devono essere comunicati al venditore al momento del ritiro, altrimenti si intendono come accettati.\n\nSALDO\nIl saldo dovr\u00e0 essere eseguito a mezzo bonifico. Pre immatricolazione nel caso di vetture non targate, pre consegna nel caso di vetture gi\u00e0 targate.\n\nGARANZIA\nLe parti concordano il termine di garanzia legale a 12 mesi dalla consegna del veicolo, salvo presenza garanzia della casa madre o se diversamente riportato.";
 /* Link diretto alla scheda Google di Europa Auto: porta il cliente
    direttamente sul modulo delle stelle, senza passaggi in mezzo. Resta
    modificabile da Parametri, ma non parte piu' da vuoto: prima, se il campo
@@ -28118,6 +28242,31 @@ var EA_SYNC_VISTE = {
   permessi:   function(){ if(typeof riSupaLoad==='function') riSupaLoad(); },
   whatsapp:   function(){ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }
 };
+/* ===== I DATI CHE SERVONO A TUTTI =====
+   Ogni sezione carica i propri dati quando la si apre. Il guaio e' che alcune
+   sezioni ne usano di altrui: Vendite, CRM e Preventivi leggono il magazzino
+   per sapere marca, modello e targa dell'auto. Chi entrava senza passare dal
+   Magazzino trovava schede senza veicolo, e doveva premere "Aggiorna tutto"
+   per rimettere le cose a posto.
+   Qui si caricano all'avvio i tre elenchi che servono ovunque: magazzino,
+   clienti e pratiche. Una volta sola per sessione, in sottofondo. */
+var _eaBaseCaricata = false;
+function eaCaricaBase(){
+  if(_eaBaseCaricata) return;
+  if(typeof eaSyncMomentoBuono==='function' && !eaSyncMomentoBuono()) return;
+  _eaBaseCaricata = true;
+  var passi = [
+    function(){ if(typeof mzSupaLoad==='function') mzSupaLoad(); },
+    function(){ if(typeof clSupaLoad==='function') clSupaLoad(); },
+    function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); }
+  ];
+  /* uno alla volta e distanziati: partendo tutti insieme all'avvio
+     rallentano la prima schermata proprio mentre la si sta guardando */
+  passi.forEach(function(f, i){
+    setTimeout(function(){ try{ f(); }catch(e){} }, 600 + i*700);
+  });
+}
+
 function eaSyncVista(){
   try{
     if(!eaSyncMomentoBuono()) return;
