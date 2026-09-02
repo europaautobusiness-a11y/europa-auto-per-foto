@@ -10377,11 +10377,37 @@ try{ window.eaSidebarGruppi=eaSidebarGruppi; }catch(e){}
 
 /* La sezione scritta nell'indirizzo, se c'e' ed e' una sezione vera. */
 var _landingUrlFatto = false;
+function eaVistaValida(v){
+  var base=String(v||'').split('/')[0];
+  return !!(document.getElementById('view-'+base) || base==='compiti');
+}
+/* La sottosezione, quando c'e': "#vendite/da_consegnare" -> "da_consegnare". */
+function eaSottoDaUrl(){
+  try{
+    var h=decodeURIComponent(String(location.hash||'').replace(/^#/,'')).trim();
+    var q=h.split('/');
+    return (q.length>1) ? q[1] : '';
+  }catch(e){ return ''; }
+}
+/* Apre la sottosezione dopo che la sezione e' comparsa. */
+function eaApriSotto(){
+  try{
+    var v=eaVistaDaUrl(), sotto=eaSottoDaUrl();
+    if(!v || !sotto) return;
+    setTimeout(function(){
+      try{
+        if(v==='vendite' && typeof cvVendGo==='function') cvVendGo(sotto);
+        else if(v==='compiti' && typeof apriCalCat==='function') apriCalCat(sotto, null);
+      }catch(e){}
+    }, 420);
+  }catch(e){}
+}
 function eaVistaDaUrl(){
   try{
     var h=String(location.hash||'').replace(/^#/,'');
     h=decodeURIComponent(h).trim();
     if(!h) return '';
+    h=h.split('/')[0];                          /* la sottosezione si legge a parte */
     if(h==='compiti') return h;                 /* il calendario non ha una vista sua */
     return document.getElementById('view-'+h) ? h : '';
   }catch(e){ return ''; }
@@ -10506,6 +10532,7 @@ function applyRoleUI() {
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
     setTimeout(function(){
       try{ if(!eaVaiA(_dove)) eaVaiA(landing); }catch(e){}
+      try{ eaApriSotto(); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
     return;
@@ -10514,7 +10541,7 @@ function applyRoleUI() {
   var _urlAdmin=eaVistaDaUrl();
   if(_urlAdmin && allowed.indexOf(_urlAdmin)!==-1 && !_landingUrlFatto){
     _landingUrlFatto=true;
-    setTimeout(function(){ try{ eaVaiA(_urlAdmin); }catch(e){} }, 200);
+    setTimeout(function(){ try{ eaVaiA(_urlAdmin); eaApriSotto(); }catch(e){} }, 200);
     return;
   }
   var activeEl = document.querySelector('.view.active');
@@ -10844,7 +10871,7 @@ function nlForm(){
 
   var h='<div style="max-width:640px;width:100%;background:#fff;border-radius:14px;overflow:hidden;margin:auto;">'
     +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">'
-    +'<span style="font-weight:800;">'+(_nl.chiusoTs?'Contratto chiuso':'Contratto di noleggio')+'</span>'
+    +'<span style="font-weight:800;">'+({prenotato:'Noleggio prenotato',attivo:'Noleggio in corso',chiuso:'Contratto chiuso'}[nlStato()])+'</span>'
     +'<button onclick="nlChiudiForm()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button></div>'
     +'<div style="padding:16px 18px;max-height:76vh;overflow:auto;">';
 
@@ -10904,8 +10931,10 @@ function nlForm(){
     + '<div style="font-size:11.5px;color:#64748b;margin:2px 0 6px;">Quello che si segna qui \u00e8 lo stato in cui la vettura esce. Senza, alla riconsegna non si distingue un danno nuovo da uno che c\u2019era gi\u00e0.</div>'
     + nlCarBox('consegna');
 
-  /* riconsegna: compare quando il contratto e' aperto */
-  if(_nl.createdAt && !_nl.chiusoTs){
+  /* riconsegna: solo a contratto attivo. Su un noleggio ancora prenotato
+     chiedere km e danni al rientro non ha senso \u2014 la vettura non e' nemmeno
+     uscita. */
+  if(nlStato()==='attivo'){
     h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:16px;">'
       +'<div style="font-weight:800;font-size:12px;color:#334155;text-transform:uppercase;margin-bottom:2px;">Riconsegna</div>'
       +'<div style="font-size:11.5px;color:#64748b;margin-bottom:4px;">Da compilare quando la vettura torna. Il ritardo si calcola sulla data di fine prevista, e le condizioni prevedono 30 \u20ac + IVA al giorno.</div>'
@@ -10924,6 +10953,15 @@ function nlForm(){
     h+='<div style="background:#f1f5f9;border-radius:10px;padding:11px 13px;margin-top:14px;font-size:12.5px;color:#475569;">'
       +'Chiuso il '+dc.toLocaleDateString('it-IT')+(_nl.kmRientro?(' \u00b7 '+nlEsc(_nl.kmRientro)+' km'):'')
       +(_nl.danni?(' \u00b7 danni: '+nlEsc(_nl.danni)):'')+'</div>';
+  }
+
+  /* Il passaggio da prenotato ad attivo e' un gesto solo, e va trovato
+     subito: sta sopra il salvataggio, non nascosto in fondo. */
+  if(nlStato()==='prenotato' && _nl.autoId){
+    h+='<button onclick="nlAttiva()" style="width:100%;margin-top:16px;padding:12px;border-radius:9px;border:none;'
+      +'background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">'
+      +'\ud83d\ude97 Attiva il noleggio \u2014 la vettura esce oggi</button>'
+      +'<div style="font-size:11.5px;color:#64748b;margin-top:5px;text-align:center;">Da premere alla consegna: chiede km, carburante e ora di ritiro.</div>';
   }
 
   h+='<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">'
@@ -11003,6 +11041,13 @@ function nlLeggiForm(){
    Per questo qui si blocca invece di avvisare, e si elenca tutto quello che
    manca in una volta sola: chiedere un campo alla volta con la persona
    davanti allo sportello e' il modo migliore per farla aspettare tre volte. */
+/* ===== PRENOTATO, ATTIVO, CHIUSO =====
+   Un noleggio si prenota prima e si consegna poi. Alla prenotazione la
+   vettura e' ancora qui: chiedere km e carburante alla consegna non ha senso,
+   nessuno li conosce. Diventano obbligatori all'attivazione, che e' il
+   momento in cui la vettura esce davvero.
+   La riconsegna si compila solo a contratto attivo: prima non c'e' niente da
+   riconsegnare. */
 var NL_OBBLIGATORI = [
   ['autoId','Vettura'],
   ['cognome','Cognome'], ['nome','Nome'],
@@ -11010,19 +11055,28 @@ var NL_OBBLIGATORI = [
   ['telefono','Telefono'], ['email','Email'], ['cf','Codice fiscale'],
   ['patente','Numero patente'], ['patenteScad','Scadenza patente'], ['patenteEnte','Patente rilasciata da'],
   ['dataInizio','Data inizio'], ['dataFine','Data fine prevista'],
-  ['ritiroData','Data ritiro'], ['ritiroOra','Ora ritiro'],
   ['prezzoGiorno','Prezzo giornaliero'], ['cauzione','Cauzione'],
-  ['modalitaPag','Modalit\u00e0 di pagamento'],
+  ['modalitaPag','Modalit\u00e0 di pagamento']
+];
+/* Solo al momento in cui la vettura viene consegnata. */
+var NL_OBBLIGATORI_ATTIVA = [
+  ['ritiroData','Data ritiro'], ['ritiroOra','Ora ritiro'],
   ['kmConsegna','Km alla consegna'], ['carburante','Carburante alla consegna']
 ];
+function nlStato(n){
+  n=n||_nl; if(!n) return 'prenotato';
+  if(n.chiusoTs) return 'chiuso';
+  return n.attivoTs ? 'attivo' : 'prenotato';
+}
 /* Per un'azienda si aggiungono i dati fiscali suoi. */
 var NL_OBBLIGATORI_AZIENDA = [
   ['ragSociale','Ragione sociale'], ['piva','Partita IVA'], ['sdi','Codice SDI']
 ];
 
-function nlMancanti(){
+function nlMancanti(perAttivare){
   var req=NL_OBBLIGATORI.slice();
   if(_nl.azienda) req=req.concat(NL_OBBLIGATORI_AZIENDA);
+  if(perAttivare || nlStato()!=='prenotato') req=req.concat(NL_OBBLIGATORI_ATTIVA);
   var out=[];
   req.forEach(function(r){
     var v=_nl[r[0]];
@@ -11045,6 +11099,26 @@ function nlSalva(){
   nlChiudiForm();
   nlRender();
   if(typeof tcToastNew==='function') tcToastNew('Contratto salvato', true);
+}
+
+/* Il momento in cui la vettura esce: si registrano ritiro, km e carburante,
+   e da li' il contratto e' in corso. Prima era prenotato e basta. */
+function nlAttiva(){
+  nlLeggiForm();
+  var manca=nlMancanti(true);
+  if(manca.length){
+    alert('Per attivare il noleggio servono anche questi dati.\n\nMancano:\n\u2022 '+manca.join('\n\u2022 ')
+      +'\n\nSono quelli del momento della consegna: senza, alla riconsegna non si pu\u00f2 confrontare niente.');
+    return;
+  }
+  if(!confirm('Attivare il noleggio?\n\nLa vettura risulta consegnata al cliente da '
+    + nlData(_nl.ritiroData) + (_nl.ritiroOra?(' alle '+_nl.ritiroOra):'') + '.')) return;
+  _nl.attivoTs=Date.now();
+  _nl.attivatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  nlUpsert(_nl);
+  nlForm();          /* si ridisegna: ora compare la riconsegna */
+  nlRender();
+  if(typeof tcToastNew==='function') tcToastNew('Noleggio attivato', true);
 }
 
 function nlChiudiContratto(){
@@ -11318,7 +11392,8 @@ function nlRender(){
   var vet=nlVetture(), rese=nlVettureRese();
   var contratti=nlLoad().filter(function(n){ return n && !n.deleted; })
     .sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
-  var aperti=contratti.filter(function(n){ return !n.chiusoTs; });
+  var prenotati=contratti.filter(function(n){ return !n.chiusoTs && !n.attivoTs; });
+  var aperti=contratti.filter(function(n){ return !n.chiusoTs && n.attivoTs; });
   var chiusi=contratti.filter(function(n){ return n.chiusoTs; });
 
   var h='<div style="max-width:1000px;margin:0 auto;">'
@@ -11338,8 +11413,11 @@ function nlRender(){
       var n=nlInCorso(a.id);
       h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9;flex-wrap:wrap;">'
         +'<div style="min-width:0;"><div style="font-weight:700;font-size:14px;color:#0f172a;">'+nlEsc(nlAutoLabel(a))+'</div>'
-        +'<div style="font-size:12px;color:'+(n?'#d97706':'#16a34a')+';font-weight:700;">'
-        +(n?('affidata a '+nlEsc(n.cognome+' '+n.nome).trim()+' fino al '+nlData(n.dataFine)):'disponibile')+'</div></div>'
+        +'<div style="font-size:12px;color:'+(n?(n.attivoTs?'#d97706':'#1a4fa0'):'#16a34a')+';font-weight:700;">'
+        +(n
+          ? ((n.attivoTs?'affidata a ':'prenotata da ')+nlEsc(((n.cognome||'')+' '+(n.nome||'')).trim())
+             +' fino al '+nlData(n.dataFine))
+          : 'disponibile')+'</div></div>'
         +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
         +(n?('<button onclick="nlApri(\''+nlEsc(n.id)+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Apri contratto</button>')
             :('<button onclick="nlNuovo(\''+nlEsc(a.id)+'\')" style="padding:7px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Affida</button>'))
@@ -11377,7 +11455,8 @@ function nlRender(){
     });
     return b+'</div>';
   };
-  h+=lista('Contratti in corso', aperti, '#166534');
+  h+=lista('Prenotati \u2014 da consegnare', prenotati, '#1a4fa0');
+  h+=lista('In corso', aperti, '#166534');
   h+=lista('Chiusi', chiusi.slice(0,20), '#64748b');
 
   h+='</div>';
@@ -13762,14 +13841,34 @@ var EA_SEZIONI_LIBERE=['impostazioni'];
 /* Appuntamenti e Task non hanno una vista che si chiama cosi': il calendario
    si apre da solo con eaVaiA('compiti'). Senza questa corrispondenza il tasto
    destro su quelle due voci non avrebbe fatto niente. */
-function eaVistaDaPulsante(id){
-  var v=String(id||'').replace(/^si-/,'');
-  if(v==='appuntamenti' || v==='task') return 'compiti';
-  return v;
+/* Le sottosezioni delle Vendite \u2014 In attesa pagamento, Da consegnare e le
+   altre \u2014 non hanno un identificativo: solo la prima ce l'ha. Il tasto
+   destro quindi non le riconosceva. Qui si guarda cosa fa il pulsante, e da
+   li' si ricava sezione e sottosezione: "#vendite/da_consegnare" apre la
+   scheda giusta invece dell'ultima usata. */
+function eaVistaDaPulsante(btn){
+  try{
+    var el=(typeof btn==='string')?document.getElementById(btn):btn;
+    var id=el?String(el.id||''):String(btn||'');
+    var oc=el?String(el.getAttribute('onclick')||''):'';
+
+    var mv=oc.match(/cvVendGo\(\s*['"]([a-z_]+)['"]/i);
+    if(mv) return 'vendite/'+mv[1];
+    var mc=oc.match(/apriCalCat\(\s*['"]([a-z_]+)['"]/i);
+    if(mc) return 'compiti/'+mc[1];
+
+    var v=id.replace(/^si-/,'');
+    if(v==='appuntamenti') return 'compiti/appuntamento';
+    if(v==='task') return 'compiti/task';
+    return v;
+  }catch(e){ return ''; }
 }
 function eaApriInNuovaScheda(vista){
   try{
-    var url=location.origin+location.pathname+location.search+'#'+encodeURIComponent(vista);
+    /* la barra fra sezione e sottosezione non va convertita, altrimenti
+       l'indirizzo diventa "vendite%2Fda_consegnare" e non si riconosce piu' */
+    var url=location.origin+location.pathname+location.search+'#'
+      + String(vista).split('/').map(encodeURIComponent).join('/');
     window.open(url,'_blank');
   }catch(e){}
 }
@@ -13777,9 +13876,11 @@ function eaApriInNuovaScheda(vista){
   try{
     var gestisci=function(ev){
       var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
-      if(!b || !b.id) return;
-      var vista=eaVistaDaPulsante(b.id);
-      if(!vista) return;
+      /* niente controllo sull'identificativo: le sottosezioni delle Vendite
+         non ce l'hanno e verrebbero scartate proprio quelle che servono */
+      if(!b) return;
+      var vista=eaVistaDaPulsante(b);
+      if(!vista || !eaVistaValida(vista)) return;
       /* rotella = tasto centrale; ctrl/cmd = nuova scheda */
       var nuova=(ev.type==='auxclick' && ev.button===1) || ev.ctrlKey || ev.metaKey;
       if(!nuova) return;
@@ -13799,9 +13900,9 @@ function eaApriInNuovaScheda(vista){
        visualizzare il sorgente. */
     document.addEventListener('contextmenu', function(ev){
       var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
-      if(!b || !b.id) return;                 /* non e' una sezione: menu del browser */
-      var vista=eaVistaDaPulsante(b.id);
-      if(!vista || !(document.getElementById('view-'+vista) || vista==='compiti')) return;
+      if(!b) return;                          /* non e' una sezione: menu del browser */
+      var vista=eaVistaDaPulsante(b);
+      if(!vista || !eaVistaValida(vista)) return;
       ev.preventDefault();
       eaApriInNuovaScheda(vista);
       /* un lampo sulla voce, cosi' si vede che il gesto e' stato raccolto */
@@ -13815,7 +13916,7 @@ function eaApriInNuovaScheda(vista){
     document.addEventListener('mousedown', function(ev){
       if(ev.button!==1) return;
       var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
-      if(b) ev.preventDefault();
+      if(b) ev.preventDefault();   /* niente scorrimento col tasto centrale */
     }, true);
   }catch(e){}
 })();
@@ -18116,6 +18217,10 @@ function mzRender(){
   if(_mzTot>_mzLim) h+='<div style="grid-column:1/-1;font-size:12px;color:#94a3b8;font-weight:600;margin-bottom:8px;">'+_mzLim+' di '+_mzTot+' veicoli</div>';
   list.slice(0,_mzLim).forEach(function(a){
     var si=mzStatoInfo(a.stato);
+    /* Una vettura resa al noleggiatore non e' piu' affidabile a nessuno:
+       nella sezione Noleggio finisce fra le rese, ma qui restava
+       "Disponibile" e sembrava ancora in casa. */
+    if(a.nlt && a.nltReso) si=['reso','Resa al noleggiatore','#64748b'];
     /* La contabilita' lavora sui dati del veicolo: prezzo d'acquisto, targa,
        telaio, dati di immatricolazione. Le serve la scheda, non solo la lista. */
     var _puoMod=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
@@ -18148,7 +18253,15 @@ function mzRender(){
     h+='<div style="text-align:right;flex:0 0 auto;">'+(_hasTitleBadge?'':'<span style="display:inline-block;background:'+si[2]+'18;color:'+si[2]+';font-weight:800;font-size:11px;padding:3px 9px;border-radius:20px;">'+si[1]+'</span>');
     if(a.prezzoVen) h+='<div style="font-weight:800;font-size:16px;color:#0f172a;margin-top:6px;">'+mzEuro(a.prezzoVen)+'</div>';
     h+='</div></div>';
-    if(a.stato!=='venduta') h+='<div class="mz-cta"><button onclick="event.stopPropagation(); mzFaiPreventivo(\''+a.id+'\')" style="width:100%;padding:8px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udcc4 Preventivo</button></div>';
+    /* Le vetture a noleggio non sono nostre e non si vendono: il pulsante
+       "Preventivo" su quelle porta solo a un preventivo da buttare. Al suo
+       posto si va al contratto di noleggio. */
+    if(a.nlt){
+      h+='<div class="mz-cta"><button onclick="event.stopPropagation(); sidebarNav(\'noleggio\');" '
+        +'style="width:100%;padding:8px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;'
+        +'font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\ude9a Noleggio</button></div>';
+    }
+    else if(a.stato!=='venduta') h+='<div class="mz-cta"><button onclick="event.stopPropagation(); mzFaiPreventivo(\''+a.id+'\')" style="width:100%;padding:8px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udcc4 Preventivo</button></div>';
     h+='</div>';
   });
   if(_mzTot>_mzLim) h+='<div style="grid-column:1/-1;text-align:center;padding:14px 0 4px;"><button onclick="window._mzLim=(window._mzLim||60)+60;mzRender();" style="padding:11px 22px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;font-family:inherit;font-weight:800;font-size:13.5px;cursor:pointer;">Mostra altri 60 &nbsp;<span style="color:#94a3b8;font-weight:600;">('+(_mzTot-_mzLim)+' rimanenti)</span></button></div>';
@@ -21244,6 +21357,81 @@ function cvTipiPagamento(idxRiga){
   return ['Caparra'].concat(integr, ['Finanziamento','Saldo']);
 }
 
+/* ===== PAGAMENTI RIORDINABILI =====
+   L'ordine dei pagamenti conta: sul preventivo stampato si legge dall'alto in
+   basso, e caparra, integrazioni e saldo devono seguire il loro corso. Finora
+   restavano nell'ordine in cui erano stati aggiunti, e per cambiarlo bisognava
+   cancellare e rifare.
+   Si trascina dalla maniglia. Si usano i puntatori invece del trascinamento
+   del browser perche' quello sul telefono non funziona. */
+var _cvDrag = null;
+
+function cvPagDragInit(){
+  var cont=document.getElementById('cv-pag'); if(!cont) return;
+  if(cont._dragPronto) return;
+  cont._dragPronto=true;
+
+  var righe=function(){ return Array.prototype.slice.call(cont.querySelectorAll('.cv-pag-riga')); };
+
+  cont.addEventListener('pointerdown', function(ev){
+    var h=ev.target && ev.target.closest ? ev.target.closest('.cv-pag-drag') : null;
+    if(!h) return;
+    var riga=h.closest('.cv-pag-riga'); if(!riga) return;
+    ev.preventDefault();
+    _cvDrag={ da:parseInt(riga.getAttribute('data-idx'),10), riga:riga, y:ev.clientY };
+    riga.style.opacity='.55';
+    try{ h.setPointerCapture(ev.pointerId); }catch(e){}
+  });
+
+  cont.addEventListener('pointermove', function(ev){
+    if(!_cvDrag) return;
+    ev.preventDefault();
+    /* si evidenzia il posto in cui finirebbe */
+    righe().forEach(function(r){ r.style.borderTop=''; r.style.borderBottom=''; });
+    var sopra=null;
+    righe().forEach(function(r){
+      if(r===_cvDrag.riga) return;
+      var b=r.getBoundingClientRect();
+      if(ev.clientY > b.top && ev.clientY < b.bottom) sopra=r;
+    });
+    if(sopra){
+      var b=sopra.getBoundingClientRect();
+      if(ev.clientY < b.top+b.height/2) sopra.style.borderTop='3px solid #1a4fa0';
+      else sopra.style.borderBottom='3px solid #1a4fa0';
+    }
+  });
+
+  var fine=function(ev){
+    if(!_cvDrag) return;
+    var da=_cvDrag.da, a=da;
+    righe().forEach(function(r){
+      if(r===_cvDrag.riga) return;
+      var b=r.getBoundingClientRect();
+      if(ev.clientY > b.top && ev.clientY < b.bottom){
+        var idx=parseInt(r.getAttribute('data-idx'),10);
+        a=(ev.clientY < b.top+b.height/2) ? idx : idx+1;
+      }
+    });
+    righe().forEach(function(r){ r.style.borderTop=''; r.style.borderBottom=''; });
+    _cvDrag.riga.style.opacity='';
+    _cvDrag=null;
+    if(a===da || a===da+1) return;          /* fermo dov'era */
+    try{
+      var arr=_cv.pagamenti;
+      var el=arr.splice(da,1)[0];
+      if(a>da) a--;
+      arr.splice(a,0,el);
+      cvRenderPag(); cvLive();
+    }catch(e){}
+  };
+  cont.addEventListener('pointerup', fine);
+  cont.addEventListener('pointercancel', function(){
+    if(!_cvDrag) return;
+    righe().forEach(function(r){ r.style.borderTop=''; r.style.borderBottom=''; });
+    _cvDrag.riga.style.opacity=''; _cvDrag=null;
+  });
+}
+
 function cvRenderPag(){
   var c=document.getElementById('cv-pag'); if(!c)return;
   var tipi=['Caparra','Saldo'];
@@ -21257,8 +21445,12 @@ function cvRenderPag(){
        altrimenti si nasconderebbe un incasso gia' registrato. */
     var _dati = !!(x.scadenza || cvPagDataIncasso(x) || String(x.note||'').trim() || x.confermato);
     var _apri = _dati || !!_cvPagAperti[i];
-    return '<div style="background:#eff6ff;border-radius:10px;padding:10px;margin-bottom:8px;">'
-      +'<div style="display:flex;gap:8px;">'
+    return '<div class="cv-pag-riga" data-idx="'+i+'" style="background:#eff6ff;border-radius:10px;padding:10px;margin-bottom:8px;">'
+      +'<div style="display:flex;gap:8px;align-items:center;">'
+      /* La maniglia serve a distinguere il trascinamento dallo scorrimento
+         della pagina: senza, sul telefono ogni tentativo di scorrere
+         sposterebbe un pagamento. */
+      +'<span class="cv-pag-drag" title="Trascina per riordinare" style="flex:0 0 auto;cursor:grab;color:#94a3b8;font-size:17px;line-height:1;padding:2px 4px;user-select:none;touch-action:none;">\u283f</span>'
       +'<select onchange="_cv.pagamenti['+i+'].tipo=this.value;cvRenderPag();cvLive()" style="flex:1;'+ss+'">'+(function(){
           /* le voci di QUESTA riga: caparra, l'integrazione che le compete,
              la prima libera, e il saldo. Un tipo gia' salvato che non e' fra
@@ -21292,6 +21484,9 @@ function cvRenderPag(){
        ))
       +'</div>';
   }).join('');
+  /* Il trascinamento si accende dopo il disegno: prima le righe non ci sono.
+     La funzione si protegge da sola dalle chiamate ripetute. */
+  try{ cvPagDragInit(); }catch(e){}
 }
 
 function cvSync(){
@@ -32324,7 +32519,27 @@ function crmRenderDashboard(){
 
   var promCard='<div style="flex:1;min-width:220px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:12px;">Prossimi promemoria</div>';
   if(!prossime.length){ promCard+='<div style="font-size:13px;color:#94a3b8;">Nessun promemoria programmato.</div>'; }
-  prossime.slice(0,6).forEach(function(pp){ var stt=crmAttStato(pp.a); var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b'); promCard+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;"><div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nameByKey[pp.key]||(String(pp.key).indexOf('@')>0?(String(pp.key)+' \u2014 contatto senza nome'):pp.key))+'</div><div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+'</div></div><div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>'; });
+  prossime.slice(0,6).forEach(function(pp){
+    var stt=crmAttStato(pp.a);
+    var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b');
+    var nome=nameByKey[pp.key] || (String(pp.key).indexOf('@')>0
+      ? (String(pp.key)+' \u2014 contatto senza nome') : pp.key);
+    /* "segna fatto" qui dentro: un promemoria vecchio che non si riesce a
+       togliere resta a segnalare una cosa che non esiste piu', e dopo un po'
+       non lo si guarda piu'. La chiave passa da crmKeyJs per via degli
+       apostrofi nei nomi. */
+    var chiave=crmKeyJs(pp.key);
+    promCard+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;">'
+      +'<div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div>'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nome)+'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')
+      +' \u00b7 <span onclick="crmChiudiProm('+crmEsc(chiave)+',&quot;'+crmEsc(pp.a.id||'')+'&quot;)" '
+      +'style="color:#1a4fa0;font-weight:700;cursor:pointer;text-decoration:underline;">segna fatto</span></div>'
+      +'</div>'
+      +'<div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div>'
+      +'</div>';
+  });
   promCard+='</div>';
 
   h+='<div style="display:flex;gap:16px;flex-wrap:wrap;">'+oppCard+promCard+'</div>';
@@ -32989,6 +33204,16 @@ function crmFonteSelect(key,cur){ return '<div style="margin-top:8px;display:fle
 function crmAttSalva(key,arr){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].attivita=arr; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmAddAttivita(key){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).slice(); arr.push({ id:'a'+Date.now(), tipo:'Da fare', scad:crmOggiISO(), nota:'', fatto:false }); crmAttSalva(key,arr); }
 function crmSetAtt(key,aid,campo,val){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).slice(); for(var i=0;i<arr.length;i++){ if(arr[i].id===aid){ arr[i][campo]=val; break; } } crmAttSalva(key,arr); }
+/* Un promemoria vecchio che nessuno riesce a togliere resta li' a segnalare
+   una cosa da fare che non esiste piu', e dopo un po' non lo si guarda piu'.
+   Si chiude da dove lo si vede, senza cercarlo nel CRM. */
+function crmChiudiProm(key, aid){
+  try{
+    if(!confirm('Segnare come fatto questo promemoria?')) return;
+    crmToggleAtt(key, aid);
+    if(typeof crmRenderDashboard==='function') crmRenderDashboard();
+  }catch(e){}
+}
 function crmToggleAtt(key,aid){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).slice(); for(var i=0;i<arr.length;i++){ if(arr[i].id===aid){ arr[i].fatto=!arr[i].fatto; break; } } crmAttSalva(key,arr); }
 function crmDelAtt(key,aid){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).filter(function(a){return a.id!==aid;}); crmAttSalva(key,arr); }
 function crmAttStato(a){ if(a.fatto) return 'fatto'; var oggi=crmOggiISO(); if(a.scad&&a.scad<oggi) return 'ritardo'; if(a.scad&&a.scad===oggi) return 'oggi'; return 'futuro'; }
