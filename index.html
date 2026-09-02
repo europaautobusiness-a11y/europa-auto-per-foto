@@ -10803,6 +10803,12 @@ function nlInCorso(autoId){
 }
 
 /* ---- rendere una vettura al noleggiatore ---- */
+/* Il pulsante sta in due posti \u2014 magazzino e sezione noleggio \u2014 quindi si
+   ridisegna quello che e' davvero a video, non una sezione a caso. */
+function nlAggiornaViste(){
+  try{ if(typeof mzRender==='function') mzRender(); }catch(e){}
+  try{ if(typeof nlRender==='function') nlRender(); }catch(e){}
+}
 function nlRendiVettura(autoId){
   var a=(typeof mzById==='function')?mzById(autoId):null;
   if(!a){ alert('Vettura non trovata.'); return; }
@@ -10816,7 +10822,7 @@ function nlRendiVettura(autoId){
     mzSave(l);
     if(typeof mzSupaUpsert==='function') mzSupaUpsert(a);
   }catch(e){}
-  nlRender();
+  nlAggiornaViste();
 }
 function nlRiprendiVettura(autoId){
   var a=(typeof mzById==='function')?mzById(autoId):null; if(!a) return;
@@ -10827,7 +10833,7 @@ function nlRiprendiVettura(autoId){
     mzSave(mzLoad().map(function(x){ return x.id===a.id ? a : x; }));
     if(typeof mzSupaUpsert==='function') mzSupaUpsert(a);
   }catch(e){}
-  nlRender();
+  nlAggiornaViste();
 }
 
 
@@ -11444,7 +11450,9 @@ function nlStampa(fase){
 /* ---- schermata ---- */
 function nlRender(){
   var wrap=document.getElementById('view-noleggio'); if(!wrap) return;
-  var vet=nlVetture(), rese=nlVettureRese();
+  /* Le rese non si elencano piu' qui: si governano dal Magazzino, scheda
+     "Noleggio LT". nlVettureRese resta perche' la usa il magazzino. */
+  var vet=nlVetture();
   var contratti=nlLoad().filter(function(n){ return n && !n.deleted; })
     .sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
   var prenotati=contratti.filter(function(n){ return !n.chiusoTs && !n.attivoTs; });
@@ -11476,21 +11484,13 @@ function nlRender(){
         +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
         +(n?('<button onclick="nlApri(\''+nlEsc(n.id)+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Apri contratto</button>')
             :('<button onclick="nlNuovo(\''+nlEsc(a.id)+'\')" style="padding:7px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Affida</button>'))
-        +'<button onclick="nlRendiVettura(\''+nlEsc(a.id)+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">Resa al noleggiatore</button>'
         +'</div></div>';
     });
   }
-  if(rese.length){
-    h+='<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f1f5f9;">'
-      +'<div style="font-size:11.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;margin-bottom:4px;">Rese al noleggiatore ('+rese.length+')</div>';
-    rese.forEach(function(a){
-      h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:13px;color:#94a3b8;">'
-        +'<span>'+nlEsc(nlAutoLabel(a))+'</span>'
-        +'<button onclick="nlRiprendiVettura(\''+nlEsc(a.id)+'\')" style="border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;">rimetti disponibile</button>'
-        +'</div>';
-    });
-    h+='</div>';
-  }
+  /* L'elenco delle rese non sta piu' qui: una vettura tornata al noleggiatore
+     non e' piu' affidabile a nessuno, e in una sezione che serve a fare
+     contratti occupava spazio senza servire. Si gestisce dal Magazzino,
+     scheda "Noleggio LT", dove stanno le vetture. */
   h+='</div>';
 
   /* contratti */
@@ -11631,8 +11631,10 @@ function wfTogliCollab(chiave){
 function wfPrecompilaAnno(k){
   var rec=wfDati(k);
   var nome=String(rec.nome||k);
-  var oggi=new Date();
-  var ultimo=(oggi.getFullYear()===wfAnno()) ? oggi.getMonth() : 11;
+  /* Ci si ferma al mese scorso: quello in corso ha il suo riquadro, e non
+     ha senso dichiararlo finito quando siamo a meta'. */
+  var ultimo=wfMeseCorrente()-1;
+  if(ultimo<0){ alert('Siamo a gennaio: non ci sono mesi arretrati.'); return; }
 
   var n=prompt('Quante trasferte al mese, in media, per '+nome+'?', '10');
   if(n===null) return;
@@ -11749,6 +11751,11 @@ function wfSupaLoad(){
 function wfEsc(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function wfEuro(n){ n=Number(n)||0; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' \u20ac'; }
 function wfAnno(){ return (new Date()).getFullYear(); }
+/* 2026-03-12 -> 12/03/2026 */
+function wfDataIt(v){
+  var q=String(v||'').split('-');
+  return (q.length===3) ? (q[2]+'/'+q[1]+'/'+q[0]) : String(v||'');
+}
 
 /* chiave stabile per dipendente: l'email, che non cambia come il nome */
 function wfChiave(d){ return String((d&&d.email)||'').toLowerCase().trim(); }
@@ -11870,18 +11877,26 @@ function wfRender(){
       +' \u00b7 esente <b style="color:#16a34a;">'+wfEuro(_trEsente)+'</b>'
       +(_trImpon>0?(' \u00b7 imponibile <b style="color:#dc2626;">'+wfEuro(_trImpon)+'</b>'):'')
       +'</div>'
-      +'<button onclick="wfPrecompilaAnno(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Precompila l\u2019anno</button>'
+      +'<button onclick="wfPrecompilaAnno(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Registra i mesi arretrati</button>'
       +'</div>';
 
-    /* Il riquadro dell'inserimento mensile: sta prima dell'elenco perche' e'
-       la cosa che si fa piu' spesso. */
+    /* ===== IL MESE IN CORSO E' L'UNICO APERTO =====
+       Come nelle provvigioni: i mesi passati si consultano nel riepilogo qui
+       sotto, e si scrive solo su quello che si sta vivendo. Quando cambia il
+       mese, il riquadro passa da solo al nuovo: non c'e' niente da chiudere
+       a mano.
+       I mesi arretrati si sistemano con "Registra i mesi arretrati". */
+    var _mc=wfMeseCorrente();
+    var _giaMese=wfTrasferteDelMese(rec, _mc);
+    var _ggMese=_giaMese.reduce(function(n,t){ return n+(Number(t.giorni)||0); },0);
+
     h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;margin-top:8px;">'
-      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Registra un mese intero</div>'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:5px;">'
+      +'Mese in corso \u2014 '+WF_MESI[_mc]+' '+wfAnno()
+      +(_ggMese?('<span style="color:#16a34a;"> \u00b7 gi\u00e0 registrate '+_ggMese+'</span>'):'')
+      +'</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
-      +'<select id="wf_tm_'+wfEsc(k)+'" style="flex:1 1 110px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
-      +'<option value="-1">mese\u2026</option>'
-      + WF_MESI.map(function(m,n){ return '<option value="'+n+'">'+m+'</option>'; }).join('')
-      +'</select>'
+      +'<input type="hidden" id="wf_tm_'+wfEsc(k)+'" value="'+_mc+'">'
       +'<input id="wf_tn_'+wfEsc(k)+'" type="number" min="1" placeholder="quante" style="flex:1 1 80px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
       +'<input id="wf_tmi_'+wfEsc(k)+'" type="number" step="0.01" placeholder="\u20ac/giorno" style="flex:1 1 90px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
       +'<input id="wf_tdove_'+wfEsc(k)+'" type="text" placeholder="dove (es. carrozzeria Novate)" style="flex:2 1 170px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
@@ -11909,8 +11924,12 @@ function wfRender(){
         h+='<div style="margin-top:9px;padding:8px 11px;background:#eff6ff;border-radius:9px;">'
           +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Riepilogo per mese</div>'
           +'<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;">';
+        var _apertoEt=WF_MESI[wfMeseCorrente()];
         presenti.forEach(function(m){
-          h+='<span><b>'+m+'</b> '+perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)+'</span>';
+          var _aperto=(m===_apertoEt);
+          h+='<span'+(_aperto?' style="color:#16a34a;"':'')+'><b>'+m+'</b> '
+            +perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)
+            +(_aperto?' \u00b7 in corso':'')+'</span>';
         });
         h+='</div></div>';
       }
@@ -11923,7 +11942,16 @@ function wfRender(){
         h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:12.5px;">'
           +'<div style="min-width:0;"><b>'+wfEsc(t.data||'')+'</b> \u00b7 '+(Number(t.giorni)||0)+'gg '
           +(t.estero?'estero':'Italia')
-          +(t.coperto==='due'?' \u00b7 vitto e alloggio a carico azienda':(t.coperto==='uno'?' \u00b7 vitto o alloggio a carico azienda':''))
+          /* le ore fuori, quando ci sono entrambe: e' il dato che rende
+             verificabile l'indennita' di quella giornata */
+          + (function(){
+              if(!t.uscita || !t.rientro) return '';
+              var a=t.uscita.split(':'), b=t.rientro.split(':');
+              var m=(parseInt(b[0],10)*60+parseInt(b[1],10)) - (parseInt(a[0],10)*60+parseInt(a[1],10));
+              if(m<0) m+=1440;
+              return ' \u00b7 ' + Math.floor(m/60) + 'h' + (m%60?('' + String(m%60).padStart(2,'0')):'') + ' fuori';
+            })()
+
           +(t.note?(' \u00b7 '+wfEsc(t.note)):'')
           +'<div style="color:#94a3b8;font-size:11.5px;">'+wfEuro(t.indennita)+'/giorno \u00b7 soglia esente '+wfEuro(lim)
           +(ecc>0?(' \u2192 imponibile '+wfEuro(ecc)):'')+'</div></div>'
@@ -11932,15 +11960,24 @@ function wfRender(){
       });
     }
 
+    /* ===== LA SINGOLA TRASFERTA =====
+       Data, ora di uscita e ora di rientro. Servono per due motivi: a
+       distanza di mesi nessuno ricorda se quel giorno si e' usciti la mattina
+       o il pomeriggio, e in caso di controllo l'indennita' va giustificata
+       con qualcosa di piu' di un numero di giorni.
+       Restano facoltative: una trasferta di piu' giorni non ha un'ora di
+       uscita sola, e non ha senso pretenderla. */
     h+='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
-      +'<input id="wf_td_'+wfEsc(k)+'" type="text" placeholder="quando (es. 12-14 marzo)" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_tdata_'+wfEsc(k)+'" type="date" title="giorno della trasferta" style="flex:1 1 140px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_tout_'+wfEsc(k)+'" type="time" title="ora di uscita" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_tin_'+wfEsc(k)+'" type="time" title="ora di rientro" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_td_'+wfEsc(k)+'" type="text" placeholder="oppure a parole (es. 12-14 marzo)" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_tg_'+wfEsc(k)+'" type="number" min="1" step="1" placeholder="giorni" style="flex:0 1 80px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_ti_'+wfEsc(k)+'" type="number" step="0.01" placeholder="\u20ac/giorno" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<select id="wf_te_'+wfEsc(k)+'" style="flex:0 1 110px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><option value="">Italia</option><option value="1">Estero</option></select>'
-      +'<select id="wf_tc_'+wfEsc(k)+'" style="flex:1 1 190px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
-      +'<option value="">Nessun rimborso vitto/alloggio</option>'
-      +'<option value="uno">Rimborso vitto oppure alloggio</option>'
-      +'<option value="due">Rimborso vitto e alloggio</option></select>'
+      /* Il rimborso di vitto e alloggio abbassa la soglia esente, ma qui non
+         succede mai: sono trasferte in giornata, si va in carrozzeria e si
+         torna. La riga chiedeva una scelta che era sempre la stessa. */
       +'<button onclick="wfAggiungiTrasferta(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:8px 14px;border-radius:7px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Aggiungi</button>'
       +'</div>'
       +'<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.45;">'
@@ -12006,10 +12043,29 @@ function wfAggiungiTrasferta(k){
      superare rende imponibile tutto. Basta che sia chiaro prima. */
   if(ecc>0 && !confirm('L\u2019indennit\u00e0 supera la soglia esente di '+wfEuro(lim)+' al giorno.\n\n'
       +'Diventerebbe imponibile '+wfEuro(ecc)+' (solo l\u2019eccedenza, non tutto).\n\nRegistro lo stesso?')) return;
+  var _gg=((document.getElementById('wf_tdata_'+k)||{}).value||'').trim();
+  var _out=((document.getElementById('wf_tout_'+k)||{}).value||'').trim();
+  var _in=((document.getElementById('wf_tin_'+k)||{}).value||'').trim();
+  var _libero=((document.getElementById('wf_td_'+k)||{}).value||'').trim();
+
+  /* Rientrare prima di essere usciti non capita: quasi sempre e' un orario
+     scritto al posto dell'altro. Si chiede, non si vieta \u2014 una trasferta puo'
+     finire dopo mezzanotte. */
+  if(_out && _in && _in < _out){
+    if(!confirm('Il rientro (' + _in + ') \u00e8 prima dell\u2019uscita (' + _out + ').\n\n'
+      +'Succede se la trasferta finisce dopo mezzanotte. \u00c8 cos\u00ec?')) return;
+  }
+
+  /* Come si legge la trasferta nell'elenco: la data vera se c'e', altrimenti
+     quello che e' stato scritto a parole. */
+  var _et = _gg ? wfDataIt(_gg) : (_libero || (new Date()).toLocaleDateString('it-IT'));
+  if(_out || _in) _et += ' \u00b7 ' + (_out||'?') + '\u2013' + (_in||'?');
+
   var rec=wfDati(k);
   rec.trasferte=rec.trasferte||[];
   rec.trasferte.push({
-    data:((document.getElementById('wf_td_'+k)||{}).value||'').trim() || (new Date()).toLocaleDateString('it-IT'),
+    data:_et, giorno:_gg, uscita:_out, rientro:_in,
+    mese:(_gg?(parseInt(_gg.slice(5,7),10)-1):wfMeseCorrente()),
     giorni:g, indennita:Math.round(i*100)/100, estero:est, coperto:cop, ts:Date.now()
   });
   wfScrivi(k, rec);
@@ -12017,6 +12073,19 @@ function wfAggiungiTrasferta(k){
 }
 var WF_MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
                'luglio','agosto','settembre','ottobre','novembre','dicembre'];
+
+/* Il mese che si sta vivendo: e' l'unico su cui si scrive. */
+function wfMeseCorrente(){
+  var d=new Date();
+  return (d.getFullYear()===wfAnno()) ? d.getMonth() : 11;
+}
+function wfTrasferteDelMese(rec, m){
+  return ((rec&&rec.trasferte)||[]).filter(function(t){
+    if(t.mese!=null) return t.mese===m;
+    var q=String(t.data||'').split('/');
+    return q.length===3 && (parseInt(q[1],10)-1)===m;
+  });
+}
 
 /* ===== UN MESE ALLA VOLTA =====
    Le trasferte qui sono ripetitive: lo stesso tragitto, dieci volte al mese,
@@ -12038,10 +12107,8 @@ function wfMeseTrasferte(k){
   var rec=wfDati(k);
   var nome=String(rec.nome||k);
 
-  /* Agosto e' il mese in cui l'officina esterna e' chiusa: se qualcuno lo
-     sceglie, quasi sempre e' una svista. Si chiede conferma, non si vieta. */
-  if(mese===7 && !confirm('Agosto: sicuro?\n\nDi solito ad agosto le trasferte non si fanno.')) return;
-
+  /* Niente domanda su agosto: qui il mese non si sceglie, e' quello in corso.
+     La domanda resta dove serve, negli arretrati. */
   var lim=wfLimiteTrasferta(false, '');
   var ecc=Math.max(0, i-lim)*n;
   if(ecc>0 && !confirm('L\u2019indennit\u00e0 supera la soglia esente di '+wfEuro(lim)+' al giorno.\n\n'
@@ -18532,13 +18599,24 @@ function mzRender(){
     /* Le vetture a noleggio non sono nostre e non si vendono: il pulsante
        "Preventivo" su quelle porta solo a un preventivo da buttare. Al suo
        posto si va al contratto di noleggio. */
-    /* Una vettura resa al noleggiatore non si affida piu' a nessuno: senza
-       pulsante, cosi' non si apre un contratto su un'auto che non c'e'. */
-    if(a.nlt && a.nltReso){ /* nessun pulsante */ }
+    /* ===== LE VETTURE A NOLEGGIO SI GOVERNANO DA QUI =====
+       Renderle al noleggiatore e riprenderle e' una faccenda di magazzino,
+       non di contratti: e' la vettura che entra o esce dalla disponibilita'.
+       Nella sezione Noleggio restano solo i contratti. */
+    if(a.nlt && a.nltReso){
+      h+='<div class="mz-cta"><button onclick="event.stopPropagation(); nlRiprendiVettura(\''+a.id+'\')" '
+        +'style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;'
+        +'font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u21a9 Rimetti disponibile</button></div>';
+    }
     else if(a.nlt){
-      h+='<div class="mz-cta"><button onclick="event.stopPropagation(); sidebarNav(\'noleggio\');" '
-        +'style="width:100%;padding:8px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;'
-        +'font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\ude9a Noleggio</button></div>';
+      h+='<div class="mz-cta" style="display:flex;gap:6px;">'
+        +'<button onclick="event.stopPropagation(); sidebarNav(\'noleggio\');" '
+        +'style="flex:1;padding:8px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;'
+        +'font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\ude9a Noleggio</button>'
+        +'<button onclick="event.stopPropagation(); nlRendiVettura(\''+a.id+'\')" '
+        +'style="flex:1;padding:8px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;'
+        +'font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Resa al noleggiatore</button>'
+        +'</div>';
     }
     else if(a.stato!=='venduta') h+='<div class="mz-cta"><button onclick="event.stopPropagation(); mzFaiPreventivo(\''+a.id+'\')" style="width:100%;padding:8px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udcc4 Preventivo</button></div>';
     h+='</div>';
