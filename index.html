@@ -33220,6 +33220,67 @@ function crmRenderLeadOnline(){
   return h;
 }
 
+
+/* ===== DUE MODI DI TOGLIERE UN CLIENTE DALL'ELENCO =====
+   Sono situazioni diverse e vanno trattate diversamente.
+
+   "Tagliando gia' fatto" vale per quell'anniversario soltanto: il cliente
+   sparisce dalla colonna dell'anno in corso ma ricompare l'anno dopo, quando
+   arriva il tagliando successivo. Si segna l'anno, non un interruttore.
+
+   "Auto venduta" toglie il cliente per sempre: non ha piu' quella macchina,
+   e proporgli un tagliando e' una figura. Resta comunque recuperabile, perche'
+   capita di segnarlo per sbaglio o di ricomprarla.
+
+   Tutto vive sulla pratica, cosi' vale su ogni dispositivo. */
+function crmTagliandiFatti(cv){
+  try{ return Array.isArray(cv.crmTagliandi) ? cv.crmTagliandi : []; }catch(e){ return []; }
+}
+function crmSalvaCv(cv){
+  try{
+    var list=cvLoad();
+    var i=list.findIndex(function(x){ return x.id===cv.id; });
+    if(i<0) return;
+    list[i]=cv; cv.updatedAt=Date.now();
+    cvSave(list);
+    if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  }catch(e){}
+}
+function crmSegnaTagliando(id, anno){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  var nome=((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'');
+  if(!confirm('Segnare il tagliando del '+anno+'\u00b0 anno come gi\u00e0 fatto per '+nome.trim()+'?\n\n'
+    +'Sparisce da questa colonna. Ricompare fra un anno, per il tagliando successivo.')) return;
+  var arr=crmTagliandiFatti(cv);
+  if(arr.indexOf(anno)<0) arr.push(anno);
+  cv.crmTagliandi=arr;
+  crmSalvaCv(cv);
+  if(typeof crmRender==='function') crmRender();
+  if(typeof tcToastNew==='function') tcToastNew('Tagliando segnato \u00b7 ricompare l\u2019anno prossimo', true);
+}
+function crmEscludiCliente(id){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+  if(!confirm('Togliere '+nome+' dai promemoria del CRM?\n\n'
+    +'Da usare quando ha venduto la macchina: non ricompare piu\u2019 in nessun anniversario.\n'
+    +'Si pu\u00f2 rimettere dal riquadro in fondo all\u2019elenco.')) return;
+  cv.crmEscluso=true;
+  cv.crmEsclusoTs=Date.now();
+  cv.crmEsclusoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  crmSalvaCv(cv);
+  if(typeof crmRender==='function') crmRender();
+  if(typeof tcToastNew==='function') tcToastNew('Tolto dai promemoria', true);
+}
+function crmRimettiCliente(id){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  cv.crmEscluso=false;
+  try{ delete cv.crmEsclusoTs; delete cv.crmEsclusoDa; }catch(e){}
+  crmSalvaCv(cv);
+  if(typeof crmRender==='function') crmRender();
+}
+var _crmMostraEsclusi=false;
+function crmToggleEsclusi(){ _crmMostraEsclusi=!_crmMostraEsclusi; if(typeof crmRender==='function') crmRender(); }
+
 function crmRenderConsegnate(){
   /* ===== QUATTRO ANNIVERSARI, QUATTRO COLONNE =====
      Non c'e' un momento solo per farsi vivi: c'e' il primo tagliando a dodici
@@ -33240,11 +33301,16 @@ function crmRenderConsegnate(){
   var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){
     return x.statoVendita==='consegnato' && !eaCvTest(x);
   });
+  var esclusi=tutte.filter(function(x){ return x.crmEscluso; });
 
-  var perFascia=FASCE.map(function(f){
+  var perFascia=FASCE.map(function(f, n){
+    var anno=n+1;
     var da=_oggi-f.da*_MESE, a=_oggi-f.a*_MESE;
-    var arr=tutte.filter(function(x){ var t=+(x.consegnatoTs||0); return t && t>=da && t<=a; })
-                 .sort(function(x,y){ return (x.consegnatoTs||0)-(y.consegnatoTs||0); });
+    var arr=tutte.filter(function(x){
+      if(x.crmEscluso) return false;                              /* auto venduta */
+      if(crmTagliandiFatti(x).indexOf(anno)>=0) return false;     /* tagliando di quest'anno gia' fatto */
+      var t=+(x.consegnatoTs||0); return t && t>=da && t<=a;
+    }).sort(function(x,y){ return (x.consegnatoTs||0)-(y.consegnatoTs||0); });
     return arr;
   });
 
@@ -33275,7 +33341,7 @@ function crmRenderConsegnate(){
   }
 
   /* La scheda del singolo cliente: la stessa in tutte le colonne. */
-  var scheda=function(cv, colore){
+  var scheda=function(cv, colore, anno){
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var d=cv.consegnatoTs?new Date(cv.consegnatoTs):null;
     var b='<div style="background:#fff;border:1px solid #e2e8f0;border-left:4px solid '+colore+';border-radius:12px;padding:12px;margin-bottom:9px;">'
@@ -33292,6 +33358,16 @@ function crmRenderConsegnate(){
         +'\ud83d\udccd '+crmEsc(_dove)+(_in?'':' \u00b7 fuori zona')+'</div>';
     })();
     b += crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''));
+    /* Le due vie d'uscita, piccole e sotto l'offerta: si usano dopo aver
+       parlato col cliente, non prima. */
+    b += '<div style="display:flex;gap:6px;margin-top:7px;">'
+      +'<button onclick="crmSegnaTagliando(\''+crmEsc(cv.id)+'\','+anno+')" '
+      +'style="flex:1;padding:6px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">'
+      +'\u2713 Tagliando fatto</button>'
+      +'<button onclick="crmEscludiCliente(\''+crmEsc(cv.id)+'\')" '
+      +'style="flex:1;padding:6px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">'
+      +'Auto venduta</button>'
+      +'</div>';
     return b+'</div>';
   };
 
@@ -33307,11 +33383,32 @@ function crmRenderConsegnate(){
     if(!arr.length){
       h+='<div style="font-size:12px;color:#cbd5e1;padding:8px 4px;">Nessuna</div>';
     } else {
-      arr.forEach(function(cv){ h+=scheda(cv, f.col); });
+      arr.forEach(function(cv){ h+=scheda(cv, f.col, n+1); });
     }
     h+='</div>';
   });
   h+='</div>';
+
+  /* Chi e' stato tolto resta raggiungibile: capita di segnarlo per sbaglio,
+     o che il cliente ricompri da noi. */
+  if(esclusi.length){
+    h+='<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e2e8f0;">'
+      +'<button onclick="crmToggleEsclusi()" style="border:none;background:none;color:#64748b;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;">'
+      +(_crmMostraEsclusi?'\u25be':'\u25b8')+' '+esclusi.length+' tolti dai promemoria</button>';
+    if(_crmMostraEsclusi){
+      h+='<div style="margin-top:8px;">';
+      esclusi.slice(0,60).forEach(function(cv){
+        var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+        h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-top:1px solid #f1f5f9;font-size:12.5px;">'
+          +'<div style="min-width:0;color:#64748b;"><b>'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</b> \u00b7 '
+          +crmEsc(a.modello||cv.autoDesc||'')+'</div>'
+          +'<button onclick="crmRimettiCliente(\''+crmEsc(cv.id)+'\')" style="flex:0 0 auto;border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;">rimetti</button>'
+          +'</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+  }
 
   return h;
 }
