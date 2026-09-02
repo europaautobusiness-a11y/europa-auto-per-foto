@@ -6682,7 +6682,74 @@ function buildReportHTML(marca, targa, dataIspezione){
 
 const PS = {fin:'SI', eta:'nuova', sotto:'NO', rate:'36-59', cpi:'NO', fi:'NO', fiMesi:48, gap:'NO', fonte:''};
 
+/* ===== SOTTOCOSTO: LO DECIDE LA GIACENZA =====
+   Un veicolo fermo da piu' di 180 giorni si vende a margine ridotto, e la
+   provvigione si dimezza. Non e' una scelta: e' un fatto che il gestionale
+   conosce, perche' la data di carico ce l'ha.
+   Quando il calcolo e' automatico il comando si blocca: lasciarlo cliccabile
+   significa permettere di rimetterlo su "No" e calcolare una provvigione che
+   in busta non arrivera'. Meglio dirlo prima che scoprirlo dopo.
+   Resta modificabile finche' non c'e' un veicolo agganciato: su una vendita
+   inserita a mano nessuno puo' sapere da quanto era in casa. */
+var _pSottoBloccato = false;
+
+function pGiacenzaVeicolo(cv){
+  try{
+    /* La vendita arriva da chi chiama; in mancanza si prova a ricavarla dal
+       confronto con la delibera, che gia' la individua dal nome del cliente. */
+    if(!cv){
+      try{ var r=(typeof pDiffDelibera==='function')?pDiffDelibera():null; cv=r&&r.cv; }catch(e){}
+    }
+    if(!cv || !cv.autoId || typeof mzById!=='function') return null;
+    var a=mzById(cv.autoId); if(!a || !a.dataCarico) return null;
+    var q=String(a.dataCarico).split('-');
+    var d=(q.length===3)?new Date(+q[0],+q[1]-1,+q[2]):new Date(a.dataCarico);
+    if(isNaN(d.getTime())) return null;
+    var rif=cv.contrattoTs||cv.consegnatoTs||Date.now();
+    return Math.floor((rif-d.getTime())/86400000);
+  }catch(e){ return null; }
+}
+
+function pAggiornaSottocosto(cv){
+  try{
+    var box=document.getElementById('ptg-sotto'); if(!box) return;
+    var gg=pGiacenzaVeicolo(cv);
+    var nota=document.getElementById('pSottoNota');
+    if(!nota){
+      nota=document.createElement('div');
+      nota.id='pSottoNota';
+      nota.style.cssText='font-size:11.5px;margin-top:5px;line-height:1.4;';
+      box.parentNode.appendChild(nota);
+    }
+    /* Array.prototype.slice: su qualche browser NodeList non ha forEach, e
+       qui si romperebbe in silenzio lasciando il pulsante cliccabile. */
+    var btns=Array.prototype.slice.call(box.querySelectorAll('.ptb'));
+
+    if(gg===null){
+      _pSottoBloccato=false;
+      btns.forEach(function(b){ b.disabled=false; b.style.opacity=''; b.style.cursor=''; b.title=''; });
+      nota.innerHTML='<span style="color:#94a3b8;">Nessun veicolo agganciato: il sottocosto va indicato a mano.</span>';
+      return;
+    }
+
+    var sotto=(gg>180);
+    PS.sotto = sotto?'SI':'NO';
+    btns.forEach(function(b){
+      var suo=(String(b.textContent||'').trim().toLowerCase()==='s\u00ec');
+      b.classList.toggle('on', suo===sotto);
+      b.disabled=true; b.style.opacity='.55'; b.style.cursor='not-allowed';
+      b.title='Deciso dalla giacenza: '+gg+' giorni in stock';
+    });
+    _pSottoBloccato=true;
+    nota.innerHTML = sotto
+      ? '<span style="color:#b45309;font-weight:700;">In stock da '+gg+' giorni: oltre 180, quindi sottocosto. La provvigione \u00e8 dimezzata.</span>'
+      : '<span style="color:#16a34a;font-weight:700;">In stock da '+gg+' giorni: sotto i 180, provvigione piena.</span>';
+  }catch(e){}
+}
+
 function ptog(k,v,btn){
+  /* Il sottocosto non si tocca quando lo decide la giacenza. */
+  if(k==='sotto' && _pSottoBloccato) return;
   PS[k]=(k==='fiMesi')?parseInt(v):v;
   btn.closest('.ptg').querySelectorAll('.ptb').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
@@ -6829,6 +6896,7 @@ function pDaDelibera(){
     var set=function(id,v){ var el=document.getElementById(id); if(el && v!==null && v!==undefined && v!=='') el.value=v; };
     set('pTan', pTanVicino(d.tan));
     set('pComm', d.istruttoria);
+    try{ pAggiornaSottocosto(r.cv); }catch(e){}
     /* valore del veicolo e anticipo arrivano dalla delibera: se la delibera
        e' vecchia e non li ha, si ricavano dall'importo finanziato */
     var _val=(d.valoreVeicolo!=null && d.valoreVeicolo!=='')?d.valoreVeicolo:null;
@@ -10314,6 +10382,7 @@ function eaVistaDaUrl(){
     var h=String(location.hash||'').replace(/^#/,'');
     h=decodeURIComponent(h).trim();
     if(!h) return '';
+    if(h==='compiti') return h;                 /* il calendario non ha una vista sua */
     return document.getElementById('view-'+h) ? h : '';
   }catch(e){ return ''; }
 }
@@ -10830,7 +10899,10 @@ function nlForm(){
     + due(lab('Km alla consegna')+inp('nl_kmConsegna',_nl.kmConsegna,'','number'),
           lab('Carburante alla consegna')+inp('nl_carburante',_nl.carburante,'es. 1/2, pieno'))
     + lab('Stato del veicolo')+inp('nl_statoAuto',_nl.statoAuto)
-    + lab('Note')+inp('nl_note',_nl.note);
+    + lab('Note')+inp('nl_note',_nl.note)
+    + '<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-top:16px;">Danni alla consegna</div>'
+    + '<div style="font-size:11.5px;color:#64748b;margin:2px 0 6px;">Quello che si segna qui \u00e8 lo stato in cui la vettura esce. Senza, alla riconsegna non si distingue un danno nuovo da uno che c\u2019era gi\u00e0.</div>'
+    + nlCarBox('consegna');
 
   /* riconsegna: compare quando il contratto e' aperto */
   if(_nl.createdAt && !_nl.chiusoTs){
@@ -10841,7 +10913,9 @@ function nlForm(){
             lab('Riconsegna \u2014 ora')+inp('nl_rientroOra',_nl.rientroOra||(new Date()).toTimeString().slice(0,5),'','time'))
       + due(lab('Km al rientro')+inp('nl_kmRientro',_nl.kmRientro,'','number'),
             lab('Carburante al rientro')+inp('nl_carbRientro',_nl.carbRientro,''))
-      + lab('Danni riscontrati')+inp('nl_danni',_nl.danni,'nessuno')
+      + lab('Danni riscontrati (in breve)')+inp('nl_danni',_nl.danni,'nessuno')
+      + '<div style="font-weight:800;font-size:11.5px;color:#334155;text-transform:uppercase;margin-top:10px;margin-bottom:4px;">Danni al rientro</div>'
+      + nlCarBox('rientro')
       +'<button onclick="nlChiudiContratto()" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Registra la riconsegna e chiudi</button>'
       +'</div>';
   }
@@ -10860,6 +10934,8 @@ function nlForm(){
 
   h+='</div></div>';
   m.innerHTML=h; m.style.display='flex';
+  /* i segni si disegnano dopo: prima il riquadro dev'essere nella pagina */
+  try{ nlRenderCar('consegna'); if(!_nl.chiusoTs) nlRenderCar('rientro'); }catch(e){}
 }
 function nlChiudiForm(){ var m=document.getElementById('nlModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 
@@ -10996,6 +11072,64 @@ function nlElimina(){
 }
 
 
+
+/* ===== SCHEMA DEI DANNI =====
+   Lo stesso disegno dell'auto usato nella perizia delle permute: si tocca il
+   punto e resta un segno numerato con la descrizione accanto.
+   Serve due volte, e sono due momenti diversi: alla consegna fotografa com'e'
+   la vettura quando esce, alla riconsegna com'e' quando torna. La differenza
+   fra i due e' quello che si puo' contestare \u2014 e senza il primo, il secondo
+   non dimostra niente.
+   Il disegno arriva da pmCarSVG: uno solo, cosi' se un domani cambia, cambia
+   in tutti i documenti insieme. */
+function nlPins(fase){
+  if(!_nl) return [];
+  var k=(fase==='rientro')?'pinsRientro':'pinsConsegna';
+  if(!Array.isArray(_nl[k])) _nl[k]=[];
+  return _nl[k];
+}
+function nlCarBox(fase){
+  var id='nl-car-'+fase;
+  return '<div id="'+id+'" onclick="nlAddPin(event,\''+fase+'\')" '
+    +'style="border:1px solid #cbd5e1;border-radius:10px;overflow:hidden;cursor:crosshair;background:#fff;">'
+    + ((typeof pmCarSVG==='function')?pmCarSVG(nlPins(fase)):'')
+    +'</div>'
+    +'<div style="font-size:11.5px;color:#64748b;margin:5px 0 6px;">Tocca il punto del danno: resta un segno numerato, poi scrivi cos\u2019\u00e8.</div>'
+    +'<div id="nl-pinlist-'+fase+'"></div>';
+}
+function nlRenderCar(fase){
+  var c=document.getElementById('nl-car-'+fase);
+  if(c && typeof pmCarSVG==='function') c.innerHTML=pmCarSVG(nlPins(fase));
+  nlRenderPinList(fase);
+}
+function nlAddPin(e, fase){
+  var box=document.getElementById('nl-car-'+fase);
+  var svg=box?box.querySelector('svg'):null; if(!svg) return;
+  var r=svg.getBoundingClientRect();
+  var x=Math.round((e.clientX-r.left)/r.width*680), y=Math.round((e.clientY-r.top)/r.height*360);
+  if(x<0||y<0||x>680||y>360) return;
+  nlPins(fase).push({x:x,y:y,desc:''});
+  nlRenderCar(fase);
+}
+function nlRemovePin(fase, i){ nlPins(fase).splice(i,1); nlRenderCar(fase); }
+function nlPinDesc(fase, i, v){ var a=nlPins(fase); if(a[i]) a[i].desc=v; }
+function nlRenderPinList(fase){
+  var c=document.getElementById('nl-pinlist-'+fase); if(!c) return;
+  var arr=nlPins(fase), h='';
+  if(!arr.length) h='<div style="font-size:12.5px;color:#94a3b8;">Nessun danno segnato.</div>';
+  arr.forEach(function(pn,i){
+    h+='<div style="display:flex;gap:7px;align-items:center;margin-bottom:5px;">'
+      +'<span style="flex:0 0 24px;height:24px;border-radius:50%;background:#dc2626;color:#fff;'
+      +'font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;">'+(i+1)+'</span>'
+      +'<input type="text" value="'+nlEsc(pn.desc||'')+'" placeholder="es. graffio paraurti posteriore" '
+      +'oninput="nlPinDesc(\''+fase+'\','+i+',this.value)" '
+      +'style="flex:1;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<button onclick="nlRemovePin(\''+fase+'\','+i+')" style="flex:0 0 auto;border:none;background:none;color:#94a3b8;font-size:15px;cursor:pointer;padding:2px 5px;">\u2715</button>'
+      +'</div>';
+  });
+  c.innerHTML=h;
+}
+
 /* ---- stampa ----
    Le condizioni sono quelle del contratto cartaceo in uso: impegni del
    firmatario, dichiarazioni, guasti e incidenti. Stanno in una costante sola
@@ -11038,10 +11172,31 @@ function nlStampa(){
 
   var riga=function(et,v){ return '<tr><td class="et">'+E(et)+'</td><td class="vl">'+E(v||'\u2014')+'</td></tr>'; };
 
+  /* Lo schema dei danni entra in stampa come immagine vettoriale, la stessa
+     che si vede a video. Se non c'e' nessun segno non si stampa: un disegno
+     vuoto occuperebbe mezza pagina senza dire niente. */
+  var schema=function(titolo, fase){
+    var pins=(_nl[(fase==='rientro')?'pinsRientro':'pinsConsegna'])||[];
+    if(!pins.length) return '';
+    var righe=pins.map(function(pn,i){
+      return '<li>'+E(pn.desc||'(senza descrizione)')+'</li>';
+    }).join('');
+    return '<div class="sez">'+E(titolo)+'</div>'
+      +'<div class="car">'+((typeof pmCarSVG==='function')?pmCarSVG(pins):'')+'</div>'
+      +'<ol class="danni">'+righe+'</ol>';
+  };
+
   var corpo=''
+   +'<table class="testa"><tr>'
+   +'<td class="tsx"><div class="az">EUROPA AUTO S.r.l.</div>'
+   +'<div class="sub">Via Nigra 4 \u2014 20037 Paderno Dugnano (MI)</div>'
+   +'<div class="sub">C.F. / P.IVA 06440210968 \u00b7 Tel. 02 9181820</div></td>'
+   +'<td class="tdx"><div class="sub">Firma per accettazione</div>'
+   +'<div class="rigafirma"></div>'
+   +'<div class="sub">Creato da: '+E(_nl.creatoDa||'')+'</div>'
+   +'<div class="sub">Data contratto: '+E(nlData(_nl.dataInizio))+'</div></td>'
+   +'</tr></table>'
    +'<div class="tit">Contratto di noleggio / auto di cortesia</div>'
-   +'<div class="sub">Europa Auto S.r.l. \u00b7 Via Nigra 4, Paderno Dugnano (MI) \u00b7 C.F./P.IVA 06440210968</div>'
-   +'<div class="sub">Data contratto: '+E(nlData(_nl.dataInizio))+' \u00b7 Creato da: '+E(_nl.creatoDa||'')+'</div>'
 
    +'<div class="sez">Dati automobilista</div><table>'
    + riga('Cognome e nome', ((_nl.cognome||'')+' '+(_nl.nome||'')).trim())
@@ -11095,9 +11250,11 @@ function nlStampa(){
          + riga('Carburante al rientro', _nl.carbRientro)
          + riga('Danni riscontrati', _nl.danni||'nessuno')
          + (rit>0 ? riga('Giorni di ritardo', rit+' \u00b7 addebito previsto '+nlEuro(rit*30)+' + IVA') : '')
-         +'</table>';
+         +'</table>'
+         + schema('Danni rilevati alla riconsegna','rientro');
      })()
 
+   + schema('Danni rilevati alla consegna','consegna')
    +'<div class="sez">Il firmatario si impegna</div><ol>'
    + NL_IMPEGNI.map(function(t){ return '<li>'+t+'</li>'; }).join('')
    +'</ol>'
@@ -11117,15 +11274,24 @@ function nlStampa(){
    +'</tr></table>';
 
   var css='<style>'
-   +'@page{size:A4;margin:14mm}'
-   +'body{font-family:Arial,Helvetica,sans-serif;font-size:10pt;color:#111;line-height:1.45;}'
-   +'.tit{font-size:16pt;font-weight:bold;color:#1a4fa0;}'
-   +'.sub{font-size:9pt;color:#555;}'
+   +'@page{size:A4;margin:12mm}'
+   +'body{font-family:Arial,Helvetica,sans-serif;font-size:9.5pt;color:#111;line-height:1.4;}'
+   +'.testa{width:100%;border-collapse:collapse;margin-bottom:10px;}'
+   +'.testa td{vertical-align:top;}'
+   +'.tsx{width:58%;} .tdx{width:42%;text-align:right;}'
+   +'.az{font-size:13pt;font-weight:bold;color:#1a4fa0;letter-spacing:.5px;}'
+   +'.rigafirma{border-bottom:1px solid #333;height:28px;margin:2px 0 4px;}'
+   +'.tit{font-size:14pt;font-weight:bold;color:#1a4fa0;border-top:2px solid #1a4fa0;padding-top:6px;margin-bottom:2px;}'
+   +'.sub{font-size:8.5pt;color:#555;}'
+   +'.car{width:74%;margin:6px auto 4px;}'
+   +'.car svg{width:100%;height:auto;}'
+   +'ol.danni{margin:2px 0 0 18px;padding:0;font-size:9pt;}'
+   +'ol.danni li{margin-bottom:2px;}'
    +'.sez{margin-top:12px;margin-bottom:4px;font-weight:bold;font-size:10.5pt;color:#1a4fa0;border-bottom:1px solid #ccd;padding-bottom:2px;}'
    +'table{width:100%;border-collapse:collapse;}'
    +'td.et{width:34%;color:#555;padding:2px 8px 2px 0;vertical-align:top;}'
    +'td.vl{font-weight:bold;padding:2px 0;}'
-   +'ol{margin:4px 0 0 16px;padding:0;} li{margin-bottom:4px;text-align:justify;}'
+   +'ol{margin:4px 0 0 16px;padding:0;} li{margin-bottom:3px;text-align:justify;font-size:8.5pt;}'
    +'p{text-align:justify;margin:4px 0;}'
    +'.firme{margin-top:22px;} .firme td{width:50%;font-size:9pt;color:#555;padding-right:14px;vertical-align:top;}'
    +'.riga{border-bottom:1px solid #333;height:34px;margin-top:4px;}'
@@ -13593,6 +13759,14 @@ var EA_SEZIONI_LIBERE=['impostazioni'];
    che si usa con qualunque collegamento, quindi non c'e' niente da imparare.
    L'accesso non viene richiesto: la sessione e' condivisa fra le schede
    dello stesso sito. */
+/* Appuntamenti e Task non hanno una vista che si chiama cosi': il calendario
+   si apre da solo con eaVaiA('compiti'). Senza questa corrispondenza il tasto
+   destro su quelle due voci non avrebbe fatto niente. */
+function eaVistaDaPulsante(id){
+  var v=String(id||'').replace(/^si-/,'');
+  if(v==='appuntamenti' || v==='task') return 'compiti';
+  return v;
+}
 function eaApriInNuovaScheda(vista){
   try{
     var url=location.origin+location.pathname+location.search+'#'+encodeURIComponent(vista);
@@ -13604,7 +13778,7 @@ function eaApriInNuovaScheda(vista){
     var gestisci=function(ev){
       var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
       if(!b || !b.id) return;
-      var vista=String(b.id).replace(/^si-/,'');
+      var vista=eaVistaDaPulsante(b.id);
       if(!vista) return;
       /* rotella = tasto centrale; ctrl/cmd = nuova scheda */
       var nuova=(ev.type==='auxclick' && ev.button===1) || ev.ctrlKey || ev.metaKey;
@@ -13616,53 +13790,27 @@ function eaApriInNuovaScheda(vista){
     document.addEventListener('auxclick', gestisci, true);
 
     /* ===== TASTO DESTRO SULLE VOCI DI MENU =====
-       Ctrl+clic funziona ma bisogna saperlo. Il tasto destro e' il gesto che
-       viene naturale, quindi qui compare un menu con due sole voci. Si
-       sostituisce quello del browser soltanto sulle voci della barra: nel
-       resto della pagina resta il suo, che serve per copiare e incollare. */
-    var menu=null;
-    var chiudiMenu=function(){ if(menu && menu.parentNode){ menu.parentNode.removeChild(menu); } menu=null; };
+       Una sola cosa da fare, quindi si fa e basta: niente riquadro con
+       un'unica voce da scegliere. Tasto destro su una sezione e si apre in
+       una scheda nuova.
+       Vale solo sulle voci di sezione: sulle intestazioni dei gruppi
+       (Vendite, Magazzino...) non c'e' una sezione da aprire, e ovunque
+       altro resta il menu del browser \u2014 che serve per copiare, stampare,
+       visualizzare il sorgente. */
     document.addEventListener('contextmenu', function(ev){
       var b=ev.target && ev.target.closest ? ev.target.closest('.sidebar-item') : null;
-      if(!b || !b.id) return;
-      var vista=String(b.id).replace(/^si-/,'');
-      if(!vista) return;
+      if(!b || !b.id) return;                 /* non e' una sezione: menu del browser */
+      var vista=eaVistaDaPulsante(b.id);
+      if(!vista || !(document.getElementById('view-'+vista) || vista==='compiti')) return;
       ev.preventDefault();
-      chiudiMenu();
-      var etichetta='';
-      try{ var l=b.querySelector('.si-label'); etichetta=l?String(l.textContent||'').trim():''; }catch(e){}
-      menu=document.createElement('div');
-      menu.style.cssText='position:fixed;z-index:100000;background:#fff;border:1px solid #cbd5e1;'
-        +'border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:6px;min-width:210px;'
-        +'font-family:inherit;font-size:13.5px;color:#0f172a;';
-      var voce=function(testo, azione, primaria){
-        var d=document.createElement('div');
-        d.textContent=testo;
-        d.style.cssText='padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;'
-          +(primaria?'font-weight:700;':'');
-        d.onmouseenter=function(){ d.style.background='#f1f5f9'; };
-        d.onmouseleave=function(){ d.style.background=''; };
-        d.onclick=function(e){ e.stopPropagation(); chiudiMenu(); azione(); };
-        menu.appendChild(d);
-      };
-      if(etichetta){
-        var t=document.createElement('div');
-        t.textContent=etichetta;
-        t.style.cssText='padding:4px 12px 6px;font-size:11px;font-weight:800;text-transform:uppercase;color:#94a3b8;';
-        menu.appendChild(t);
-      }
-      voce('Apri in una nuova scheda', function(){ eaApriInNuovaScheda(vista); }, true);
-      voce('Apri qui', function(){ try{ b.click(); }catch(e){} });
-      document.body.appendChild(menu);
-      /* se il menu uscirebbe dallo schermo, si sposta dentro */
-      var x=ev.clientX, y=ev.clientY, r=menu.getBoundingClientRect();
-      if(x+r.width>window.innerWidth-8) x=Math.max(8, window.innerWidth-r.width-8);
-      if(y+r.height>window.innerHeight-8) y=Math.max(8, window.innerHeight-r.height-8);
-      menu.style.left=x+'px'; menu.style.top=y+'px';
+      eaApriInNuovaScheda(vista);
+      /* un lampo sulla voce, cosi' si vede che il gesto e' stato raccolto */
+      try{
+        var col=b.style.background;
+        b.style.background='rgba(255,255,255,.25)';
+        setTimeout(function(){ b.style.background=col||''; }, 180);
+      }catch(e){}
     }, true);
-    document.addEventListener('click', function(){ chiudiMenu(); });
-    document.addEventListener('scroll', function(){ chiudiMenu(); }, true);
-    document.addEventListener('keydown', function(e){ if(e.key==='Escape') chiudiMenu(); });
     /* senza questo il browser apre il suo menu di scorrimento col tasto centrale */
     document.addEventListener('mousedown', function(ev){
       if(ev.button!==1) return;
