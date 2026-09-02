@@ -33221,44 +33221,98 @@ function crmRenderLeadOnline(){
 }
 
 function crmRenderConsegnate(){
-  /* Qui interessa solo chi e' arrivato al momento giusto per la proposta:
-     consegne di circa 11 mesi fa, mostrate per una finestra di 30 giorni. */
+  /* ===== QUATTRO ANNIVERSARI, QUATTRO COLONNE =====
+     Non c'e' un momento solo per farsi vivi: c'e' il primo tagliando a dodici
+     mesi, poi il secondo, il terzo e il quarto. Ognuno e' un'occasione
+     diversa, e il cliente di quattro anni fa non si tratta come quello di
+     uno.
+     Le finestre sono di trenta giorni ciascuna, alla vigilia
+     dell'anniversario: chi ha consegnato tra 11 e 12 mesi fa sta per arrivare
+     al primo anno, e cosi' via. */
   var _oggi=Date.now(), _MESE=30*24*3600000;
-  var _da=_oggi-12*_MESE, _a=_oggi-11*_MESE;   /* finestra di 30 giorni intorno agli 11 mesi */
-  var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){return x.statoVendita==='consegnato' && !eaCvTest(x);});
-  var cons=tutte.filter(function(x){ var t=+(x.consegnatoTs||0); return t && t>=_da && t<=_a; })
-                .sort(function(a,b){return (a.consegnatoTs||0)-(b.consegnatoTs||0);});
-  if(!cons.length) return '<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna consegna in scadenza.<div style="font-size:12px;margin-top:6px;">Qui compaiono le auto consegnate circa 11 mesi fa, per 30 giorni: e\u0301 il momento giusto per proporre tagliando e rinnovo polizza.<br>Consegne totali in archivio: '+tutte.length+'.</div></div>';
-  var _fuori=cons.filter(function(cv){ return !crmInZona(crmProvCliente(cv.cliente||{})); }).length;
-  if(_crmConsZona) cons=cons.filter(function(cv){ return crmInZona(crmProvCliente(cv.cliente||{})); });
-  var h='<div style="font-size:12px;color:#64748b;margin-bottom:6px;"><b>'+cons.length+'</b> da contattare adesso \u00b7 consegnate tra 11 e 12 mesi fa \u00b7 archivio totale '+tutte.length+' consegne</div>';
-  if(_fuori){
-    h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-      +'<span>\ud83d\udccd '+_fuori+' fuori zona</span>'
-      +'<button onclick="crmConsZonaToggle()" style="padding:5px 10px;border-radius:7px;border:1px solid #cbd5e1;background:'+(_crmConsZona?'#0f766e':'#fff')+';color:'+(_crmConsZona?'#fff':'#475569')+';font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">'
-      +(_crmConsZona?'Mostra tutti':'Nascondi fuori zona')+'</button></div>';
-  } else { h=h.replace('margin-bottom:6px','margin-bottom:12px'); }
-  cons.forEach(function(cv){ var cl=cv.cliente||{}; var a=cv.autoSnapshot||{}; var mesi=crmMesiDa(cv.consegnatoTs); var tag=mesi>=11;
-    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px;'+(tag?'border-left:4px solid #d97706;':'')+'">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><div><div style="font-weight:800;font-size:15px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div><div style="font-size:12px;color:#64748b;">🚗 '+crmEsc((a.modello||cv.autoDesc||''))+(a.targa?(' · '+crmEsc(cv.nuovaTarga||a.targa)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:2px;">Consegnata il '+crmDMY(cv.consegnatoTs)+' · '+mesi+' mesi fa</div>'
-      +(function(){
-          var _pv=crmProvCliente(cl);
-          var _citta=crmCittaCliente(cl);
-          if(!_pv && !_citta) return '<div style="font-size:12px;color:#cbd5e1;margin-top:2px;">\ud83d\udccd residenza non indicata</div>';
-          var _in=crmInZona(_pv);
-          /* Qui serve sapere se il cliente e' vicino, e per quello basta la
-             provincia: se la citta' manca si mostra la sola provincia invece
-             di un trattino che sembra un dato perso. */
-          var _dove = _citta ? (_citta + (_pv?(' ('+_pv+')'):'')) : _pv;
-          return '<div style="font-size:12px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
-            +'\ud83d\udccd '+crmEsc(_dove)
-            +(_in?'':' \u00b7 fuori zona')+'</div>';
-        })()
-      +'</div>'
-      +(tag?'<div style="font-size:11px;font-weight:800;color:#92400e;background:#fef3c7;padding:5px 9px;border-radius:20px;height:fit-content;white-space:nowrap;">🔔 Tempo tagliando</div>':'')+'</div>'
-      +crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''))
-      +'</div>';
+  var FASCE=[
+    { et:'1 anno',  sotto:'11\u201312 mesi fa', da:12, a:11, col:'#1a4fa0' },
+    { et:'2 anni',  sotto:'23\u201324 mesi fa', da:24, a:23, col:'#0f766e' },
+    { et:'3 anni',  sotto:'35\u201336 mesi fa', da:36, a:35, col:'#b45309' },
+    { et:'4 anni',  sotto:'47\u201348 mesi fa', da:48, a:47, col:'#7c3aed' }
+  ];
+
+  var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){
+    return x.statoVendita==='consegnato' && !eaCvTest(x);
   });
+
+  var perFascia=FASCE.map(function(f){
+    var da=_oggi-f.da*_MESE, a=_oggi-f.a*_MESE;
+    var arr=tutte.filter(function(x){ var t=+(x.consegnatoTs||0); return t && t>=da && t<=a; })
+                 .sort(function(x,y){ return (x.consegnatoTs||0)-(y.consegnatoTs||0); });
+    return arr;
+  });
+
+  var fuoriTot=0;
+  perFascia.forEach(function(arr){
+    fuoriTot += arr.filter(function(cv){ return !crmInZona(crmProvCliente(cv.cliente||{})); }).length;
+  });
+  if(_crmConsZona){
+    perFascia=perFascia.map(function(arr){
+      return arr.filter(function(cv){ return crmInZona(crmProvCliente(cv.cliente||{})); });
+    });
+  }
+
+  var totale=perFascia.reduce(function(n,arr){ return n+arr.length; },0);
+
+  var h='<div style="font-size:12px;color:#64748b;margin-bottom:'+(fuoriTot?'6px':'12px')+';">'
+    +'<b>'+totale+'</b> da contattare adesso \u00b7 divise per anniversario di consegna \u00b7 archivio totale '+tutte.length+' consegne</div>';
+  if(fuoriTot){
+    h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+      +'<span>\ud83d\udccd '+fuoriTot+' fuori zona</span>'
+      +'<button onclick="crmConsZonaToggle()" style="padding:5px 10px;border-radius:7px;border:1px solid #cbd5e1;background:'+(_crmConsZona?'#0f766e':'#fff')+';color:'+(_crmConsZona?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'
+      +(_crmConsZona?'Mostra tutti':'Nascondi fuori zona')+'</button></div>';
+  }
+
+  if(!totale){
+    return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna consegna in scadenza.'
+      +'<div style="font-size:12px;margin-top:6px;">Qui compaiono le auto consegnate circa uno, due, tre o quattro anni fa.</div></div>';
+  }
+
+  /* La scheda del singolo cliente: la stessa in tutte le colonne. */
+  var scheda=function(cv, colore){
+    var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+    var d=cv.consegnatoTs?new Date(cv.consegnatoTs):null;
+    var b='<div style="background:#fff;border:1px solid #e2e8f0;border-left:4px solid '+colore+';border-radius:12px;padding:12px;margin-bottom:9px;">'
+      +'<div style="font-weight:800;font-size:14px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div>'
+      +'<div style="font-size:12px;color:#64748b;margin-top:2px;">\ud83d\ude97 '+crmEsc((a.modello||cv.autoDesc||''))
+      + (a.targa?(' \u00b7 '+crmEsc(a.targa)):'')+'</div>'
+      +(d?('<div style="font-size:11.5px;color:#94a3b8;">Consegnata il '+d.toLocaleDateString('it-IT')+'</div>'):'');
+    b += (function(){
+      var _pv=crmProvCliente(cl), _citta=crmCittaCliente(cl);
+      if(!_pv && !_citta) return '<div style="font-size:11.5px;color:#cbd5e1;margin-top:2px;">\ud83d\udccd residenza non indicata</div>';
+      var _in=crmInZona(_pv);
+      var _dove=_citta ? (_citta + (_pv?(' ('+_pv+')'):'')) : _pv;
+      return '<div style="font-size:11.5px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
+        +'\ud83d\udccd '+crmEsc(_dove)+(_in?'':' \u00b7 fuori zona')+'</div>';
+    })();
+    b += crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''));
+    return b+'</div>';
+  };
+
+  /* Quattro colonne affiancate, che diventano una sola su schermo stretto:
+     flex con una larghezza minima, cosi' sul telefono si impilano da sole. */
+  h+='<div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">';
+  FASCE.forEach(function(f, n){
+    var arr=perFascia[n];
+    h+='<div style="flex:1 1 260px;min-width:250px;">'
+      +'<div style="position:sticky;top:0;background:#f8fafc;padding:8px 10px;border-radius:10px;margin-bottom:9px;border-top:3px solid '+f.col+';">'
+      +'<div style="font-weight:800;font-size:13.5px;color:'+f.col+';">'+f.et+' <span style="color:#94a3b8;font-weight:700;">('+arr.length+')</span></div>'
+      +'<div style="font-size:11px;color:#94a3b8;">'+f.sotto+'</div></div>';
+    if(!arr.length){
+      h+='<div style="font-size:12px;color:#cbd5e1;padding:8px 4px;">Nessuna</div>';
+    } else {
+      arr.forEach(function(cv){ h+=scheda(cv, f.col); });
+    }
+    h+='</div>';
+  });
+  h+='</div>';
+
   return h;
 }
 var _crmAssFiltro='attive';   /* 'attive' | 'tutte' */
