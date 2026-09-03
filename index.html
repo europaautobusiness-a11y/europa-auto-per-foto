@@ -29191,7 +29191,7 @@ function cvFatturaGenera(id){
   if(!cvPuoFatturare()){ alert('Le fatture le genera Arianna.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ alert('Contratto non trovato.'); return; }
   var cv=list[idx];
-  if(cv.fattura){ cvStampaById(id,'fattura'); return; }
+  if(cv.fattura){ cvFatturaScarica(id); return; }
   if(cv.permutaOn && cv.permuta){
     var _pmDesc=(((cv.permuta.marca||'')+' '+(cv.permuta.modello||'')).trim())||'permuta';
     if(!confirm('La permuta ('+_pmDesc+') \u00e8 stata realmente consegnata?\n\n\u2022 OK = S\u00ec: genero la fattura includendo il valore della permuta\n\u2022 Annulla = No: apro la pratica per modificarla')){ if(typeof cvForm==='function') cvForm(id); return; }
@@ -29216,16 +29216,214 @@ function cvFatturaAnnulla(id){
   if(typeof cvVendRender==='function') cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('Fattura annullata',true);
 }
+/* ===== INCASSO FATTURA: come ha pagato il cliente =====
+   Quando si scarica una fattura GIA' emessa (tipicamente il venditore, alla
+   consegna) si chiede una volta sola come ha pagato il cliente. La risposta
+   resta sulla pratica e parte subito una mail ad amministrazione e
+   contabilita'. Alle ristampe successive non si richiede piu': si puo'
+   correggere dal link "modifica" accanto al badge. */
+var CV_FATT_MODI = [
+  { k:'bonifico_istantaneo', et:'Bonifico istantaneo', ic:'\uD83C\uDFE6', col:'#1a4fa0', bg:'#eff6ff', br:'#bfdbfe' },
+  { k:'pos',                 et:'POS',                 ic:'\uD83D\uDCB3', col:'#6d28d9', bg:'#f5f3ff', br:'#ddd6fe' },
+  { k:'cash',                et:'Contanti',            ic:'\uD83D\uDCB6', col:'#166534', bg:'#f0fdf4', br:'#bbf7d0' }
+];
+function cvFattModo(k){
+  for(var i=0;i<CV_FATT_MODI.length;i++){ if(CV_FATT_MODI[i].k===k) return CV_FATT_MODI[i]; }
+  return null;
+}
+function cvFattModoEt(k){ var m=cvFattModo(k); return m?m.et:(k||'\u2014'); }
+
+var _cvFpId=null, _cvFpModo='';
+
+/* Entrata unica per lo scarico di una fattura gia' generata. */
+function cvFatturaScarica(id, forza){
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===id;})[0]; }catch(_e){} }
+  if(!cv){ alert('Pratica non trovata.'); return; }
+  if(!cv.fattura){ alert('Questa pratica non ha ancora una fattura.'); return; }
+  if(!forza && cv.fatturaPagamento && cv.fatturaPagamento.modo){ cvStampaById(id,'fattura'); return; }
+  cvFattPagApri(id);
+}
+
+function cvFattPagApri(id){
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===id;})[0]; }catch(_e){} }
+  if(!cv || !cv.fattura) return;
+  _cvFpId=id;
+  _cvFpModo=(cv.fatturaPagamento&&cv.fatturaPagamento.modo)||'';
+  var ov=document.getElementById('cvFpOv');
+  if(!ov){ ov=document.createElement('div'); ov.id='cvFpOv'; document.body.appendChild(ov); }
+  ov.setAttribute('style','position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.58);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;');
+  cvFattPagRender();
+}
+function cvFattPagChiudi(){
+  var ov=document.getElementById('cvFpOv');
+  if(ov){ ov.innerHTML=''; ov.setAttribute('style','display:none;'); }
+  _cvFpId=null; _cvFpModo='';
+}
+function cvFattPagScegli(k){
+  var el=document.getElementById('cv_fp_nota');
+  if(el) window._cvFpNota=el.value;
+  _cvFpModo=k; cvFattPagRender();
+}
+
+function cvFattPagRender(){
+  var ov=document.getElementById('cvFpOv'); if(!ov) return;
+  var cv=(typeof cvById==='function')?cvById(_cvFpId):null;
+  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===_cvFpId;})[0]; }catch(_e){} }
+  if(!cv || !cv.fattura){ cvFattPagChiudi(); return; }
+  var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+  var nome=(((cl.cognome||'')+' '+(cl.nome||'')).trim())||'\u2014';
+  var auto=(((a.marca||'')+' '+(a.modello||'')).trim())||String(cv.autoDesc||'')||'\u2014';
+  if(a.targa) auto+=' \u00b7 '+a.targa;
+  var t={}; try{ t=(typeof cvCalcola==='function')?cvCalcola(cv):{}; }catch(_e){}
+  var imp=(t&&t.totaleScontato!=null&&typeof cvEuro==='function')?cvEuro(t.totaleScontato):'';
+  var giaFatto=!!(cv.fatturaPagamento&&cv.fatturaPagamento.modo);
+
+  var h='<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.32);font-family:inherit;">'
+    +'<div style="padding:16px 18px 14px;border-bottom:1px solid #e2e8f0;">'
+    +'<div style="font-size:17px;font-weight:800;color:#0f172a;">Come ha pagato il cliente?</div>'
+    +'<div style="font-size:12.5px;color:#64748b;margin-top:5px;line-height:1.55;">'
+    +'\uD83E\uDDFE Fattura n. <b style="color:#0f172a;">'+cvEsc(String(cv.fattura.numero))+'/'+cvEsc(String(cv.fattura.anno))+'</b><br>'
+    +cvEsc(nome)+'<br>'+cvEsc(auto)
+    +(imp?('<br>Totale <b style="color:#0f172a;">'+imp+'</b>'):'')
+    +'</div></div>'
+    +'<div style="padding:14px 18px 4px;">';
+
+  CV_FATT_MODI.forEach(function(m){
+    var on=(_cvFpModo===m.k);
+    h+='<button type="button" onclick="cvFattPagScegli(\''+m.k+'\')" '
+      +'style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-bottom:9px;padding:13px 14px;border-radius:10px;cursor:pointer;font-family:inherit;'
+      +'border:2px solid '+(on?m.col:'#e2e8f0')+';background:'+(on?m.bg:'#fff')+';">'
+      +'<span style="font-size:21px;line-height:1;">'+m.ic+'</span>'
+      +'<span style="flex:1;font-size:14.5px;font-weight:'+(on?'800':'600')+';color:'+(on?m.col:'#334155')+';">'+m.et+'</span>'
+      +'<span style="width:19px;height:19px;border-radius:50%;flex:0 0 auto;border:2px solid '+(on?m.col:'#cbd5e1')+';background:'+(on?m.col:'#fff')+';color:#fff;font-size:12px;font-weight:900;text-align:center;line-height:15px;">'+(on?'\u2713':'')+'</span>'
+      +'</button>';
+  });
+
+  h+='<input id="cv_fp_nota" type="text" maxlength="120" placeholder="Nota (facoltativa): es. 2.000 cash + resto POS" '
+    +'value="'+cvEsc(window._cvFpNota||((cv.fatturaPagamento&&cv.fatturaPagamento.nota)||''))+'" '
+    +'style="width:100%;box-sizing:border-box;margin-top:2px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;">';
+
+  if(giaFatto){
+    h+='<div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:10px 12px;font-size:12px;color:#92400e;line-height:1.5;">'
+      +'Modalit\u00e0 gi\u00e0 registrata: <b>'+cvEsc(cvFattModoEt(cv.fatturaPagamento.modo))+'</b>. '
+      +'Confermando parte una nuova mail di rettifica ad amministrazione e contabilit\u00e0.</div>';
+  } else {
+    h+='<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;line-height:1.5;">'
+      +'La risposta viene inviata subito ad amministrazione e contabilit\u00e0. Ti viene chiesta una volta sola.</div>';
+  }
+
+  h+='</div>'
+    +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px 18px;display:flex;gap:8px;">'
+    +'<button type="button" onclick="cvFattPagChiudi()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Annulla</button>'
+    +'<button type="button" id="cv_fp_ok" onclick="cvFattPagConferma()" '+(_cvFpModo?'':'disabled ')
+    +'style="flex:1;padding:11px;border-radius:9px;border:none;font-family:inherit;font-weight:800;font-size:14px;'
+    +(_cvFpModo?'background:#16a34a;color:#fff;cursor:pointer;':'background:#e2e8f0;color:#94a3b8;cursor:not-allowed;')+'">'
+    +'\uD83D\uDDA8\uFE0F Conferma e scarica</button>'
+    +'</div></div>';
+  ov.innerHTML=h;
+}
+
+function cvFattPagConferma(){
+  if(!_cvFpModo){ alert('Scegli come ha pagato il cliente.'); return; }
+  var id=_cvFpId;
+  var nota=''; var el=document.getElementById('cv_fp_nota'); if(el) nota=String(el.value||'').trim();
+  var list=cvLoad(), idx=list.findIndex(function(x){return x.id===id;});
+  if(idx<0){ alert('Pratica non trovata.'); return; }
+  var cv=list[idx];
+  var chiMail=(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'';
+  var chiNome=(typeof _currentUserName!=='undefined'&&_currentUserName)||'';
+  var prec=cv.fatturaPagamento||null;
+  if(prec && prec.modo){
+    cv.fatturaPagamentoStorico=(cv.fatturaPagamentoStorico||[]).concat([prec]);
+  }
+  var rec={ modo:_cvFpModo, nota:nota, ts:Date.now(), da:chiMail, daNome:chiNome };
+  cv.fatturaPagamento=rec; cv.updatedAt=Date.now();
+  cvSave(list);
+  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(_e){}
+  window._cvFpNota='';
+  cvFattPagChiudi();
+  try{ cvFattPagAvvisa(cv, rec, prec); }catch(_e){}
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(_e){}
+  try{ if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCE7 Pagamento \u201c'+cvFattModoEt(rec.modo)+'\u201d inviato ad amministrazione e contabilit\u00e0',true); }catch(_e){}
+  cvStampaById(id,'fattura');
+}
+
+/* Mail interna: due invii separati, se una casella rifiuta l'altra riceve. */
+function cvFattPagAvvisa(cv, rec, prec){
+  try{
+    if(typeof eaInviaMessaggio!=='function') return;
+    var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+    var nome=(((cl.cognome||'')+' '+(cl.nome||'')).trim())||'\u2014';
+    var auto=(((a.marca||'')+' '+(a.modello||'')).trim())||String(cv.autoDesc||'')||'\u2014';
+    var idAuto=[]; if(a.targa) idAuto.push('targa '+a.targa); if(a.telaio) idAuto.push('telaio '+a.telaio);
+    if(a.numero_interno) idAuto.push('n\u00b0 '+a.numero_interno);
+    if(idAuto.length) auto+=' \u00b7 '+idAuto.join(' \u00b7 ');
+    var t={}; try{ t=(typeof cvCalcola==='function')?cvCalcola(cv):{}; }catch(_e){}
+    var imp=(t&&t.totaleScontato!=null&&typeof cvEuro==='function')?cvEuro(t.totaleScontato):'\u2014';
+    var m=cvFattModo(rec.modo)||{ et:rec.modo, ic:'', col:'#1a4fa0', bg:'#eff6ff', br:'#bfdbfe' };
+    var d=new Date(rec.ts||Date.now());
+    var quando=d.toLocaleDateString('it-IT')+' alle '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+    var chi=rec.daNome||rec.da||'utente';
+    var rett=!!(prec&&prec.modo);
+
+    var riga=function(l,v){ return '<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+l+'</td>'
+      +'<td style="padding:5px 0;font-size:14px;font-weight:700;color:#0f172a;">'+v+'</td></tr>'; };
+
+    var corpo='<p style="margin-top:0;"><b>'+cvEsc(chi)+'</b> ha scaricato la fattura e ha indicato '
+      +(rett?'una <b>modalit\u00e0 di pagamento diversa</b> da quella registrata prima.':'come ha pagato il cliente.')+'</p>'
+      +'<div style="background:'+m.bg+';border:1px solid '+m.br+';border-radius:10px;padding:14px 16px;margin:14px 0;">'
+      +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:'+m.col+';">Modalit\u00e0 di pagamento</div>'
+      +'<div style="font-size:20px;font-weight:800;color:'+m.col+';margin-top:3px;">'+(m.ic?(m.ic+' '):'')+cvEsc(m.et)+'</div>'
+      +(rec.nota?('<div style="font-size:13px;color:#334155;margin-top:7px;">'+cvEsc(rec.nota)+'</div>'):'')
+      +'</div>'
+      +(rett?('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#92400e;">'
+        +'Rettifica: prima risultava <b>'+cvEsc(cvFattModoEt(prec.modo))+'</b>'
+        +(prec.daNome||prec.da?(' (indicata da '+cvEsc(prec.daNome||prec.da)+')'):'')+'.</div>'):'')
+      +'<table style="border-collapse:collapse;margin-bottom:6px;">'
+      +riga('Fattura','n. '+cvEsc(String(cv.fattura.numero))+'/'+cvEsc(String(cv.fattura.anno))
+            +' \u00b7 '+((cv.fattura.serie==='margine')?'art. 36 margine':'IVA esposta'))
+      +riga('Cliente',cvEsc(nome))
+      +riga('Veicolo',cvEsc(auto))
+      +riga('Totale pratica',imp)
+      +riga('Indicato da',cvEsc(chi))
+      +riga('Quando',cvEsc(quando))
+      +'</table>'
+      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;margin-bottom:0;">Da riscontrare con l\u2019incasso in prima nota e con i pagamenti registrati sulla pratica.</p>';
+
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    var ogg=(rett?'RETTIFICA incasso \u2014 ':'Incasso fattura \u2014 ')
+      +'n. '+cv.fattura.numero+'/'+cv.fattura.anno+' \u00b7 '+m.et+' \u00b7 '+(nome||'cliente');
+    ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
+      try{ eaInviaMessaggio({ to:dest, subject:ogg, html:html }); }catch(e){}
+    });
+  }catch(e){}
+}
+
 function cvFatturaBtn(cv){
   var _puo=cvPuoFatturare();
   if(cv && cv.fattura){
     return '<div style="flex:1 1 100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px;">'
       +'<span style="font-size:12px;font-weight:800;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:7px;white-space:nowrap;">\ud83e\uddfe Fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno+'</span>'
-      +'<button onclick="cvStampaById(\''+cv.id+'\',\'fattura\')" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #16a34a;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83d\udda8\ufe0f Ristampa</button>'
+      +'<button onclick="event.stopPropagation();cvFatturaScarica(\''+cv.id+'\')" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #16a34a;background:#f0fdf4;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83d\udda8\ufe0f Scarica</button>'
+      +cvFattPagBadge(cv)
       +(_puo?'<a onclick="cvFatturaAnnulla(\''+cv.id+'\')" style="font-size:11px;color:#dc2626;cursor:pointer;text-decoration:underline;">Annulla fattura</a>':'')+'</div>';
   }
   if(!_puo) return '';
   return '<button onclick="cvFatturaGenera(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\ud83e\uddfe Genera fattura</button>';
+}
+/* Accanto alla fattura: come ha pagato il cliente, e il link per correggere. */
+function cvFattPagBadge(cv){
+  try{
+    var r=cv&&cv.fatturaPagamento;
+    if(!r||!r.modo) return '';
+    var m=cvFattModo(r.modo)||{ et:r.modo, ic:'', col:'#334155', bg:'#f1f5f9', br:'#e2e8f0' };
+    return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;color:'+m.col
+      +';background:'+m.bg+';border:1px solid '+m.br+';padding:5px 9px;border-radius:7px;white-space:nowrap;" '
+      +'title="'+cvEsc((r.nota||'')||('Indicato da '+(r.daNome||r.da||'')))+'">'+(m.ic?(m.ic+' '):'')+cvEsc(m.et)+'</span>'
+      +'<a onclick="event.stopPropagation();cvFatturaScarica(\''+cv.id+'\',true)" style="font-size:11px;color:#64748b;cursor:pointer;text-decoration:underline;">modifica</a>';
+  }catch(e){ return ''; }
 }
 /* Nella scheda unica, cosa manca a questa pratica. */
 function cvCosaMancaFin(cv){
