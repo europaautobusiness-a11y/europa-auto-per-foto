@@ -17219,6 +17219,44 @@ function pvInviaMail(){
 }
 
 /* ===================== PERMUTE (perizia veicolo in permuta) ===================== */
+/* ===== CHI DEVE SAPERE DI UNA PERMUTA =====
+   Una permuta e' lavoro di vendita prima ancora che di amministrazione: chi
+   ha preso il cliente deve vedere la perizia appena il cliente firma, senza
+   passare da nessuno. Finora gli avvisi partivano solo verso
+   amministrazione@, quindi li leggeva Davide e basta.
+   Invii separati: se una casella rifiuta, l'altra riceve lo stesso. */
+var PM_MAIL_INTERNE = ['amministrazione@europaautosrl.it', 'vendita@europaautosrl.it'];
+/* ===== QUANDO UNA PERIZIA E' FIRMATA =====
+   Una sola risposta per tutto il gestionale. La lista Permute e la scheda del
+   contratto rispondevano in modo diverso: la prima guardava solo il disegno
+   della firma, la seconda anche la conferma del cliente.
+   Cosa resta agli atti di una firma fatta dal telefono del cliente: il
+   disegno, le quattro dichiarazioni spuntate, data e ora, e l'email da cui e'
+   arrivata. Il codice via email non c'e' piu' \u2014 arrivava nella stessa casella
+   del link e non dimostrava nulla in piu'. */
+function pmFirmata(p){
+  if(!p) return false;
+  return !!(p.firma || p.firmatoDalCliente || p.firmaTs || p.metodoFirma==='carta');
+}
+function pmComeFirmata(p){
+  if(!p || !pmFirmata(p)) return '';
+  if(p.metodoFirma==='carta') return 'su carta';
+  if(p.metodoFirma==='otp') return 'dal cliente, con codice';
+  if(p.firmatoDalCliente) return 'dal cliente, firma + dichiarazioni';
+  return 'in concessionaria';
+}
+function pmAvvisaInterni(msg){
+  try{
+    if(typeof eaInviaMessaggio!=='function' || !msg) return;
+    PM_MAIL_INTERNE.forEach(function(dest){
+      try{
+        var m={}; for(var k in msg){ if(Object.prototype.hasOwnProperty.call(msg,k)) m[k]=msg[k]; }
+        m.to=dest;
+        eaInviaMessaggio(m);
+      }catch(e){}
+    });
+  }catch(e){}
+}
 var PERMUTE_KEY='ea_permute_v1';
 var PERMUTE_SHEET='Permute';
 var PERMUTE_DEL_KEY='ea_permute_del_v1';
@@ -17441,12 +17479,15 @@ function pmRender(){
     +'</div>';
   if(!list.length){ wrap.innerHTML=h+'<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">'+(q?('Nessuna perizia trovata per \u00ab'+pmEsc(_pmQ)+'\u00bb.'):(_pmTab==='concluse'?'Nessuna permuta conclusa.':'Nessuna perizia in ingresso. Premi Nuova permuta.'))+'</div>'; return; }
   list.forEach(function(p){
-    var firmato = !!(p.firma) || p.metodoFirma==='carta';
+    /* Stessa regola usata nella scheda del contratto. Qui mancavano
+       firmatoDalCliente e firmaTs, quindi una perizia confermata dal cliente
+       continuava a risultare "Da firmare". */
+    var firmato = pmFirmata(p);
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
     h+='<div onclick="pmApri(\''+p.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+pmEsc(p.cliente||'(cliente senza nome)')+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+pmEsc(p.modello||'—')+(p.targa?(' · '+pmEsc(p.targa)):'')+'</div>';
-    h+='<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(p.valutazione?('💶 € '+pmEsc(p.valutazione)+' · '):'')+(firmato?('<span style="color:#16a34a;font-weight:700;">✅ Firmato</span>'+(p.firmaTs?(' <span style="color:#64748b;font-weight:600;">il '+pmFmtDataOra(p.firmaTs)+'</span>'):'')):'<span style="color:#d97706;font-weight:700;">✍️ Da firmare</span>')+'</div>'+((!firmato && p.linkTs)?('<div style="font-size:11px;color:#0891b2;margin-top:3px;">🔗 Link inviato il '+pmFmtDataOra(p.linkTs)+(p.promemoriaInviatoAt?(' · 🔔 promemoria inviato'):'')+'</div>'):'')+'</div>';
+    h+='<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(p.valutazione?('💶 € '+pmEsc(p.valutazione)+' · '):'')+(firmato?('<span style="color:#16a34a;font-weight:700;">✅ Firmato</span>'+(p.firmaTs?(' <span style="color:#64748b;font-weight:600;">il '+pmFmtDataOra(p.firmaTs)+'</span>'):'')+((function(){ var _cm=pmComeFirmata(p); return _cm?(' <span style="color:#94a3b8;font-weight:600;">· '+pmEsc(_cm)+'</span>'):''; })())):'<span style="color:#d97706;font-weight:700;">✍️ Da firmare</span>')+'</div>'+((!firmato && p.linkTs)?('<div style="font-size:11px;color:#0891b2;margin-top:3px;">🔗 Link inviato il '+pmFmtDataOra(p.linkTs)+(p.promemoriaInviatoAt?(' · 🔔 promemoria inviato'):'')+'</div>'):'')+'</div>';
     h+='<div style="display:flex;flex-direction:column;gap:6px;flex:0 0 auto;align-items:stretch;">';
     h+='<button onclick="pmApri(\''+p.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Apri</button>';
     if(_pmTab!=='concluse'){
@@ -17687,9 +17728,8 @@ function pmSalva(){
      c'e', finisce nella console. */
   if(nuovaNotifica){
     try{
-      if(typeof eaInviaMessaggio==='function'){
-        eaInviaMessaggio({
-          to:'amministrazione@europaautosrl.it',
+      if(typeof pmAvvisaInterni==='function'){
+        pmAvvisaInterni({
           subject:'Permuta da valutare \u2014 '+((rec.cliente||'cliente')+' \u00b7 '+(rec.modello||'')).trim(),
           html:'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
               +'<p>\u00c8 arrivata una permuta da valutare.</p>'
@@ -17698,7 +17738,7 @@ function pmSalva(){
               +'<b>Targa:</b> '+pmEsc(rec.targa||'\u2014')+'</p>'
               +'<p>La trovi nel gestionale, sezione Permute.</p></div>',
           text:'Permuta da valutare \u2014 '+(rec.cliente||'')+' \u00b7 '+(rec.modello||'')+'. La trovi nel gestionale, sezione Permute.'
-        }).then(function(r){ if(r && r.error) try{ console.log('avviso permuta:', r.error); }catch(e){} });
+        });
       }
     }catch(e){}
   }
@@ -17960,7 +18000,7 @@ function pmClientRender(ov, rec){
     +dl('pmcl_d3','Il chilometraggio è reale e non manomesso.',dz.d3)
     +dl('pmcl_d4','Il veicolo non ha subìto danni strutturali da incidente non dichiarati.',dz.d4)
     +'<p style="font-size:12px;color:#64748b;">Se entro 60 giorni dalla consegna emergono danni o vizi preesistenti non dichiarati, Europa Auto potrà rivalutare il veicolo e richiedere il risarcimento e/o la differenza di valore.</p><p style="font-size:12px;color:#64748b;">Il veicolo dovrà essere consegnato in buone condizioni igieniche e di pulizia esterne: in caso contrario, al ritiro verranno addebitati € 100,00 di spese di pulizia.</p></div>';
-  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">La tua email</div><div style="font-size:12px;color:#64748b;margin-bottom:8px;">Ci serve per mandarti copia della perizia firmata. I dati che inserisci restano salvati: se esci e torni, ritrovi tutto.</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">La tua email</div><div style="font-size:12px;color:#64748b;margin-bottom:8px;">Serve a Europa Auto per ricontattarti sulla valutazione. I dati che inserisci restano salvati: se esci e torni, ritrovi tutto.</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Firma digitale</div><canvas id="pmcl-sig" width="700" height="180" style="width:100%;height:180px;border:2px dashed #94a3b8;border-radius:10px;background:#fff;touch-action:none;display:block;"></canvas><button onclick="pmClientClear()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Cancella</button></div>';
   h+='<button onclick="pmClientSubmit()" style="width:100%;padding:15px;border-radius:11px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:16px;cursor:pointer;font-family:inherit;">✅ Conferma e firma la perizia</button><div id="pmcl-esito" style="font-size:13px;color:#475569;text-align:center;margin-top:12px;"></div></div>';
   ov.innerHTML=h;
@@ -18094,14 +18134,28 @@ function pmClientSubmit(){
      da Resend con la perizia dentro la mail. Prima passavano tutti e due da
      Apps Script. */
   var _phtml=''; try{ _phtml=pmPeriziaFullHTML(rec); }catch(e){}
-  var _avvisa=function(){
+  /* ===== SE IL GESTIONALE NON SI AGGIORNA, LO DEVE DIRE =====
+     La riga su Supabase veniva scritta con upsert e l'eventuale errore
+     finiva solo nella console del telefono del cliente: la mail partiva
+     lo stesso e in concessionaria la perizia restava "Da firmare" senza che
+     nessuno sapesse perche'. Ora l'esito viaggia dentro l'avviso interno. */
+  var _avvisa=function(salvataggio){
     try{
-      if(typeof eaInviaMessaggio!=='function') return;
-      eaInviaMessaggio({
-        to:'amministrazione@europaautosrl.it',
-        subject:'Perizia firmata \u2014 '+((rec.cliente||'cliente')+' \u00b7 '+(rec.modello||'')).trim(),
-        html:(_phtml || '<p>Il cliente ha firmato la perizia. Aprila nel gestionale, sezione Permute.</p>'),
-        text:'Il cliente '+(rec.cliente||'')+' ha firmato la perizia di '+(rec.modello||'')+'. Aprila nel gestionale, sezione Permute.'
+      if(typeof pmAvvisaInterni!=='function') return;
+      var _ko=(salvataggio && salvataggio.ok===false);
+      var _banner=_ko
+        ? ('<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#991b1b;line-height:1.55;">'
+           +'<b>Attenzione: il gestionale non si \u00e8 aggiornato.</b><br>'
+           +'La perizia \u00e8 qui sotto, ma su Supabase la riga non \u00e8 stata scritta, quindi nella sezione Permute risulta ancora da firmare. '
+           +'Va aggiornata a mano.'
+           +(salvataggio.msg?('<br><span style="color:#7f1d1d;font-size:12px;">Motivo tecnico: '+pmEsc(String(salvataggio.msg))+'</span>'):'')
+           +'</div>')
+        : '';
+      pmAvvisaInterni({
+        subject:(_ko?'\u26a0\ufe0f ':'')+'Perizia firmata \u2014 '+((rec.cliente||'cliente')+' \u00b7 '+(rec.modello||'')).trim()+(_ko?' (gestionale non aggiornato)':''),
+        html:_banner+(_phtml || '<p>Il cliente ha firmato la perizia. Aprila nel gestionale, sezione Permute.</p>'),
+        text:'Il cliente '+(rec.cliente||'')+' ha firmato la perizia di '+(rec.modello||'')+'.'
+             +(_ko?' ATTENZIONE: il gestionale non si e\' aggiornato, la perizia va aggiornata a mano nella sezione Permute.':' La trovi nel gestionale, sezione Permute.')
       });
     }catch(e){}
   };
@@ -18117,12 +18171,23 @@ function pmClientSubmit(){
       }catch(e){}
     }
     if(_sb2){
-      _sb2.from('permute_app').upsert({ id:String(rec.id), data:rec }).then(function(r2){
-        if(r2 && r2.error){ try{ console.log('perizia salvataggio:', r2.error.message); }catch(e){} }
-        _avvisa();
-      });
-    } else { _avvisa(); }
-  }catch(e){ _avvisa(); }
+      /* update e non upsert: la riga esiste gia' (il cliente l'ha appena
+         letta per aprire il link). Cosi' al database basta il permesso di
+         aggiornare, senza dover concedere a chi non ha un account anche
+         quello di creare righe nuove. */
+      var _fatto=false;
+      var _chiudi=function(esito){ if(_fatto) return; _fatto=true; _avvisa(esito); };
+      setTimeout(function(){ _chiudi({ok:false, msg:'nessuna risposta dal database'}); }, 12000);
+      _sb2.from('permute_app').update({ data:rec }).eq('id', String(rec.id)).select('id')
+        .then(function(r2){
+          var err=(r2 && r2.error) ? (r2.error.message||'errore') : '';
+          var scritte=(r2 && r2.data) ? r2.data.length : 0;
+          if(err){ try{ console.log('perizia salvataggio:', err); }catch(e){} _chiudi({ok:false, msg:err}); return; }
+          if(!scritte){ _chiudi({ok:false, msg:'nessuna riga aggiornata (permessi del database)'}); return; }
+          _chiudi({ok:true});
+        }, function(e2){ _chiudi({ok:false, msg:(e2&&e2.message)||String(e2)}); });
+    } else { _avvisa({ok:false, msg:'database non raggiungibile dalla pagina del cliente'}); }
+  }catch(e){ _avvisa({ok:false, msg:(e&&e.message)||String(e)}); }
   if(es){ es.innerHTML='✅ Perizia firmata e inviata a Europa Auto. Grazie, '+pmEsc(rec.cliente||'')+'!'; }
   pmClientClearDraft();
   var ov=document.getElementById('pm-client');
@@ -19677,7 +19742,7 @@ function mzForm(id){
   var perizHtml='';
   if(a && (a.origine==='permuta' || a.periziaId || a.permutaDifetti)){
     var per=(a.periziaId && typeof pmById==='function')?pmById(a.periziaId):null;
-    var firmata=per && (per.firma || per.metodoFirma==='carta' || per.firmatoDalCliente);
+    var firmata=(typeof pmFirmata==='function')?pmFirmata(per):(per && (per.firma || per.metodoFirma==='carta' || per.firmatoDalCliente));
     var danni='';
     if(per && per.pins && per.pins.length){ danni=per.pins.map(function(pin,i){ return (i+1)+'. '+mzEsc(pin.nota||pin.descrizione||pin.desc||pin.text||'danno'); }).join('<br>'); }
     if(!danni && a.permutaDifetti) danni=mzEsc(a.permutaDifetti);
@@ -27503,12 +27568,30 @@ function tgAnnulla(id){
   var st=(list[i].fattureTagAnnullate||[]);
   st.push({ numero:f.numero, anno:f.anno, data:f.data, annullataIl:new Date().toISOString().slice(0,10) });
   list[i].fattureTagAnnullate=st;
+  /* Senza numero la proforma sparisce da sola dalla scheda cliente: quella
+     lista mostra solo le fatture vive. */
+  var _nome2=String(f.nome||list[i].titolo||list[i].cliente||'\u2014');
+  var _veic2=[String(f.modello||''), String(f.targa||'')].filter(Boolean).join(' \u00b7 ') || String(list[i].veicolo||'\u2014');
+  var _pg2=list[i].fatturaTagPagamento||null;
+  if(_pg2 && _pg2.modo){
+    list[i].fatturaTagPagamento_storico=(list[i].fatturaTagPagamento_storico||[]).concat([
+      Object.assign({}, _pg2, { annullataIl:Date.now(), fattura:et })
+    ]);
+  }
+  delete list[i].fatturaTagPagamento;
   delete f.numero; delete f.anno; delete f.data;
   list[i].fatturaTag=f;
+  list[i].updatedAt=Date.now();
   try{ _fonte.salva(list); }catch(e){ alert('Non sono riuscito a salvare l\u2019annullamento: '+(e&&e.message||e)); return; }
   if(_fonte.upsert) try{ _fonte.upsert(list[i]); }catch(e){}
   try{ if(typeof ccSync==='function') ccSync(list[i]); }catch(e){}
-  if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
+  if(_pg2 && _pg2.modo){
+    try{ eaPagAvvisaAnnullo({ tipoDoc:'la fattura del tagliando', oggetto:'fattura tagliando '+et+' \u00b7 '+_nome2,
+      rec:_pg2, righe:[['Fattura',et],['Cliente',_nome2],['Veicolo',_veic2]] }); }catch(e){}
+  }
+  try{ eaRinfrescaSchedaCliente(); }catch(e){}
+  try{ if(typeof ccRender==='function') ccRender(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata'+((_pg2&&_pg2.modo)?' \u2014 incasso azzerato':''), true);
   tgRender();
 }
 
@@ -29489,9 +29572,28 @@ function cvFatturaAnnulla(id){
   var cv=list[idx]; if(!cv.fattura) return;
   if(!confirm('Annullare la fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno+'?\n\nConferma 1 di 2.')) return;
   if(!confirm('Annullare la fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno+'?\n\nIl documento verr\u00e0 rimosso e potrai rigenerarla (con un nuovo numero).')) return;
+  var _et='n. '+cv.fattura.numero+'/'+cv.fattura.anno;
+  var _cl=cv.cliente||{}, _a=cv.autoSnapshot||{};
+  var _nome=(((_cl.cognome||'')+' '+(_cl.nome||'')).trim())||String(_cl.ragSociale||'')||'\u2014';
+  var _auto=(String(_a.modello||'').trim())||String(cv.autoDesc||'')||'\u2014';
+  var _tg=cv.nuovaTarga||_a.targa||''; if(_tg) _auto+=' \u00b7 '+_tg;
+  /* L'incasso segue la fattura: annullata lei, la modalita' non vale piu'.
+     Se restasse, rifacendo il documento la domanda non verrebbe piu' posta. */
+  var _pg=cv.fatturaPagamento||null;
+  if(_pg && _pg.modo){
+    cv.fatturaPagamentoStorico=(cv.fatturaPagamentoStorico||[]).concat([
+      Object.assign({}, _pg, { annullataIl:Date.now(), fattura:_et })
+    ]);
+  }
+  delete cv.fatturaPagamento;
   delete cv.fattura; cv.updatedAt=Date.now(); cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+  if(_pg && _pg.modo){
+    try{ eaPagAvvisaAnnullo({ tipoDoc:'la fattura di vendita', oggetto:'fattura '+_et+' \u00b7 '+_nome,
+      rec:_pg, righe:[['Fattura',_et],['Cliente',_nome],['Veicolo',_auto]] }); }catch(e){}
+  }
   if(typeof cvVendRender==='function') cvVendRender();
-  if(typeof tcToastNew==='function') tcToastNew('Fattura annullata',true);
+  try{ eaRinfrescaSchedaCliente(); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('Fattura annullata'+((_pg&&_pg.modo)?' \u2014 incasso azzerato':''),true);
 }
 /* ===== INCASSO: COME HA PAGATO IL CLIENTE =====
    Quando si scarica una fattura GIA' emessa (di vendita o di tagliando) si
@@ -29623,6 +29725,46 @@ function eaPagAvvisa(o){
     ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
       try{ eaInviaMessaggio({ to:dest, subject:ogg, html:html }); }catch(e){}
     });
+  }catch(e){}
+}
+
+/* Una fattura annullata dopo che l'incasso e' stato comunicato lascia in
+   contabilita' una mail che parla di soldi entrati per un documento che non
+   esiste piu'. Se l'incasso era stato registrato, l'annullamento si dice. */
+function eaPagAvvisaAnnullo(o){
+  try{
+    if(typeof eaInviaMessaggio!=='function' || !o || !o.rec) return;
+    var rec=o.rec;
+    var m=eaPagModo(rec.modo)||{ et:rec.modo, ic:'' };
+    var chi=(typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'utente';
+    var d=new Date();
+    var quando=d.toLocaleDateString('it-IT')+' alle '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+    var riga=function(l,v){ return '<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;vertical-align:top;">'+l+'</td>'
+      +'<td style="padding:5px 0;font-size:14px;font-weight:700;color:#0f172a;">'+v+'</td></tr>'; };
+    var corpo='<p style="margin-top:0;"><b>'+cvEsc(chi)+'</b> ha annullato '+cvEsc(o.tipoDoc||'la fattura')+'.</p>'
+      +'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 16px;margin:14px 0;">'
+      +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#991b1b;">Incasso da stornare</div>'
+      +'<div style="font-size:20px;font-weight:800;color:#991b1b;margin-top:3px;">'+(m.ic?(m.ic+' '):'')+cvEsc(m.et)+'</div>'
+      +(rec.nota?('<div style="font-size:13px;color:#7f1d1d;margin-top:7px;">'+cvEsc(rec.nota)+'</div>'):'')
+      +'</div>'
+      +'<table style="border-collapse:collapse;margin-bottom:6px;">'
+      +(o.righe||[]).map(function(r){ return riga(cvEsc(r[0]), cvEsc(r[1])); }).join('')
+      +riga('Annullata da', cvEsc(chi))
+      +riga('Quando', cvEsc(quando))
+      +'</table>'
+      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;margin-bottom:0;">'
+      +'La modalit\u00e0 di pagamento registrata \u00e8 stata azzerata: se il documento viene rifatto verr\u00e0 richiesta di nuovo.</p>';
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
+      try{ eaInviaMessaggio({ to:dest, subject:'ANNULLATA \u2014 '+(o.oggetto||''), html:html }); }catch(e){}
+    });
+  }catch(e){}
+}
+/* La scheda cliente aperta va ridisegnata: senza numero la proforma non
+   compare piu' fra gli interventi, ma solo alla prossima apertura. */
+function eaRinfrescaSchedaCliente(){
+  try{
+    if(typeof _clSel!=='undefined' && _clSel && typeof clRenderDettaglio==='function') clRenderDettaglio();
   }catch(e){}
 }
 
