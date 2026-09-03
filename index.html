@@ -20716,6 +20716,47 @@ function clRenderDettaglio(){
     /* Solo l'ELENCO, senza casella di caricamento: il documento si carica dal
        riquadro Documenti come tutti gli altri, e scegliendo "Tagliando /
        manutenzione" viene a finire qui. Una sola casella in tutta la scheda. */
+    /* ===== GLI INTERVENTI, UNO PER UNO =====
+       Fin qui venivano solo contati: si leggeva "Interventi e manutenzioni
+       (3)" e nient'altro. Il numero da solo non serve a nessuno \u2014 chi apre
+       la scheda vuole sapere cosa e' stato fatto e quando, e soprattutto
+       vuole poter ristampare la proforma da consegnare al cliente. */
+    if(iv.length){
+      box+='<div style="margin-top:6px;">';
+      iv.forEach(function(x){
+        var f=x.fatturaTag||{};
+        var _d=String(x.data||'').split('-');
+        var _dIt=(_d.length===3)?(_d[2]+'/'+_d[1]+'/'+_d[0]):String(x.data||'');
+        var _num=f.numero?('n. '+f.numero+'/'+(f.anno||'')):'';
+        var _tot=(f.totale!=null && f.totale!=='')
+          ? ((typeof cvEuro==='function')?cvEuro(f.totale):(f.totale+' \u20ac')) : '';
+        var _desc=String(x.descrizione||x.nota||'Intervento');
+        box+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9;flex-wrap:wrap;">'
+          +'<div style="min-width:0;flex:1;">'
+          +'<div style="font-size:13px;font-weight:700;color:#0f172a;">'+clEsc(_desc)+'</div>'
+          +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(_dIt)
+          +(x.veicolo?(' \u00b7 '+clEsc(x.veicolo)):'')
+          +(_num?(' \u00b7 proforma '+clEsc(_num)):'')
+          +(x.daCalendario?' \u00b7 dal calendario':'')
+          +'</div></div>'
+          +'<div style="display:flex;gap:6px;align-items:center;flex:0 0 auto;">'
+          +(_tot?('<span style="font-size:13px;font-weight:800;color:#0f172a;">'+clEsc(_tot)+'</span>'):'')
+          /* Il pulsante dice cosa fa: un'icona muta costringerebbe a provare
+             per capire se stampa la proforma o apre altro. */
+          +(f.numero
+             ? ('<button onclick="event.stopPropagation();tgStampa(\''+clEsc(x.id)+'\')" '
+                +'style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;'
+                +'font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">'
+                +'\ud83d\udda8\ufe0f Stampa proforma</button>')
+             : '')
+          +'<button onclick="event.stopPropagation();tgApri(\''+clEsc(x.id)+'\')" '
+          +'style="padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;'
+          +'font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Apri</button>'
+          +'</div></div>';
+      });
+      box+='</div>';
+    }
+
     var _tk='clt_'+String(c.key||'').replace(/[^A-Za-z0-9_]/g,'');
     box+='<div id="'+_tk+'-list" style="margin-top:8px;"></div>';
     /* Le fatture di manutenzione caricate come documento appartengono qui:
@@ -26750,12 +26791,55 @@ function clSinistriDi(key, nome){
     });
   }catch(e){ return []; }
 }
+/* ===== LE PROFORMA FATTE DAL CALENDARIO STANNO IN UN ALTRO POSTO =====
+   Una proforma generata da un appuntamento resta attaccata all'appuntamento;
+   l'archivio interventi e' un elenco diverso. La scheda cliente leggeva solo
+   il secondo, quindi quelle proforma non si trovavano da nessuna parte se non
+   tornando sul calendario e ricordandosi il giorno.
+
+   Qui i due elenchi si leggono insieme. Il documento non si copia: resta
+   dov'e' ed esiste una volta sola. Duplicarlo avrebbe voluto dire due
+   versioni che prima o poi divergono \u2014 si corregge una e l'altra resta
+   indietro. */
+function ivDaCalendario(k){
+  var out=[];
+  try{
+    if(typeof ccLoad!=='function') return out;
+    ccLoad().forEach(function(c){
+      if(!c || c.deleted) return;
+      var f=c.fatturaTag;
+      if(!f || !f.numero) return;            /* proforma non ancora generata */
+      var kk=ivChiaveCliente(c.cliente||f.nome||c.titolo, c.clienteKey);
+      if(kk!==k) return;
+      out.push({
+        id: c.id,
+        daCalendario: true,                  /* per sapere dove aprirla */
+        data: c.data || f.data || '',
+        cliente: c.cliente || f.nome || '',
+        clienteKey: c.clienteKey || null,
+        veicolo: c.veicolo || f.modello || '',
+        targa: f.targa || '',
+        descrizione: (c.nota || (f.righe && f.righe[0] && f.righe[0].desc) || 'Intervento'),
+        fatturaTag: f
+      });
+    });
+  }catch(e){}
+  return out;
+}
+
 function ivDelCliente(key, nome){
   var k=ivChiaveCliente(nome, key);
-  return ivLoad().filter(function(x){
+  var propri=ivLoad().filter(function(x){
     if(!x || x.deleted) return false;
     return ivChiaveCliente(x.cliente, x.clienteKey)===k;
-  }).sort(function(a,b){ return String(b.data||'').localeCompare(String(a.data||'')); });
+  });
+  var dalCal=ivDaCalendario(k);
+  /* un appuntamento gia' passato all'archivio non si conta due volte */
+  var visti={};
+  propri.forEach(function(x){ if(x && x.id) visti[x.id]=true; });
+  dalCal.forEach(function(x){ if(!visti[x.id]) propri.push(x); });
+
+  return propri.sort(function(a,b){ return String(b.data||'').localeCompare(String(a.data||'')); });
 }
 /* numerazione proforma separata: non e' una fattura e non deve sembrarlo */
 function ivProssimoNumero(){
