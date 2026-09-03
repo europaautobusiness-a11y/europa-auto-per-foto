@@ -14719,15 +14719,35 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   /* ===================== Utente / dipendenti ===================== */
+  /* ===== SUL CALENDARIO CI VA IL NOME, NON L'INDIRIZZO =====
+     L'etichetta del login a volte riporta la mail invece del nome, e gli
+     appuntamenti uscivano firmati "europaautobusiness@gmail.com". Il nome
+     vero lo sa gia' eaNomeDaMail (Davide, Rudy, i dipendenti in Presenze):
+     se quello che si legge e' un indirizzo, si traduce. */
+  function ccNomeDaMail(email, ripiego){
+    var e=String(email||'').trim();
+    try{ if(e && typeof eaNomeDaMail==='function'){ var n=eaNomeDaMail(e); if(n && String(n).indexOf('@')<0) return n; } }catch(_e){}
+    var r=String(ripiego||'').trim();
+    if(r && r.indexOf('@')<0) return r;
+    if(e) return e.split('@')[0];
+    return r || 'Utente';
+  }
+  /* Il nome dell'assegnatario di un appuntamento gia' salvato: i record
+     vecchi hanno l'indirizzo dentro dipNome e vanno ripuliti a video. */
+  function ccNomeDip(c){
+    if(!c) return '';
+    var n=String(c.dipNome||'').trim();
+    if(n && n.indexOf('@')<0) return n;
+    if(c.dipEmail || n) return ccNomeDaMail(c.dipEmail||n, n);
+    return '';
+  }
   function ccUtente(){
     var nomeEl = document.getElementById('login-email-name');
     var nome = (nomeEl && nomeEl.textContent.trim()) || '';
     var email = (typeof _currentUserEmail !== 'undefined' && _currentUserEmail) ? _currentUserEmail : '';
     var ruolo = (typeof getCurrentRole === 'function') ? getCurrentRole() : 'dipendente';
-    if (!nome) {
-      var list = (typeof tcLoadDip === 'function') ? tcLoadDip() : [];
-      var d = list.filter(function(x){ return x.email === email; })[0];
-      nome = d ? d.nome : (email || 'Utente');
+    if (!nome || nome.indexOf('@') >= 0) {
+      nome = ccNomeDaMail(email, nome);
     }
     return { nome:nome, email:email, ruolo:ruolo };
   }
@@ -14851,7 +14871,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if(interv.length>42) interv=interv.slice(0,40)+'\u2026';
       var titolo=(isTask?'\u2705 ':(ti[0]+' '))+(c.titolo||(isTask?'Task':'Appuntamento'))
         +(interv?(' \u00b7 '+interv):'')
-        +(c.dipNome?(' \u00b7 '+c.dipNome):'');
+        +((function(){ var _dn=ccNomeDip(c); return _dn?(' \u00b7 '+_dn):''; })());
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
       var mm=ora.match(/^(\d{1,2}):(\d{2})$/);
@@ -14925,7 +14945,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if (!list.length){ el.innerHTML = '<div class="cc-emptymsg">Nessun compito per questo giorno.</div>'; return; }
     // raggruppa NETTO per utente
     var groups={};
-    list.forEach(function(c){ var k=c.dipEmail||c.dipNome||'—'; if(!groups[k]) groups[k]={nome:c.dipNome||k,email:c.dipEmail||'',items:[]}; groups[k].items.push(c); });
+    list.forEach(function(c){ var k=c.dipEmail||c.dipNome||'—'; if(!groups[k]) groups[k]={nome:(ccNomeDip(c)||k),email:c.dipEmail||'',items:[]}; groups[k].items.push(c); });
     var u=ccUtente();
     var keys=Object.keys(groups).sort(function(a,b){ if(groups[a].email===u.email) return -1; if(groups[b].email===u.email) return 1; return groups[a].nome.localeCompare(groups[b].nome); });
     var html='';
@@ -14992,7 +15012,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var aperti = ccLoad().filter(function(c){ return !c.fatto && (!f || c.dipEmail===f); });
     if(!aperti.length){ body.innerHTML='<div class="cc-emptymsg" style="padding:10px">Nessun compito da eseguire 🎉</div>'; return; }
     var groups = {};
-    aperti.forEach(function(c){ var k=c.dipEmail||c.dipNome||'—'; if(!groups[k]) groups[k]={nome:c.dipNome||k, email:c.dipEmail||'', items:[]}; groups[k].items.push(c); });
+    aperti.forEach(function(c){ var k=c.dipEmail||c.dipNome||'—'; if(!groups[k]) groups[k]={nome:(ccNomeDip(c)||k), email:c.dipEmail||'', items:[]}; groups[k].items.push(c); });
     var now=new Date(); var oggi=ymd(now.getFullYear(),now.getMonth(),now.getDate());
     var u=ccUtente();
     var keys=Object.keys(groups).sort(function(a,b){ if(groups[a].email===u.email) return -1; if(groups[b].email===u.email) return 1; return groups[a].nome.localeCompare(groups[b].nome); });
@@ -15029,9 +15049,9 @@ document.addEventListener('DOMContentLoaded',function(){
     if (u && u.email && !dips.some(function(d){ return d.email===u.email; })) {
       dips = [{ nome:u.nome, email:u.email }].concat(dips);
     }
-    var optAll = '<option value="">Tutti i dipendenti</option>' + dips.map(function(d){ return '<option value="'+ccEsc(d.email)+'">'+ccEsc(d.nome)+'</option>'; }).join('');
-    document.getElementById('cc-filtro').innerHTML = optAll;
-    document.getElementById('cc-dip').innerHTML = dips.map(function(d){ return '<option value="'+ccEsc(d.email)+'">'+ccEsc(d.nome)+'</option>'; }).join('');
+    var _opt = function(d){ return '<option value="'+ccEsc(d.email)+'">'+ccEsc(ccNomeDaMail(d.email, d.nome))+'</option>'; };
+    document.getElementById('cc-filtro').innerHTML = '<option value="">Tutti i dipendenti</option>' + dips.map(_opt).join('');
+    document.getElementById('cc-dip').innerHTML = dips.map(_opt).join('');
   }
   function ccAggiornaUtente(){
     var u = ccUtente();
@@ -15414,7 +15434,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var c = {
       id: 'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
       data: _ccDataScelta, titolo: titolo, tipo:tipo, categoria:categoria, email:email, tel:tel,
-      dipEmail: dipSel.value, dipNome: dipSel.options[dipSel.selectedIndex].text,
+      dipEmail: dipSel.value, dipNome: ccNomeDaMail(dipSel.value, dipSel.options[dipSel.selectedIndex].text),
       ora: document.getElementById('cc-ora').value.trim(),
       veicolo: ((document.getElementById('cc-veicolo')||{}).value||'').trim(), durata: parseInt(((document.getElementById('cc-durata')||{}).value)||'0',10)||0,
       ricorda: ricorda,
@@ -20749,9 +20769,16 @@ function clRenderDettaglio(){
      Vale anche come argomento di vendita — quando cambia auto, gli si mostra
      quanto l'ha tenuta in ordine. */
   h+=(function(){
-    var iv=(typeof ivDelCliente==='function')?ivDelCliente(c.key, nomeVis):[];
+    var iv=(typeof ivDelCliente==='function')?ivDelCliente(c.key, nomeVis, c):[];
     var tot=0;
-    iv.forEach(function(x){ try{ tot+=Number((x.fatturaTag&&x.fatturaTag.totale)||0)||0; }catch(e){} });
+    /* Il totale non viene salvato sulla fattura: sta nelle righe. Prima si
+       leggeva un campo che non esiste e usciva sempre zero. */
+    var ivTot=function(f){
+      if(!f) return 0;
+      if(f.totale!=null && f.totale!=='') return Number(f.totale)||0;
+      try{ return (typeof tgTotaleDoc==='function')?tgTotaleDoc(f):0; }catch(e){ return 0; }
+    };
+    iv.forEach(function(x){ try{ tot+=ivTot(x.fatturaTag); }catch(e){} });
     var box='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">'
       +'<div style="font-weight:800;color:#1a4fa0;">\ud83d\udd27 Interventi e manutenzioni ('+iv.length+')'
@@ -20781,8 +20808,8 @@ function clRenderDettaglio(){
         var _d=String(x.data||'').split('-');
         var _dIt=(_d.length===3)?(_d[2]+'/'+_d[1]+'/'+_d[0]):String(x.data||'');
         var _num=f.numero?('n. '+f.numero+'/'+(f.anno||'')):'';
-        var _tot=(f.totale!=null && f.totale!=='')
-          ? ((typeof cvEuro==='function')?cvEuro(f.totale):(f.totale+' \u20ac')) : '';
+        var _totN=ivTot(f);
+        var _tot=_totN?((typeof cvEuro==='function')?cvEuro(_totN):(_totN+' \u20ac')):'';
         var _desc=String(x.descrizione||x.nota||'Intervento');
         box+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9;flex-wrap:wrap;">'
           +'<div style="min-width:0;flex:1;">'
@@ -20797,10 +20824,10 @@ function clRenderDettaglio(){
           /* Il pulsante dice cosa fa: un'icona muta costringerebbe a provare
              per capire se stampa la proforma o apre altro. */
           +(f.numero
-             ? ('<button onclick="event.stopPropagation();tgStampa(\''+clEsc(x.id)+'\')" '
+             ? ('<button onclick="event.stopPropagation();tgScarica(\''+clEsc(x.id)+'\')" '
                 +'style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;'
                 +'font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">'
-                +'\ud83d\udda8\ufe0f Stampa proforma</button>')
+                +'\ud83d\udda8\ufe0f Scarica proforma</button>')
              : '')
           +'<button onclick="event.stopPropagation();tgApri(\''+clEsc(x.id)+'\')" '
           +'style="padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;'
@@ -20845,17 +20872,10 @@ function clRenderDettaglio(){
         }).join('')
         +'</div>';
     }
+    /* L'elenco degli interventi lo disegna gia' il blocco qui sopra, con
+       data, veicolo, numero di proforma, importo e pulsanti. Qui sotto ce
+       n'era un secondo, piu' povero: ogni intervento compariva due volte. */
     if(!iv.length) return box+'<div style="font-size:13px;color:#94a3b8;">Nessun intervento registrato.</div>'+_sinBox+'</div>';
-    box+=iv.map(function(x){
-      var f=x.fatturaTag||{};
-      var d=String(x.data||'').split('-'); var dIt=(d.length===3)?(d[2]+'/'+d[1]+'/'+d[0]):(x.data||'');
-      var desc=(f.righe&&f.righe.length&&f.righe[0].desc)?f.righe[0].desc:(x.nota||'Intervento');
-      return '<div onclick="tgApri(\''+x.id+'\')" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:10px;">'
-        +'<div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;color:#0f172a;">'+clEsc(desc)+'</div>'
-        +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(dIt)+(x.veicolo?(' \u00b7 '+clEsc(x.veicolo)):'')
-        +(f.numeroProforma?(' \u00b7 PF '+f.numeroProforma+'/'+(f.annoProforma||'')):'')+'</div></div>'
-        +'<div style="font-weight:800;color:#334155;white-space:nowrap;">'+(f.totale?(typeof cvEuro==='function'?cvEuro(f.totale):f.totale):'\u2014')+'</div></div>';
-    }).join('');
     return box+_sinBox+'</div>';
   })();
   h+=docCard('Preventivi', c.preventivi, function(cv){ var t=(typeof cvCalcola==='function')?cvCalcola(cv):{totaleScontato:0}; return '<div onclick="clVaiCv(\''+cv.id+'\',false)" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;"><span style="font-size:13px;min-width:0;">'+clEsc(cv.autoDesc||(cv.autoSnapshot&&cv.autoSnapshot.modello)||'\u2014')+' \u00b7 '+clEsc(cv.data||'')+'</span><b style="font-size:13px;flex:0 0 auto;">'+cvEuro(t.totaleScontato)+'</b></div>'; });
@@ -26914,16 +26934,70 @@ function clSinistriDi(key, nome){
    dov'e' ed esiste una volta sola. Duplicarlo avrebbe voluto dire due
    versioni che prima o poi divergono \u2014 si corregge una e l'altra resta
    indietro. */
-function ivDaCalendario(k){
+/* ===== PERCHE' NON SI VEDEVANO =====
+   Il confronto era asimmetrico. Da un lato ivChiaveCliente(nome, key) con la
+   chiave dell'anagrafica restituiva la chiave; dall'altro l'appuntamento del
+   calendario la chiave non ce l'ha (ccAggiungi non la scrive) e ripiegava sul
+   nome normalizzato. Chiave contro nome non coincidono mai, quindi nessuna
+   proforma del calendario finiva nella scheda cliente.
+   Ora si aggancia come fa gia' la sezione Appuntamenti: email, poi telefono,
+   poi nome (anche con nome e cognome invertiti). */
+function ivDaCalendario(k, nome, key, cli){
   var out=[];
   try{
     if(typeof ccLoad!=='function') return out;
+    var norm=function(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,''); };
+    /* le parole ordinate: "EUCARISTA PASQUALE" e "PASQUALE EUCARISTA" pari sono */
+    var wset=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z]/g,' ').split(/\s+/).filter(Boolean).sort().join(''); };
+    var soloCifre=function(v){ return String(v||'').replace(/\D/g,''); };
+
+    var a=cli||null;
+    if(!a){
+      try{
+        var st=(typeof clStore==='function')?clStore():null;
+        if(st){
+          if(key && st[key]) a=st[key];
+          if(!a){
+            var nn0=norm(nome);
+            Object.keys(st).forEach(function(kk2){
+              var x=st[kk2];
+              if(!a && x && (norm((x.cognome||'')+(x.nome||''))===nn0 || norm(x.ragSociale)===nn0)) a=x;
+            });
+          }
+        }
+      }catch(e){}
+    }
+    var mails={}, tels={};
+    if(a){
+      [a.email,a.email2].forEach(function(e){ e=String(e||'').toLowerCase().trim(); if(e) mails[e]=1; });
+      [a.telefono,a.telefono2].forEach(function(t){ t=soloCifre(t); if(t.length>=8) tels[t]=1; });
+    }
+    var nomiOk={};
+    [nome, (a?((a.cognome||'')+' '+(a.nome||'')):''), (a?a.ragSociale:'')].forEach(function(v){
+      var w=wset(v); if(w) nomiOk[w]=1;
+    });
+
     ccLoad().forEach(function(c){
       if(!c || c.deleted) return;
       var f=c.fatturaTag;
       if(!f || !f.numero) return;            /* proforma non ancora generata */
-      var kk=ivChiaveCliente(c.cliente||f.nome||c.titolo, c.clienteKey);
-      if(kk!==k) return;
+      var ok=false;
+      if(key && c.clienteKey && String(c.clienteKey)===String(key)) ok=true;
+      if(!ok){
+        var em=String(c.email||'').toLowerCase().trim();
+        if(em && mails[em]) ok=true;
+      }
+      if(!ok){
+        var tl=soloCifre(c.tel||c.telefono);
+        if(tl.length>=8 && tels[tl]) ok=true;
+      }
+      if(!ok){
+        var cand=[c.cliente, f.nome, c.titolo];
+        for(var i=0;i<cand.length && !ok;i++){ var w=wset(cand[i]); if(w && nomiOk[w]) ok=true; }
+      }
+      /* vecchio comportamento: chi la chiave ce l'ha davvero uguale */
+      if(!ok && k && ivChiaveCliente(c.cliente||f.nome||c.titolo, c.clienteKey)===k) ok=true;
+      if(!ok) return;
       out.push({
         id: c.id,
         daCalendario: true,                  /* per sapere dove aprirla */
@@ -26940,13 +27014,13 @@ function ivDaCalendario(k){
   return out;
 }
 
-function ivDelCliente(key, nome){
+function ivDelCliente(key, nome, cli){
   var k=ivChiaveCliente(nome, key);
   var propri=ivLoad().filter(function(x){
     if(!x || x.deleted) return false;
     return ivChiaveCliente(x.cliente, x.clienteKey)===k;
   });
-  var dalCal=ivDaCalendario(k);
+  var dalCal=ivDaCalendario(k, nome, key, cli);
   /* un appuntamento gia' passato all'archivio non si conta due volte */
   var visti={};
   propri.forEach(function(x){ if(x && x.id) visti[x.id]=true; });
