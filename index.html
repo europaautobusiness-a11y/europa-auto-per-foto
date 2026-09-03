@@ -15461,10 +15461,56 @@ document.addEventListener('DOMContentLoaded',function(){
     list.forEach(function(c){ if (c.id===id){ c.fatto=!c.fatto; c.fattoDa=c.fatto?u.nome:''; ccSync(c); } });
     ccSave(list); ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccBadgeSubito();
   }
+  /* ===== SE C'ERA UN CLIENTE, VA AVVISATO =====
+     Un appuntamento cancellato senza dirlo lascia qualcuno ad aspettare in
+     concessionaria. La mail parte solo se c'e' un'email e se l'appuntamento
+     non e' gia' passato: annullare qualcosa di ieri non serve a nessuno. */
+  function ccMailAnnullo(c){
+    try{
+      if(!c) return;
+      var em=String(c.email||'').trim();
+      if(!em || !/.+@.+\..+/.test(em)) return;
+      if(typeof eaInviaMessaggio!=='function') return;
+
+      /* solo se e' ancora nel futuro */
+      var q=String(c.data||'').split('-');
+      if(q.length===3){
+        var d=new Date(+q[0], +q[1]-1, +q[2], 23, 59, 59);
+        if(d.getTime() < Date.now()) return;
+      }
+
+      var giorno=(q.length===3)?(q[2]+'/'+q[1]+'/'+q[0]):String(c.data||'');
+      var nome=String(c.cliente||'').trim();
+      var F='font-family:Arial,Helvetica,sans-serif;';
+
+      var corpo='<div style="'+F+'font-size:14px;color:#0f172a;line-height:1.6;">'
+        +'<p>'+(nome?('Gentile '+ccEsc(nome)+','):'Gentile cliente,')+'</p>'
+        +'<p>le scriviamo per comunicarle che <b>l\u2019appuntamento del '+ccEsc(giorno)
+        + (c.ora?(' alle '+ccEsc(c.ora)):'') + ' \u00e8 stato annullato</b>.</p>'
+        + (c.veicolo?('<p>Riferimento: '+ccEsc(c.veicolo)+'</p>'):'')
+        +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin:14px 0;">'
+        +'<b>Vuole fissarne un altro?</b><br>'
+        +'Ci scriva o ci chiami: troviamo insieme il giorno che le \u00e8 pi\u00f9 comodo.'
+        +'</div>'
+        +'<p>Ci scusiamo per il disagio.</p>'
+        +'<p>A presto,<br><b>Europa Auto</b></p></div>';
+
+      eaInviaMessaggio({
+        to: em,
+        subject: 'Appuntamento del '+giorno+' annullato \u2014 Europa Auto',
+        html: (typeof eaMailWrap==='function') ? eaMailWrap(corpo) : corpo
+      });
+      ccToast('Avviso di annullamento inviato a '+em);
+    }catch(e){ try{ console.log('mail annullo:', e && e.message || e); }catch(e2){} }
+  }
+
   function ccElimina(id){
     if (!confirm('Eliminare questo compito?')) return;
+    var _c=null;
+    try{ _c=ccLoad().filter(function(x){ return x && x.id===id; })[0]||null; }catch(e){}
     var list = ccLoad().filter(function(c){ return c.id!==id; });
     ccSave(list);
+    try{ ccMailAnnullo(_c); }catch(e){}
     /* la lapide impedisce che torni dal remoto alla prossima sincronizzazione */
     try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
     if (typeof gsDelete === 'function') gsDelete(CC_SHEET, id);
@@ -26341,12 +26387,24 @@ var CC_DEL_KEY = 'ea_compiti_deleted_v1';
 function ccTombstones(){
   try{ return JSON.parse(localStorage.getItem(CC_DEL_KEY)||'[]'); }catch(e){ return []; }
 }
+/* ===== LA LAPIDE DEVE VALERE PER TUTTI =====
+   Cancellare la riga su Supabase non basta: sul computer di chi l'aveva
+   creata l'appuntamento c'e' ancora, e alla sua sincronizzazione lo rimanda
+   su perche' non lo trova piu' di la'. Dopo qualche minuto ricompare, e non
+   si capisce da dove.
+   Al posto della cancellazione si scrive quindi una riga che dice "questo e'
+   stato eliminato": tutti i dispositivi la leggono e lo tolgono anche da
+   casa loro. */
 function ccAddTombstone(id){
   if(!id) return;
   try{
     var t=ccTombstones();
     if(t.indexOf(id)<0){ t.push(id); localStorage.setItem(CC_DEL_KEY, JSON.stringify(t.slice(-500))); }
-    if(typeof supaDelete==='function') supaDelete('compiti_app', id);
+    if(typeof supaUpsert==='function'){
+      supaUpsert('compiti_app', { id:id, data:{ id:id, deleted:true, updatedAt:Date.now() } });
+    } else if(typeof supaDelete==='function'){
+      supaDelete('compiti_app', id);
+    }
   }catch(e){}
 }
 function ccTs(c){ return +((c && (c.updatedAt || c.createdAt)) || 0); }
@@ -26379,10 +26437,17 @@ function ccSupaLoad(done){
         return d;
       }).filter(function(d){ return d && d.id; });
 
-      /* i cancellati non tornano, e spariscono anche di la' */
-      remoti.filter(function(d){ return tomb.indexOf(d.id)>=0; })
-            .forEach(function(d){ try{ if(typeof supaDelete==='function') supaDelete('compiti_app', d.id); }catch(e){} });
-      remoti = remoti.filter(function(d){ return tomb.indexOf(d.id)<0; });
+      /* Le eliminazioni fatte altrove valgono anche qui: la riga con
+         deleted:true e' la lapide di un altro dispositivo. Si aggiunge alle
+         proprie, cosi' quell'appuntamento non risale mai piu'. */
+      var _nuoveTomb=false;
+      remoti.filter(function(d){ return d.deleted===true; }).forEach(function(d){
+        if(tomb.indexOf(d.id)<0){ tomb.push(d.id); _nuoveTomb=true; }
+      });
+      if(_nuoveTomb){
+        try{ localStorage.setItem(CC_DEL_KEY, JSON.stringify(tomb.slice(-500))); }catch(e){}
+      }
+      remoti = remoti.filter(function(d){ return d.deleted!==true && tomb.indexOf(d.id)<0; });
 
       var locali = window.ccLoad().filter(function(c){ return c && c.id && tomb.indexOf(c.id)<0; });
       var byId = {}, daSpingere = [];
@@ -26789,6 +26854,70 @@ function tgById(id){
   try{ return (typeof ccLoad==='function'?ccLoad():[]).filter(function(c){ return c.id===id; })[0]; }catch(e){ return null; }
 }
 
+/* ===== IL CLIENTE E' GIA' IN ANAGRAFICA =====
+   Il modulo della fattura leggeva solo quello che era stato salvato sulla
+   fattura stessa, e per il nome ripiegava sul titolo dell'appuntamento. Via,
+   codice fiscale e partita IVA bisognava riscriverli a mano, quando sono dati
+   che il gestionale ha gia'.
+   Si cerca la scheda partendo dall'appuntamento: prima per email, poi per
+   telefono, infine per nome. Le prime due sono univoche, il nome no \u2014 ci
+   sono omonimi \u2014 quindi si usa per ultimo. */
+function tgAnagraficaDi(c){
+  try{
+    if(!c || typeof clStore!=='function') return null;
+    var st=clStore()||{};
+    var tutti=Object.keys(st).map(function(k){ return st[k]; }).filter(Boolean);
+    if(!tutti.length) return null;
+
+    var em=String(c.email||'').toLowerCase().trim();
+    if(em){
+      var perMail=tutti.filter(function(x){
+        return String(x.email||'').toLowerCase().trim()===em
+            || String(x.email2||'').toLowerCase().trim()===em;
+      })[0];
+      if(perMail) return perMail;
+    }
+
+    var soloCifre=function(v){ return String(v||'').replace(/\D/g,''); };
+    var tel=soloCifre(c.tel||c.telefono);
+    if(tel.length>=8){
+      var perTel=tutti.filter(function(x){
+        return soloCifre(x.telefono)===tel || soloCifre(x.telefono2)===tel;
+      })[0];
+      if(perTel) return perTel;
+    }
+
+    var norm=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z]/g,''); };
+    var nn=norm(c.cliente||c.titolo);
+    if(nn.length>=6){
+      var perNome=tutti.filter(function(x){
+        var a=norm((x.cognome||'')+(x.nome||''));
+        var b=norm((x.nome||'')+(x.cognome||''));
+        return a===nn || b===nn;
+      });
+      if(perNome.length===1) return perNome[0];   /* un solo omonimo: sicuro */
+    }
+  }catch(e){}
+  return null;
+}
+
+/* L'indirizzo in una riga sola, come lo vuole la fattura. */
+function tgIndirizzoDi(a){
+  if(!a) return '';
+  var pezzi=[];
+  var ind=(Array.isArray(a.indirizzi) && a.indirizzi.length) ? a.indirizzi[a.indirizzi.length-1] : null;
+  var via=(ind && ind.via) || a.via || '';
+  var civ=(ind && ind.civico) || a.civico || '';
+  var cap=(ind && ind.cap) || a.cap || '';
+  var citta=(ind && ind.citta) || a.citta || '';
+  var prov=(ind && ind.prov) || a.prov || '';
+  if(via) pezzi.push((String(via)+' '+String(civ)).trim());
+  var riga2=[cap, citta].filter(Boolean).join(' ');
+  if(prov) riga2 += (riga2?' ':'')+'('+prov+')';
+  if(riga2) pezzi.push(riga2);
+  return pezzi.join(' \u2014 ').trim();
+}
+
 function tgApri(id){
   var c=tgById(id);
   if(!c){ alert('Appuntamento non trovato.'); return; }
@@ -26866,7 +26995,24 @@ function tgRender(){
   var c=tgById(_tgId); if(!c) return;
   var f=c.fatturaTag||{};
   var v=tgVeicoloDa(c.veicolo||'');
-  var g=function(k, fb){ return (f[k]!=null && f[k]!=='') ? f[k] : (fb||''); };
+  /* Quello che e' stato scritto sulla fattura vince sempre: se qualcuno ha
+     corretto un indirizzo qui, non deve tornare quello vecchio. L'anagrafica
+     riempie solo i campi ancora vuoti. */
+  var _ana=(typeof tgAnagraficaDi==='function')?tgAnagraficaDi(c):null;
+  var _daAna={};
+  if(_ana){
+    _daAna.nome = (_ana.business && _ana.ragSociale)
+      ? String(_ana.ragSociale)
+      : ((String(_ana.cognome||'')+' '+String(_ana.nome||'')).trim());
+    _daAna.indirizzo = tgIndirizzoDi(_ana);
+    _daAna.cf   = String(_ana.cf||'');
+    _daAna.piva = String(_ana.piva||'');
+  }
+  var g=function(k, fb){
+    if(f[k]!=null && f[k]!=='') return f[k];
+    if(_daAna[k]) return _daAna[k];
+    return (fb||'');
+  };
   var lbl='display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;';
   var inp='width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;box-sizing:border-box;';
   var t=tgTotali();
@@ -27009,13 +27155,23 @@ function tgAnnulla(id){
   var f=c.fatturaTag, et='n. '+f.numero+'/'+f.anno;
   if(!confirm('Annullare la fattura tagliando '+et+'?\n\nConferma 1 di 2.')) return;
   if(!confirm('Annullare la fattura '+et+' intestata a '+(f.nome||'')+'?\n\nIl numero '+f.numero+' torner\u00e0 disponibile.')) return;
-  var list=ccLoad(), i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
+  /* ===== L'ANNULLAMENTO NON VENIVA SALVATO =====
+     Qui la variabile _f e' la fattura, ma poco sotto la si usava come se
+     fosse l'elenco: "_f.salva(list)" chiamava un metodo che non esiste.
+     L'errore veniva inghiottito, la fattura restava col suo numero e non si
+     poteva rifare. Serve la fonte vera \u2014 calendario o archivio interventi \u2014
+     che e' quella che tgListaFonte sa restituire. */
+  var _fonte=tgListaFonte();
+  var list=_fonte.list, i=list.findIndex(function(x){ return x.id===id; });
+  if(i<0){ alert('Non trovo pi\u00f9 l\u2019intervento di questa fattura.'); return; }
   var st=(list[i].fattureTagAnnullate||[]);
   st.push({ numero:f.numero, anno:f.anno, data:f.data, annullataIl:new Date().toISOString().slice(0,10) });
   list[i].fattureTagAnnullate=st;
   delete f.numero; delete f.anno; delete f.data;
-  list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
-  try{ ccSync(list[i]); }catch(e){}
+  list[i].fatturaTag=f;
+  try{ _fonte.salva(list); }catch(e){ alert('Non sono riuscito a salvare l\u2019annullamento: '+(e&&e.message||e)); return; }
+  if(_fonte.upsert) try{ _fonte.upsert(list[i]); }catch(e){}
+  try{ if(typeof ccSync==='function') ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
   tgRender();
 }
