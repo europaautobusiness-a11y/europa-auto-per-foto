@@ -17226,6 +17226,35 @@ function pvInviaMail(){
    amministrazione@, quindi li leggeva Davide e basta.
    Invii separati: se una casella rifiuta, l'altra riceve lo stesso. */
 var PM_MAIL_INTERNE = ['amministrazione@europaautosrl.it', 'vendita@europaautosrl.it'];
+/* ===== QUANTO DURA IL LINK DEL CLIENTE =====
+   Le 48 ore partono da quando il link viene generato (rec.linkTs), non da
+   quando il cliente lo apre. Erano scritte a mano in cinque punti diversi:
+   la scadenza mostrata in concessionaria, il testo della mail, il conto alla
+   rovescia sulla pagina, il blocco all'apertura e quello del vecchio
+   percorso. Cambiarne una sola voleva dire farne uscire cinque diverse.
+   Da qui in avanti si cambia solo questo numero, e il permesso su Supabase
+   (perizia-firma-cliente.sql) va tenuto allineato. */
+var PM_LINK_ORE = 48;
+function pmLinkDurataMs(){ return PM_LINK_ORE*3600*1000; }
+function pmLinkScadenzaTs(rec){
+  var t=rec && Number(rec.linkTs);
+  return (t>0) ? (t + pmLinkDurataMs()) : 0;
+}
+/* Senza linkTs non e' mai stato generato un link: la pagina non va aperta.
+   Prima passava, il cliente compilava tutto e poi il database rifiutava la
+   firma \u2014 lavoro buttato senza spiegazione. */
+function pmLinkScaduto(rec){
+  var sc=pmLinkScadenzaTs(rec);
+  if(!sc) return true;
+  return Date.now() > sc;
+}
+function pmLinkScadutoHTML(){
+  return '<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">'
+    +'<div style="font-size:54px;">\u23f1\ufe0f</div>'
+    +'<h1 style="font-size:20px;color:#0f172a;">Link scaduto</h1>'
+    +'<p style="color:#64748b;font-size:15px;line-height:1.6;">Il collegamento per compilare la perizia \u00e8 valido '+PM_LINK_ORE+' ore.<br>'
+    +'Ci contatti e gliene mandiamo uno nuovo.</p></div>';
+}
 /* ===== QUANDO UNA PERIZIA E' FIRMATA =====
    Una sola risposta per tutto il gestionale. La lista Permute e la scheda del
    contratto rispondevano in modo diverso: la prima guardava solo il disegno
@@ -17845,14 +17874,14 @@ function pmLinkCliente(){
   /* Il link non ha piu' bisogno del foglio: la pagina del cliente legge da
      Supabase e l'email parte da Resend. */
   var box=document.getElementById('pm-linkbox');
-  if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; var eml=document.getElementById('pm-link-email'); if(eml && !eml.value){ if(_pm.rec&&_pm.rec.email) eml.value=_pm.rec.email; } var sc=document.getElementById('pm-link-scad'); if(sc) sc.textContent='Il link scade il '+pmFmtDataOra(rec.linkTs+48*3600*1000)+' (48 ore).'; box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
+  if(box){ var inp=document.getElementById('pm-linkurl'); if(inp) inp.value=url; var eml=document.getElementById('pm-link-email'); if(eml && !eml.value){ if(_pm.rec&&_pm.rec.email) eml.value=_pm.rec.email; } var sc=document.getElementById('pm-link-scad'); if(sc) sc.textContent='Il link scade il '+pmFmtDataOra(pmLinkScadenzaTs(rec))+' ('+PM_LINK_ORE+' ore).'; box.style.display='block'; box.scrollIntoView({behavior:'smooth'}); }
 }
 function pmInviaLinkEmail(){
   var inp=document.getElementById('pm-linkurl'); var emEl=document.getElementById('pm-link-email'); var st=document.getElementById('pm-link-stato');
   if(!inp||!inp.value){ if(st)st.textContent='Genera prima il link.'; return; }
   var em=emEl?emEl.value:''; if(!em){ if(st)st.textContent='Inserisci l\'email del cliente.'; return; }
   var cliente=(document.getElementById('pm_cliente')||{}).value||'';
-  var scadTs=(_pm.rec&&_pm.rec.linkTs?_pm.rec.linkTs:Date.now())+48*3600*1000;
+  var scadTs=pmLinkScadenzaTs(_pm.rec) || (Date.now()+pmLinkDurataMs());
   var scad=pmFmtDataOra(scadTs);
   if(st) st.textContent='Invio in corso\u2026';
 
@@ -17906,14 +17935,7 @@ function pmClientOpen(id){
      regola lascia leggere soltanto le righe che hanno un link generato. */
   var _mostra=function(rec){
     if(!rec){ ov.firstChild.textContent='Perizia non trovata o link non pi\u00f9 valido.'; return; }
-    if(rec.linkTs && (Date.now() > (Number(rec.linkTs)+48*3600*1000))){
-      ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">'
-        +'<div style="font-size:54px;">\u23f1\ufe0f</div>'
-        +'<h1 style="font-size:20px;color:#0f172a;">Link scaduto</h1>'
-        +'<p style="color:#64748b;font-size:15px;line-height:1.6;">Il collegamento per compilare la perizia \u00e8 valido 48 ore.<br>'
-        +'Ci contatti e gliene mandiamo uno nuovo.</p></div>';
-      return;
-    }
+    if(pmLinkScaduto(rec)){ ov.innerHTML=pmLinkScadutoHTML(); return; }
     pmClientRender(ov, rec);
   };
   /* Il collegamento si crea qui, senza dipendere da sbClient: quella funzione
@@ -17957,7 +17979,7 @@ function pmClientOpenDaFoglio(id, ov){
     clearTimeout(to); try{delete window[cb];}catch(e){}
     var rec=Array.isArray(data)?data.filter(function(r){return r&&String(r.id)===String(id);})[0]:null;
     if(!rec){ ov.firstChild.textContent='Perizia non trovata o link non più valido.'; return; }
-    if(rec.linkTs && (Date.now() > (Number(rec.linkTs)+48*3600*1000))){ ov.innerHTML='<div style="max-width:560px;margin:0 auto;padding:60px 24px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"><div style="font-size:52px;">⏱️</div><h1 style="font-size:22px;color:#b91c1c;">Link scaduto</h1><p style="color:#475569;font-size:15px;">Questo link è scaduto (validità 48 ore). Contatta Europa Auto per riceverne uno nuovo.</p></div>'; return; }
+    if(pmLinkScaduto(rec)){ ov.innerHTML=pmLinkScadutoHTML(); return; }
     pmClientRender(ov, rec);
   };
   s.src=GS_URL+'?sheet='+encodeURIComponent(PERMUTE_SHEET)+'&callback='+cb;
@@ -18023,7 +18045,7 @@ function pmClientSaveDraft(){
 function pmClientClearDraft(){ try{ localStorage.removeItem('ea_pmcl_draft_'+(_pmcl&&_pmcl.rec?_pmcl.rec.id:'')); }catch(e){} if(window._pmclSaveTimer){ clearInterval(window._pmclSaveTimer); window._pmclSaveTimer=null; } }
 function pmClientCountdown(linkTs){
   if(!linkTs) return; var el=document.getElementById('pmcl-countdown'); if(!el) return; el.style.display='block';
-  var scad=Number(linkTs)+48*3600*1000;
+  var scad=Number(linkTs)+pmLinkDurataMs();
   var upd=function(){ var d=scad-Date.now(); if(d<=0){ el.innerHTML='⏱️ Link scaduto'; return; } var hh=Math.floor(d/3600000), mm=Math.floor((d%3600000)/60000); el.innerHTML='⏱️ Tempo per completare: <span style="font-size:19px;">'+hh+'h '+(mm<10?'0':'')+mm+'m</span>'; };
   upd(); if(window._pmclTimer) clearInterval(window._pmclTimer); window._pmclTimer=setInterval(upd, 30000);
 }
@@ -18093,6 +18115,17 @@ function pmClientValida(){
 }
 function pmClientSubmit(){
   var es=document.getElementById('pmcl-esito');
+  /* La scadenza si controllava solo all'apertura: chi apriva la pagina alla
+     quarantasettesima ora e la compilava con calma poteva premere Firma a
+     link gia' scaduto. La pagina diceva fatto e il database rifiutava. */
+  try{
+    if(_pmcl && _pmcl.rec && typeof pmLinkScaduto==='function' && pmLinkScaduto(_pmcl.rec)){
+      var _ov=document.getElementById('pm-client');
+      if(_ov) _ov.innerHTML=pmLinkScadutoHTML();
+      else if(es) es.innerHTML='\u23f1\ufe0f Il link \u00e8 scaduto. Ci contatti e gliene mandiamo uno nuovo.';
+      return;
+    }
+  }catch(e){}
   var err=pmClientValida();
   if(err){ if(es)es.innerHTML='⚠️ '+pmEsc(err.msg); var elx=document.getElementById(err.id); if(elx){ elx.style.borderColor='#dc2626'; if(elx.scrollIntoView)elx.scrollIntoView({behavior:'smooth',block:'center'}); try{elx.focus();}catch(e){} } return; }
   /* Il codice via email non si chiede piu': arrivava nella stessa casella dove
@@ -18604,9 +18637,126 @@ function mzInit(){
   try{ if(typeof fnSupaLoad==='function') fnSupaLoad(); }catch(e){}
 }
 
+/* ===== CARTELLINA CARTACEA =====
+   La cartellina la prepara la contabilita', a mano, e finora l'unico modo di
+   sapere se una era gia' fatta era andare a guardare nell'armadio. La spunta
+   la mette solo chi le fa; tutti gli altri leggono lo stato e basta.
+   Il dato sta sul veicolo: { fatta, ts, da, daNome }. */
+function mzCartellinaPuo(){
+  try{
+    return (typeof isAdmin==='function' && isAdmin())
+        || (typeof eaIsContabilita==='function' && eaIsContabilita());
+  }catch(e){ return false; }
+}
+function mzCartellinaFatta(a){ return !!(a && a.cartellina && a.cartellina.fatta===true); }
+function mzCartellinaQuando(a){
+  try{
+    var t=a && a.cartellina && a.cartellina.ts;
+    if(!t) return '';
+    var d=new Date(t);
+    return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear();
+  }catch(e){ return ''; }
+}
+/* Il pallino sulla scheda in elenco: si vede senza aprire niente. */
+function mzCartellinaBadge(a){
+  var ok=mzCartellinaFatta(a);
+  var q=ok?mzCartellinaQuando(a):'';
+  var chi=(ok && a.cartellina && (a.cartellina.daNome||a.cartellina.da))||'';
+  var tit=ok ? ('Cartellina creata'+(q?(' il '+q):'')+(chi?(' da '+chi):'')) : 'Cartellina cartacea ancora da creare';
+  return '<span title="'+mzEsc(tit)+'" style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:9px;'
+    +(ok?'background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;':'background:#fffbeb;color:#92400e;border:1px solid #fde68a;')
+    +'">\uD83D\uDDC2\uFE0F '+(ok?'Cartellina':'Da creare')+'</span>';
+}
+/* Salvataggio immediato: non passa da mzSalva, che pretende tutti i campi
+   obbligatori. Mettere una spunta non deve costringere a completare la
+   scheda di un'auto arrivata ieri. */
+function mzCartellinaImposta(id, fatta){
+  if(!mzCartellinaPuo()){ alert('La cartellina la segna solo la contabilit\u00e0.'); return; }
+  try{
+    var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; });
+    if(i<0){ alert('Salva prima l\u2019auto, poi potrai segnare la cartellina.'); return; }
+    var a=l[i];
+    if(fatta){
+      a.cartellina={ fatta:true, ts:Date.now(),
+        da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+        daNome:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+    } else {
+      /* Non si cancella la storia: si registra chi l'ha rimessa da fare. */
+      a.cartellina={ fatta:false, ts:Date.now(),
+        da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+        daNome:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+    }
+    a.updatedAt=Date.now();
+    mzSave(l);
+    try{ if(typeof mzSupaUpsert==='function') mzSupaUpsert(a); }catch(e){}
+    var box=document.getElementById('mz-cartellina-box');
+    if(box) box.outerHTML=mzCartellinaBox(a);
+    try{ if(typeof mzRender==='function') mzRender(); }catch(e){}
+    if(typeof tcToastNew==='function'){
+      tcToastNew(fatta?'\uD83D\uDDC2\uFE0F Cartellina segnata come creata':'\uD83D\uDDC2\uFE0F Cartellina rimessa fra quelle da creare', true);
+    }
+  }catch(e){}
+}
+/* Il riquadro dentro la scheda del veicolo. */
+function mzCartellinaBox(a){
+  var esiste=!!(a && a.id && (typeof mzById!=='function' || mzById(a.id)));
+  var ok=mzCartellinaFatta(a);
+  var q=ok?mzCartellinaQuando(a):'';
+  var chi=(ok && a && a.cartellina && (a.cartellina.daNome||a.cartellina.da))||'';
+  var h='<div id="mz-cartellina-box" style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:10px;">'
+    +'<div style="font-weight:800;font-size:12px;color:#1a4fa0;text-transform:uppercase;margin-bottom:6px;">\uD83D\uDDC2\uFE0F Cartellina cartacea</div>';
+
+  if(!esiste){
+    h+='<div style="font-size:12px;color:#94a3b8;">Salva prima l\u2019auto: la cartellina si segna dopo.</div></div>';
+    return h;
+  }
+
+  if(mzCartellinaPuo()){
+    var b=function(val,txt,col,bg){
+      var on=(ok===val);
+      return '<button type="button" onclick="mzCartellinaImposta(\''+a.id+'\','+(val?'true':'false')+')" '
+        +'style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(on?col:'#e2e8f0')+';background:'+(on?bg:'#fff')
+        +';color:'+(on?col:'#94a3b8')+';font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">'+txt+'</button>';
+    };
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+      +b(true,'\u2713 Creata','#166534','#f0fdf4')
+      +b(false,'\u2717 Da creare','#92400e','#fffbeb')
+      +'</div>';
+    h+='<div style="font-size:11px;color:#94a3b8;margin-top:5px;">'
+      +(ok?('Segnata'+(q?(' il '+q):'')+(chi?(' da '+mzEsc(chi)):'')+'. Si salva subito, senza premere Salva auto.')
+          :'Si salva subito, senza premere Salva auto.')
+      +'</div>';
+  } else {
+    /* Sola lettura per tutti gli altri: sanno com'e' messa senza poterla toccare. */
+    h+= ok
+      ? ('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;font-size:13px;color:#166534;font-weight:700;">'
+         +'\u2705 Cartellina creata'+(q?('<span style="font-weight:600;color:#15803d;"> il '+q+'</span>'):'')
+         +(chi?('<span style="font-weight:600;color:#15803d;"> da '+mzEsc(chi)+'</span>'):'')+'</div>')
+      : ('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;font-size:13px;color:#92400e;font-weight:700;">'
+         +'\uD83D\uDDC2\uFE0F Cartellina da creare</div>');
+    h+='<div style="font-size:11px;color:#94a3b8;margin-top:5px;">La segna la contabilit\u00e0.</div>';
+  }
+  h+='</div>';
+  return h;
+}
+
 function mzRenderFiltri(){
   var c=document.getElementById('mz-filtri'); if(!c) return;
   var opz=[['disponibile','Disponibili'],['opzionata','Opzionate'],['venduta','Vendute'],['permuta','Permute'],['nlt','\ud83d\udd11 Noleggio LT'],['tutte','Tutte']];
+  /* La lista del lavoro arretrato serve a chi le cartelline le prepara: agli
+     altri sarebbe un filtro in piu' da leggere e mai da usare. Si contano
+     solo i veicoli ancora in casa: su quelli venduti la cartellina o e' gia'
+     in archivio o non si fa piu'. */
+  try{
+    if(typeof mzCartellinaPuo==='function' && mzCartellinaPuo()){
+      var _mancanti=0;
+      (typeof mzLoad==='function'?mzLoad():[]).forEach(function(a){
+        if(!a || a.stato==='venduta') return;
+        if(!mzCartellinaFatta(a)) _mancanti++;
+      });
+      opz.push(['cartellina','\ud83d\uddc2\ufe0f Cartelline da creare'+(_mancanti?(' ('+_mancanti+')'):'')]);
+    }
+  }catch(e){}
   c.innerHTML=opz.map(function(o){
     var on=_mzFiltro===o[0];
     return '<button onclick="mzFiltro(\''+o[0]+'\')" style="padding:7px 12px;border-radius:20px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+o[1]+'</button>';
@@ -18874,6 +19024,7 @@ function mzRender(){
        resta 'disponibile'). Senza questo caso finiva nel confronto generico
        qui sotto e la scheda restava vuota pur contando i veicoli. */
     else if(_mzFiltro==='nlt'){ /* la lista e' gia' filtrata sopra */ }
+    else if(_mzFiltro==='cartellina'){ if(a.stato==='venduta' || mzCartellinaFatta(a)) return false; }
     else if(_mzFiltro!=='tutte' && a.stato!==_mzFiltro) return false;
     if(q){ var blob=((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')+' '+(a.targa||'')+' '+(a.telaio||'')+' '+(a.numero_interno||'')+' '+(a.colore||'')).toLowerCase(); if(blob.indexOf(q)<0) return false; }
     return true;
@@ -18924,7 +19075,8 @@ function mzRender(){
     var _nf=(a.foto&&a.foto.length)||0;
     var _fH='<span title="'+_nf+' foto caricate" style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:9px;'
       +(_nf?'background:#f1f5f9;color:#64748b;':'background:#fef2f2;color:#991b1b;')+'">\uD83D\uDCF7 '+_nf+'</span>';
-    h+='<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">'+regBadges+' '+_dkH+_fH+'</div>';
+    var _carH=(typeof mzCartellinaBadge==='function')?mzCartellinaBadge(a):'';
+    h+='<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">'+regBadges+' '+_dkH+_fH+_carH+'</div>';
     var _cbA=a.cambio?(/autom/i.test(a.cambio)?'Aut':'Man'):'';
     h+='<div style="font-size:13px;color:#475569;margin-top:3px;line-height:1.3;">'+(_cbA?('<b>'+_cbA+'</b> · '):'')+(a.anno||'—')+' · '+(a.km?((''+a.km).replace(/\B(?=(\d{3})+(?!\d))/g,'.')+' km'):'— km')+'</div>';
     var badges=[]; if(a.alimentazione)badges.push(a.alimentazione); if(a.colore)badges.push(a.colore);
@@ -19810,6 +19962,8 @@ function mzForm(id){
       +'<div style="font-size:11px;color:#94a3b8;margin-top:5px;">Rilevata in perizia. <b>In arrivo</b> = il venditore deve ancora consegnarla: va sollecitata prima della vendita.</div>'
       +'</div>';
   })();
+  /* Cartellina cartacea: la spunta la mette la contabilita', gli altri leggono. */
+  try{ h+=mzCartellinaBox(a||{ id:_mzId }); }catch(e){}
   h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'+docPannelloHTML('auto', _mzId, 'mzdoc', null, null, null, true)+'</div>';
   h+='<div id="mz-doc-pratiche"></div>';
   /* Il dettaglio della vendita compare solo se l'auto e' effettivamente venduta */
