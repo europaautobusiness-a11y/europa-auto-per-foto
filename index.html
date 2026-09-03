@@ -7807,6 +7807,35 @@ function pSalva() {
   if (PS.fin === 'SI' && !valore) errsForm.push('Valore Bene');
   if (!PS.fonte) errsForm.push('Come ci ha trovato il cliente');
 
+  /* ===== LA DELIBERA VINCE =====
+     Se per questo cliente esiste una delibera confermata, i suoi numeri sono
+     quelli veri: sono cio' che la finanziaria ha effettivamente caricato.
+     Un valore scritto a mano che se ne discosta e' quasi sempre una svista, e
+     produrrebbe una provvigione calcolata su dati smentiti.
+     Non si segnala soltanto: si riportano i campi ai valori della delibera e
+     si dice cosa e' stato corretto. Poi il calcolo riparte da li'. */
+  try{
+    var _dd=(typeof pDiffDelibera==='function')?pDiffDelibera():null;
+    if(_dd && _dd.d && _dd.d.confermata && _dd.diff && _dd.diff.length){
+      var _set=function(id,v){
+        var el=document.getElementById(id);
+        if(el && v!==null && v!==undefined && v!=='') el.value=v;
+      };
+      var _corretti=_dd.diff.map(function(x){ return x[0]+': '+x[1]+' \u2192 '+x[2]; });
+      if(_dd.campi['pTan'])  _set('pTan', (typeof pTanVicino==='function')?pTanVicino(_dd.d.tan):_dd.d.tan);
+      if(_dd.campi['pComm']) _set('pComm', _dd.d.istruttoria);
+      if(_dd.campi['pValore']){
+        if(_dd.d.valoreVeicolo!=null) _set('pValore', _dd.d.valoreVeicolo);
+        if(_dd.d.anticipo!=null)      _set('pAcconto', _dd.d.anticipo);
+      }
+      alert('Ho riportato i valori a quelli della delibera.\n\n\u2022 '+_corretti.join('\n\u2022 ')
+        +'\n\nLa delibera \u00e8 quello che la finanziaria ha caricato davvero: '
+        +'la provvigione si calcola su quei numeri.\n\nControlla il risultato e salva di nuovo.');
+      try{ if(typeof pCalcola==='function') pCalcola(); }catch(e){}
+      return;
+    }
+  }catch(e){}
+
   if (errsForm.length) {
     alert('⚠ Campi obbligatori mancanti: ' + errsForm.join(', '));
     return;
@@ -7869,7 +7898,33 @@ function pSalva() {
   else if (res.tipo === 'sotto') { entry.provv = res.provv; }
   else { entry.compass = res.compass; entry.dbAvvera = res.dbAvvera; entry.bestProvv = res.bestProvv; }
 
-  if(existingEntry){const idx=reg.findIndex(x=>x.id===entry.id);if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
+  /* ===== UNA SOLA RIGA PER CONTRATTO =====
+     Alla conferma della delibera il gestionale crea gia' la riga della
+     provvigione, collegata al contratto. Se poi Rudy la calcola a mano, il
+     collegamento non veniva ereditato e nasceva una seconda riga: la stessa
+     vendita compariva due volte, una a zero e una col valore giusto.
+     Qui, prima di aggiungere, si cerca la riga di quel contratto \u2014 per
+     collegamento se c'e', altrimenti per cliente e modello \u2014 e la si
+     aggiorna invece di duplicarla. */
+  /* existingEntry e' const: la riga adottata si tiene a parte */
+  var _adottata = existingEntry || null;
+  if(!existingEntry && !entry.cvId){
+    var _gemella=reg.filter(function(r){
+      if(!r || r.id===entry.id) return false;
+      var _stessoCli=String(r.cliente||'').trim().toUpperCase()===String(entry.cliente||'').trim().toUpperCase();
+      var _stessaAuto=String(r.modello||'').trim().toUpperCase()===String(entry.modello||'').trim().toUpperCase();
+      return _stessoCli && _stessaAuto && r.bozza===true;
+    })[0];
+    if(_gemella){
+      entry.id=_gemella.id;
+      entry.cvId=_gemella.cvId||null;
+      entry.data=_gemella.data||entry.data;
+      entry.mese=_gemella.mese||entry.mese;
+      _adottata=_gemella;
+    }
+  }
+
+  if(_adottata){const idx=reg.findIndex(x=>x.id===entry.id);if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
   entry.updatedAt = Date.now();
   _pEditingId=null;
   pSaveReg(reg);
@@ -29268,11 +29323,15 @@ function cvDeliberaSalva(id){
     }
 
     if(_avvisi.length){
-      alert('I conti della delibera non tornano con il contratto.\n\n\u2022 '
+      /* Qui si blocca. Una delibera con i conti sbagliati fa nascere una
+         provvigione sbagliata, e se ne accorge il mese dopo chi paga: e'
+         piu' facile correggere adesso che rifare un conteggio gia' chiuso. */
+      alert('Non posso confermare: i conti della delibera non tornano con il contratto.\n\n\u2022 '
         +_avvisi.join('\n\n\u2022 ')
         +'\n\nSe il cliente finanzia tutto e alla finanziaria hai dichiarato un valore '
-        +'pi\u00f9 alto, ricordati di mettere l\u2019anticipo che compensa: la differenza deve '
-        +'tornare all\u2019importo finanziato.\n\nControlla prima di confermare.');
+        +'pi\u00f9 alto, metti l\u2019anticipo che compensa: valore meno anticipo deve fare '
+        +'l\u2019importo finanziato.\n\nCorreggi i valori e riprova.');
+      return;
     }
   }catch(e){}
 
@@ -29347,10 +29406,44 @@ function cvDeliberaSalva(id){
   if(typeof tcToastNew==='function') tcToastNew('\u2705 Delibera registrata'+(_nuovoSt?(' \u2014 '+_nuovoSt):''),true);
 }
 function cvDeliberaAnnulla(id){
-  if(!confirm('Annullare la conferma della delibera? La pratica torner\u00e0 tra quelle in attesa.')) return;
+  /* ===== ANNULLARE LA DELIBERA ANNULLA LA PROVVIGIONE =====
+     La provvigione nasce dalla delibera e si calcola sui suoi numeri. Se la
+     delibera viene annullata, quella riga resta appesa a un documento che non
+     esiste piu': a fine mese si paga un compenso su un finanziamento mai
+     caricato.
+     Si toglie quindi anche la riga, dicendo prima quanto vale \u2014 cosi' chi
+     annulla sa cosa sta portando via, e non lo scopre dal conteggio. */
+  var _rp=null;
+  try{ if(typeof pProvvDiCv==='function') _rp=pProvvDiCv(id); }catch(e){}
+
+  var _avviso='Annullare la conferma della delibera? La pratica torner\u00e0 tra quelle in attesa.';
+  if(_rp && _rp.r){
+    var _imp=(_rp.r.provvigione!=null && _rp.r.provvigione!=='')
+      ? ((typeof cvEuro==='function')?cvEuro(_rp.r.provvigione):(_rp.r.provvigione+' \u20ac'))
+      : null;
+    _avviso += '\n\nViene tolta anche la provvigione collegata'
+      + (_imp?(' da '+_imp):'') + '.';
+  }
+  if(!confirm(_avviso)) return;
+
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
   if(list[i].finDelibera) list[i].finDelibera.confermata=false;
   list[i].updatedAt=Date.now();
+
+  /* La riga se ne va con le lapidi, altrimenti al prossimo scambio con il
+     cloud tornerebbe su come e' gia' successo in passato. */
+  if(_rp && _rp.r && _rp.r.id!=null){
+    try{
+      var _id=_rp.r.id;
+      pSaveReg(pLoadReg().filter(function(r){ return String(r.id)!==String(_id); }));
+      try{ _pRegCache=_pRegCache.filter(function(r){ return String(r.id)!==String(_id); }); }catch(e){}
+      if(typeof pTombAdd==='function') pTombAdd(_id);
+      if(typeof pSupaDelete==='function') pSupaDelete(_id);
+      if(typeof pRenderReg==='function') pRenderReg();
+      if(typeof pAggStats==='function') pAggStats();
+    }catch(e){ try{ console.log('provvigione da annullare:', e && e.message || e); }catch(e2){} }
+  }
+
   try{ cvLogRegistra(null, list[i], 'delibera_annullata'); }catch(e){}
   if(typeof cvVendAvanzaStato==='function') cvVendAvanzaStato(list[i]);
   cvSave(list); if(typeof cvSupaUpsert==='function') cvSupaUpsert(list[i]);
