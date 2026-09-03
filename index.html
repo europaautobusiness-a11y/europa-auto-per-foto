@@ -15323,11 +15323,22 @@ document.addEventListener('DOMContentLoaded',function(){
     /* Fattura tagliando: solo sugli interventi su auto */
     if((c.tipo||'')==='intervento'){
       var _ft=c.fatturaTag||{};
-      rows+='<button onclick="tgApri(\''+c.id+'\')" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid '
-        +(_ft.numero?'#16a34a':'#1a4fa0')+';background:'+(_ft.numero?'#f0fdf4':'#eff6ff')+';color:'+(_ft.numero?'#166534':'#1a4fa0')
-        +';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
-        +(_ft.numero?('\uD83D\uDDA8 Fattura n. '+_ft.numero+'/'+_ft.anno+' \u2014 scarica o annulla'):'\uD83D\uDD27 Genera fattura tagliando')
-        +'</button>';
+      if(_ft.numero){
+        /* Il venditore preme e la fattura esce: la domanda sul pagamento
+           arriva qui, non dentro il modulo che non deve nemmeno aprire. */
+        var _pg=c.fatturaTagPagamento||null;
+        var _pgM=(_pg&&_pg.modo&&typeof eaPagModo==='function')?eaPagModo(_pg.modo):null;
+        rows+='<button onclick="tgScarica(\''+c.id+'\')" style="width:100%;margin-top:8px;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">'
+          +'\uD83D\uDDA8\uFE0F Scarica fattura n. '+_ft.numero+'/'+_ft.anno+'</button>';
+        rows+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">'
+          +(_pgM?('<span style="font-size:11.5px;font-weight:800;color:'+_pgM.col+';background:'+_pgM.bg+';border:1px solid '+_pgM.br+';padding:4px 9px;border-radius:7px;">'+_pgM.ic+' '+_pgM.et+'</span>'
+                  +'<a onclick="tgScarica(\''+c.id+'\',true)" style="font-size:11px;color:#64748b;cursor:pointer;text-decoration:underline;">modifica</a>'):'')
+          +'<a onclick="tgApri(\''+c.id+'\')" style="font-size:11px;color:#64748b;cursor:pointer;text-decoration:underline;margin-left:auto;">apri o annulla la fattura</a>'
+          +'</div>';
+      } else {
+        rows+='<button onclick="tgApri(\''+c.id+'\')" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">'
+          +'\uD83D\uDD27 Genera fattura tagliando</button>';
+      }
     }
     if(c.email) rows+='<div style="font-size:13px;margin:5px 0;"><b>Email:</b> '+ccEsc(c.email)+'</div>';
     if(c.tel) rows+='<div style="font-size:13px;margin:5px 0;"><b>Telefono:</b> '+ccEsc(c.tel)+'</div>';
@@ -15410,6 +15421,14 @@ document.addEventListener('DOMContentLoaded',function(){
       nota: document.getElementById('cc-nota').value.trim(),
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
     };
+    /* Solo sui nuovi: in modifica un campo svuotato apposta resta svuotato. */
+    try{
+      if(!(typeof _ccEditId!=='undefined' && _ccEditId) && categoria!=='task'
+         && !c.veicolo && typeof tgVeicoloAcquistato==='function'){
+        var _va=tgVeicoloAcquistato(c);
+        if(_va.daAcquisto) c.veicolo=tgVeicoloTesto(_va);
+      }
+    }catch(e){}
     var list = ccLoad();
     if(typeof _ccEditId!=='undefined' && _ccEditId){ var _ei=-1; for(var _k=0;_k<list.length;_k++){ if(list[_k].id===_ccEditId){ _ei=_k; break; } } if(_ei>=0){ c.id=_ccEditId; c.avvisato=list[_ei].avvisato; c.solleciti=list[_ei].solleciti; list[_ei]=c; } else { list.push(c); } _ccEditId=null; } else { list.push(c); }
     ccSave(list); ccSync(c);
@@ -15468,6 +15487,9 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccMailAnnullo(c){
     try{
       if(!c) return;
+      /* Un task e' lavoro interno: se per caso si porta dietro un'email
+         (campo rimasto compilato), il cliente non c'entra nulla. */
+      if(String(c.categoria||'')==='task') return;
       var em=String(c.email||'').trim();
       if(!em || !/.+@.+\..+/.test(em)) return;
       if(typeof eaInviaMessaggio!=='function') return;
@@ -15504,17 +15526,48 @@ document.addEventListener('DOMContentLoaded',function(){
     }catch(e){ try{ console.log('mail annullo:', e && e.message || e); }catch(e2){} }
   }
 
+  /* Un appuntamento non e' un compito: la domanda deve dire quale delle due
+     cose si sta cancellando, e soprattutto deve avvisare PRIMA che al cliente
+     parte una mail di annullamento. Chi premeva OK non lo sapeva. */
   function ccElimina(id){
-    if (!confirm('Eliminare questo compito?')) return;
     var _c=null;
     try{ _c=ccLoad().filter(function(x){ return x && x.id===id; })[0]||null; }catch(e){}
+    var _task=!!(_c && String(_c.categoria||'')==='task');
+    var _em=_c?String(_c.email||'').trim():'';
+
+    /* Stessa regola di ccMailAnnullo: la mail parte solo se c'e' un indirizzo
+       valido e se l'appuntamento non e' gia' passato. Qui si ricalcola per non
+       promettere un avviso che poi non parte. */
+    var _avvisa=false;
+    if(!_task && _em && /.+@.+\..+/.test(_em)){
+      var _q=String((_c&&_c.data)||'').split('-');
+      if(_q.length===3){
+        var _d=new Date(+_q[0], +_q[1]-1, +_q[2], 23, 59, 59);
+        _avvisa=(_d.getTime()>=Date.now());
+      } else { _avvisa=true; }
+    }
+
+    var _msg=_task?'Eliminare questo compito?':'Eliminare questo appuntamento?';
+    if(_c){
+      var _q2=String(_c.data||'').split('-');
+      var _gg=(_q2.length===3)?(_q2[2]+'/'+_q2[1]+'/'+_q2[0]):String(_c.data||'');
+      var _rig=String(_c.titolo||_c.cliente||'').trim();
+      if(_rig || _gg){
+        _msg+='\n\n'+_rig+((_rig&&_gg)?' \u00b7 ':'')+_gg+(_c.ora?(' alle '+_c.ora):'');
+      }
+      if(_c.veicolo) _msg+='\n'+String(_c.veicolo);
+    }
+    if(_avvisa) _msg+='\n\nAl cliente ('+_em+') verr\u00e0 inviata una email di annullamento.';
+    if (!confirm(_msg)) return;
+
     var list = ccLoad().filter(function(c){ return c.id!==id; });
     ccSave(list);
     try{ ccMailAnnullo(_c); }catch(e){}
     /* la lapide impedisce che torni dal remoto alla prossima sincronizzazione */
     try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
     if (typeof gsDelete === 'function') gsDelete(CC_SHEET, id);
-    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast('Compito eliminato');
+    ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo();
+    ccToast((_task?'Compito eliminato':'Appuntamento eliminato')+(_avvisa?' \u2014 avviso inviato al cliente':''));
   }
 
   /* ===================== Voce (titolo + data/ora) ===================== */
@@ -26707,6 +26760,58 @@ function tgVeicoloDa(testo){
   return out;
 }
 
+/* ===== IL CLIENTE L'AUTO L'HA COMPRATA DA NOI =====
+   Chi porta la macchina per un tagliando quasi sempre l'ha acquistata qui:
+   il veicolo non va cercato a mano, sta gia' su una pratica di vendita.
+   Si aggancia il cliente per email, poi per telefono, poi per nome (per
+   ultimo: gli omonimi esistono) e si prende la pratica piu' recente.
+   Se non si trova nulla i campi restano vuoti e si compilano a mano. */
+function tgVeicoloAcquistato(c){
+  var out={ targa:'', telaio:'', modello:'', dataImm:'', km:'', daAcquisto:false };
+  try{
+    if(!c || typeof cvLoad!=='function') return out;
+    var em=String(c.email||'').toLowerCase().trim();
+    var cif=function(v){ return String(v||'').replace(/\D/g,''); };
+    var tel=cif(c.tel||c.telefono);
+    var norm=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z]/g,''); };
+    var nn=norm(c.cliente||c.titolo);
+    var best=null, bestPeso=-1, bestTs=-1;
+    cvLoad().forEach(function(pr){
+      if(!pr) return;
+      var a=pr.autoSnapshot||{};
+      if(!a.targa && !a.telaio && !a.modello) return;
+      var cl=pr.cliente||{};
+      var ok=false;
+      if(em && (String(cl.email||'').toLowerCase().trim()===em || String(cl.email2||'').toLowerCase().trim()===em)) ok=true;
+      if(!ok && tel.length>=8 && (cif(cl.telefono)===tel || cif(cl.telefono2)===tel)) ok=true;
+      if(!ok && nn.length>=6){
+        var n1=norm((cl.cognome||'')+(cl.nome||'')), n2=norm((cl.nome||'')+(cl.cognome||''));
+        if(n1===nn || n2===nn) ok=true;
+      }
+      if(!ok) return;
+      /* Una pratica consegnata vale piu' di una ancora aperta. */
+      var peso=(String(pr.statoVendita||'')==='consegnato')?1:0;
+      var ts=parseInt(pr.consegnaTs||pr.updatedAt||pr.createdAt||0,10)||0;
+      if(peso>bestPeso || (peso===bestPeso && ts>=bestTs)){ bestPeso=peso; bestTs=ts; best=pr; }
+    });
+    if(best){
+      var a2=best.autoSnapshot||{};
+      out.targa=best.nuovaTarga||a2.targa||'';
+      out.telaio=a2.telaio||'';
+      out.modello=String(a2.modello||'').trim();
+      out.dataImm=a2.dataImm||'';
+      out.km=a2.km||'';
+      out.daAcquisto=!!(out.targa||out.telaio||out.modello);
+    }
+  }catch(e){}
+  return out;
+}
+/* Il veicolo scritto in una riga sola, come va sull'appuntamento. */
+function tgVeicoloTesto(v){
+  if(!v) return '';
+  return ((v.modello||'')+(v.targa?(' '+v.targa):'')).replace(/\s+/g,' ').trim();
+}
+
 function tgNumeroProssimo(){
   var y=tgAnno(), max=0, base=0;
   try{ if(typeof parLoad==='function') base=parseInt((parLoad()['fatturaBaseTagliandi']||0),10)||0; }catch(e){}
@@ -27052,6 +27157,24 @@ function tgApri(id){
   if(!(f.righe && f.righe.length) && c.nota && _tgRighe[0] && !_tgRighe[0].cod){
     _tgRighe[0].desc = String(c.nota).toUpperCase().slice(0,60);
   }
+  /* Veicolo mancante sull'appuntamento: lo si prende dalla pratica di
+     vendita e lo si scrive sull'evento, cosi' compare anche sul calendario
+     e non va ricercato la volta dopo. */
+  try{
+    if(!String(c.veicolo||'').trim() && String(c.categoria||'')!=='task'){
+      var _va=tgVeicoloAcquistato(c), _vt=tgVeicoloTesto(_va);
+      if(_va.daAcquisto && _vt){
+        var _fo=tgListaFonte(), _li=_fo.list;
+        var _ix=_li.findIndex(function(x){ return x.id===id; });
+        if(_ix>=0){
+          _li[_ix].veicolo=_vt; _li[_ix].updatedAt=Date.now();
+          _fo.salva(_li); if(_fo.upsert) try{ _fo.upsert(_li[_ix]); }catch(e2){}
+          try{ if(typeof ccSync==='function') ccSync(_li[_ix]); }catch(e2){}
+          c=_li[_ix];
+        } else { c.veicolo=_vt; }
+      }
+    }
+  }catch(e){}
   var m=document.getElementById('tg-modal');
   if(!m){
     m=document.createElement('div'); m.id='tg-modal';
@@ -27118,6 +27241,21 @@ function tgRender(){
   var c=tgById(_tgId); if(!c) return;
   var f=c.fatturaTag||{};
   var v=tgVeicoloDa(c.veicolo||'');
+  /* L'auto venduta esce dal magazzino: telaio, immatricolazione e km non si
+     trovano piu' li'. Li completa la pratica di vendita del cliente. */
+  try{
+    if(!v.targa || !v.telaio || !v.dataImm || !v.modello){
+      var _va=tgVeicoloAcquistato(c);
+      if(_va.daAcquisto){
+        if(!v.targa)   v.targa=_va.targa;
+        if(!v.telaio)  v.telaio=_va.telaio;
+        if(!v.modello) v.modello=_va.modello;
+        if(!v.dataImm) v.dataImm=_va.dataImm;
+        if(!v.km)      v.km=_va.km;
+        if(_va.targa||_va.telaio) v.daAcquisto=true;
+      }
+    }
+  }catch(e){}
   /* Quello che e' stato scritto sulla fattura vince sempre: se qualcuno ha
      corretto un indirizzo qui, non deve tornare quello vecchio. L'anagrafica
      riempie solo i campi ancora vuoti. */
@@ -27162,7 +27300,7 @@ function tgRender(){
     h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;">'
       +'<div style="font-size:13px;color:#166534;font-weight:700;margin-bottom:8px;">\u2705 Fattura n. '+f.numero+'/'+f.anno+' emessa il '+((f.data||'').split('-').reverse().join('/'))+'</div>'
       +'<div style="display:flex;gap:8px;">'
-      +'<button onclick="tgStampa(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Scarica di nuovo</button>'
+      +'<button onclick="tgScarica(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Scarica di nuovo</button>'
       +'<button onclick="tgAnnulla(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #dc2626;background:#fff;color:#991b1b;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u274c Annulla fattura</button>'
       +'</div></div>';
   } else {
@@ -27192,7 +27330,8 @@ function tgRender(){
   var _daMag = !v.fuoriMagazzino && (v.telaio || v.targa);
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">VEICOLO '
     + (_daMag ? '<span style="font-weight:400;color:#16a34a;">\u2713 trovato in magazzino, correggi se serve</span>'
-              : '<span style="font-weight:400;color:#b45309;">\u26a0\ufe0f auto non in magazzino \u2014 completa telaio e immatricolazione</span>')
+       : (v.daAcquisto ? '<span style="font-weight:400;color:#16a34a;">\u2713 auto acquistata dal cliente, correggi se serve</span>'
+              : '<span style="font-weight:400;color:#b45309;">\u26a0\ufe0f auto non trovata \u2014 completa targa, telaio e immatricolazione</span>'))
     + '</div>';
   h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">'
     +((String(_tgId||'').indexOf('iv_')===0)
@@ -27270,7 +27409,7 @@ function tgGenera(){
   try{ ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('\uD83E\uDDFE Fattura tagliando n. '+num+'/'+y+' generata', true);
   tgRender();
-  tgStampa(_tgId);
+  tgScarica(_tgId);
 }
 
 function tgAnnulla(id){
@@ -27297,6 +27436,70 @@ function tgAnnulla(id){
   try{ if(typeof ccSync==='function') ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('Fattura '+et+' annullata', true);
   tgRender();
+}
+
+/* ===== SCARICO DIRETTO DELLA FATTURA TAGLIANDO =====
+   Dal calendario il venditore non deve riaprire il modulo: preme, gli si
+   chiede come ha pagato il cliente e il documento esce. La modalita' finisce
+   anche sulla fattura stampata, al posto del "Bonifico bancario" di default. */
+function tgTotaleDoc(f){
+  var imp=0;
+  ((f&&f.righe)||[]).forEach(function(r){ imp += tgNum(r.qta)*tgNum(r.prezzo)*(1-tgNum(r.sconto)/100); });
+  imp=Math.round(imp*100)/100;
+  var pct=(f && f.ivaPct!=null)?tgNum(f.ivaPct):TG_IVA_DEF;
+  return Math.round(imp*(1+pct/100)*100)/100;
+}
+function tgScarica(id, forza){
+  var c=tgById(id);
+  if(!c){ alert('Intervento non trovato.'); return; }
+  var f=c.fatturaTag||{};
+  if(!f.numero){ tgApri(id); return; }
+  /* tgStampa e tgTotali leggono le variabili del modulo: qui il modulo non
+     e' stato aperto, quindi si allineano prima di stampare. */
+  _tgId=id;
+  _tgRighe=JSON.parse(JSON.stringify(f.righe||[]));
+  var prec=c.fatturaTagPagamento||null;
+  if(!forza && prec && prec.modo){ tgStampa(id); return; }
+
+  var nome=String(f.nome||c.titolo||c.cliente||'\u2014');
+  var veic=[String(f.modello||''), String(f.targa||'')].filter(Boolean).join(' \u00b7 ') || String(c.veicolo||'\u2014');
+  var tot='\u20ac '+tgEu(tgTotaleDoc(f));
+
+  eaPagChiedi({
+    doc:'\uD83E\uDDFE Fattura tagliando n. '+f.numero+'/'+f.anno,
+    righe:[nome, veic],
+    totale:tot,
+    modoPrec:(prec&&prec.modo)||'',
+    notaPrec:(prec&&prec.nota)||'',
+    onOk:function(rec){
+      try{
+        var _fo=tgListaFonte(), list=_fo.list;
+        var i=list.findIndex(function(x){ return x.id===id; });
+        if(i<0){ alert('Non trovo pi\u00f9 l\u2019intervento.'); return; }
+        if(prec && prec.modo) list[i].fatturaTagPagamento_storico=(list[i].fatturaTagPagamento_storico||[]).concat([prec]);
+        list[i].fatturaTagPagamento=rec;
+        /* la dicitura in fattura segue l'incasso reale */
+        var ff=list[i].fatturaTag||{}; ff.pagamento=eaPagModoEt(rec.modo); list[i].fatturaTag=ff;
+        list[i].updatedAt=Date.now();
+        _fo.salva(list); if(_fo.upsert) try{ _fo.upsert(list[i]); }catch(e){}
+        try{ if(typeof ccSync==='function') ccSync(list[i]); }catch(e){}
+      }catch(e){}
+      eaPagAvvisa({
+        tipoDoc:'la fattura del tagliando',
+        oggetto:'fattura tagliando n. '+f.numero+'/'+f.anno+' \u00b7 '+nome,
+        rec:rec, prec:prec,
+        righe:[
+          ['Fattura','n. '+f.numero+'/'+f.anno+' \u00b7 serie tagliandi'],
+          ['Cliente',nome], ['Veicolo',veic],
+          ['Intervento',String(c.nota||'\u2014')],
+          ['Totale documento',tot]
+        ]
+      });
+      try{ if(typeof tgRender==='function' && document.getElementById('tg-modal')) tgRender(); }catch(e){}
+      try{ if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCE7 '+eaPagModoEt(rec.modo)+' \u2014 avviso inviato ad amministrazione e contabilit\u00e0',true); }catch(e){}
+      tgStampa(id);
+    }
+  });
 }
 
 /* ---- Stampa: ricalca il modulo della fattura di officina ---- */
@@ -29216,83 +29419,65 @@ function cvFatturaAnnulla(id){
   if(typeof cvVendRender==='function') cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('Fattura annullata',true);
 }
-/* ===== INCASSO FATTURA: come ha pagato il cliente =====
-   Quando si scarica una fattura GIA' emessa (tipicamente il venditore, alla
-   consegna) si chiede una volta sola come ha pagato il cliente. La risposta
-   resta sulla pratica e parte subito una mail ad amministrazione e
-   contabilita'. Alle ristampe successive non si richiede piu': si puo'
-   correggere dal link "modifica" accanto al badge. */
-var CV_FATT_MODI = [
+/* ===== INCASSO: COME HA PAGATO IL CLIENTE =====
+   Quando si scarica una fattura GIA' emessa (di vendita o di tagliando) si
+   chiede una volta sola con che cosa e' stata incassata. La risposta resta
+   sul documento e parte subito una mail ad amministrazione e contabilita'.
+   Alle volte successive non si richiede piu': si corregge dal link "modifica".
+   Il modulo e' generico: chi lo apre passa i dati da mostrare e la funzione
+   da eseguire alla conferma. */
+var EA_PAG_MODI = [
   { k:'bonifico_istantaneo', et:'Bonifico istantaneo', ic:'\uD83C\uDFE6', col:'#1a4fa0', bg:'#eff6ff', br:'#bfdbfe' },
   { k:'pos',                 et:'POS',                 ic:'\uD83D\uDCB3', col:'#6d28d9', bg:'#f5f3ff', br:'#ddd6fe' },
   { k:'cash',                et:'Contanti',            ic:'\uD83D\uDCB6', col:'#166534', bg:'#f0fdf4', br:'#bbf7d0' }
 ];
-function cvFattModo(k){
-  for(var i=0;i<CV_FATT_MODI.length;i++){ if(CV_FATT_MODI[i].k===k) return CV_FATT_MODI[i]; }
+function eaPagModo(k){
+  for(var i=0;i<EA_PAG_MODI.length;i++){ if(EA_PAG_MODI[i].k===k) return EA_PAG_MODI[i]; }
   return null;
 }
-function cvFattModoEt(k){ var m=cvFattModo(k); return m?m.et:(k||'\u2014'); }
+function eaPagModoEt(k){ var m=eaPagModo(k); return m?m.et:(k||'\u2014'); }
+/* nomi storici, restano validi */
+function cvFattModo(k){ return eaPagModo(k); }
+function cvFattModoEt(k){ return eaPagModoEt(k); }
 
-var _cvFpId=null, _cvFpModo='';
+var _eaPagCtx=null, _eaPagModo='', _eaPagNota='';
 
-/* Entrata unica per lo scarico di una fattura gia' generata. */
-function cvFatturaScarica(id, forza){
-  var cv=(typeof cvById==='function')?cvById(id):null;
-  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===id;})[0]; }catch(_e){} }
-  if(!cv){ alert('Pratica non trovata.'); return; }
-  if(!cv.fattura){ alert('Questa pratica non ha ancora una fattura.'); return; }
-  if(!forza && cv.fatturaPagamento && cv.fatturaPagamento.modo){ cvStampaById(id,'fattura'); return; }
-  cvFattPagApri(id);
+/* ctx = { doc, righe:[..], totale, modoPrec, notaPrec, onOk:function(rec){} } */
+function eaPagChiedi(ctx){
+  if(!ctx || typeof ctx.onOk!=='function') return;
+  _eaPagCtx=ctx;
+  _eaPagModo=ctx.modoPrec||'';
+  _eaPagNota=ctx.notaPrec||'';
+  var ov=document.getElementById('eaPagOv');
+  if(!ov){ ov=document.createElement('div'); ov.id='eaPagOv'; document.body.appendChild(ov); }
+  ov.setAttribute('style','position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.58);z-index:100090;display:flex;align-items:center;justify-content:center;padding:16px;');
+  eaPagRender();
 }
-
-function cvFattPagApri(id){
-  var cv=(typeof cvById==='function')?cvById(id):null;
-  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===id;})[0]; }catch(_e){} }
-  if(!cv || !cv.fattura) return;
-  _cvFpId=id;
-  _cvFpModo=(cv.fatturaPagamento&&cv.fatturaPagamento.modo)||'';
-  var ov=document.getElementById('cvFpOv');
-  if(!ov){ ov=document.createElement('div'); ov.id='cvFpOv'; document.body.appendChild(ov); }
-  ov.setAttribute('style','position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.58);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;');
-  cvFattPagRender();
-}
-function cvFattPagChiudi(){
-  var ov=document.getElementById('cvFpOv');
+function eaPagChiudi(){
+  var ov=document.getElementById('eaPagOv');
   if(ov){ ov.innerHTML=''; ov.setAttribute('style','display:none;'); }
-  _cvFpId=null; _cvFpModo='';
+  _eaPagCtx=null; _eaPagModo=''; _eaPagNota='';
 }
-function cvFattPagScegli(k){
-  var el=document.getElementById('cv_fp_nota');
-  if(el) window._cvFpNota=el.value;
-  _cvFpModo=k; cvFattPagRender();
+function eaPagScegli(k){
+  var el=document.getElementById('ea_pag_nota'); if(el) _eaPagNota=el.value;
+  _eaPagModo=k; eaPagRender();
 }
-
-function cvFattPagRender(){
-  var ov=document.getElementById('cvFpOv'); if(!ov) return;
-  var cv=(typeof cvById==='function')?cvById(_cvFpId):null;
-  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===_cvFpId;})[0]; }catch(_e){} }
-  if(!cv || !cv.fattura){ cvFattPagChiudi(); return; }
-  var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
-  var nome=(((cl.cognome||'')+' '+(cl.nome||'')).trim())||'\u2014';
-  var auto=(((a.marca||'')+' '+(a.modello||'')).trim())||String(cv.autoDesc||'')||'\u2014';
-  if(a.targa) auto+=' \u00b7 '+a.targa;
-  var t={}; try{ t=(typeof cvCalcola==='function')?cvCalcola(cv):{}; }catch(_e){}
-  var imp=(t&&t.totaleScontato!=null&&typeof cvEuro==='function')?cvEuro(t.totaleScontato):'';
-  var giaFatto=!!(cv.fatturaPagamento&&cv.fatturaPagamento.modo);
-
+function eaPagRender(){
+  var ov=document.getElementById('eaPagOv'); if(!ov||!_eaPagCtx) return;
+  var c=_eaPagCtx;
+  var gia=!!c.modoPrec;
   var h='<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.32);font-family:inherit;">'
     +'<div style="padding:16px 18px 14px;border-bottom:1px solid #e2e8f0;">'
     +'<div style="font-size:17px;font-weight:800;color:#0f172a;">Come ha pagato il cliente?</div>'
     +'<div style="font-size:12.5px;color:#64748b;margin-top:5px;line-height:1.55;">'
-    +'\uD83E\uDDFE Fattura n. <b style="color:#0f172a;">'+cvEsc(String(cv.fattura.numero))+'/'+cvEsc(String(cv.fattura.anno))+'</b><br>'
-    +cvEsc(nome)+'<br>'+cvEsc(auto)
-    +(imp?('<br>Totale <b style="color:#0f172a;">'+imp+'</b>'):'')
+    +(c.doc?('<b style="color:#0f172a;">'+cvEsc(c.doc)+'</b><br>'):'')
+    +(c.righe||[]).map(function(r){ return cvEsc(r); }).join('<br>')
+    +(c.totale?('<br>Totale <b style="color:#0f172a;">'+cvEsc(c.totale)+'</b>'):'')
     +'</div></div>'
     +'<div style="padding:14px 18px 4px;">';
-
-  CV_FATT_MODI.forEach(function(m){
-    var on=(_cvFpModo===m.k);
-    h+='<button type="button" onclick="cvFattPagScegli(\''+m.k+'\')" '
+  EA_PAG_MODI.forEach(function(m){
+    var on=(_eaPagModo===m.k);
+    h+='<button type="button" onclick="eaPagScegli(\''+m.k+'\')" '
       +'style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-bottom:9px;padding:13px 14px;border-radius:10px;cursor:pointer;font-family:inherit;'
       +'border:2px solid '+(on?m.col:'#e2e8f0')+';background:'+(on?m.bg:'#fff')+';">'
       +'<span style="font-size:21px;line-height:1;">'+m.ic+'</span>'
@@ -29300,78 +29485,50 @@ function cvFattPagRender(){
       +'<span style="width:19px;height:19px;border-radius:50%;flex:0 0 auto;border:2px solid '+(on?m.col:'#cbd5e1')+';background:'+(on?m.col:'#fff')+';color:#fff;font-size:12px;font-weight:900;text-align:center;line-height:15px;">'+(on?'\u2713':'')+'</span>'
       +'</button>';
   });
-
-  h+='<input id="cv_fp_nota" type="text" maxlength="120" placeholder="Nota (facoltativa): es. 2.000 cash + resto POS" '
-    +'value="'+cvEsc(window._cvFpNota||((cv.fatturaPagamento&&cv.fatturaPagamento.nota)||''))+'" '
+  h+='<input id="ea_pag_nota" type="text" maxlength="120" placeholder="Nota (facoltativa): es. 200 cash + resto POS" '
+    +'value="'+cvEsc(_eaPagNota||'')+'" '
     +'style="width:100%;box-sizing:border-box;margin-top:2px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;">';
-
-  if(giaFatto){
+  if(gia){
     h+='<div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:10px 12px;font-size:12px;color:#92400e;line-height:1.5;">'
-      +'Modalit\u00e0 gi\u00e0 registrata: <b>'+cvEsc(cvFattModoEt(cv.fatturaPagamento.modo))+'</b>. '
+      +'Modalit\u00e0 gi\u00e0 registrata: <b>'+cvEsc(eaPagModoEt(c.modoPrec))+'</b>. '
       +'Confermando parte una nuova mail di rettifica ad amministrazione e contabilit\u00e0.</div>';
   } else {
     h+='<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;line-height:1.5;">'
       +'La risposta viene inviata subito ad amministrazione e contabilit\u00e0. Ti viene chiesta una volta sola.</div>';
   }
-
   h+='</div>'
     +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px 18px;display:flex;gap:8px;">'
-    +'<button type="button" onclick="cvFattPagChiudi()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Annulla</button>'
-    +'<button type="button" id="cv_fp_ok" onclick="cvFattPagConferma()" '+(_cvFpModo?'':'disabled ')
+    +'<button type="button" onclick="eaPagChiudi()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Annulla</button>'
+    +'<button type="button" onclick="eaPagConferma()" '+(_eaPagModo?'':'disabled ')
     +'style="flex:1;padding:11px;border-radius:9px;border:none;font-family:inherit;font-weight:800;font-size:14px;'
-    +(_cvFpModo?'background:#16a34a;color:#fff;cursor:pointer;':'background:#e2e8f0;color:#94a3b8;cursor:not-allowed;')+'">'
+    +(_eaPagModo?'background:#16a34a;color:#fff;cursor:pointer;':'background:#e2e8f0;color:#94a3b8;cursor:not-allowed;')+'">'
     +'\uD83D\uDDA8\uFE0F Conferma e scarica</button>'
     +'</div></div>';
   ov.innerHTML=h;
 }
-
-function cvFattPagConferma(){
-  if(!_cvFpModo){ alert('Scegli come ha pagato il cliente.'); return; }
-  var id=_cvFpId;
-  var nota=''; var el=document.getElementById('cv_fp_nota'); if(el) nota=String(el.value||'').trim();
-  var list=cvLoad(), idx=list.findIndex(function(x){return x.id===id;});
-  if(idx<0){ alert('Pratica non trovata.'); return; }
-  var cv=list[idx];
-  var chiMail=(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'';
-  var chiNome=(typeof _currentUserName!=='undefined'&&_currentUserName)||'';
-  var prec=cv.fatturaPagamento||null;
-  if(prec && prec.modo){
-    cv.fatturaPagamentoStorico=(cv.fatturaPagamentoStorico||[]).concat([prec]);
-  }
-  var rec={ modo:_cvFpModo, nota:nota, ts:Date.now(), da:chiMail, daNome:chiNome };
-  cv.fatturaPagamento=rec; cv.updatedAt=Date.now();
-  cvSave(list);
-  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(_e){}
-  window._cvFpNota='';
-  cvFattPagChiudi();
-  try{ cvFattPagAvvisa(cv, rec, prec); }catch(_e){}
-  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(_e){}
-  try{ if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCE7 Pagamento \u201c'+cvFattModoEt(rec.modo)+'\u201d inviato ad amministrazione e contabilit\u00e0',true); }catch(_e){}
-  cvStampaById(id,'fattura');
+function eaPagConferma(){
+  if(!_eaPagModo){ alert('Scegli come ha pagato il cliente.'); return; }
+  var ctx=_eaPagCtx; if(!ctx) return;
+  var nota=''; var el=document.getElementById('ea_pag_nota'); if(el) nota=String(el.value||'').trim();
+  var rec={ modo:_eaPagModo, nota:nota, ts:Date.now(),
+            da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+            daNome:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+  eaPagChiudi();
+  try{ ctx.onOk(rec); }catch(e){ try{ console.log('pagamento:', e&&e.message||e); }catch(e2){} }
 }
 
 /* Mail interna: due invii separati, se una casella rifiuta l'altra riceve. */
-function cvFattPagAvvisa(cv, rec, prec){
+function eaPagAvvisa(o){
   try{
-    if(typeof eaInviaMessaggio!=='function') return;
-    var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
-    var nome=(((cl.cognome||'')+' '+(cl.nome||'')).trim())||'\u2014';
-    var auto=(((a.marca||'')+' '+(a.modello||'')).trim())||String(cv.autoDesc||'')||'\u2014';
-    var idAuto=[]; if(a.targa) idAuto.push('targa '+a.targa); if(a.telaio) idAuto.push('telaio '+a.telaio);
-    if(a.numero_interno) idAuto.push('n\u00b0 '+a.numero_interno);
-    if(idAuto.length) auto+=' \u00b7 '+idAuto.join(' \u00b7 ');
-    var t={}; try{ t=(typeof cvCalcola==='function')?cvCalcola(cv):{}; }catch(_e){}
-    var imp=(t&&t.totaleScontato!=null&&typeof cvEuro==='function')?cvEuro(t.totaleScontato):'\u2014';
-    var m=cvFattModo(rec.modo)||{ et:rec.modo, ic:'', col:'#1a4fa0', bg:'#eff6ff', br:'#bfdbfe' };
+    if(typeof eaInviaMessaggio!=='function' || !o || !o.rec) return;
+    var rec=o.rec, prec=o.prec||null, rett=!!(prec&&prec.modo);
+    var m=eaPagModo(rec.modo)||{ et:rec.modo, ic:'', col:'#1a4fa0', bg:'#eff6ff', br:'#bfdbfe' };
     var d=new Date(rec.ts||Date.now());
     var quando=d.toLocaleDateString('it-IT')+' alle '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
     var chi=rec.daNome||rec.da||'utente';
-    var rett=!!(prec&&prec.modo);
-
-    var riga=function(l,v){ return '<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+l+'</td>'
+    var riga=function(l,v){ return '<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;vertical-align:top;">'+l+'</td>'
       +'<td style="padding:5px 0;font-size:14px;font-weight:700;color:#0f172a;">'+v+'</td></tr>'; };
-
-    var corpo='<p style="margin-top:0;"><b>'+cvEsc(chi)+'</b> ha scaricato la fattura e ha indicato '
+    var corpo='<p style="margin-top:0;"><b>'+cvEsc(chi)+'</b> ha scaricato '+cvEsc(o.tipoDoc||'la fattura')+' e ha indicato '
       +(rett?'una <b>modalit\u00e0 di pagamento diversa</b> da quella registrata prima.':'come ha pagato il cliente.')+'</p>'
       +'<div style="background:'+m.bg+';border:1px solid '+m.br+';border-radius:10px;padding:14px 16px;margin:14px 0;">'
       +'<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:'+m.col+';">Modalit\u00e0 di pagamento</div>'
@@ -29379,26 +29536,67 @@ function cvFattPagAvvisa(cv, rec, prec){
       +(rec.nota?('<div style="font-size:13px;color:#334155;margin-top:7px;">'+cvEsc(rec.nota)+'</div>'):'')
       +'</div>'
       +(rett?('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#92400e;">'
-        +'Rettifica: prima risultava <b>'+cvEsc(cvFattModoEt(prec.modo))+'</b>'
-        +(prec.daNome||prec.da?(' (indicata da '+cvEsc(prec.daNome||prec.da)+')'):'')+'.</div>'):'')
+        +'Rettifica: prima risultava <b>'+cvEsc(eaPagModoEt(prec.modo))+'</b>'
+        +((prec.daNome||prec.da)?(' (indicata da '+cvEsc(prec.daNome||prec.da)+')'):'')+'.</div>'):'')
       +'<table style="border-collapse:collapse;margin-bottom:6px;">'
-      +riga('Fattura','n. '+cvEsc(String(cv.fattura.numero))+'/'+cvEsc(String(cv.fattura.anno))
-            +' \u00b7 '+((cv.fattura.serie==='margine')?'art. 36 margine':'IVA esposta'))
-      +riga('Cliente',cvEsc(nome))
-      +riga('Veicolo',cvEsc(auto))
-      +riga('Totale pratica',imp)
-      +riga('Indicato da',cvEsc(chi))
-      +riga('Quando',cvEsc(quando))
+      +(o.righe||[]).map(function(r){ return riga(cvEsc(r[0]), cvEsc(r[1])); }).join('')
+      +riga('Indicato da', cvEsc(chi))
+      +riga('Quando', cvEsc(quando))
       +'</table>'
-      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;margin-bottom:0;">Da riscontrare con l\u2019incasso in prima nota e con i pagamenti registrati sulla pratica.</p>';
-
+      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;margin-bottom:0;">Da riscontrare con l\u2019incasso in prima nota.</p>';
     var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
-    var ogg=(rett?'RETTIFICA incasso \u2014 ':'Incasso fattura \u2014 ')
-      +'n. '+cv.fattura.numero+'/'+cv.fattura.anno+' \u00b7 '+m.et+' \u00b7 '+(nome||'cliente');
+    var ogg=(rett?'RETTIFICA incasso \u2014 ':'Incasso \u2014 ')+(o.oggetto||'')+' \u00b7 '+m.et;
     ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
       try{ eaInviaMessaggio({ to:dest, subject:ogg, html:html }); }catch(e){}
     });
   }catch(e){}
+}
+
+/* ---------- Fattura di VENDITA ---------- */
+function cvFatturaScarica(id, forza){
+  var cv=(typeof cvById==='function')?cvById(id):null;
+  if(!cv){ try{ cv=cvLoad().filter(function(x){return x.id===id;})[0]; }catch(_e){} }
+  if(!cv){ alert('Pratica non trovata.'); return; }
+  if(!cv.fattura){ alert('Questa pratica non ha ancora una fattura.'); return; }
+  var prec=cv.fatturaPagamento||null;
+  if(!forza && prec && prec.modo){ cvStampaById(id,'fattura'); return; }
+
+  var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
+  var nome=(((cl.cognome||'')+' '+(cl.nome||'')).trim())||String(cl.ragSociale||'')||'\u2014';
+  var auto=(String(a.modello||'').trim())||String(cv.autoDesc||'')||'\u2014';
+  var targa=cv.nuovaTarga||a.targa||'';
+  if(targa) auto+=' \u00b7 '+targa;
+  var t={}; try{ t=(typeof cvCalcola==='function')?cvCalcola(cv):{}; }catch(_e){}
+  var imp=(t&&t.totaleScontato!=null&&typeof cvEuro==='function')?cvEuro(t.totaleScontato):'';
+
+  eaPagChiedi({
+    doc:'\uD83E\uDDFE Fattura n. '+cv.fattura.numero+'/'+cv.fattura.anno,
+    righe:[nome, auto],
+    totale:imp,
+    modoPrec:(prec&&prec.modo)||'',
+    notaPrec:(prec&&prec.nota)||'',
+    onOk:function(rec){
+      var list=cvLoad(), idx=list.findIndex(function(x){return x.id===id;});
+      if(idx<0){ alert('Pratica non trovata.'); return; }
+      var v=list[idx];
+      if(prec && prec.modo) v.fatturaPagamentoStorico=(v.fatturaPagamentoStorico||[]).concat([prec]);
+      v.fatturaPagamento=rec; v.updatedAt=Date.now();
+      cvSave(list);
+      try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', v); }catch(_e){}
+      eaPagAvvisa({
+        tipoDoc:'la fattura di vendita',
+        oggetto:'fattura n. '+v.fattura.numero+'/'+v.fattura.anno+' \u00b7 '+nome,
+        rec:rec, prec:prec,
+        righe:[
+          ['Fattura','n. '+v.fattura.numero+'/'+v.fattura.anno+' \u00b7 '+((v.fattura.serie==='margine')?'art. 36 margine':'IVA esposta')],
+          ['Cliente',nome], ['Veicolo',auto], ['Totale pratica',imp||'\u2014']
+        ]
+      });
+      try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(_e){}
+      try{ if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCE7 '+eaPagModoEt(rec.modo)+' \u2014 avviso inviato ad amministrazione e contabilit\u00e0',true); }catch(_e){}
+      cvStampaById(id,'fattura');
+    }
+  });
 }
 
 function cvFatturaBtn(cv){
@@ -29418,7 +29616,7 @@ function cvFattPagBadge(cv){
   try{
     var r=cv&&cv.fatturaPagamento;
     if(!r||!r.modo) return '';
-    var m=cvFattModo(r.modo)||{ et:r.modo, ic:'', col:'#334155', bg:'#f1f5f9', br:'#e2e8f0' };
+    var m=eaPagModo(r.modo)||{ et:r.modo, ic:'', col:'#334155', bg:'#f1f5f9', br:'#e2e8f0' };
     return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;color:'+m.col
       +';background:'+m.bg+';border:1px solid '+m.br+';padding:5px 9px;border-radius:7px;white-space:nowrap;" '
       +'title="'+cvEsc((r.nota||'')||('Indicato da '+(r.daNome||r.da||'')))+'">'+(m.ic?(m.ic+' '):'')+cvEsc(m.et)+'</span>'
