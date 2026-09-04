@@ -18446,7 +18446,7 @@ function prnClientOpen(cod){
     +'<div style="padding:38px 0 26px;">'
     +'<div style="font-size:13px;font-weight:700;color:#1a4fa0;letter-spacing:.02em;">Europa Auto</div>'
     +'<h1 style="font-size:29px;line-height:1.15;font-weight:800;color:#0f172a;margin:8px 0 10px;letter-spacing:-.02em;">'
-    +'Prenota il tagliando</h1>'
+    +'Modulo prenotazione</h1>'
     +'<p style="font-size:16px;line-height:1.55;color:#475569;margin:0;">'
     +'Ci dica quando le fa comodo. La richiamiamo noi per fissare l\u2019orario.</p>'
     +'</div>'
@@ -18459,7 +18459,7 @@ function prnClientOpen(cod){
     +'<label class="prn-lab" for="prn_tel">Telefono</label>'
     +'<input id="prn_tel" class="prn-in" type="tel" inputmode="tel" autocomplete="tel">'
 
-    +'<label class="prn-lab" for="prn_email">Email <span class="prn-opt">\u2014 se la vuole per iscritto</span></label>'
+    +'<label class="prn-lab" for="prn_email">Email</label>'
     +'<input id="prn_email" class="prn-in" type="email" inputmode="email" autocomplete="email">'
 
     +'<label class="prn-lab" for="prn_targa">Targa</label>'
@@ -18502,6 +18502,21 @@ function prnClientOpen(cod){
     +'</div>';
   window._prnFascia='mattina';
 }
+/* Dire cosa manca non basta se il campo e' fuori schermo: si segna in
+   arancione e ci si va sopra. */
+function prnFuoco(manca){
+  var mappa={ 'nome e cognome':'prn_nome', 'telefono':'prn_tel', 'email':'prn_email',
+              'targa':'prn_targa', 'intervento':'prn_lavoro', 'giorno':'prn_data' };
+  try{
+    ['prn_nome','prn_tel','prn_email','prn_targa','prn_lavoro','prn_data'].forEach(function(id){
+      var e=document.getElementById(id); if(!e) return;
+      var vuoto=!String(e.value||'').trim();
+      e.style.borderColor=vuoto?'#f59e0b':'#dbe3ee';
+    });
+    var primo=mappa[manca[0]];
+    if(primo){ var el=document.getElementById(primo); if(el) el.focus(); }
+  }catch(e){}
+}
 function prnDataCambia(){
   var el=document.getElementById('prn_data'), n=document.getElementById('prn_datanota');
   if(!el||!n) return;
@@ -18527,12 +18542,36 @@ function prnFascia(k){
 function prnInvia(){
   var g=function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
   var err=document.getElementById('prn_errore');
+  /* Tutti i campi servono davvero: senza email non si manda la conferma,
+     senza targa non si sa quale auto entra in officina. L'unico lasciato
+     libero e' la segnalazione, che e' un commento e non un dato: obbligarlo
+     produrrebbe righe con un trattino dentro. */
   var manca=[];
-  if(!g('prn_nome'))   manca.push('nome e cognome');
-  if(!g('prn_tel'))    manca.push('telefono');
-  if(!g('prn_targa'))  manca.push('targa');
-  if(!g('prn_data'))   manca.push('giorno preferito');
-  if(manca.length){ if(err) err.textContent='Manca ancora: '+manca.join(', ')+'.'; return; }
+  if(!g('prn_nome'))    manca.push('nome e cognome');
+  if(!g('prn_tel'))     manca.push('telefono');
+  if(!g('prn_email'))   manca.push('email');
+  if(!g('prn_targa'))   manca.push('targa');
+  if(!g('prn_lavoro'))  manca.push('intervento');
+  if(!g('prn_data'))    manca.push('giorno');
+  if(!window._prnFascia) manca.push('fascia oraria');
+  if(manca.length){
+    if(err) err.textContent='Manca ancora: '+manca.join(', ')+'.';
+    try{ prnFuoco(manca); }catch(e){}
+    return;
+  }
+  /* Un indirizzo scritto male vale come non averlo: la conferma non arriva
+     e nessuno se ne accorge. */
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(g('prn_email'))){
+    if(err) err.textContent='L\u2019indirizzo email non sembra completo: controlli che ci siano la chiocciola e il punto.';
+    try{ var _e=document.getElementById('prn_email'); if(_e){ _e.style.borderColor='#f59e0b'; _e.focus(); } }catch(e){}
+    return;
+  }
+  /* Il numero deve essere un numero, non due cifre battute per sbaglio. */
+  if(String(g('prn_tel')).replace(/\D/g,'').length<8){
+    if(err) err.textContent='Il numero di telefono sembra incompleto.';
+    try{ var _t=document.getElementById('prn_tel'); if(_t){ _t.style.borderColor='#f59e0b'; _t.focus(); } }catch(e){}
+    return;
+  }
   /* Sabato e domenica l'officina e' chiusa: meglio dirlo adesso che
      richiamare il cliente per spostarlo. */
   if(!prnGiornoValido(g('prn_data'))){
@@ -35180,6 +35219,122 @@ function crmPaccBtn(chiave, nome, tel){
   return '<button onclick="crmOffertaPacchetto('+jq(chiave)+','+jq(nome)+','+jq(tel)+')" title="Ricalcola la rata col pacchetto manutenzione e propone l\'offerta" style="margin-top:8px;margin-left:8px;padding:8px 12px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">\uD83D\uDD27 Offerta pacchetto (rata)</button>';
 }
 
+/* ===== I MODELLI APPROVATI, COLLEGATI ALLE AZIONI DEL CRM =====
+   Su Meta i modelli sono tanti e si chiamano col nome tecnico, minuscolo e
+   con gli underscore \u2014 non col titolo che si legge in anteprima. Qui si
+   scrive quale modello serve a quale azione, cosi' il pulsante sa cosa
+   mandare. Si cambia da un campo, senza toccare il codice: se domani il
+   modello viene rifatto con un altro nome, si aggiorna qui.
+   L'invio resta a mano, un cliente per volta: chi non va disturbato lo sa
+   solo chi guarda la scheda. */
+var WA_MOD_KEY='ea_wa_modelli_v1';
+var WA_MOD_DEF={
+  consegnate: { nome:'sconto_manutenzione', lingua:'it', variabili:['nome'] }
+};
+function waModStore(){ try{ return JSON.parse(localStorage.getItem(WA_MOD_KEY)||'{}'); }catch(e){ return {}; } }
+function waMod(azione){
+  var o=waModStore()[azione]||{};
+  var d=WA_MOD_DEF[azione]||{};
+  return { nome:(o.nome!=null?o.nome:d.nome)||'', lingua:(o.lingua||d.lingua||'it'), variabili:d.variabili||[] };
+}
+function waModSet(azione, nome, lingua){
+  var o=waModStore();
+  o[azione]={ nome:String(nome||'').trim(), lingua:String(lingua||'it').trim() };
+  try{ localStorage.setItem(WA_MOD_KEY, JSON.stringify(o)); }catch(e){}
+  try{ if(typeof cfgSupaSave==='function') cfgSupaSave(WA_MOD_KEY, o); }catch(e){}
+}
+/* Il riquadro per cambiarlo, in cima alle auto consegnate. */
+function waModBox(){
+  var m=waMod('consegnate');
+  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:12px;'
+    +'display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +'<div style="font-size:12px;color:#64748b;flex:0 0 auto;">Modello WhatsApp usato qui</div>'
+    +'<input id="wamod-consegnate" value="'+crmEsc(m.nome)+'" placeholder="sconto_manutenzione" '
+    +'style="flex:1;min-width:170px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+    +'<input id="wamod-consegnate-lng" value="'+crmEsc(m.lingua)+'" title="lingua del modello su Meta" '
+    +'style="width:56px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;text-align:center;">'
+    +'<button onclick="waModSalva()" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;'
+    +'background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Salva</button>'
+    +'<div style="flex-basis:100%;font-size:11px;color:#94a3b8;">'
+    +'Il nome tecnico come sta su Meta, non il titolo. Al modello viene passato solo il nome di battesimo del cliente.</div>'
+    +'</div>';
+}
+function waModSalva(){
+  var n=document.getElementById('wamod-consegnate'), l=document.getElementById('wamod-consegnate-lng');
+  if(!n) return;
+  waModSet('consegnate', n.value, (l?l.value:'it'));
+  if(typeof tcToastNew==='function') tcToastNew('\u2713 Modello salvato', true);
+}
+
+/* ===== L'INVIO, UNO PER VOLTA =====
+   Parte dal server tramite Meta, quindi arriva anche se il cliente non ha
+   mai scritto. Prima di partire si dice a chi va e con quale modello: da
+   qui in poi il messaggio non si richiama indietro. */
+function crmOffertaModello(cvId, nome, tel){
+  var m=waMod('consegnate');
+  if(!m.nome){
+    alert('Non e\u2019 ancora indicato quale modello usare.\n\nScrivilo nel riquadro in cima alle auto consegnate: '
+      +'e\u2019 il nome tecnico che leggi su Meta, tipo sconto_manutenzione.');
+    return;
+  }
+  var t=crmWa(tel);
+  if(!t){ alert('Questo cliente non ha un numero di telefono.'); return; }
+  var primo=String(nome||'').trim().split(/\s+/)[0]||'Cliente';
+  if(!confirm('Mandare il modello \u201c'+m.nome+'\u201d a '+primo+'?\n\n'
+    +'Numero: +'+t+'\n\n'
+    +'Parte subito da WhatsApp Business e non si pu\u00f2 richiamare indietro.')) return;
+
+  if(typeof waApiInvia!=='function'){ alert('Modulo WhatsApp non disponibile.'); return; }
+  waApiInvia({ to:t, template:m.nome, lingua:m.lingua, variabili:[primo] }).then(function(r){
+    if(r && r.ok){
+      crmSegnaInviato(cvId, m.nome);
+      if(typeof tcToastNew==='function') tcToastNew('\u2713 Messaggio inviato a '+primo, true);
+    } else {
+      var msg=String((r&&r.errore)||'non inviato');
+      alert('Il messaggio non \u00e8 partito.\n\n'+msg
+        +'\n\nSe dice che il numero non \u00e8 autorizzato, siamo ancora sul numero di prova di Meta: '
+        +'scrive solo ai destinatari abilitati.');
+    }
+  }, function(){
+    alert('Server non raggiungibile: il messaggio non \u00e8 partito.');
+  });
+}
+/* Ottanta clienti da contattare a mano: senza un segno si perde il conto e
+   qualcuno lo si scrive due volte. */
+function crmSegnaInviato(cvId, modello){
+  try{
+    var cv=(typeof cvById==='function')?cvById(cvId):null;
+    if(!cv){ cv=cvLoad().filter(function(x){ return x.id===cvId; })[0]; }
+    if(!cv) return;
+    cv.crmOffertaTs=Date.now();
+    cv.crmOffertaModello=modello||'';
+    cv.crmOffertaDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||'');
+    crmSalvaCv(cv);
+    if(typeof crmRender==='function') crmRender();
+  }catch(e){}
+}
+/* Il pulsante nella scheda: verde se non e' ancora partito, grigio con la
+   data quando e' gia' stato mandato. Si puo' rimandare, ma consapevolmente. */
+function crmOffModBtn(cv, nome, tel){
+  var jq=function(x){ return JSON.stringify(String(x==null?'':x)); };
+  var ts=cv&&cv.crmOffertaTs;
+  if(!tel) return '';
+  if(ts){
+    var d=new Date(ts);
+    var q=('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2);
+    return '<div style="display:flex;align-items:center;gap:7px;margin-top:8px;">'
+      +'<div style="flex:1;font-size:11.5px;color:#16a34a;font-weight:700;">\u2713 Offerta inviata il '+q
+      +(cv.crmOffertaDa?(' da '+crmEsc(cv.crmOffertaDa)):'')+'</div>'
+      +'<button onclick="crmOffertaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
+      +'style="flex:0 0 auto;padding:5px 9px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#64748b;'
+      +'font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Rimanda</button></div>';
+  }
+  return '<button onclick="crmOffertaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
+    +'style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:none;background:#16a34a;color:#fff;'
+    +'font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">'
+    +'\uD83D\uDCAC Invia l\u2019offerta su WhatsApp</button>';
+}
+
 function crmOffBtn(nome,tel,email,auto){ return '<button onclick="crmOfferta('+JSON.stringify(nome||'')+','+JSON.stringify(tel||'')+','+JSON.stringify(email||'')+','+JSON.stringify(auto||'')+')" style="margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🎁 Offerta manutenzione (WhatsApp)</button>'; }
 var CRM_AVCOL=['#1a4fa0','#0891b2','#7c3aed','#16a34a','#d97706','#dc2626','#0f766e','#be185d'];
 function crmAvatarColor(seed){ var s=String(seed||''); var n=0; for(var i=0;i<s.length;i++){ n=(n*31+s.charCodeAt(i))>>>0; } return CRM_AVCOL[n%CRM_AVCOL.length]; }
@@ -36032,6 +36187,7 @@ function crmRenderConsegnate(){
 
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:'+(fuoriTot?'6px':'12px')+';">'
     +'<b>'+totale+'</b> da contattare adesso \u00b7 divise per anniversario di consegna \u00b7 archivio totale '+tutte.length+' consegne</div>';
+  h+=waModBox();
   if(fuoriTot){
     var _zb=function(val, testo){
       var on=(_crmConsZona===val);
@@ -36084,7 +36240,14 @@ function crmRenderConsegnate(){
       return '<div style="font-size:11.5px;margin-top:2px;color:'+(_in?'#64748b':'#b45309')+';font-weight:'+(_in?'400':'700')+';">'
         +'\ud83d\udccd '+crmEsc(_dove)+(_in?'':' \u00b7 fuori zona')+'</div>';
     })();
-    b += crmOffBtn((cl.nome||''),(cl.telefono||''),(cl.email||''),(a.modello||cv.autoDesc||''));
+    b += crmOffModBtn(cv, (cl.nome||''), (cl.telefono||''));
+    /* La vecchia strada resta, piu' piccola: apre WhatsApp col testo gia'
+       scritto e lo mandi tu. Serve quando il modello non basta o il cliente
+       ha gia' scritto e si puo' rispondere a mano. */
+    b += '<div style="margin-top:5px;text-align:right;">'
+      +'<a onclick="crmOfferta('+JSON.stringify(cl.nome||'')+','+JSON.stringify(cl.telefono||'')+','
+      +JSON.stringify(cl.email||'')+','+JSON.stringify(a.modello||cv.autoDesc||'')+')" '
+      +'style="font-size:11px;color:#64748b;cursor:pointer;text-decoration:underline;">scrivi a mano</a></div>';
     /* Le due vie d'uscita, piccole e sotto l'offerta: si usano dopo aver
        parlato col cliente, non prima. */
     b += '<div style="display:flex;gap:6px;margin-top:7px;">'
