@@ -21143,7 +21143,7 @@ function clRenderDettaglio(){
         var _num=f.numero?('n. '+f.numero+'/'+(f.anno||'')):'';
         var _totN=ivTot(f);
         var _tot=_totN?((typeof cvEuro==='function')?cvEuro(_totN):(_totN+' \u20ac')):'';
-        var _desc=String(x.descrizione||x.nota||'Intervento');
+        var _desc=String(x.descrizione||'Intervento');
         box+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9;flex-wrap:wrap;">'
           +'<div style="min-width:0;flex:1;">'
           +'<div style="font-size:13px;font-weight:700;color:#0f172a;">'+clEsc(_desc)+'</div>'
@@ -21175,8 +21175,10 @@ function clRenderDettaglio(){
     /* Le fatture di manutenzione caricate come documento appartengono qui:
        sono lo stesso storico officina del cliente, e cercarle in un altro
        riquadro non ha senso per chi guarda questa scheda. */
-    box+='<div id="clTag_'+String(c.key||'').replace(/[^A-Za-z0-9_]/g,'')+'"></div>';
-    try{ var _k=c.key; setTimeout(function(){ clTagliandiRender(_k); }, 250); }catch(e){}
+    /* Qui c'era un secondo elenco delle stesse fatture, "Fatture di
+       manutenzione": stessi file di "Fatture e documenti officina" qui
+       sopra, ma senza il cestino. La stessa fattura compariva due volte e
+       si poteva cancellare solo da una. Resta quello completo. */
     /* I sinistri stanno sotto gli interventi, nello stesso riquadro: per il
        cliente sono la stessa cosa, un passaggio in officina. Toccandoli si
        apre la scheda del sinistro, che e' una finestra sopra la pagina e si
@@ -21262,28 +21264,6 @@ function clElimina(keyEnc){
 }
 /* Il secondo recapito compare su richiesta: chi ne ha uno solo non deve
    vedere due caselle vuote da riempire. */
-function clTagliandiRender(clienteKey){
-  try{
-    var el=document.getElementById('clTag_'+String(clienteKey||'').replace(/[^A-Za-z0-9_]/g,''));
-    if(!el) return;
-    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
-    sb.from('documenti').select('*').eq('entita_tipo','cliente').eq('entita_id',String(clienteKey))
-      .eq('categoria','tagliando').order('created_at',{ascending:false})
-      .then(function(r){
-        if(!r || r.error || !r.data || !r.data.length) return;
-        el.innerHTML='<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:2px 0 5px;">Fatture di manutenzione ('+r.data.length+')</div>'
-          + r.data.map(function(d){
-              var data=''; try{ data=new Date(d.created_at).toLocaleDateString('it-IT'); }catch(e){}
-              return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:#f8fafc;">'
-                +'<div style="min-width:0;"><div style="font-size:13px;font-weight:700;">'+docEsc(d.nome_file||'documento')+'</div>'
-                +'<div style="font-size:11px;color:#94a3b8;">'+data+'</div></div>'
-                +'<button onclick="docApri(\''+d.id+'\')" style="flex:0 0 auto;padding:5px 11px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;">Apri</button>'
-                +'</div>';
-            }).join('');
-      });
-  }catch(e){}
-}
-
 function clMostraRecapiti2(){
   try{
     var b=document.getElementById('cl-rec2'), l=document.getElementById('cl-rec2-link');
@@ -27339,7 +27319,23 @@ function ivDaCalendario(k, nome, key, cli){
         clienteKey: c.clienteKey || null,
         veicolo: c.veicolo || f.modello || '',
         targa: f.targa || '',
-        descrizione: (c.nota || (f.righe && f.righe[0] && f.righe[0].desc) || 'Intervento'),
+        /* ===== COSA E' STATO FATTO, NON PERCHE' ERA STATO PRESO =====
+           La nota dell'appuntamento dice il motivo della prenotazione:
+           "CRISTALLO". Poi in officina si fa anche il tagliando, e nello
+           storico resta scritta la parola sbagliata. Quello che e' stato
+           fatto davvero sta nelle righe della proforma, che e' il documento
+           emesso a lavoro finito: si legge di li'. Senza proforma non si
+           tira a indovinare, e si scrive solo "Intervento". */
+        descrizione: (function(){
+          var r=(f && f.righe) || [];
+          var vive=r.filter(function(x){ return x && String(x.desc||'').trim(); });
+          if(!vive.length) return 'Intervento';
+          var primo=String(vive[0].desc).trim();
+          /* Un cristallo piu' un tagliando non sono "cristallo": se le voci
+             sono piu' d'una si dice, cosi' nessuno si fida della prima. */
+          return (vive.length>1) ? (primo+' +'+(vive.length-1)+' voci') : primo;
+        })(),
+        nota: c.nota || '',
         fatturaTag: f
       });
     });
@@ -27909,6 +27905,22 @@ function tgScarica(id, forza){
         _fo.salva(list); if(_fo.upsert) try{ _fo.upsert(list[i]); }catch(e){}
         try{ if(typeof ccSync==='function') ccSync(list[i]); }catch(e){}
       }catch(e){}
+      /* Riga per riga come sono in fattura: descrizione, quantita' se
+         diversa da una, sconto se c'e', e quanto pesa quella voce. */
+      var _voci=((f && f.righe) || [])
+        .filter(function(r){ return r && String(r.desc||'').trim(); })
+        .map(function(r){
+          var q=tgNum(r.qta)||1, pz=tgNum(r.prezzo), sc=tgNum(r.sconto);
+          var imp=Math.round(q*pz*(1-sc/100)*100)/100;
+          return String(r.desc).trim()
+            +(q!==1?(' \u00d7'+q):'')
+            +(sc?(' \u2212'+sc+'%'):'')
+            +' \u2014 \u20ac '+tgEu(imp);
+        });
+      if(!_voci.length) _voci=['\u2014'];
+      /* Il motivo della prenotazione resta, ma come contorno: serve a capire
+         perche' il cliente era venuto, non a dire cosa gli e' stato fatto. */
+      var _motivo=String((c && c.nota) || '').trim();
       eaPagAvvisa({
         tipoDoc:'la fattura del tagliando',
         oggetto:'fattura tagliando n. '+f.numero+'/'+f.anno+' \u00b7 '+nome,
@@ -27916,7 +27928,14 @@ function tgScarica(id, forza){
         righe:[
           ['Fattura','n. '+f.numero+'/'+f.anno+' \u00b7 serie tagliandi'],
           ['Cliente',nome], ['Veicolo',veic],
-          ['Intervento',String(c.nota||'\u2014')],
+          /* ===== COSA E' STATO FATTO =====
+             Qui c'era la nota dell'appuntamento, cioe' il motivo per cui il
+             cliente aveva prenotato. Ma fra la prenotazione e la cassa il
+             lavoro cambia: si prenota per un cristallo e si fa anche il
+             tagliando. In contabilita' serve sapere cosa e' stato fatturato,
+             e quello sta nelle righe della proforma, con importi e sconti. */
+          ['Lavori eseguiti', _voci],
+          (_motivo ? ['Prenotato per', _motivo] : null),
           ['Totale documento',tot]
         ]
       });
@@ -29983,7 +30002,14 @@ function eaPagAvvisa(o){
         +'Rettifica: prima risultava <b>'+cvEsc(eaPagModoEt(prec.modo))+'</b>'
         +((prec.daNome||prec.da)?(' (indicata da '+cvEsc(prec.daNome||prec.da)+')'):'')+'.</div>'):'')
       +'<table style="border-collapse:collapse;margin-bottom:6px;">'
-      +(o.righe||[]).map(function(r){ return riga(cvEsc(r[0]), cvEsc(r[1])); }).join('')
+      /* Un elenco di lavori non sta su una riga sola: se il valore arriva
+         come lista, ogni voce va a capo per conto suo. */
+      +(o.righe||[]).filter(function(r){ return !!r; }).map(function(r){
+          var v = (r[1] instanceof Array)
+            ? r[1].map(function(x){ return cvEsc(x); }).join('<br>')
+            : cvEsc(r[1]);
+          return riga(cvEsc(r[0]), v);
+        }).join('')
       +riga('Indicato da', cvEsc(chi))
       +riga('Quando', cvEsc(quando))
       +'</table>'
@@ -30016,7 +30042,14 @@ function eaPagAvvisaAnnullo(o){
       +(rec.nota?('<div style="font-size:13px;color:#7f1d1d;margin-top:7px;">'+cvEsc(rec.nota)+'</div>'):'')
       +'</div>'
       +'<table style="border-collapse:collapse;margin-bottom:6px;">'
-      +(o.righe||[]).map(function(r){ return riga(cvEsc(r[0]), cvEsc(r[1])); }).join('')
+      /* Un elenco di lavori non sta su una riga sola: se il valore arriva
+         come lista, ogni voce va a capo per conto suo. */
+      +(o.righe||[]).filter(function(r){ return !!r; }).map(function(r){
+          var v = (r[1] instanceof Array)
+            ? r[1].map(function(x){ return cvEsc(x); }).join('<br>')
+            : cvEsc(r[1]);
+          return riga(cvEsc(r[0]), v);
+        }).join('')
       +riga('Annullata da', cvEsc(chi))
       +riga('Quando', cvEsc(quando))
       +'</table>'
@@ -30250,8 +30283,32 @@ function cvDeliberaForm(id){
   /* Polizza sconosciuta: si passa al riquadro manuale, cosi' la scelta si
      vede e si fa. Meglio una domanda in piu' che una provvigione sbagliata. */
   if(!_polTipo) _polDaSim=false;
-  /* Anche i mesi vengono dal contratto, non da un 48 fisso. */
-  var _polMesiDef = parseInt(d.polizzaMesi,10) || parseInt(cv.assicMesi,10) || 48;
+  /* ===== I MESI DELLA POLIZZA =====
+     Entrano nel calcolo della provvigione insieme al tipo, e finora
+     ripiegavano su 48 fissi quando la delibera non li aveva ancora: su una
+     polizza a 60 mesi \u2014 la durata normale di NET e Fit2You \u2014 la provvigione
+     usciva calcolata sulla durata sbagliata.
+     Si prendono in quest'ordine, dal piu' preciso al piu' generico:
+       1. quello che si e' appena simulato (durata CVT del simulatore)
+       2. quello gia' salvato su questa delibera
+       3. quello scritto sul contratto da chi ha venduto
+       4. la durata tipica della polizza scelta (60 per quelle in uso)
+     Il 48 resta solo se non si sa proprio nulla. */
+  var _polMesiFonte='';
+  var _polMesiDef = (function(){
+    var _n=function(x){ var v=parseInt(x,10); return (v>0)?v:0; };
+    var v;
+    v=_n(fromSim && fromSim.polizzaMesi); if(v){ _polMesiFonte='dal simulatore'; return v; }
+    v=_n(d.polizzaMesi);                  if(v){ _polMesiFonte='gi\u00e0 sulla delibera'; return v; }
+    v=_n(cv.assicMesi);                   if(v){ _polMesiFonte='dal contratto'; return v; }
+    try{
+      var _l=(typeof CV_POLIZZE!=='undefined')?CV_POLIZZE:[];
+      for(var i=0;i<_l.length;i++){
+        if(_l[i].id===_polTipo){ v=_n(_l[i].mesiDef); if(v){ _polMesiFonte='durata tipica di '+_l[i].nome; return v; } }
+      }
+    }catch(e){}
+    _polMesiFonte=''; return 48;
+  })();
   var _polNome = (function(){
     try{
       if(_polTipo==='nessuna') return 'Nessuna polizza';
@@ -30272,7 +30329,9 @@ function cvDeliberaForm(id){
    +'<div style="margin-top:7px;padding-top:7px;border-top:1px solid #bbf7d0;font-size:12px;color:#166534;">'
    +'<b>'+_esc(_polNome||'\u2014')+'</b>'+(_polTipo!=='nessuna'?(' \u00b7 '+_polMesiDef+' mesi'):'')
    +'<div style="font-size:10.5px;color:#15803d;font-weight:600;margin-top:1px;">'
-   +(_polEreditata?'presa dal contratto':'gi\u00e0 sulla delibera')+' \u2014 entra nel calcolo della provvigione</div>'
+   +(_polEreditata?'presa dal contratto':'gi\u00e0 sulla delibera')
+   +(_polMesiFonte?(', durata '+_polMesiFonte):'')
+   +' \u2014 entra nel calcolo della provvigione</div>'
    +'</div></div>'
    +'<input type="hidden" id="dl_polizze" value="'+(_polVal===''?'0':_esc(_polVal))+'">'
    +'<input type="hidden" id="dl_polizzaTipo" value="'+_esc(_polTipo)+'">'
@@ -30379,8 +30438,17 @@ function cvDeliberaForm(id){
      +'<option value="NO"'+(String(d.gap||'NO')==='NO'?' selected':'')+'>No</option>'
      +'<option value="SI"'+(String(d.gap||'')==='SI'?' selected':'')+'>S\u00ec</option></select></div>'
    +'<div style="flex:1;"><label style="'+lab+'">Durata polizza</label><select id="dl_polMesi" style="'+inp+'background:#fff;">'
-     +[24,36,48,60,72].map(function(mm){ return '<option value="'+mm+'"'+(_polMesiDef===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('')
-     +'</select></div></div></div>'
+     /* Una durata che non sta fra le voci standard veniva persa: la tendina
+        ripiegava sulla prima e il contratto diceva un'altra cosa. Ora la
+        durata vera entra nell'elenco. */
+     +(function(){
+        var _v=[24,36,48,60,72];
+        if(_polMesiDef>0 && _v.indexOf(_polMesiDef)<0){ _v.push(_polMesiDef); _v.sort(function(a,b){ return a-b; }); }
+        return _v.map(function(mm){ return '<option value="'+mm+'"'+(_polMesiDef===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('');
+      })()
+     +'</select>'
+     +(_polMesiFonte?('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">'+_polMesiFonte+'</div>'):'')
+     +'</div></div></div>'
    +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
@@ -30631,7 +30699,10 @@ function cvDeliberaSalva(id){
   list[i].finDelibera={ confermata:true, finanziaria:_fin, tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
     polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
-    cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'), polizzaMesi:(n('polMesi')||48),
+    cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'),
+    /* La tendina un valore ce l'ha sempre: il vecchio ripiego a 48 poteva
+       solo sostituire una durata buona con una sbagliata. */
+    polizzaMesi:(n('polMesi') || ((list[i].finDelibera && list[i].finDelibera.polizzaMesi) || null)),
     valoreVeicolo:n('valore'), anticipo:n('anticipo'),
     note:g('note'),
     rataManuale:(window._delibRataManuale===true)||undefined,
@@ -34942,8 +35013,50 @@ function crmInZona(prov){
   if(!prov) return true;   /* provincia sconosciuta: nel dubbio si mostra */
   return CRM_PROV_ZONA.indexOf(prov) >= 0;
 }
-var _crmConsZona = false;   /* true = nasconde chi e' fuori zona */
-function crmConsZonaToggle(){ _crmConsZona=!_crmConsZona; if(typeof crmRender==='function') crmRender(); }
+/* ===== ZONA: TRE MODI DI GUARDARE LA STESSA LISTA =====
+   Nascondere i fuori zona serve a lavorare; vederli da soli serve a farli
+   fuori. Prima si poteva solo togliere quel gruppo dalla vista, mai
+   isolarlo, e per trovarne sei sparsi in quattro colonne bisognava
+   scorrerle tutte. */
+var _crmConsZona = 'tutti';   /* 'tutti' | 'dentro' | 'fuori' */
+function crmConsZonaSet(v){
+  _crmConsZona=v;
+  if(typeof crmRender==='function') crmRender();
+}
+/* il vecchio nome resta valido: alterna fra tutti e dentro */
+function crmConsZonaToggle(){ crmConsZonaSet(_crmConsZona==='dentro'?'tutti':'dentro'); }
+
+/* Togliere in blocco i fuori zona dai promemoria. Sei clienti a mano sono
+   sei conferme: qui e' una sola, con i nomi scritti prima di procedere. */
+function crmEscludiFuoriZona(){
+  try{
+    var tutte=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){
+      return x.statoVendita==='consegnato' && !eaCvTest(x) && !x.crmEscluso;
+    });
+    var fuori=tutte.filter(function(cv){ return !crmInZona(crmProvCliente(cv.cliente||{})); });
+    if(!fuori.length){ alert('Nessun cliente fuori zona da togliere.'); return; }
+    var nomi=fuori.map(function(cv){
+      var cl=cv.cliente||{};
+      return '\u2022 '+(((cl.cognome||'')+' '+(cl.nome||'')).trim()||'(senza nome)')
+        +' \u2014 '+(crmProvCliente(cl)||'zona sconosciuta');
+    });
+    var _pochi=nomi.slice(0,25).join('\n')+(nomi.length>25?('\n\u2026e altri '+(nomi.length-25)):'');
+    if(!confirm('Togliere '+fuori.length+' clienti fuori zona dai promemoria del CRM?\n\n'
+      +_pochi
+      +'\n\nNon ricompaiono pi\u00f9 in nessun anniversario. '
+      +'Restano nel riquadro in fondo all\u2019elenco e si possono rimettere uno per uno.')) return;
+    fuori.forEach(function(cv){
+      cv.crmEscluso=true;
+      cv.crmEsclusoTs=Date.now();
+      cv.crmEsclusoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+      cv.crmEsclusoMotivo='fuori zona';
+      try{ crmSalvaCv(cv); }catch(e){}
+    });
+    _crmConsZona='tutti';
+    if(typeof crmRender==='function') crmRender();
+    if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCCD '+fuori.length+' fuori zona tolti dai promemoria', true);
+  }catch(e){ alert('Non sono riuscito a completare: '+(e&&e.message||e)); }
+}
 
 /* ===================== LEAD ONLINE =====================
    Le richieste che arrivano da AutoScout e dal modulo del sito. Entrano
@@ -35358,7 +35471,7 @@ function crmEscludiCliente(id){
 function crmRimettiCliente(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   cv.crmEscluso=false;
-  try{ delete cv.crmEsclusoTs; delete cv.crmEsclusoDa; }catch(e){}
+  try{ delete cv.crmEsclusoTs; delete cv.crmEsclusoDa; delete cv.crmEsclusoMotivo; }catch(e){}
   crmSalvaCv(cv);
   if(typeof crmRender==='function') crmRender();
 }
@@ -35402,9 +35515,10 @@ function crmRenderConsegnate(){
   perFascia.forEach(function(arr){
     fuoriTot += arr.filter(function(cv){ return !crmInZona(crmProvCliente(cv.cliente||{})); }).length;
   });
-  if(_crmConsZona){
+  if(_crmConsZona==='dentro' || _crmConsZona==='fuori'){
+    var _vuoi=(_crmConsZona==='dentro');
     perFascia=perFascia.map(function(arr){
-      return arr.filter(function(cv){ return crmInZona(crmProvCliente(cv.cliente||{})); });
+      return arr.filter(function(cv){ return crmInZona(crmProvCliente(cv.cliente||{}))===_vuoi; });
     });
   }
 
@@ -35413,13 +35527,36 @@ function crmRenderConsegnate(){
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:'+(fuoriTot?'6px':'12px')+';">'
     +'<b>'+totale+'</b> da contattare adesso \u00b7 divise per anniversario di consegna \u00b7 archivio totale '+tutte.length+' consegne</div>';
   if(fuoriTot){
+    var _zb=function(val, testo){
+      var on=(_crmConsZona===val);
+      return '<button onclick="crmConsZonaSet(\''+val+'\')" style="padding:5px 10px;border-radius:7px;border:1px solid '
+        +(on?'#0f766e':'#cbd5e1')+';background:'+(on?'#0f766e':'#fff')+';color:'+(on?'#fff':'#475569')
+        +';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+testo+'</button>';
+    };
     h+='<div style="font-size:12px;color:#64748b;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
       +'<span>\ud83d\udccd '+fuoriTot+' fuori zona</span>'
-      +'<button onclick="crmConsZonaToggle()" style="padding:5px 10px;border-radius:7px;border:1px solid #cbd5e1;background:'+(_crmConsZona?'#0f766e':'#fff')+';color:'+(_crmConsZona?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'
-      +(_crmConsZona?'Mostra tutti':'Nascondi fuori zona')+'</button></div>';
+      +_zb('tutti','Tutti')
+      +_zb('dentro','Solo in zona')
+      +_zb('fuori','Solo fuori zona')
+      /* Il pulsante che toglie in blocco compare solo mentre li stai
+         guardando: altrove sarebbe un tasto pericoloso di passaggio. */
+      +(_crmConsZona==='fuori'
+         ? ('<button onclick="crmEscludiFuoriZona()" style="padding:5px 10px;border-radius:7px;border:1px solid #dc2626;background:#fff;color:#dc2626;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">'
+            +'\uD83D\uDDD1\uFE0F Togli tutti dai promemoria ('+fuoriTot+')</button>')
+         : '')
+      +'</div>';
   }
 
   if(!totale){
+    /* Con un filtro acceso "nessuna consegna in scadenza" e' fuorviante: le
+       consegne ci sono, e' la vista che le sta escludendo. */
+    if(_crmConsZona==='fuori'){
+      return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessun cliente fuori zona da contattare adesso.'
+        +'<div style="font-size:12px;margin-top:6px;">I fuori zona contati sopra possono essere in fasce gi\u00e0 evase.</div></div>';
+    }
+    if(_crmConsZona==='dentro'){
+      return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessun cliente in zona da contattare adesso.</div>';
+    }
     return h+'<div style="text-align:center;color:#94a3b8;padding:36px;font-size:14px;">Nessuna consegna in scadenza.'
       +'<div style="font-size:12px;margin-top:6px;">Qui compaiono le auto consegnate circa uno, due, tre o quattro anni fa.</div></div>';
   }
@@ -35485,7 +35622,9 @@ function crmRenderConsegnate(){
         var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
         h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-top:1px solid #f1f5f9;font-size:12.5px;">'
           +'<div style="min-width:0;color:#64748b;"><b>'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</b> \u00b7 '
-          +crmEsc(a.modello||cv.autoDesc||'')+'</div>'
+          +crmEsc(a.modello||cv.autoDesc||'')
+          +(cv.crmEsclusoMotivo?(' <span style="color:#94a3b8;">\u00b7 '+crmEsc(cv.crmEsclusoMotivo)+'</span>'):'')
+          +'</div>'
           +'<button onclick="crmRimettiCliente(\''+crmEsc(cv.id)+'\')" style="flex:0 0 auto;border:none;background:none;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;">rimetti</button>'
           +'</div>';
       });
