@@ -7886,25 +7886,49 @@ function pSalva() {
      produrrebbe una provvigione calcolata su dati smentiti.
      Non si segnala soltanto: si riportano i campi ai valori della delibera e
      si dice cosa e' stato corretto. Poi il calcolo riparte da li'. */
+  window._pDelibForzata=null;
   try{
     var _dd=(typeof pDiffDelibera==='function')?pDiffDelibera():null;
     if(_dd && _dd.d && _dd.d.confermata && _dd.diff && _dd.diff.length){
-      var _set=function(id,v){
-        var el=document.getElementById(id);
-        if(el && v!==null && v!==undefined && v!=='') el.value=v;
-      };
       var _corretti=_dd.diff.map(function(x){ return x[0]+': '+x[1]+' \u2192 '+x[2]; });
-      if(_dd.campi['pTan'])  _set('pTan', (typeof pTanVicino==='function')?pTanVicino(_dd.d.tan):_dd.d.tan);
-      if(_dd.campi['pComm']) _set('pComm', _dd.d.istruttoria);
-      if(_dd.campi['pValore']){
-        if(_dd.d.valoreVeicolo!=null) _set('pValore', _dd.d.valoreVeicolo);
-        if(_dd.d.anticipo!=null)      _set('pAcconto', _dd.d.anticipo);
+      /* Riporta i campi ai numeri della delibera e fa ricalcolare. */
+      var _riallinea=function(){
+        var _set=function(id,v){
+          var el=document.getElementById(id);
+          if(el && v!==null && v!==undefined && v!=='') el.value=v;
+        };
+        if(_dd.campi['pTan'])  _set('pTan', (typeof pTanVicino==='function')?pTanVicino(_dd.d.tan):_dd.d.tan);
+        if(_dd.campi['pComm']) _set('pComm', _dd.d.istruttoria);
+        if(_dd.campi['pValore']){
+          if(_dd.d.valoreVeicolo!=null) _set('pValore', _dd.d.valoreVeicolo);
+          if(_dd.d.anticipo!=null)      _set('pAcconto', _dd.d.anticipo);
+        }
+        alert('Ho riportato i valori a quelli della delibera.\n\n\u2022 '+_corretti.join('\n\u2022 ')
+          +'\n\nLa delibera \u00e8 quello che la finanziaria ha caricato davvero: '
+          +'la provvigione si calcola su quei numeri.\n\nControlla il risultato e salva di nuovo.');
+        try{ if(typeof pCalcola==='function') pCalcola(); }catch(e){}
+      };
+
+      /* ===== LA DEROGA =====
+         Una delibera puo' essere stata confermata in deroga: in quel caso i
+         numeri della provvigione non possono coincidere, e riallinearli
+         ogni volta e' un giro a vuoto. Chi ha deciso la deroga sulla
+         delibera e' il titolare, e solo lui puo' chiuderla anche qui. */
+      var _puoForz=false;
+      try{ _puoForz=(typeof isAdmin==='function' && isAdmin()); }catch(e){}
+      if(!_puoForz){ _riallinea(); return; }
+
+      if(!confirm('I valori non corrispondono alla delibera.\n\n\u2022 '+_corretti.join('\n\u2022 ')
+        +'\n\nLa delibera \u00e8 quello che la finanziaria ha caricato davvero.\n\n\u2014\u2014\u2014\n\n'
+        +'OK = salvo lo stesso con i valori che vedi ora\n'
+        +'      (la forzatura resta scritta sulla provvigione)\n'
+        +'Annulla = riporto i valori a quelli della delibera')){
+        _riallinea(); return;
       }
-      alert('Ho riportato i valori a quelli della delibera.\n\n\u2022 '+_corretti.join('\n\u2022 ')
-        +'\n\nLa delibera \u00e8 quello che la finanziaria ha caricato davvero: '
-        +'la provvigione si calcola su quei numeri.\n\nControlla il risultato e salva di nuovo.');
-      try{ if(typeof pCalcola==='function') pCalcola(); }catch(e){}
-      return;
+      window._pDelibForzata={
+        diff:_corretti.slice(0), ts:Date.now(),
+        da:((typeof _currentUserName!=='undefined'&&_currentUserName)||'')
+      };
     }
   }catch(e){}
 
@@ -7967,6 +7991,8 @@ function pSalva() {
       ? { calcolo:_pSottoAuto, scelto:PS.sotto, ts:Date.now(),
           da:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') }
       : undefined,
+    /* Salvata contro la delibera: il perche' resta qui, con nome e ora. */
+    delibForzata: (window._pDelibForzata || undefined),
     fi: PS.fi, fiMesi: PS.fi!=='NO'?(PS.fiMesi||48):null, cpi: PS.cpi, gap: PS.gap,
     valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15,
     fonte: PS.fonte || 'Non specificato',
@@ -7976,6 +8002,8 @@ function pSalva() {
   if (res.tipo === 'noFin') { entry.provv = 25; }
   else if (res.tipo === 'sotto') { entry.provv = res.provv; }
   else { entry.compass = res.compass; entry.dbAvvera = res.dbAvvera; entry.bestProvv = res.bestProvv; }
+  /* La deroga vale per questo salvataggio: il prossimo riparte dai controlli. */
+  window._pDelibForzata=null;
 
   /* ===== UNA SOLA RIGA PER CONTRATTO =====
      Alla conferma della delibera il gestionale crea gia' la riga della
@@ -8629,6 +8657,13 @@ function pDettaglio(id){
                 +(r.sottoForzato.da?(', deciso da '+r.sottoForzato.da):''))
              : ''))
       + (r.giacenzaGg?riga('Giacenza a contratto', r.giacenzaGg+' giorni'):'')
+      + (r.delibForzata
+          ? riga('Salvata in deroga',
+              '\u26a0\ufe0f non corrisponde alla delibera'
+              +(r.delibForzata.da?(' \u00b7 '+r.delibForzata.da):'')
+              +((r.delibForzata.diff&&r.delibForzata.diff.length)
+                 ? (' \u00b7 '+r.delibForzata.diff.join(' \u00b7 ')) : ''))
+          : '')
       +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:14px 0 4px;">Il risultato</div>'
       + (res&&res.C15!=null?riga('Base di calcolo (C15)', eur(res.C15)):'')
       + riga('Provvigione registrata', eur(salvata), true)
