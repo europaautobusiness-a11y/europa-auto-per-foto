@@ -6696,6 +6696,19 @@ const PS = {fin:'SI', eta:'nuova', sotto:'NO', rate:'36-59', cpi:'NO', fi:'NO', 
    Resta modificabile finche' non c'e' un veicolo agganciato: su una vendita
    inserita a mano nessuno puo' sapere da quanto era in casa. */
 var _pSottoBloccato = false;
+/* ===== FORZARE IL SOTTOCOSTO =====
+   Il sottocosto lo decide il gestionale: giacenza oltre i 180 giorni oppure
+   vendita sotto il prezzo d'acquisto. Il pulsante resta spento perche' non e'
+   un'opinione, e una provvigione dimezzata per sbaglio la paga qualcuno.
+   Esistono pero' casi che i due criteri non vedono: un contributo del
+   fornitore, un'auto ferma per un problema nostro e non per il mercato. Chi
+   ne risponde e' il titolare, quindi solo lui puo' cambiarlo, e la modifica
+   resta scritta sulla provvigione con il valore automatico che ha scavalcato. */
+var _pSottoAuto = null;      /* cosa direbbe il calcolo, 'SI' o 'NO' */
+var _pSottoForzato = false;  /* il titolare l'ha cambiato a mano */
+function pPuoForzareSotto(){
+  try{ return (typeof isAdmin==='function' && isAdmin()); }catch(e){ return false; }
+}
 function pEuro(n){ n=Number(n)||0; return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' \u20ac'; }
 
 /* ===== CONFRONTARE MELE CON MELE =====
@@ -6799,7 +6812,7 @@ function pAggiornaSottocosto(cv){
     var btns=Array.prototype.slice.call(box.querySelectorAll('.ptb'));
 
     if(gg===null && !pz){
-      _pSottoBloccato=false;
+      _pSottoBloccato=false; _pSottoAuto=null; _pSottoForzato=false;
       btns.forEach(function(b){ b.disabled=false; b.style.opacity=''; b.style.cursor=''; b.title=''; });
       nota.innerHTML='<span style="color:#94a3b8;">Nessun veicolo agganciato: il sottocosto va indicato a mano.</span>';
       return;
@@ -6810,14 +6823,27 @@ function pAggiornaSottocosto(cv){
     var perGiacenza = (gg!==null && gg>180);
     var perPrezzo   = !!(pz && pz.sotto);
     var sotto = perGiacenza || perPrezzo;
-    PS.sotto = sotto?'SI':'NO';
+    _pSottoAuto = sotto?'SI':'NO';
+    var _puo = pPuoForzareSotto();
+    /* Una scelta gia' fatta dal titolare non viene riscritta a ogni ricalcolo:
+       altrimenti basterebbe toccare un altro campo per rimetterla com'era. */
+    var _tieni = (_puo && _pSottoForzato && PS.sotto && PS.sotto!==_pSottoAuto);
+    if(!_tieni){ PS.sotto=_pSottoAuto; _pSottoForzato=false; }
+    var _attivo = PS.sotto;
     btns.forEach(function(b){
       var suo=(String(b.textContent||'').trim().toLowerCase()==='s\u00ec');
-      b.classList.toggle('on', suo===sotto);
-      b.disabled=true; b.style.opacity='.55'; b.style.cursor='not-allowed';
-      b.title='Deciso dalla giacenza: '+gg+' giorni in stock';
+      b.classList.toggle('on', (suo?'SI':'NO')===_attivo);
+      if(_puo){
+        b.disabled=false; b.style.opacity=''; b.style.cursor='pointer';
+        b.title='Deciso dal calcolo ('+(_pSottoAuto==='SI'?'sottocosto':'provvigione piena')
+               +'). Puoi cambiarlo: resta scritto sulla provvigione.';
+      } else {
+        b.disabled=true; b.style.opacity='.55'; b.style.cursor='not-allowed';
+        b.title=(gg!==null)?('Deciso dalla giacenza: '+gg+' giorni in stock')
+                           :'Deciso dal margine sulla vendita';
+      }
     });
-    _pSottoBloccato=true;
+    _pSottoBloccato=!_puo;
 
     var righe=[];
     if(gg!==null){
@@ -6841,18 +6867,59 @@ function pAggiornaSottocosto(cv){
     righe.push(sotto
       ? '<span style="color:#b45309;font-weight:700;">Sottocosto: provvigione dimezzata.</span>'
       : '<span style="color:#16a34a;font-weight:700;">Provvigione piena.</span>');
+    if(PS.sotto!==_pSottoAuto){
+      righe.push('<span style="color:#991b1b;font-weight:800;">\u26a0\ufe0f Forzato a '
+        +(PS.sotto==='SI'?'SOTTOCOSTO':'PROVVIGIONE PIENA')
+        +': il calcolo diceva '+(_pSottoAuto==='SI'?'sottocosto':'provvigione piena')
+        +'. Resta scritto sulla provvigione.</span>');
+    } else if(pPuoForzareSotto()){
+      righe.push('<span style="color:#94a3b8;">Puoi cambiarlo tu: la modifica resta segnata.</span>');
+    }
     nota.innerHTML = righe.join('<br>');
   }catch(e){}
 }
 
 function ptog(k,v,btn){
-  /* Il sottocosto non si tocca quando lo decide la giacenza. */
+  /* Il sottocosto non si tocca quando lo decide la giacenza \u2014 salvo il
+     titolare, per cui il blocco non viene mai acceso. */
   if(k==='sotto' && _pSottoBloccato) return;
+  if(k==='sotto'){
+    _pSottoForzato = (_pSottoAuto!==null && v!==_pSottoAuto);
+    if(_pSottoForzato && pPuoForzareSotto()){
+      try{
+        if(!confirm('Il calcolo dice '+(_pSottoAuto==='SI'?'SOTTOCOSTO':'PROVVIGIONE PIENA')
+          +' e tu stai mettendo '+(v==='SI'?'SOTTOCOSTO':'PROVVIGIONE PIENA')+'.\n\n'
+          +(v==='SI'?'La provvigione verr\u00e0 dimezzata.':'La provvigione verr\u00e0 pagata piena.')
+          +'\nLa forzatura resta scritta sulla provvigione.\n\nOK = confermo\nAnnulla = lascio com\u2019\u00e8')){
+          _pSottoForzato=false; return;
+        }
+      }catch(e){}
+    }
+  }
   PS[k]=(k==='fiMesi')?parseInt(v):v;
   btn.closest('.ptg').querySelectorAll('.ptb').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
   if(k==='fin'){const b=document.getElementById('pBloccoFin');if(b)b.style.display=v==='SI'?'block':'none';}
   if(k==='fi'){const m=document.getElementById('pFiMesiWrap');if(m)m.style.display=(v!=='NO')?'block':'none';}
+  /* La nota sotto i pulsanti deve dire subito che si sta andando contro il
+     calcolo: si riscrive senza ricostruire tutto il riquadro. */
+  if(k==='sotto'){
+    try{
+      var _n=document.getElementById('pSottoNota');
+      if(_n && _pSottoAuto!==null){
+        var _r=_n.innerHTML.split('<br>').filter(function(x){ return x.indexOf('\u26a0')<0 && x.indexOf('Puoi cambiarlo tu')<0; });
+        if(PS.sotto!==_pSottoAuto){
+          _r.push('<span style="color:#991b1b;font-weight:800;">\u26a0\ufe0f Forzato a '
+            +(PS.sotto==='SI'?'SOTTOCOSTO':'PROVVIGIONE PIENA')
+            +': il calcolo diceva '+(_pSottoAuto==='SI'?'sottocosto':'provvigione piena')
+            +'. Resta scritto sulla provvigione.</span>');
+        } else if(pPuoForzareSotto()){
+          _r.push('<span style="color:#94a3b8;">Puoi cambiarlo tu: la modifica resta segnata.</span>');
+        }
+        _n.innerHTML=_r.join('<br>');
+      }
+    }catch(e){}
+  }
   pCalcola();
 }
 
@@ -7893,6 +7960,13 @@ function pSalva() {
     finanziaria,
     provvigione: provvSelezionata,
     eta: PS.eta, sotto: PS.sotto, rate: PS.rate,
+    /* Chi guardera' questa riga a fine mese deve sapere se il sottocosto e'
+       stato deciso dal calcolo o scavalcato a mano, e da chi. */
+    sottoAuto: (_pSottoAuto!==null && PS.sotto===_pSottoAuto) ? true : undefined,
+    sottoForzato: (_pSottoAuto!==null && PS.sotto!==_pSottoAuto)
+      ? { calcolo:_pSottoAuto, scelto:PS.sotto, ts:Date.now(),
+          da:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') }
+      : undefined,
     fi: PS.fi, fiMesi: PS.fi!=='NO'?(PS.fiMesi||48):null, cpi: PS.cpi, gap: PS.gap,
     valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15,
     fonte: PS.fonte || 'Non specificato',
@@ -8548,7 +8622,12 @@ function pDettaglio(id){
       + riga('Durata polizza', val(r.fiMesi,' mesi'))
       + riga('CPI', val(r.cpi)) + riga('GAP', val(r.gap))
       + riga('Et\u00e0 veicolo', val(r.eta)+(r.etaMesi?(' ('+r.etaMesi+' mesi)'):''))
-      + riga('Sottocosto', val(r.sotto)+(r.sottoAuto?' (automatico oltre 180 gg)':''))
+      + riga('Sottocosto', val(r.sotto)
+          +(r.sottoAuto?' (automatico oltre 180 gg)':'')
+          +(r.sottoForzato
+             ? (' \u26a0\ufe0f forzato: il calcolo diceva '+(r.sottoForzato.calcolo==='SI'?'S\u00cc':'NO')
+                +(r.sottoForzato.da?(', deciso da '+r.sottoForzato.da):''))
+             : ''))
       + (r.giacenzaGg?riga('Giacenza a contratto', r.giacenzaGg+' giorni'):'')
       +'<div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:14px 0 4px;">Il risultato</div>'
       + (res&&res.C15!=null?riga('Base di calcolo (C15)', eur(res.C15)):'')
@@ -30115,17 +30194,55 @@ function cvDeliberaForm(id){
   if(window._delibPolManuale===true){ _polDaSim=false; }
   window._delibPolManuale=false;
   var _polVal = val('polizze'); if(_polVal===''||_polVal===null||_polVal===undefined) _polVal='';
+  /* ===== QUALE POLIZZA FINISCE NELLA PROVVIGIONE =====
+     La provvigione si calcola anche sulla polizza: NET, Fit2You, Zurich e le
+     altre non valgono uguale. Finora, quando la delibera arrivava dal
+     simulatore, il tipo di polizza non veniva chiesto e finiva in un campo
+     nascosto che, se vuoto, valeva NET. Su una vendita senza polizza o con
+     una polizza diversa la provvigione nasceva sbagliata, e nessuno poteva
+     accorgersene perche' quel dato non compariva da nessuna parte.
+     Ora si eredita da quello che Rudy ha gia' scritto sul contratto, e se
+     non c'e' niente da ereditare si chiede invece di inventarlo. */
   var _polTipo = String(d.polizzaTipo||'');
+  var _polEreditata = false;
+  if(!_polTipo){
+    if(cv.assicOn && cv.polizzaTipo){ _polTipo=String(cv.polizzaTipo); _polEreditata=true; }
+    else if(cv.assicOn===false || cv.assicOn===undefined || cv.assicOn===null){
+      /* nessuna assicurazione sul contratto: sulla provvigione non pesa */
+      if(!cv.assicOn){ _polTipo='nessuna'; _polEreditata=true; }
+    }
+  }
+  /* Polizza sconosciuta: si passa al riquadro manuale, cosi' la scelta si
+     vede e si fa. Meglio una domanda in piu' che una provvigione sbagliata. */
+  if(!_polTipo) _polDaSim=false;
+  /* Anche i mesi vengono dal contratto, non da un 48 fisso. */
+  var _polMesiDef = parseInt(d.polizzaMesi,10) || parseInt(cv.assicMesi,10) || 48;
+  var _polNome = (function(){
+    try{
+      if(_polTipo==='nessuna') return 'Nessuna polizza';
+      if(_polTipo==='altra') return 'Altra polizza';
+      var _l=(typeof CV_POLIZZE!=='undefined')?CV_POLIZZE:[];
+      for(var i=0;i<_l.length;i++){ if(_l[i].id===_polTipo) return _l[i].nome; }
+      return _polTipo ? (_polTipo.charAt(0).toUpperCase()+_polTipo.slice(1)) : '';
+    }catch(e){ return _polTipo||''; }
+  })();
   var _esc=function(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); };
 
   var _polAuto = '<label style="'+lab+'">Polizze \u20ac</label>'
    +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:10px 11px;">'
    +'<div style="font-size:17px;font-weight:800;color:#166534;">'+((_polVal===''?'0':_polVal))+' \u20ac</div>'
-   +'<div style="font-size:11px;color:#166534;font-weight:600;margin-top:2px;">\u2713 Gi\u00e0 comprese nel simulatore \u2014 non serve inserirle</div></div>'
+   +'<div style="font-size:11px;color:#166534;font-weight:600;margin-top:2px;">\u2713 Gi\u00e0 comprese nel simulatore \u2014 non serve inserirle</div>'
+   /* Il tipo di polizza entra nel calcolo della provvigione: sta scritto qui
+      perche' si possa controllare, non in un campo invisibile. */
+   +'<div style="margin-top:7px;padding-top:7px;border-top:1px solid #bbf7d0;font-size:12px;color:#166534;">'
+   +'<b>'+_esc(_polNome||'\u2014')+'</b>'+(_polTipo!=='nessuna'?(' \u00b7 '+_polMesiDef+' mesi'):'')
+   +'<div style="font-size:10.5px;color:#15803d;font-weight:600;margin-top:1px;">'
+   +(_polEreditata?'presa dal contratto':'gi\u00e0 sulla delibera')+' \u2014 entra nel calcolo della provvigione</div>'
+   +'</div></div>'
    +'<input type="hidden" id="dl_polizze" value="'+(_polVal===''?'0':_esc(_polVal))+'">'
-   +'<input type="hidden" id="dl_polizzaTipo" value="'+_esc(_polTipo||'net')+'">'
+   +'<input type="hidden" id="dl_polizzaTipo" value="'+_esc(_polTipo)+'">'
    +'<input type="hidden" id="dl_daSim" value="1">'
-   +'<div style="margin-top:5px;"><a onclick="cvDelibPolManualeSwitch()" style="font-size:11px;color:#1a4fa0;cursor:pointer;text-decoration:underline;">Altra polizza \u2014 inseriscila a mano</a></div>';
+   +'<div style="margin-top:5px;"><a onclick="cvDelibPolManualeSwitch()" style="font-size:11px;color:#1a4fa0;cursor:pointer;text-decoration:underline;">Polizza diversa \u2014 cambiala a mano</a></div>';
 
   var _polOpts = '<option value="">\u2014 scegli \u2014</option>'
    + (typeof CV_POLIZZE!=='undefined'?CV_POLIZZE:[]).map(function(pz){
@@ -30227,7 +30344,7 @@ function cvDeliberaForm(id){
      +'<option value="NO"'+(String(d.gap||'NO')==='NO'?' selected':'')+'>No</option>'
      +'<option value="SI"'+(String(d.gap||'')==='SI'?' selected':'')+'>S\u00ec</option></select></div>'
    +'<div style="flex:1;"><label style="'+lab+'">Durata polizza</label><select id="dl_polMesi" style="'+inp+'background:#fff;">'
-     +[24,36,48,60,72].map(function(mm){ return '<option value="'+mm+'"'+((parseInt(d.polizzaMesi,10)||48)===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('')
+     +[24,36,48,60,72].map(function(mm){ return '<option value="'+mm+'"'+(_polMesiDef===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('')
      +'</select></div></div></div>'
    +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
@@ -30354,7 +30471,10 @@ function cvDeliberaSalva(id){
   if(n('istruttoria')===null) mancanti.push('Commissioni finanziarie');
   if(n('polizze')===null) mancanti.push('Polizze');
   var _daSim=(g('daSim')==='1');
-  if(!_daSim && !g('polizzaTipo')) mancanti.push('Tipo polizza');
+  /* Prima il controllo saltava quando la delibera veniva dal simulatore, e
+     il campo nascosto ripiegava su NET. Il tipo di polizza serve al calcolo
+     della provvigione in tutti e due i casi, quindi si pretende sempre. */
+  if(!g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
   /* ===== I CONTI DELLA DELIBERA DEVONO TORNARE COL CONTRATTO =====
      Il valore del veicolo in delibera puo' legittimamente essere piu' alto
