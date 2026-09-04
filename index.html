@@ -21179,7 +21179,9 @@ function clRenderDettaglio(){
       /* Le liste si riempiono dopo che il riquadro e' nel documento. */
       try{
         var _ivIds=iv.map(function(y){ return y.id; });
-        setTimeout(function(){ _ivIds.forEach(function(_id){ try{ ivDocRiquadro(_id, false); }catch(e){} }); }, 0);
+        setTimeout(function(){ _ivIds.forEach(function(_id){
+          try{ ivDocRiquadro(_id, !!(typeof _ivDocAperti!=='undefined' && _ivDocAperti[_id])); }catch(e){}
+        }); }, 0);
       }catch(e){}
     }
 
@@ -25176,6 +25178,16 @@ function docAggiungi(pfx, files){
      passaggio in piu' che si dimenticava, lasciando allegati mai salvati. */
   var au=_docAuto[pfx];
   if(au){ setTimeout(function(){ try{ docCarica(au.tipo, au.id, pfx); }catch(e){} }, 60); }
+  /* Caricato il file, il riquadro dell'intervento non serve piu' aperto:
+     si richiude e resta la fattura in riga. Se il caricamento fallisce
+     resta aperto, perche' c'e' da riprovare. */
+  if(au && au.tipo==='intervento'){
+    setTimeout(function(){
+      try{
+        if(!(_docSel[pfx]||[]).length && typeof ivDocRiquadro==='function') ivDocRiquadro(au.id, false);
+      }catch(e){}
+    }, 2500);
+  }
 }
 function docSelTogli(pfx, i){ if(_docSel[pfx]){ _docSel[pfx].splice(i,1); docSelRender(pfx); } }
 function docKb(b){ if(b>=1048576) return (b/1048576).toFixed(1).replace('.',',')+' MB'; return Math.max(1,Math.round(b/1024))+' KB'; }
@@ -27364,12 +27376,22 @@ function ivDaCalendario(k, nome, key, cli){
    e non finisce nel mucchio dei documenti officina. */
 function ivDocPfx(id){ return 'ivdocC_'+String(id==null?'':id).replace(/[^A-Za-z0-9_]/g,''); }
 
+/* ===== IL RIQUADRO APERTO DEVE RESTARE APERTO =====
+   La scheda cliente si ridisegna da sola: ogni 45 secondi la sincronizzazione
+   rilegge clienti e interventi e ricostruisce il riquadro. La casella di
+   caricamento appena aperta spariva sotto le mani di chi stava per
+   trascinarci dentro un file. Qui si annota quali sono aperti e si
+   riaprono quando la scheda torna in piedi. I file gia' scelti stanno in
+   _docSel e vengono ridisegnati da soli. */
+var _ivDocAperti={};
+
 function ivDocRiquadro(id, aperto){
   var pfx=ivDocPfx(id);
   var wrap=document.getElementById(pfx+'-wrap'); if(!wrap) return;
   /* Chiuso e' una voce come le altre e sta in riga con i pulsanti. Aperto ha
      dentro una casella di trascinamento, che in una colonna stretta non si
      centra nemmeno un file: solo allora prende tutta la larghezza. */
+  if(aperto) _ivDocAperti[id]=true; else delete _ivDocAperti[id];
   try{
     wrap.style.flex     = aperto ? '1 1 100%' : '0 0 auto';
     wrap.style.maxWidth = aperto ? 'none' : '270px';
@@ -27382,12 +27404,12 @@ function ivDocRiquadro(id, aperto){
     wrap.innerHTML='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:6px;background:#f8fafc;">'
       +docPannelloHTML('intervento', id, pfx, ['fattura_intervento'],
          'La fattura emessa al cliente per questo intervento.', false, true)
-      +'<div style="margin-top:6px;text-align:right;"><a onclick="ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',false)" '
+      +'<div style="margin-top:6px;text-align:right;"><a onclick="event.stopPropagation();ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',false)" '
       +'style="font-size:11.5px;color:#64748b;cursor:pointer;text-decoration:underline;">Chiudi</a></div>'
       +'</div>';
   } else {
     wrap.innerHTML='<div id="'+pfx+'-list"></div>'
-      +'<a onclick="ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',true)" '
+      +'<a onclick="event.stopPropagation();ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',true)" '
       +'style="display:inline-block;font-size:11.5px;color:#1a4fa0;cursor:pointer;text-decoration:underline;white-space:nowrap;">'
       +'\uD83D\uDCCE Allega fattura</a>';
   }
