@@ -30065,6 +30065,9 @@ function cvVendRender(){ var wrap=document.getElementById('view-vendite'); if(!w
 function cvDeliberaForm(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   window._delibRataManuale=false;
+  /* Una forzatura vale per il salvataggio in cui e' stata decisa: riaprendo
+     il pannello si riparte dai controlli, non da un permesso rimasto acceso. */
+  window._delibForzata=null;
   try{ if(window._delibDaSim && window._delibDaSim.provvAzienda!=null) window._delibDaSimProvv=window._delibDaSim.provvAzienda; }catch(e){}
   setTimeout(function(){ try{ cvDeliberaFinCambia(); }catch(e){} }, 60);
   var sim=cvDatiSimulati(cv);
@@ -30190,6 +30193,26 @@ function cvDeliberaForm(id){
    +_polBox
    /* Questi tre dati non servono alla delibera in se': servono al calcolo
       della provvigione. Raccogliendoli qui, Rudy inserisce una volta sola. */
+   +(function(){
+       /* Una delibera passata in deroga non deve sembrare normale la volta
+          dopo: chi la riapre vede subito che i conti non tornavano e chi ha
+          deciso di andare avanti lo stesso. */
+       var _fz=d && d.forzata;
+       if(!_fz) return '';
+       var _q=new Date(_fz.ts||Date.now());
+       return '<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:9px;padding:10px 12px;margin-top:12px;">'
+         +'<div style="font-size:11px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.05em;">\u26a0\ufe0f Delibera forzata</div>'
+         +'<div style="font-size:12.5px;color:#92400e;margin-top:4px;line-height:1.55;">'
+         +'Confermata da <b>'+cvEsc(_fz.da||'\u2014')+'</b> il '
+         +('0'+_q.getDate()).slice(-2)+'/'+('0'+(_q.getMonth()+1)).slice(-2)+'/'+_q.getFullYear()
+         +' alle '+('0'+_q.getHours()).slice(-2)+':'+('0'+_q.getMinutes()).slice(-2)
+         +' nonostante lo scarto col contratto.</div>'
+         +((_fz.avvisi&&_fz.avvisi.length)
+            ? ('<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#7c2d12;line-height:1.5;">'
+               +_fz.avvisi.map(function(a){ return '<li>'+cvEsc(a)+'</li>'; }).join('')+'</ul>')
+            : '')
+         +'</div>';
+     })()
    +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:12px;">'
    +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Dati per la provvigione</div>'
    +'<div style="display:flex;gap:10px;">'
@@ -30344,6 +30367,7 @@ function cvDeliberaSalva(id){
      aspetta dalla finanziaria.
      Se non torna, si sbaglia una provvigione o si scopre a consegna avvenuta
      che manca del denaro. */
+  var _avvisiOra=null;      /* quante differenze ha trovato questo salvataggio */
   try{
     var _V=n('valore'), _A=n('anticipo'), _I=n('importo');
     var _q=function(x){ return Math.round((Number(x)||0)*100)/100; };
@@ -30372,16 +30396,41 @@ function cvDeliberaSalva(id){
         +' (differenza '+cvEuro(Math.abs(_q(_I-_finAtteso)))+').');
     }
 
+    _avvisiOra=_avvisi.length;
     if(_avvisi.length){
-      /* Qui si blocca. Una delibera con i conti sbagliati fa nascere una
-         provvigione sbagliata, e se ne accorge il mese dopo chi paga: e'
-         piu' facile correggere adesso che rifare un conteggio gia' chiuso. */
-      alert('Non posso confermare: i conti della delibera non tornano con il contratto.\n\n\u2022 '
+      /* ===== IL BLOCCO E LA SUA ECCEZIONE =====
+         Una delibera con i conti sbagliati fa nascere una provvigione
+         sbagliata, e se ne accorge il mese dopo chi paga: e' piu' facile
+         correggere adesso che rifare un conteggio gia' chiuso. Per questo
+         per tutti resta un muro.
+         Esistono pero' casi veri in cui i numeri non possono tornare \u2014
+         accordi particolari con la finanziaria, contributi che stanno fuori
+         dal contratto. Chi risponde di quei casi e' il titolare, e solo lui
+         puo' passare oltre: la forzatura resta scritta sulla delibera con
+         nome, ora e le differenze esatte, cosi' a fine mese si sa perche'
+         quella provvigione e' fuori riga. */
+      var _testo='Non posso confermare: i conti della delibera non tornano con il contratto.\n\n\u2022 '
         +_avvisi.join('\n\n\u2022 ')
         +'\n\nSe il cliente finanzia tutto e alla finanziaria hai dichiarato un valore '
         +'pi\u00f9 alto, metti l\u2019anticipo che compensa: valore meno anticipo deve fare '
-        +'l\u2019importo finanziato.\n\nCorreggi i valori e riprova.');
-      return;
+        +'l\u2019importo finanziato.';
+      var _puoForzare=false;
+      try{ _puoForzare=(typeof isAdmin==='function' && isAdmin()); }catch(e){}
+      if(!_puoForzare){
+        alert(_testo+'\n\nCorreggi i valori e riprova.');
+        return;
+      }
+      if(!confirm(_testo
+        +'\n\n\u2014\u2014\u2014\n\nPuoi confermarla lo stesso: la provvigione verr\u00e0 calcolata su '
+        +'questi numeri, cos\u00ec come sono. La forzatura resta scritta sulla delibera '
+        +'col tuo nome.\n\nOK = confermo lo stesso\nAnnulla = torno a correggere')){
+        return;
+      }
+      window._delibForzata={
+        ts:Date.now(),
+        da:((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+        avvisi:_avvisi.slice(0)
+      };
     }
   }catch(e){}
 
@@ -30441,7 +30490,17 @@ function cvDeliberaSalva(id){
     data:((list[i].finDelibera&&list[i].finDelibera.data)||new Date().toISOString().slice(0,10)),
     correttaTs:((list[i].finDelibera&&list[i].finDelibera.confermata)?Date.now():null),
     correttaDa:((list[i].finDelibera&&list[i].finDelibera.confermata)?((typeof _currentUserName!=='undefined'&&_currentUserName)||''):''),
+    /* Se non e' stata forzata adesso, resta quella di prima: correggendo una
+       delibera gia' forzata senza risolvere lo scarto non si cancella la
+       nota. Si toglie da sola quando i conti tornano. */
+    forzata:(window._delibForzata || ((list[i].finDelibera&&list[i].finDelibera.forzata)||null)),
     inseritaDa:(typeof _currentUserName!=='undefined'?_currentUserName:''), ts:Date.now() };
+  /* Conti tornati: la delibera non e' piu' fuori riga e la nota decade. */
+  if(!window._delibForzata && list[i].finDelibera && list[i].finDelibera.forzata){
+    var _erano=(list[i].finDelibera.forzata.avvisi||[]).length;
+    if(_erano && _avvisiOra===0) list[i].finDelibera.forzata=null;
+  }
+  window._delibForzata=null;
   list[i].updatedAt=Date.now();
   /* La delibera e' il fatto che sblocca la pratica: lo stato si ricalcola qui,
      non alla prossima apertura della schermata. */
