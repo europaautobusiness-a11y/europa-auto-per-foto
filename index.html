@@ -21165,9 +21165,22 @@ function clRenderDettaglio(){
           +'<button onclick="event.stopPropagation();tgApri(\''+clEsc(x.id)+'\')" '
           +'style="padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;'
           +'font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Apri</button>'
-          +'</div></div>';
+          +'</div>'
+          /* ===== LA PROFORMA E LA FATTURA, UNA DI FIANCO ALL'ALTRA =====
+             La proforma la genera il gestionale, la fattura la emettete voi:
+             sono due documenti dello stesso lavoro e vanno tenuti insieme.
+             Finora la fattura si caricava fra i documenti officina, un
+             elenco unico dove a distanza di mesi non si capisce piu' quale
+             riga appartiene a quale intervento. */
+          +'<div id="'+ivDocPfx(x.id)+'-wrap" style="flex-basis:100%;"></div>'
+          +'</div>';
       });
       box+='</div>';
+      /* Le liste si riempiono dopo che il riquadro e' nel documento. */
+      try{
+        var _ivIds=iv.map(function(y){ return y.id; });
+        setTimeout(function(){ _ivIds.forEach(function(_id){ try{ ivDocRiquadro(_id, false); }catch(e){} }); }, 0);
+      }catch(e){}
     }
 
     var _tk='clt_'+String(c.key||'').replace(/[^A-Za-z0-9_]/g,'');
@@ -27343,6 +27356,37 @@ function ivDaCalendario(k, nome, key, cli){
   return out;
 }
 
+/* ===== LA FATTURA DI QUESTO INTERVENTO =====
+   Un riquadro per lavorazione, dentro la riga dell'intervento. Chiuso mostra
+   la fattura gia' allegata (con Apri e cestino, come ovunque); aperto mostra
+   la casella di caricamento. Il documento si archivia con entita_tipo
+   "intervento" e l'id della lavorazione, quindi resta legato a quel lavoro
+   e non finisce nel mucchio dei documenti officina. */
+function ivDocPfx(id){ return 'ivdocC_'+String(id==null?'':id).replace(/[^A-Za-z0-9_]/g,''); }
+
+function ivDocRiquadro(id, aperto){
+  var pfx=ivDocPfx(id);
+  var wrap=document.getElementById(pfx+'-wrap'); if(!wrap) return;
+  if(aperto){
+    if(typeof docPannelloHTML!=='function'){ return; }
+    /* titolo false: il riquadro sta gia' dentro la riga dell'intervento e
+       un'altra intestazione sarebbe rumore. autoCarica: appena scelto il
+       file parte, senza un secondo pulsante da premere. */
+    wrap.innerHTML='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:6px;background:#f8fafc;">'
+      +docPannelloHTML('intervento', id, pfx, ['fattura_intervento'],
+         'La fattura emessa al cliente per questo intervento.', false, true)
+      +'<div style="margin-top:6px;text-align:right;"><a onclick="ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',false)" '
+      +'style="font-size:11.5px;color:#64748b;cursor:pointer;text-decoration:underline;">Chiudi</a></div>'
+      +'</div>';
+  } else {
+    wrap.innerHTML='<div id="'+pfx+'-list" style="margin-top:4px;"></div>'
+      +'<a onclick="ivDocRiquadro(\''+String(id).replace(/'/g,'')+'\',true)" '
+      +'style="font-size:11.5px;color:#1a4fa0;cursor:pointer;text-decoration:underline;">'
+      +'\uD83D\uDCCE Allega la fattura di questo intervento</a>';
+  }
+  try{ if(typeof docListaRender==='function') docListaRender('intervento', id, pfx, ['fattura_intervento']); }catch(e){}
+}
+
 function ivDelCliente(key, nome, cli){
   var k=ivChiaveCliente(nome, key);
   var propri=ivLoad().filter(function(x){
@@ -27692,7 +27736,11 @@ function tgRender(){
      fattura la emettete voi al cliente e si carica qui. Sta dentro
      l'intervento e non fra i documenti sparsi del veicolo, cosi' aprendo la
      lavorazione si trova subito il documento che la certifica. */
-  if(typeof docPannelloHTML==='function' && String(_tgId||'').indexOf('iv_')===0){
+  /* Il pannello valeva solo per gli interventi creati dalla scheda cliente
+     (id "iv_..."), non per quelli nati da un appuntamento del calendario, che
+     sono la maggior parte. Il documento si aggancia all'id, e quello ce
+     l'hanno tutti e due. */
+  if(typeof docPannelloHTML==='function' && _tgId){
     h+='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-bottom:12px;background:#f8fafc;">'
       +docPannelloHTML('intervento', _tgId, 'ivdoc_'+_tgId, ['fattura_intervento'],
         'La fattura emessa al cliente per questo intervento.', 'Fattura dell\u2019intervento', true)
