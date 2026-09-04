@@ -14823,7 +14823,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div class="cc-addbox">'
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
-  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
+  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option><option value="testdrive">🚗 Test drive</option></select></div>'
   +       '<div class="cc-field" id="cc-veicolo-wrap"><label id="cc-veicolo-lab">Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" onchange="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"></div><datalist id="cc-clienti-list"></datalist>'
@@ -15022,7 +15022,13 @@ document.addEventListener('DOMContentLoaded',function(){
   function ccColoreCompito(c){ return ccColore((c.dipEmail||c.dipNome||'')); }
 
   var ccFC=null;
-  function ccTipoInfo(t){ return (t==='vendita')?['\ud83e\udd1d','Vendita','#2563eb']:['\ud83d\udd27','Intervento','#ea580c']; }
+  /* Il verde del test drive non e' decorativo: chi guarda il calendario deve
+     riconoscere a colpo d'occhio i contatti caldi in mezzo agli altri. */
+  function ccTipoInfo(t){
+    if(t==='vendita')   return ['\ud83e\udd1d','Vendita','#2563eb'];
+    if(t==='testdrive') return ['\ud83d\ude97','Test drive','#16a34a'];
+    return ['\ud83d\udd27','Intervento','#ea580c'];
+  }
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
     return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
@@ -15226,7 +15232,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if (fd) for (var i=0;i<fd.options.length;i++){ if (fd.options[i].value===u.email){ fd.selectedIndex=i; break; } }
     }
   }
-  function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita')?'45':'90'; }catch(e){} }
+  function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita')?'45':((t==='testdrive')?'30':'90'); }catch(e){} }
   function ccNomeCliente(o){ var c=(o&&o.cliente)?o.cliente:o||{}; return (c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()); }
   /* Per cercare un'auto anche dal cognome del cliente: costruisco l'elenco
      dei proprietari a partire da contratti e vendite. */
@@ -15501,7 +15507,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var list=ccLoad(), c=null; for(var i=0;i<list.length;i++){ if(list[i].id===id){ c=list[i]; break; } }
     if(!c) return;
     var quando=(c.data||'')+(c.ora?(' \u00b7 '+c.ora):'');
-    var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?'\ud83e\udd1d Appuntamento vendita':'\ud83d\udcc5 Appuntamento'));
+    var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?'\ud83e\udd1d Appuntamento vendita':(c.tipo==='testdrive'?'\ud83d\ude97 Test drive':'\ud83d\udcc5 Appuntamento')));
     var rows='<div style="font-size:13px;color:#475569;margin-bottom:8px;">'+tipoLbl+' \u00b7 '+ccEsc(quando)+'</div>';
     if(c.veicolo) rows+='<div style="font-size:13px;margin:5px 0;"><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</div>';
     /* Fattura tagliando: solo sugli interventi su auto */
@@ -15657,8 +15663,93 @@ document.addEventListener('DOMContentLoaded',function(){
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
     try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo+(c.dipNome?(' \u2014 '+c.dipNome):''), '\u2705', (c.dipEmail?{tipo:'task_new', refId:c.id, per:c.dipEmail}:null));
     if(categoria==='task') ccMailNuovoTask(c); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
+    try{ if(c.tipo==='testdrive') ccTestDriveAvvisa(c); }catch(e){}
     document.getElementById('cc-titolo').focus();
   }
+
+  /* ===== TEST DRIVE: QUALCUNO DEVE PREPARARE L'AUTO =====
+     Un test drive e' un contatto caldo e ha un lavoro dietro: l'auto va
+     tirata fuori, pulita, col pieno. Se l'appuntamento resta solo sul
+     calendario, il giorno stesso l'auto non e' pronta.
+     Partono due avvisi: la mail all'amministrazione, e un messaggio gia'
+     scritto per chi prepara le auto \u2014 che va mandato a mano, dal WhatsApp
+     dell'ufficio, perche' un messaggio automatico costerebbe a ogni invio. */
+  function ccTestDriveAvvisa(c){
+    try{
+      var q=String(c.data||'').split('-');
+      var giorno=(q.length===3)?(q[2]+'/'+q[1]+'/'+q[0]):String(c.data||'');
+      var GIORNI=['domenica','luned\u00ec','marted\u00ec','mercoled\u00ec','gioved\u00ec','venerd\u00ec','sabato'];
+      var esteso=giorno;
+      if(q.length===3){ try{ esteso=GIORNI[new Date(+q[0],+q[1]-1,+q[2]).getDay()]+' '+giorno; }catch(e){} }
+      var auto=String(c.veicolo||'').trim();
+      var cli=String(c.cliente||c.titolo||'').trim();
+      var chi=(typeof ccUtente==='function')?(ccUtente().nome||''):'';
+
+      /* --- la mail all'amministrazione --- */
+      if(typeof eaInviaMessaggio==='function'){
+        var corpo='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+          +'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;margin-bottom:14px;">'
+          +'<div style="font-size:16px;font-weight:800;color:#166534;">\ud83d\ude97 Test drive prenotato</div></div>'
+          +'<table style="border-collapse:collapse;">'
+          +'<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Cliente</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(cli)+'</td></tr>'
+          +'<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Quando</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(esteso)+(c.ora?(' alle '+ccEsc(c.ora)):'')+'</td></tr>'
+          +(auto?('<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Veicolo</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(auto)+'</td></tr>'):'')
+          +(c.telefono?('<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Telefono</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(c.telefono)+'</td></tr>'):'')
+          +(chi?('<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Inserito da</td><td style="padding:5px 0;">'+ccEsc(chi)+'</td></tr>'):'')
+          +'</table>'
+          +(c.nota?('<p style="margin-top:12px;"><b>Nota:</b> '+ccEsc(c.nota)+'</p>'):'')
+          +'<p style="margin-top:14px;color:#9a3412;"><b>L\u2019auto va preparata</b> per quel giorno.</p></div>';
+        eaInviaMessaggio({
+          to:'amministrazione@europaautosrl.it',
+          subject:'\ud83d\ude97 Test drive '+giorno+(c.ora?(' '+c.ora):'')+' \u2014 '+(cli||'cliente'),
+          html:(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo
+        });
+      }
+
+      /* --- il messaggio pronto per chi prepara --- */
+      var testo='Test drive '+esteso+(c.ora?(' alle '+c.ora):'')+'.'
+        +(auto?('\nAuto: '+auto):'')
+        +(cli?('\nCliente: '+cli):'')
+        +'\nDa preparare.';
+      _ccTdMsg=testo;
+      var box=document.getElementById('cc-testdrive-avviso');
+      if(!box){
+        box=document.createElement('div'); box.id='cc-testdrive-avviso';
+        var dove=document.getElementById('cc-titolo');
+        if(dove && dove.parentNode && dove.parentNode.parentNode) dove.parentNode.parentNode.insertBefore(box, dove.parentNode);
+        else document.body.appendChild(box);
+      }
+      box.setAttribute('style','margin:10px 0;padding:12px 14px;border-radius:10px;background:#f0fdf4;border:1px solid #86efac;');
+      box.innerHTML='<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:4px;">\ud83d\ude97 Test drive salvato</div>'
+        +'<div style="font-size:12px;color:#166534;line-height:1.5;margin-bottom:9px;">'
+        +'Avviso mandato all\u2019amministrazione. Manca chi prepara l\u2019auto: il messaggio \u00e8 gi\u00e0 scritto.</div>'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+        +'<a href="'+ccTdLink()+'" target="_blank" rel="noopener" '
+        +'style="flex:1;min-width:150px;text-align:center;padding:10px;border-radius:8px;background:#25D366;color:#fff;'
+        +'font-weight:800;font-size:12.5px;text-decoration:none;">\ud83d\udcac Avvisa su WhatsApp</a>'
+        +'<button onclick="ccTdCopia()" style="flex:0 0 auto;padding:10px 12px;border-radius:8px;border:1px solid #86efac;'
+        +'background:#fff;color:#166534;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Copia</button>'
+        +'<button onclick="ccTdChiudi()" style="flex:0 0 auto;padding:10px 12px;border-radius:8px;border:none;'
+        +'background:transparent;color:#64748b;font-family:inherit;font-size:12.5px;cursor:pointer;">Chiudi</button></div>';
+    }catch(e){}
+  }
+  var _ccTdMsg='';
+  function ccTdNum(){
+    try{ if(typeof parLoad==='function'){ var n=String(parLoad().telefonoPrepara||'').replace(/[^0-9]/g,''); if(n) return n; } }catch(e){}
+    return '';
+  }
+  function ccTdLink(){
+    var n=ccTdNum();
+    return 'https://wa.me/'+(n||'')+'?text='+encodeURIComponent(_ccTdMsg);
+  }
+  function ccTdCopia(){
+    try{
+      if(navigator.clipboard) navigator.clipboard.writeText(_ccTdMsg);
+      ccToast('Messaggio copiato');
+    }catch(e){}
+  }
+  function ccTdChiudi(){ try{ var b=document.getElementById('cc-testdrive-avviso'); if(b) b.remove(); }catch(e){} }
+  try{ window.ccTdCopia=ccTdCopia; window.ccTdChiudi=ccTdChiudi; }catch(e){}
   function ccToggle(id){
     var u = ccUtente(); var list = ccLoad();
     list.forEach(function(c){ if (c.id===id){ c.fatto=!c.fatto; c.fattoDa=c.fatto?u.nome:''; ccSync(c); } });
@@ -26201,7 +26292,7 @@ var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIO
      telefono   = quello che il cliente legge e chiama
      telefonoWa = quello delle chat WhatsApp, in cifre col prefisso e
                   senza il +, come lo vuole wa.me */
-  telefono:'02 9181820', telefonoWa:'39029181820' };
+  telefono:'02 9181820', telefonoWa:'39029181820', telefonoPrepara:'' };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
 /* parLoad restituisce solo i campi noti: qui serve il grezzo, con dentro
    updatedAt, per capire quale versione e' la piu' recente. */
@@ -26480,6 +26571,10 @@ function parInit(){
   h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
     +'Solo cifre, col prefisso internazionale e senza il segno pi\u00f9: 39029181820. '
     +'\u00c8 quello a cui portano i link \u201cScrivici su WhatsApp\u201d.</div>';
+  h+=lab('Numero WhatsApp di chi prepara le auto')+inp('par_telefonoPrepara',p.telefonoPrepara);
+  h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
+    +'Stesso formato: 393401234567. Quando si salva un test drive compare un pulsante che apre '
+    +'WhatsApp con il messaggio gi\u00e0 scritto, da mandare a mano dal telefono dell\u2019ufficio.</div>';
   h+=lab('Numero massimo preparazioni al giorno')+inp('par_maxPreparazioni',p.maxPreparazioni,'number');
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Condizioni contrattuali (stampate sul preventivo)</div>';
   h+=lab('Condizioni PROPOSTA D’ACQUISTO (stampate sul proposta d’acquisto)')+'<textarea id="par_condizioni" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioni)+'</textarea>';
@@ -26505,7 +26600,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['telefono','telefonoWa','condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
+  ['telefono','telefonoWa','telefonoPrepara','condizioni','condizioniFinali','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
   /* Anche se il locale e' pieno i parametri devono partire per il cloud:
      e' li' che li leggono gli altri. Prima si salva su Supabase, poi si
