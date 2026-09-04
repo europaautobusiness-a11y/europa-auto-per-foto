@@ -18390,6 +18390,50 @@ var _prnCod='';
 
 function prnEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+/* ===== IL LINK CHE SCADE =====
+   Il pulsante del modello WhatsApp ha un URL dinamico: la parte fissa
+   finisce con ?prenota= e in coda il gestionale attacca un codice che
+   contiene la data di scadenza, tipo wa20260911. La pagina lo legge e dopo
+   quella data non si apre piu'.
+   Il codice non e' un segreto e chiunque potrebbe cambiarlo: non serve a
+   difendere niente, serve a non far prenotare con un'offerta scaduta. Chi
+   ci prova a mano telefona, ed e' quello che vogliamo.
+   Un codice senza data \u2014 il vecchio "wa" \u2014 continua a valere per sempre:
+   i link gia' in giro non si rompono. */
+var PRN_GIORNI_DEF = 7;
+function prnCodiceScadenza(giorni){
+  var g=parseInt(giorni,10); if(!(g>0)) g=PRN_GIORNI_DEF;
+  var d=new Date(); d.setDate(d.getDate()+g); d.setHours(23,59,59,999);
+  var z=function(n){ return String(n).padStart(2,'0'); };
+  return { codice:'wa'+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate()), ts:d.getTime(), data:d };
+}
+function prnScadenzaDaCodice(cod){
+  var m=String(cod||'').match(/^wa(\d{4})(\d{2})(\d{2})$/);
+  if(!m) return 0;                       /* nessuna data: non scade */
+  var d=new Date(+m[1], +m[2]-1, +m[3], 23, 59, 59, 999);
+  return d.getTime();
+}
+var PRN_MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno',
+              'luglio','agosto','settembre','ottobre','novembre','dicembre'];
+function prnDataEstesa(d){
+  try{ return d.getDate()+' '+PRN_MESI[d.getMonth()]+' '+d.getFullYear(); }catch(e){ return ''; }
+}
+function prnScadutoHTML(ts){
+  var q=''; try{ q=prnDataEstesa(new Date(ts)); }catch(e){}
+  return '<div style="max-width:460px;margin:0 auto;padding:64px 20px;text-align:center;'
+    +'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;">'
+    +'<div style="font-size:15px;font-weight:700;color:#1a4fa0;">Europa Auto</div>'
+    +'<h1 style="font-size:26px;line-height:1.2;font-weight:800;color:#0f172a;margin:14px 0 10px;letter-spacing:-.02em;">'
+    +'Offerta scaduta</h1>'
+    +'<p style="font-size:16px;line-height:1.6;color:#475569;margin:0 0 18px;">'
+    +'Questa promozione \u00e8 finita'+(q?(' l\u2019'+prnEsc(q)):'')+'.<br>'
+    +'Se vuole comunque prenotare un tagliando, ci chiami: troviamo il giorno insieme.</p>'
+    +'<a href="tel:029181820" style="display:inline-block;padding:15px 28px;border-radius:11px;background:#1a4fa0;color:#fff;'
+    +'font-size:16.5px;font-weight:700;text-decoration:none;">Chiama 02 9181820</a>'
+    +'<div style="margin-top:26px;font-size:13px;color:#94a3b8;line-height:1.6;">'
+    +'Europa Auto S.r.l. \u2014 Via Nigra 4, Paderno Dugnano (MI)</div></div>';
+}
+
 /* Il primo giorno prenotabile: da domani, saltando sabato e domenica.
    In officina il sabato non si lavora. */
 function prnPrimoGiorno(){
@@ -18416,6 +18460,10 @@ function prnClientOpen(cod){
   var ov=document.getElementById('prn-client');
   if(!ov){ ov=document.createElement('div'); ov.id='prn-client'; document.body.appendChild(ov); }
   ov.setAttribute('style','position:fixed;top:0;left:0;right:0;bottom:0;background:#eef2f7;z-index:100000;overflow:auto;-webkit-overflow-scrolling:touch;');
+  /* Prima di tutto il resto: se l'offerta e' finita non si compila nulla.
+     Far riempire il modulo e rifiutarlo alla fine sarebbe peggio. */
+  var _sc=prnScadenzaDaCodice(_prnCod);
+  if(_sc && Date.now()>_sc){ ov.innerHTML=prnScadutoHTML(_sc); return; }
   var min=prnPrimoGiorno();
 
   var css='<style>'
@@ -18590,7 +18638,8 @@ function prnInvia(){
     nome:g('prn_nome'), tel:g('prn_tel'), email:g('prn_email'),
     targa:g('prn_targa').toUpperCase(), lavoro:g('prn_lavoro'),
     data:g('prn_data'), fascia:fasciaK, fasciaEt:fasciaEt, note:g('prn_note'),
-    codice:_prnCod, stato:'nuova', ts:Date.now()
+    codice:_prnCod, scadenzaLink:prnScadenzaDaCodice(_prnCod),
+    stato:'nuova', ts:Date.now()
   };
 
   var _dIt=(function(){ var q=String(rec.data).split('-'); return (q.length===3)?(q[2]+'/'+q[1]+'/'+q[0]):rec.data; })();
@@ -18692,6 +18741,7 @@ function prnStato(id, stato){
     var nuovo={}; for(var k in rec){ if(Object.prototype.hasOwnProperty.call(rec,k)) nuovo[k]=rec[k]; }
     nuovo.stato=stato;
     nuovo.chiusaDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||'');
+    if(arguments.length>2 && arguments[2]) nuovo.oraFissata=String(arguments[2]);
     nuovo.chiusaTs=Date.now();
     sb.from('prenotazioni_app').update({ data:nuovo }).eq('id', id).then(function(){});
     _prnCache=_prnCache.filter(function(x){ return x.id!==id; });
@@ -18755,9 +18805,79 @@ function prnConferma(id){
 
   var list=ccLoad(); list.push(c); ccSave(list);
   try{ if(typeof ccSync==='function') ccSync(c); }catch(e){}
-  prnStato(rec.id, 'confermata');
+  var _mail=prnMailConferma(rec, c);
+  prnStato(rec.id, 'confermata', ora);
   try{ if(typeof ccRender==='function') ccRender(); }catch(e){}
-  if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCC5 Appuntamento messo in calendario \u2014 avvisa il cliente', true);
+  if(typeof tcToastNew==='function'){
+    tcToastNew(_mail
+      ? ('\uD83D\uDCC5 Appuntamento fissato \u2014 conferma inviata a '+_mail)
+      : '\uD83D\uDCC5 Appuntamento fissato \u2014 nessuna email: avvisa il cliente', true);
+  }
+}
+
+/* ===== LA CONFERMA AL CLIENTE =====
+   Il cliente ha chiesto una fascia, non un'ora: finche' non gli si scrive
+   l'orario esatto, per lui l'appuntamento non esiste. La mail parte da sola
+   appena si mette in calendario, e dice l'ora vera \u2014 che puo' essere
+   diversa da quella che aveva chiesto.
+   Torna il numero di telefono perche' se l'orario non gli va deve poter
+   rispondere subito, senza cercare il messaggio di partenza. */
+function prnMailConferma(rec, c){
+  try{
+    var em=String((rec&&rec.email)||'').trim();
+    if(!em || !/.+@.+\..+/.test(em)) return '';
+    if(typeof eaInviaMessaggio!=='function') return '';
+
+    var MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno',
+              'luglio','agosto','settembre','ottobre','novembre','dicembre'];
+    var GIORNI=['domenica','luned\u00ec','marted\u00ec','mercoled\u00ec','gioved\u00ec','venerd\u00ec','sabato'];
+    var q=String(c.data||'').split('-');
+    var quando='';
+    if(q.length===3){
+      var d=new Date(+q[0], +q[1]-1, +q[2]);
+      quando=GIORNI[d.getDay()]+' '+(+q[2])+' '+MESI[+q[1]-1]+' '+q[0];
+    } else { quando=String(c.data||''); }
+
+    var primo=String(rec.nome||'').trim().split(/\s+/)[0]||'';
+    var veic=String(c.veicolo||rec.targa||'').trim();
+    var F='font-family:Arial,Helvetica,sans-serif;';
+    var riga=function(l,v){
+      return '<tr><td style="padding:7px 20px 7px 0;color:#64748b;font-size:14px;white-space:nowrap;vertical-align:top;">'+l+'</td>'
+        +'<td style="padding:7px 0;font-size:15px;font-weight:700;color:#0f172a;">'+prnEsc(v)+'</td></tr>';
+    };
+    var corpo='<div style="'+F+'font-size:15px;color:#0f172a;line-height:1.6;">'
+      +'<p>Gentile '+prnEsc(primo||'cliente')+',</p>'
+      +'<p>le confermiamo l\u2019appuntamento in officina.</p>'
+      +'<div style="background:#f2f6fc;border:1px solid #cfe0f5;border-radius:12px;padding:16px 18px;margin:16px 0;">'
+      +'<table style="border-collapse:collapse;">'
+      +riga('Giorno', quando)
+      +riga('Ora', c.ora||'')
+      +riga('Intervento', rec.lavoro||'')
+      +(veic?riga('Veicolo', veic):'')
+      +'</table></div>'
+      +'<p>Ci trova in <b>Via Nigra 4, Paderno Dugnano (MI)</b>.</p>'
+      +'<p>Se l\u2019orario non le va bene, risponda a questa email oppure ci chiami allo '
+      +'<b>02 9181820</b>: lo spostiamo senza problemi.</p>'
+      +'<p>A presto,<br><b>Europa Auto</b></p></div>';
+
+    var testo='Gentile '+(primo||'cliente')+',\n'
+      +'le confermiamo l\u2019appuntamento in officina.\n\n'
+      +'Giorno: '+quando+'\n'
+      +'Ora: '+(c.ora||'')+'\n'
+      +'Intervento: '+(rec.lavoro||'')+'\n'
+      +(veic?('Veicolo: '+veic+'\n'):'')
+      +'\nVia Nigra 4, Paderno Dugnano (MI).\n'
+      +'Se l\u2019orario non le va bene risponda a questa email o chiami il 02 9181820.\n\n'
+      +'A presto,\nEuropa Auto';
+
+    eaInviaMessaggio({
+      to: em,
+      subject: 'Appuntamento confermato \u2014 '+quando+(c.ora?(' alle '+c.ora):'')+' \u2014 Europa Auto',
+      html: (typeof eaMailWrap==='function') ? eaMailWrap(corpo) : corpo,
+      text: testo
+    });
+    return em;
+  }catch(e){ return ''; }
 }
 function prnDataIt(d){
   var q=String(d||'').split('-');
@@ -18766,7 +18886,9 @@ function prnDataIt(d){
 /* Il link va copiato una volta sola, quando si compila il template su Meta.
    Tenerlo qui evita di doverlo ricostruire a mano ogni volta. */
 function prnCopiaLink(){
-  var l=prnLink('wa');
+  /* Sul pulsante del modello va la parte fissa, che finisce con ?prenota= :
+     la coda con la scadenza la mette il gestionale a ogni invio. */
+  var l=prnLink('').replace(/=$/,'=');
   try{
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(l).then(function(){
@@ -18779,7 +18901,7 @@ function prnRichiesteRender(){
   var el=document.getElementById('prn-richieste'); if(!el) return;
   var _link='<div style="font-size:11.5px;color:#94a3b8;margin:-4px 0 12px;">'
     +'\uD83D\uDD17 <a onclick="prnCopiaLink()" style="color:#1a4fa0;cursor:pointer;text-decoration:underline;">'
-    +'Copia il link di prenotazione</a> \u2014 da mettere nel pulsante del template WhatsApp</div>';
+    +'Copia il link di prenotazione</a> \u2014 la parte fissa del pulsante, finisce con <b>?prenota=</b></div>';
   if(!_prnCache.length){ el.innerHTML=_link; return; }
   el.innerHTML=_link+'<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
     +'<div style="font-weight:800;font-size:14px;color:#92400e;margin-bottom:2px;">'
@@ -35229,17 +35351,30 @@ function crmPaccBtn(chiave, nome, tel){
    solo chi guarda la scheda. */
 var WA_MOD_KEY='ea_wa_modelli_v1';
 var WA_MOD_DEF={
-  consegnate: { nome:'sconto_manutenzione', lingua:'it', variabili:['nome'] }
+  consegnate: { nome:'sconto_manutenzione', lingua:'it', conNome:true, conScadenza:false, urlDinamico:false, giorni:7 }
 };
 function waModStore(){ try{ return JSON.parse(localStorage.getItem(WA_MOD_KEY)||'{}'); }catch(e){ return {}; } }
 function waMod(azione){
   var o=waModStore()[azione]||{};
   var d=WA_MOD_DEF[azione]||{};
-  return { nome:(o.nome!=null?o.nome:d.nome)||'', lingua:(o.lingua||d.lingua||'it'), variabili:d.variabili||[] };
+  return {
+    nome:(o.nome!=null?o.nome:d.nome)||'',
+    lingua:(o.lingua||d.lingua||'it'),
+    /* Se il testo del modello non contiene {{1}}, Meta rifiuta il messaggio
+       che gli arriva con un parametro dentro: e' l'errore 132000. */
+    conNome:(o.conNome!=null?!!o.conNome:!!d.conNome),
+    /* {{2}} col giorno entro cui l'offerta vale */
+    conScadenza:(o.conScadenza!=null?!!o.conScadenza:!!d.conScadenza),
+    /* il pulsante del modello ha un URL dinamico a cui attaccare la coda */
+    urlDinamico:(o.urlDinamico!=null?!!o.urlDinamico:!!d.urlDinamico),
+    giorni:(parseInt(o.giorni!=null?o.giorni:d.giorni,10)||7)
+  };
 }
-function waModSet(azione, nome, lingua){
+function waModSet(azione, nome, lingua, conNome, conScadenza, urlDinamico, giorni){
   var o=waModStore();
-  o[azione]={ nome:String(nome||'').trim(), lingua:String(lingua||'it').trim() };
+  o[azione]={ nome:String(nome||'').trim(), lingua:String(lingua||'it').trim(), conNome:!!conNome,
+              conScadenza:!!conScadenza, urlDinamico:!!urlDinamico,
+              giorni:(parseInt(giorni,10)||7) };
   try{ localStorage.setItem(WA_MOD_KEY, JSON.stringify(o)); }catch(e){}
   try{ if(typeof cfgSupaSave==='function') cfgSupaSave(WA_MOD_KEY, o); }catch(e){}
 }
@@ -35249,21 +35384,68 @@ function waModBox(){
   return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:12px;'
     +'display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
     +'<div style="font-size:12px;color:#64748b;flex:0 0 auto;">Modello WhatsApp usato qui</div>'
+    /* ===== SI SALVA DA SOLO =====
+       Il CRM si risincronizza ogni 45 secondi e ogni volta che si torna
+       sulla scheda del browser: ridisegnava il riquadro e rimetteva i valori
+       di prima proprio mentre si stava scrivendo. Premendo Salva si salvava
+       quello vecchio, e sembrava che il tasto non funzionasse.
+       Ora ogni campo scrive appena lo si lascia: il tasto resta solo per
+       conferma, ma non serve piu' a niente. */
     +'<input id="wamod-consegnate" value="'+crmEsc(m.nome)+'" placeholder="sconto_manutenzione" '
+    +'onchange="waModSalva()" onblur="waModSalva()" '
     +'style="flex:1;min-width:170px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
     +'<input id="wamod-consegnate-lng" value="'+crmEsc(m.lingua)+'" title="lingua del modello su Meta" '
+    +'onchange="waModSalva()" onblur="waModSalva()" '
     +'style="width:56px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;text-align:center;">'
-    +'<button onclick="waModSalva()" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;'
+    +'<button onclick="waModSalva(true)" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #cbd5e1;'
     +'background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Salva</button>'
+    +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;">'
+    +'<input type="checkbox" id="wamod-consegnate-nome"'+(m.conNome?' checked':'')+' onchange="waModSalva(true)" style="width:16px;height:16px;">'
+    +'Il modello contiene <b style="font-family:monospace;">{{1}}</b> per il nome del cliente'
+    +'<span id="wamod-esito" style="margin-left:6px;font-weight:700;font-size:11.5px;"></span></label>'
+    +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;">'
+    +'<input type="checkbox" id="wamod-consegnate-scad"'+(m.conScadenza?' checked':'')+' onchange="waModSalva(true)" style="width:16px;height:16px;">'
+    +'\u2026e <b style="font-family:monospace;">{{2}}</b> con la data entro cui vale l\u2019offerta</label>'
+    +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;">'
+    +'<input type="checkbox" id="wamod-consegnate-dyn"'+(m.urlDinamico?' checked':'')+' onchange="waModSalva(true)" style="width:16px;height:16px;">'
+    +'Il pulsante ha un URL dinamico \u2014 il link scade da solo</label>'
+    +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;">'
+    +'L\u2019offerta vale <input id="wamod-consegnate-gg" type="number" min="1" max="60" value="'+(m.giorni||7)+'" '
+    +'onchange="waModSalva(true)" onblur="waModSalva()" '
+    +'style="width:52px;padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;text-align:center;"> giorni</label>'
     +'<div style="flex-basis:100%;font-size:11px;color:#94a3b8;">'
-    +'Il nome tecnico come sta su Meta, non il titolo. Al modello viene passato solo il nome di battesimo del cliente.</div>'
+    +'Il nome tecnico come sta su Meta, non il titolo. Se il testo del modello non ha nessuna variabile, '
+    +'lascia la casella vuota: mandare un nome a un modello che non lo aspetta lo fa rifiutare.</div>'
     +'</div>';
 }
-function waModSalva(){
-  var n=document.getElementById('wamod-consegnate'), l=document.getElementById('wamod-consegnate-lng');
+function waModSalva(annuncia){
+  var n=document.getElementById('wamod-consegnate'),
+      l=document.getElementById('wamod-consegnate-lng'),
+      v=document.getElementById('wamod-consegnate-nome'),
+      sc=document.getElementById('wamod-consegnate-scad'),
+      dy=document.getElementById('wamod-consegnate-dyn'),
+      gg=document.getElementById('wamod-consegnate-gg');
   if(!n) return;
-  waModSet('consegnate', n.value, (l?l.value:'it'));
-  if(typeof tcToastNew==='function') tcToastNew('\u2713 Modello salvato', true);
+  var prima=waMod('consegnate');
+  waModSet('consegnate', n.value, (l?l.value:'it'), (v?v.checked:false),
+           (sc?sc.checked:false), (dy?dy.checked:false), (gg?gg.value:7));
+  var dopo=waMod('consegnate');
+  var cambiato=(prima.nome!==dopo.nome || prima.lingua!==dopo.lingua || prima.conNome!==dopo.conNome
+                || prima.conScadenza!==dopo.conScadenza || prima.urlDinamico!==dopo.urlDinamico
+                || prima.giorni!==dopo.giorni);
+  if(!cambiato && !annuncia) return;
+  /* Un segno che si vede sul posto: il toast sta in un angolo e chi guarda
+     il riquadro non lo nota. */
+  try{
+    var el=document.getElementById('wamod-esito');
+    if(el){
+      el.textContent='\u2713 salvato';
+      el.style.color='#16a34a';
+      clearTimeout(window._waModT);
+      window._waModT=setTimeout(function(){ try{ el.textContent=''; }catch(e){} }, 2500);
+    }
+  }catch(e){}
+  if(annuncia && typeof tcToastNew==='function') tcToastNew('\u2713 Modello salvato', true);
 }
 
 /* ===== L'INVIO, UNO PER VOLTA =====
@@ -35280,23 +35462,61 @@ function crmOffertaModello(cvId, nome, tel){
   var t=crmWa(tel);
   if(!t){ alert('Questo cliente non ha un numero di telefono.'); return; }
   var primo=String(nome||'').trim().split(/\s+/)[0]||'Cliente';
+  var _ant=prnCodiceScadenza(m.giorni);
   if(!confirm('Mandare il modello \u201c'+m.nome+'\u201d a '+primo+'?\n\n'
-    +'Numero: +'+t+'\n\n'
-    +'Parte subito da WhatsApp Business e non si pu\u00f2 richiamare indietro.')) return;
+    +'Numero: +'+t+'\n'
+    +((m.conScadenza||m.urlDinamico)
+        ? ('Offerta valida fino al '+prnDataEstesa(_ant.data)+'\n') : '')
+    +'\nParte subito da WhatsApp Business e non si pu\u00f2 richiamare indietro.')) return;
 
   if(typeof waApiInvia!=='function'){ alert('Modulo WhatsApp non disponibile.'); return; }
   /* Un invio che parte e non risponde e' indistinguibile da un pulsante
      rotto: qui si vede subito che qualcosa sta succedendo. */
   if(typeof tcToastNew==='function') tcToastNew('Invio in corso a '+primo+'\u2026', true);
-  waApiInvia({ to:t, template:m.nome, lingua:m.lingua, variabili:[primo] }).then(function(r){
+  /* La scadenza si calcola adesso: il countdown parte da quando il messaggio
+     viene mandato, non da quando il modello e' stato scritto. */
+  var _sc=prnCodiceScadenza(m.giorni);
+  var _dati={ to:t, template:m.nome, lingua:m.lingua };
+  var _vars=[];
+  if(m.conNome)     _vars.push(primo);
+  if(m.conScadenza) _vars.push(prnDataEstesa(_sc.data));
+  if(_vars.length)  _dati.variabili=_vars;
+  /* La coda del link: la pagina la legge e dopo quella data non si apre. */
+  if(m.urlDinamico){ _dati.suffisso=_sc.codice; _dati.indicePulsante='0'; }
+  waApiInvia(_dati).then(function(r){
     if(r && r.ok){
       crmSegnaInviato(cvId, m.nome);
       if(typeof tcToastNew==='function') tcToastNew('\u2713 Messaggio inviato a '+primo, true);
     } else {
       var msg=String((r&&r.errore)||'non inviato');
-      alert('Il messaggio non \u00e8 partito.\n\n'+msg
-        +'\n\nSe dice che il numero non \u00e8 autorizzato, siamo ancora sul numero di prova di Meta: '
-        +'scrive solo ai destinatari abilitati.');
+      /* I due errori che capitano davvero, detti in italiano e con la
+         soluzione accanto: il codice di Meta da solo non dice cosa fare. */
+      var spiega='';
+      if(/132000|number of parameters/i.test(msg)){
+        spiega='\n\nQuesto vuol dire che il modello su Meta non ha lo stesso numero di variabili '
+          +'che gli stiamo mandando.\n\n'
+          +(m.conNome
+             ? 'Stiamo passando il nome del cliente, ma nel testo del modello non c\u2019\u00e8 nessun {{1}}. '
+               +'Togli la spunta \u201cIl modello contiene {{1}}\u201d nel riquadro qui sopra e riprova.'
+             : 'Il modello si aspetta una variabile che non gli stiamo mandando. '
+               +'Metti la spunta \u201cIl modello contiene {{1}}\u201d nel riquadro qui sopra e riprova.');
+        /* Con l'URL dinamico acceso il conto non torna anche quando il
+           pulsante del modello ha invece un indirizzo fisso: sono due
+           cause diverse per lo stesso codice, e vanno dette tutte e due. */
+        if(m.urlDinamico){
+          spiega+='\n\nPu\u00f2 dipendere anche dal pulsante: stiamo attaccando una coda al link, '
+            +'ma se il pulsante del modello ha un URL fisso Meta la rifiuta. '
+            +'Togli la spunta \u201cIl pulsante ha un URL dinamico\u201d, oppure rifai il pulsante su Meta.';
+        }
+      } else if(/132001|does not exist|not found/i.test(msg)){
+        spiega='\n\nIl modello \u201c'+m.nome+'\u201d non risulta a Meta con questo nome o in lingua \u201c'+m.lingua+'\u201d. '
+          +'Controlla il nome tecnico su WhatsApp Manager: minuscolo e con gli underscore.';
+      } else if(/not.*approved|pending|in review/i.test(msg)){
+        spiega='\n\nIl modello non \u00e8 ancora approvato da Meta: finch\u00e9 \u00e8 in revisione non si pu\u00f2 inviare.';
+      } else if(/recipient|not in allowed|allowed list/i.test(msg)){
+        spiega='\n\nSiamo ancora sul numero di prova di Meta: scrive solo ai destinatari abilitati.';
+      }
+      alert('Il messaggio non \u00e8 partito.\n\n'+msg+spiega);
     }
   }, function(){
     alert('Server non raggiungibile: il messaggio non \u00e8 partito.');
