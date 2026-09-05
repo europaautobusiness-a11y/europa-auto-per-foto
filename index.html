@@ -18128,6 +18128,116 @@ function pmQuestStampa(q){
   h+='</table>';
   return h;
 }
+/* ===== LA PERIZIA DENTRO LA EMAIL =====
+   pmPeriziaInner e' scritta per la stampa: bianco e nero, caratteri piccoli,
+   e soprattutto il foglio di stile e' agganciato a #sin-print, che nella
+   email non esiste. Le regole non si applicavano a niente e arrivava un
+   muro di testo senza forma.
+   Qui la perizia si ricostruisce con gli stili scritti dentro ogni riga \u2014
+   l'unico modo che le caselle di posta rispettano \u2014 e con abbastanza
+   colore da far trovare le cose a colpo d'occhio. */
+function pmMailRiga(etichetta, valore, largo){
+  if(valore==null || String(valore).trim()==='') valore='\u2014';
+  return '<td'+(largo?' colspan="2"':'')+' style="padding:9px 12px;border:1px solid #e2e8f0;vertical-align:top;">'
+    +'<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;font-weight:700;margin-bottom:2px;">'+pmEsc(etichetta)+'</div>'
+    +'<div style="font-size:14px;color:#0f172a;font-weight:700;">'+pmEsc(valore)+'</div></td>';
+}
+function pmMailSezione(titolo){
+  return '<div style="font-size:11.5px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 7px;">'+pmEsc(titolo)+'</div>';
+}
+function pmPeriziaMailHTML(p){
+  try{
+    var F='font-family:Arial,Helvetica,sans-serif;';
+    var h='<div style="'+F+'">';
+
+    /* --- l'auto e la valutazione, che sono le due cose che si cercano --- */
+    h+='<div style="background:#1a4fa0;border-radius:12px 12px 0 0;padding:16px 18px;">'
+      +'<div style="color:#bfd4f2;font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;">Perizia veicolo in permuta</div>'
+      +'<div style="color:#fff;font-size:19px;font-weight:800;margin-top:3px;">'+pmEsc(p.modello||'\u2014')+'</div>'
+      +'<div style="color:#bfd4f2;font-size:13.5px;margin-top:2px;">'+pmEsc(p.cliente||'')+'</div></div>';
+
+    if(String(p.valutazione||'').trim()){
+      h+='<div style="background:#f0fdf4;border:1px solid #86efac;border-top:none;padding:13px 18px;">'
+        +'<span style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#166534;font-weight:700;">Valutazione</span>'
+        +'<span style="font-size:22px;font-weight:800;color:#166534;margin-left:10px;">\u20ac '+pmEsc(p.valutazione)+'</span></div>';
+    }
+
+    h+='<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:16px 18px;background:#fff;">';
+
+    /* --- i dati --- */
+    h+='<table style="width:100%;border-collapse:collapse;">'
+      +'<tr>'+pmMailRiga('Anno',p.anno)+pmMailRiga('Chilometri',p.km)+'</tr>'
+      +'<tr>'+pmMailRiga('Targa',p.targa)+pmMailRiga('Proprietari',p.proprietari)+'</tr>'
+      +'<tr>'+pmMailRiga('Gomme',(String(p.gomme||'').trim()?(p.gomme+'%'):''))+pmMailRiga('Chiavi',p.chiavi)+'</tr>'
+      +'<tr>'+pmMailRiga('Bollo',p.bollo)+pmMailRiga('Revisione',p.revisione)+'</tr>'
+      +'</table>';
+
+    if(String(p.dotazioni||'').trim()){
+      h+=pmMailSezione('Dotazioni')
+        +'<div style="font-size:13.5px;color:#334155;line-height:1.55;">'+pmEsc(p.dotazioni)+'</div>';
+    }
+
+    /* --- i tagliandi --- */
+    try{
+      var tf=(p.tagliandi||[]).map(function(i){ return PM_TAGLIANDI[i] ? (PM_TAGLIANDI[i][0]+'/'+PM_TAGLIANDI[i][1]) : ''; }).filter(Boolean);
+      if(tf.length){
+        h+=pmMailSezione('Tagliandi eseguiti')+'<div>';
+        tf.forEach(function(t){
+          h+='<span style="display:inline-block;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;'
+            +'border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;margin:0 5px 5px 0;">'+pmEsc(t)+'</span>';
+        });
+        h+='</div>';
+      }
+    }catch(e){}
+
+    /* --- i danni segnati sulla sagoma --- */
+    try{
+      var pins=p.pins||[];
+      if(pins.length){
+        h+=pmMailSezione('Danni segnalati ('+pins.length+')')+'<div>';
+        pins.forEach(function(x,i){
+          var t=String((x&&(x.nota||x.testo||x.tipo))||'').trim();
+          h+='<div style="font-size:13px;color:#7c2d12;background:#fff7ed;border-left:3px solid #fdba74;'
+            +'padding:7px 11px;border-radius:0 7px 7px 0;margin-bottom:5px;">'
+            +'<b>'+(i+1)+'.</b> '+pmEsc(t||'segnalato sulla sagoma')+'</div>';
+        });
+        h+='</div>';
+      }
+    }catch(e){}
+
+    /* --- le dichiarazioni spuntate --- */
+    try{
+      var d=p.dichiarazioni||{};
+      var voci=[[d.d1,'Informazioni complete e veritiere'],
+                [d.d2,'Nessun danno o vizio occulto oltre a quelli elencati'],
+                [d.d3,'Chilometraggio reale e non manomesso'],
+                [d.d4,'Nessun danno strutturale da incidente non dichiarato']];
+      var spunte=voci.filter(function(v){ return v[0]; });
+      if(spunte.length){
+        h+=pmMailSezione('Dichiarato dal cliente');
+        spunte.forEach(function(v){
+          h+='<div style="font-size:13px;color:#334155;margin-bottom:4px;">'
+            +'<span style="color:#16a34a;font-weight:800;">\u2713</span> '+pmEsc(v[1])+'</div>';
+        });
+      }
+    }catch(e){}
+
+    /* --- la firma --- */
+    if(p.firma && p.metodoFirma!=='carta'){
+      h+=pmMailSezione('Firma del cliente')
+        +'<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px;background:#fafbfc;">'
+        +'<img src="'+p.firma+'" alt="firma" style="max-height:70px;display:block;">'
+        +'</div>';
+    }
+    if(p.dataFirma){
+      h+='<div style="font-size:12px;color:#94a3b8;margin-top:9px;">Firmata il '+pmEsc(p.dataFirma)+'</div>';
+    }
+
+    h+='</div></div>';
+    return h;
+  }catch(e){ return ''; }
+}
+
 function pmPeriziaInner(p){
   var dch=[]; if(p.dichiarazioni.d1)dch.push('le informazioni fornite sullo stato del veicolo sono complete e veritiere'); if(p.dichiarazioni.d2)dch.push('il veicolo non presenta danni, guasti meccanici o vizi occulti diversi da quelli elencati'); if(p.dichiarazioni.d3)dch.push('il chilometraggio indicato è reale e non manomesso'); if(p.dichiarazioni.d4)dch.push('il veicolo non ha subìto danni strutturali da incidente non dichiarati');
   var tf=p.tagliandi.map(function(i){return PM_TAGLIANDI[i][0]+'/'+PM_TAGLIANDI[i][1];});
@@ -18325,12 +18435,20 @@ function pmClientRender(ov, rec){
      Chi torna su una perizia gia' compilata ritrova le sue. */
   var dz=rec.dichiarazioni||{};
   var dl=function(id,t,on){ return '<label style="display:flex;gap:9px;align-items:flex-start;margin:9px 0;font-size:13px;line-height:1.4;cursor:pointer;"><input type="checkbox" id="'+id+'" '+(on===true?'checked':'')+' style="width:21px;height:21px;flex:0 0 auto;margin-top:1px;"><span>'+t+'</span></label>'; };
+  /* ===== PRIMA LA CONSEGUENZA, POI LE SPUNTE =====
+     La clausola stava sotto le quattro caselle: si leggeva dopo aver gia'
+     spuntato, quando ormai non cambiava piu' niente. Messa sopra, il
+     cliente sa cosa firma mentre lo firma. In grassetto perche' e'
+     l'unica riga con un effetto sul portafoglio. */
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Le tue dichiarazioni</div>'
+    +'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:11px 13px;margin-bottom:12px;">'
+    +'<p style="font-size:12.5px;color:#78350f;line-height:1.55;margin:0 0 8px;"><b>Se entro 60 giorni dalla consegna emergono danni o vizi preesistenti non dichiarati, Europa Auto potr\u00e0 rivalutare il veicolo e richiedere il risarcimento e/o la differenza di valore.</b></p>'
+    +'<p style="font-size:12.5px;color:#78350f;line-height:1.55;margin:0;"><b>Il veicolo dovr\u00e0 essere consegnato in buone condizioni igieniche e di pulizia esterne: in caso contrario, al ritiro verranno addebitati \u20ac 100,00 di spese di pulizia.</b></p></div>'
     +dl('pmcl_d1','Le informazioni sullo stato del veicolo sono complete e veritiere.',dz.d1)
     +dl('pmcl_d2','Il veicolo non presenta danni, guasti o vizi occulti diversi da quelli elencati.',dz.d2)
     +dl('pmcl_d3','Il chilometraggio è reale e non manomesso.',dz.d3)
     +dl('pmcl_d4','Il veicolo non ha subìto danni strutturali da incidente non dichiarati.',dz.d4)
-    +'<p style="font-size:12px;color:#64748b;">Se entro 60 giorni dalla consegna emergono danni o vizi preesistenti non dichiarati, Europa Auto potrà rivalutare il veicolo e richiedere il risarcimento e/o la differenza di valore.</p><p style="font-size:12px;color:#64748b;">Il veicolo dovrà essere consegnato in buone condizioni igieniche e di pulizia esterne: in caso contrario, al ritiro verranno addebitati € 100,00 di spese di pulizia.</p></div>';
+    +'</div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">La tua email</div><div style="font-size:12px;color:#64748b;margin-bottom:8px;">Serve a Europa Auto per ricontattarti sulla valutazione. I dati che inserisci restano salvati: se esci e torni, ritrovi tutto.</div><input type="email" id="pmcl_email" value="'+pmEsc(rec.email||'')+'" placeholder="la-tua-email@esempio.it" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><div id="pmcl-ostato" style="font-size:12px;color:#64748b;margin-top:6px;"></div><div id="pmcl-overif" style="display:none;margin-top:8px;"><div style="display:flex;gap:8px;"><input type="text" id="pmcl_otp" inputmode="numeric" placeholder="codice 6 cifre" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;"><button onclick="pmClientVerifica()" style="padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Verifica</button></div></div></div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:15px;margin-bottom:14px;"><div style="font-size:13px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:8px;">Firma digitale</div><canvas id="pmcl-sig" width="700" height="180" style="width:100%;height:180px;border:2px dashed #94a3b8;border-radius:10px;background:#fff;touch-action:none;display:block;"></canvas><button onclick="pmClientClear()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;cursor:pointer;">Cancella</button></div>';
   h+='<button onclick="pmClientSubmit()" style="width:100%;padding:15px;border-radius:11px;border:none;background:#16a34a;color:#fff;font-weight:800;font-size:16px;cursor:pointer;font-family:inherit;">✅ Conferma e firma la perizia</button><div id="pmcl-esito" style="font-size:13px;color:#475569;text-align:center;margin-top:12px;"></div></div>';
@@ -18475,7 +18593,8 @@ function pmClientSubmit(){
   /* La perizia firmata torna su Supabase, e l'avviso all'amministrazione parte
      da Resend con la perizia dentro la mail. Prima passavano tutti e due da
      Apps Script. */
-  var _phtml=''; try{ _phtml=pmPeriziaFullHTML(rec); }catch(e){}
+  var _phtml=''; try{ _phtml=pmPeriziaMailHTML(rec); }catch(e){}
+  if(!_phtml){ try{ _phtml=pmPeriziaFullHTML(rec); }catch(e){} }
   /* ===== SE IL GESTIONALE NON SI AGGIORNA, LO DEVE DIRE =====
      La riga su Supabase veniva scritta con upsert e l'eventuale errore
      finiva solo nella console del telefono del cliente: la mail partiva
@@ -18493,10 +18612,25 @@ function pmClientSubmit(){
            +(salvataggio.msg?('<br><span style="color:#7f1d1d;font-size:12px;">Motivo tecnico: '+pmEsc(String(salvataggio.msg))+'</span>'):'')
            +'</div>')
         : '';
+      /* ===== CHI HA FIRMATO =====
+         L'email che il cliente scrive prima di firmare non compariva
+         nell'avviso: chi lo riceve non sa a quale indirizzo rispondere, e
+         se il nome sulla perizia non e' quello di chi ha compilato non c'e'
+         modo di accorgersene. Sta in cima, sopra la perizia. */
+      var _chi='';
+      if(String(rec.email||'').trim()){
+        _chi='<div style="font-family:Arial,Helvetica,sans-serif;background:#f2f6fc;border:1px solid #cfe0f5;'
+          +'border-radius:9px;padding:11px 13px;margin-bottom:12px;font-size:13.5px;color:#0f172a;line-height:1.6;">'
+          +'Firmata da <b>'+pmEsc(rec.email)+'</b>'
+          +(rec.dataFirma?(' il '+pmEsc(rec.dataFirma)):'')
+          +'<br><a href="mailto:'+pmEsc(rec.email)+'" style="color:#1a4fa0;font-weight:700;text-decoration:none;">Rispondi al cliente</a>'
+          +'</div>';
+      }
       pmAvvisaInterni({
         subject:(_ko?'\u26a0\ufe0f ':'')+'Perizia firmata \u2014 '+((rec.cliente||'cliente')+' \u00b7 '+(rec.modello||'')).trim()+(_ko?' (gestionale non aggiornato)':''),
-        html:_banner+(_phtml || '<p>Il cliente ha firmato la perizia. Aprila nel gestionale, sezione Permute.</p>'),
+        html:_banner+_chi+(_phtml || '<p>Il cliente ha firmato la perizia. Aprila nel gestionale, sezione Permute.</p>'),
         text:'Il cliente '+(rec.cliente||'')+' ha firmato la perizia di '+(rec.modello||'')+'.'
+             +(rec.email?(' Email indicata dal cliente: '+rec.email+'.'):'')
              +(_ko?' ATTENZIONE: il gestionale non si e\' aggiornato, la perizia va aggiornata a mano nella sezione Permute.':' La trovi nel gestionale, sezione Permute.')
       });
     }catch(e){}
