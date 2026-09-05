@@ -4888,7 +4888,9 @@ function eaMailTestata(){
     +'</div>';
 }
 function eaMailWrap(contentHtml){
-  var wa = EA_WA_NUM ? ('\uD83D\uDCAC WhatsApp: <a href="https://wa.me/'+EA_WA_NUM+'" style="color:#25D366;font-weight:700;text-decoration:none;">scrivici su WhatsApp</a><br>') : '';
+  /* Il numero WhatsApp del pie' di pagina segue i Parametri come tutto il resto. */
+  var _wn = eaTelWa();
+  var wa = _wn ? ('\uD83D\uDCAC WhatsApp: <a href="https://wa.me/'+_wn+'" style="color:#25D366;font-weight:700;text-decoration:none;">scrivici su WhatsApp</a><br>') : '';
   return '<div style="background:#f1f5f9;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;">'
     +'<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">'
     + eaMailTestata()
@@ -14848,8 +14850,15 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<div class="cc-addbox">'
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
-  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option><option value="testdrive">🚗 Appuntamento — veicolo in magazzino</option></select></div>'
+  +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
   +       '<div class="cc-field" id="cc-veicolo-wrap"><label id="cc-veicolo-lab">Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
+  +       '<div class="cc-field" id="cc-bovisio-wrap" style="display:none;">'
+  +         '<label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;">'
+  +           '<input type="checkbox" id="cc-bovisio" style="width:17px;height:17px;">'
+  +           '<span>\ud83d\ude97 Il veicolo \u00e8 nel magazzino di Bovisio</span></label>'
+  +         '<div style="font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.5;">'
+  +           'Va portato in sede: parte la mail all\u2019amministrazione e l\u2019avviso a Renato.</div>'
+  +       '</div>'
   +       '<div class="cc-field"><label>Cliente / descrizione</label>'
   +         '<div class="cc-inputmic"><input type="text" id="cc-titolo" list="cc-clienti-list" oninput="ccClienteSel()" onchange="ccClienteSel()" placeholder="Cliente esistente o descrizione" autocomplete="off"></div><datalist id="cc-clienti-list"></datalist>'
   +         '<div id="cc-cli-nota" style="font-size:11.5px;color:#94a3b8;margin-top:4px;"></div>'
@@ -15049,16 +15058,18 @@ document.addEventListener('DOMContentLoaded',function(){
   var ccFC=null;
   /* Il verde del test drive non e' decorativo: chi guarda il calendario deve
      riconoscere a colpo d'occhio i contatti caldi in mezzo agli altri. */
-  function ccTipoInfo(t){
-    if(t==='vendita')   return ['\ud83e\udd1d','Vendita','#2563eb'];
-    if(t==='testdrive') return ['\ud83d\ude97','Magazzino','#16a34a'];
+  function ccTipoInfo(t, bovisio){
+    /* Il verde segnala l'auto da portare: e' quello che chi guarda il
+       calendario deve vedere per primo, prima ancora del tipo. */
+    if(bovisio)       return ['\ud83d\ude97','Da Bovisio','#16a34a'];
+    if(t==='vendita') return ['\ud83e\udd1d','Vendita','#2563eb'];
     return ['\ud83d\udd27','Intervento','#ea580c'];
   }
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
     return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
       var isTask=(c.categoria==='task');
-      var ti=ccTipoInfo(c.tipo);
+      var ti=ccTipoInfo(c.tipo, c.bovisio);
       var col=c.fatto?'#94a3b8':(isTask?'#0d9488':ti[2]);
       /* Il tipo di intervento (tagliando, grandine, freni...) va letto dal calendario
          senza aprire la scheda: si aggiunge al titolo dell'evento. */
@@ -15154,7 +15165,7 @@ document.addEventListener('DOMContentLoaded',function(){
         + '</div>';
       g.items.sort(function(a,b){ return (a.fatto===b.fatto)?0:(a.fatto?1:-1); });
       g.items.forEach(function(c){
-        var ti=ccTipoInfo(c.tipo);
+        var ti=ccTipoInfo(c.tipo, c.bovisio);
         html += '<div class="cc-task'+(c.fatto?' cc-done':'')+'" style="border-left:5px solid '+_col+'">'
           + '<div class="cc-check'+(c.fatto?' cc-on':'')+'" data-id="'+c.id+'" data-act="toggle">'+(c.fatto?'✓':'')+'</div>'
           + '<div class="cc-tbody">'
@@ -15163,6 +15174,8 @@ document.addEventListener('DOMContentLoaded',function(){
           +     (c.ora?'<span>🕐 '+ccEsc(c.ora)+'</span>':'')
           +     (c.tel?'<span>📞 '+ccEsc(c.tel)+'</span>':'')
           +     (c.email?'<span>✉️ '+ccEsc(c.email)+'</span>':'')
+          +     (c.bovisio?('<span style="color:'+(c.renatoAvvisato?'#16a34a':'#dc2626')+';font-weight:700;">'
+                  +(c.renatoAvvisato?('\u2713 Renato avvisato'+(c.renatoAvvisato==='a voce'?' (a voce)':'')):'\u26a0 Renato non avvisato')+'</span>'):'')
           +     (c.ricorda?'<span>🔔 promemoria '+ccEsc(ccFmtRicorda(c.ricorda))+'</span><span class="cc-callink" data-id="'+c.id+'" data-act="ics">📅 avvisami</span>':'')
           +     (c.creatoDa?'<span>da '+ccEsc(c.creatoDa)+'</span>':'')
           +     (c.fatto&&c.fattoDa?'<span>✓ fatto da '+ccEsc(c.fattoDa)+'</span>':'')
@@ -15257,7 +15270,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if (fd) for (var i=0;i<fd.options.length;i++){ if (fd.options[i].value===u.email){ fd.selectedIndex=i; break; } }
     }
   }
-  function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita'||t==='testdrive')?'45':'90'; }catch(e){} }
+  function ccDurataDefault(){ try{ var t=(document.getElementById('cc-tipo')||{}).value; var d=document.getElementById('cc-durata'); if(d) d.value=(t==='vendita')?'45':'90'; }catch(e){} }
   function ccNomeCliente(o){ var c=(o&&o.cliente)?o.cliente:o||{}; return (c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()); }
   /* Per cercare un'auto anche dal cognome del cliente: costruisco l'elenco
      dei proprietari a partire da contratti e vendite. */
@@ -15353,6 +15366,11 @@ document.addEventListener('DOMContentLoaded',function(){
         var _vend=(_tipo==='vendita');
         vl.innerHTML=_auto.map(function(a){ return '<option value="'+ccEsc(ccEtichettaAuto(a,_vend))+'"></option>'; }).join('');
         var _ve=document.getElementById('cc-veicolo');
+        /* La spunta di Bovisio riguarda solo le vendite: su un intervento
+           in officina l'auto e' gia' qui, portata dal cliente. */
+        var _bw=document.getElementById('cc-bovisio-wrap');
+        if(_bw) _bw.style.display=(_tipo==='vendita')?'':'none';
+        if(_tipo!=='vendita'){ var _bc=document.getElementById('cc-bovisio'); if(_bc) _bc.checked=false; }
         if(_ve && _tipo==='vendita') _ve.placeholder=_auto.length+' auto in magazzino \u2014 targa / modello / n\u00b0\u2026';
       }
       var cl=document.getElementById('cc-clienti-list');
@@ -15532,7 +15550,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var list=ccLoad(), c=null; for(var i=0;i<list.length;i++){ if(list[i].id===id){ c=list[i]; break; } }
     if(!c) return;
     var quando=(c.data||'')+(c.ora?(' \u00b7 '+c.ora):'');
-    var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?'\ud83e\udd1d Appuntamento vendita':(c.tipo==='testdrive'?'\ud83d\ude97 Appuntamento \u2014 veicolo in magazzino':'\ud83d\udcc5 Appuntamento')));
+    var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?('\ud83e\udd1d Appuntamento vendita'+(c.bovisio?' \u00b7 \ud83d\ude97 veicolo da Bovisio':'')):(false?'':'\ud83d\udcc5 Appuntamento')));
     var rows='<div style="font-size:13px;color:#475569;margin-bottom:8px;">'+tipoLbl+' \u00b7 '+ccEsc(quando)+'</div>';
     if(c.veicolo) rows+='<div style="font-size:13px;margin:5px 0;"><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</div>';
     /* Fattura tagliando: solo sugli interventi su auto */
@@ -15558,6 +15576,27 @@ document.addEventListener('DOMContentLoaded',function(){
     if(c.email) rows+='<div style="font-size:13px;margin:5px 0;"><b>Email:</b> '+ccEsc(c.email)+'</div>';
     if(c.tel) rows+='<div style="font-size:13px;margin:5px 0;"><b>Telefono:</b> '+ccEsc(c.tel)+'</div>';
     if(c.nota) rows+='<div style="font-size:13px;margin:5px 0;"><b>Note:</b> '+ccEsc(c.nota)+'</div>';
+    /* ===== IL VEICOLO SI SCOPRE DOPO =====
+       Quando Rudy fissa l'appuntamento spesso non sa ancora dove sia
+       l'auto. Passare da Modifica per accendere il flag rimanderebbe al
+       cliente la mail di conferma di un appuntamento che non e' cambiato.
+       Da qui si accende il flag e basta: parte l'avviso interno, al
+       cliente non arriva niente. */
+    if(c.tipo==='vendita' && c.categoria!=='task'){
+      if(c.bovisio){
+        rows+='<div style="margin-top:10px;padding:10px 12px;border-radius:9px;background:#f0fdf4;border:1px solid #86efac;'
+          +'font-size:12.5px;color:#166534;line-height:1.5;">\uD83D\uDE97 <b>Veicolo dal magazzino di Bovisio</b><br>'
+          +(c.renatoAvvisato
+              ? ('\u2713 Renato avvisato'+(c.renatoAvvisato==='a voce'?' a voce':' su WhatsApp'))
+              : '\u26a0 Renato non ancora avvisato')
+          +' \u00b7 <a onclick="ccBovisioRiavvisa(\''+c.id+'\')" style="color:#166534;font-weight:700;text-decoration:underline;cursor:pointer;">avvisa</a></div>';
+      } else {
+        rows+='<button onclick="ccBovisioAccendi(\''+c.id+'\')" '
+          +'style="width:100%;margin-top:10px;padding:10px;border-radius:9px;border:1px dashed #86efac;'
+          +'background:#f0fdf4;color:#166534;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">'
+          +'\uD83D\uDE97 Il veicolo \u00e8 nel magazzino di Bovisio</button>';
+      }
+    }
     var ov=document.getElementById('cc-evento-overlay');
     if(!ov){ ov=document.createElement('div'); ov.id='cc-evento-overlay'; ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;'; document.body.appendChild(ov); }
     ov.innerHTML='<div style="background:#fff;border-radius:16px;max-width:420px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3);font-family:inherit;">'
@@ -15587,6 +15626,7 @@ document.addEventListener('DOMContentLoaded',function(){
         if(g('cc-ora')) g('cc-ora').value=c.ora||'';
         if(g('cc-data')) g('cc-data').value=c.data||'';
         if(g('cc-veicolo')) g('cc-veicolo').value=c.veicolo||'';
+        if(g('cc-bovisio')) g('cc-bovisio').checked=!!c.bovisio;
         if(g('cc-nota')) g('cc-nota').value=c.nota||'';
         if(g('cc-tipo')) g('cc-tipo').value=c.tipo||'intervento';
         if(g('cc-durata')) g('cc-durata').value=String(c.durata||45);
@@ -15614,6 +15654,27 @@ document.addEventListener('DOMContentLoaded',function(){
       ccToast('Scrivi il tipo di intervento nella nota');
       if(notaEl){ notaEl.focus(); notaEl.style.borderColor='#dc2626'; setTimeout(function(){ notaEl.style.borderColor=''; }, 2500); }
       return;
+    }
+    /* ===== SENZA MODELLO L'AVVISO NON SERVE A NIENTE =====
+       Il messaggio a Renato dice quale auto portare: se il campo e' vuoto
+       lui riceve "da portare in sede" e basta, e deve telefonare per
+       chiedere quale. Per questo tipo il veicolo si scrive per forza. */
+    var _tipoSel=(document.getElementById('cc-tipo')||{}).value||'intervento';
+    var _bovEl=document.getElementById('cc-bovisio');
+    var _bovisio=(_tipoSel==='vendita' && _bovEl && _bovEl.checked);
+    var _ccEraBovisio=false;
+    try{
+      if(_ccEditId) ccLoad().forEach(function(x){ if(x && String(x.id)===String(_ccEditId) && x.bovisio) _ccEraBovisio=true; });
+    }catch(e){}
+    if(_bovisio){
+      var _veEl=document.getElementById('cc-veicolo');
+      var _ve=((_veEl||{}).value||'').trim();
+      if(!_ve){
+        ccToast('Scrivi quale veicolo: Renato deve sapere cosa portare');
+        if(_veEl){ _veEl.focus(); _veEl.style.borderColor='#dc2626';
+          setTimeout(function(){ _veEl.style.borderColor=''; }, 2500); }
+        return;
+      }
     }
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
@@ -15702,7 +15763,15 @@ document.addEventListener('DOMContentLoaded',function(){
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
     try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo+(c.dipNome?(' \u2014 '+c.dipNome):''), '\u2705', (c.dipEmail?{tipo:'task_new', refId:c.id, per:c.dipEmail}:null));
     if(categoria==='task') ccMailNuovoTask(c); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
-    try{ if(c.tipo==='testdrive') ccTestDriveAvvisa(c); }catch(e){}
+    try{
+      if(_bovisio){
+        c.bovisio=true;
+        ccSave(ccLoad().map(function(x){ return (x&&x.id===c.id)?c:x; }));
+        /* L'avviso a Renato riparte solo se il flag e' nuovo: modificando
+           l'ora di un appuntamento gia' segnalato non serve richiamarlo. */
+        if(!_ccEraBovisio) ccBovisioAvvisa(c);
+      }
+    }catch(e){}
     document.getElementById('cc-titolo').focus();
   }
 
@@ -15713,7 +15782,7 @@ document.addEventListener('DOMContentLoaded',function(){
      Partono due avvisi: la mail all'amministrazione, e un messaggio gia'
      scritto per chi prepara le auto \u2014 che va mandato a mano, dal WhatsApp
      dell'ufficio, perche' un messaggio automatico costerebbe a ogni invio. */
-  function ccTestDriveAvvisa(c){
+  function ccBovisioAvvisa(c){
     try{
       var q=String(c.data||'').split('-');
       var giorno=(q.length===3)?(q[2]+'/'+q[1]+'/'+q[0]):String(c.data||'');
@@ -15728,7 +15797,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if(typeof eaInviaMessaggio==='function'){
         var corpo='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
           +'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;margin-bottom:14px;">'
-          +'<div style="font-size:16px;font-weight:800;color:#166534;">\ud83d\ude97 Appuntamento \u2014 veicolo in magazzino</div></div>'
+          +'<div style="font-size:16px;font-weight:800;color:#166534;">\ud83d\ude97 Appuntamento vendita \u2014 veicolo in magazzino</div></div>'
           +'<table style="border-collapse:collapse;">'
           +'<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Cliente</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(cli)+'</td></tr>'
           +'<tr><td style="padding:5px 18px 5px 0;color:#64748b;">Quando</td><td style="padding:5px 0;font-weight:700;">'+ccEsc(esteso)+(c.ora?(' alle '+ccEsc(c.ora)):'')+'</td></tr>'
@@ -15751,26 +15820,106 @@ document.addEventListener('DOMContentLoaded',function(){
         +(cli?('\nCliente: '+cli):'')
         +'\nDa portare in sede.';
       _ccTdMsg=testo;
-      var box=document.getElementById('cc-testdrive-avviso');
-      if(!box){
-        box=document.createElement('div'); box.id='cc-testdrive-avviso';
-        var dove=document.getElementById('cc-titolo');
-        if(dove && dove.parentNode && dove.parentNode.parentNode) dove.parentNode.parentNode.insertBefore(box, dove.parentNode);
-        else document.body.appendChild(box);
-      }
-      box.setAttribute('style','margin:10px 0;padding:12px 14px;border-radius:10px;background:#f0fdf4;border:1px solid #86efac;');
-      box.innerHTML='<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:4px;">\ud83d\ude97 Appuntamento salvato \u2014 auto da portare in sede</div>'
-        +'<div style="font-size:12px;color:#166534;line-height:1.5;margin-bottom:9px;">'
-        +'Avviso mandato all\u2019amministrazione. Ora avvisa Renato: il messaggio \u00e8 gi\u00e0 scritto.</div>'
-        +'<div style="display:flex;gap:8px;flex-wrap:wrap;">'
-        +'<a href="'+ccTdLink()+'" target="_blank" rel="noopener" '
-        +'style="flex:1;min-width:150px;text-align:center;padding:10px;border-radius:8px;background:#25D366;color:#fff;'
-        +'font-weight:800;font-size:12.5px;text-decoration:none;">\ud83d\udcac Avvisa Renato su WhatsApp</a>'
-        +'<button onclick="ccTdCopia()" style="flex:0 0 auto;padding:10px 12px;border-radius:8px;border:1px solid #86efac;'
-        +'background:#fff;color:#166534;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Copia</button>'
-        +'<button onclick="ccTdChiudi()" style="flex:0 0 auto;padding:10px 12px;border-radius:8px;border:none;'
-        +'background:transparent;color:#64748b;font-family:inherit;font-size:12.5px;cursor:pointer;">Chiudi</button></div>';
+      _ccTdApp=c;
+      ccTdModale();
     }catch(e){}
+  }
+
+  /* ===== L'AVVISO A RENATO NON SI PUO' SALTARE =====
+     Un riquadro in mezzo alla pagina si chiude senza leggerlo: l'auto resta
+     nell'altra sede e il cliente arriva a vuoto. Qui la finestra copre lo
+     schermo e non si chiude da sola \u2014 niente clic fuori, niente Esc. Si
+     esce in due modi soli, e tutti e due lasciano traccia: si manda il
+     messaggio, oppure si dichiara di aver avvisato in un altro modo. */
+  var _ccTdApp=null;
+
+  /* Accende il flag su un appuntamento gia' salvato. Tocca solo quel campo:
+     non ripassa dal salvataggio del modulo, quindi al cliente non parte
+     nessuna email. */
+  function ccBovisioAccendi(id){
+    try{
+      var list=ccLoad(), trov=null;
+      list.forEach(function(x){ if(x && String(x.id)===String(id)){ x.bovisio=true; trov=x; } });
+      if(!trov){ ccToast('Appuntamento non trovato'); return; }
+      if(!String(trov.veicolo||'').trim()){
+        var v=prompt('Quale veicolo va portato da Bovisio?\n(targa o modello)');
+        if(v===null) return;
+        v=String(v).trim();
+        if(!v){ ccToast('Serve il veicolo: Renato deve sapere cosa portare'); return; }
+        trov.veicolo=v;
+      }
+      ccSave(list);
+      try{ ccSync(trov); }catch(e){}
+      try{ ccChiudiEvento(); }catch(e){}
+      ccBovisioAvvisa(trov);
+      try{ if(typeof ccRender==='function') ccRender(); }catch(e){}
+    }catch(e){}
+  }
+  /* Rimandare l'avviso: capita che Renato non abbia letto. */
+  function ccBovisioRiavvisa(id){
+    try{
+      var trov=null;
+      ccLoad().forEach(function(x){ if(x && String(x.id)===String(id)) trov=x; });
+      if(!trov) return;
+      try{ ccChiudiEvento(); }catch(e){}
+      ccBovisioAvvisa(trov);
+    }catch(e){}
+  }
+  try{ window.ccBovisioAccendi=ccBovisioAccendi; window.ccBovisioRiavvisa=ccBovisioRiavvisa; }catch(e){}
+  function ccTdModale(){
+    var ov=document.getElementById('cc-td-modale');
+    if(!ov){ ov=document.createElement('div'); ov.id='cc-td-modale'; document.body.appendChild(ov); }
+    ov.setAttribute('style','position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:100050;'
+      +'display:flex;align-items:center;justify-content:center;padding:18px;');
+    var senzaNum=!ccTdNum();
+    ov.innerHTML='<div style="background:#fff;border-radius:16px;max-width:420px;width:100%;padding:22px;'
+      +'box-shadow:0 18px 50px rgba(0,0,0,.3);font-family:inherit;">'
+      +'<div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:6px;">\ud83d\ude97 L\u2019auto \u00e8 in magazzino</div>'
+      +'<div style="font-size:13.5px;color:#475569;line-height:1.6;margin-bottom:14px;">'
+      +'Va portata in sede per l\u2019appuntamento. <b>Avvisa Renato adesso</b>: '
+      +'l\u2019appuntamento \u00e8 gi\u00e0 salvato e l\u2019amministrazione avvisata.</div>'
+      +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:11px 13px;'
+      +'font-size:13px;color:#334155;line-height:1.55;white-space:pre-wrap;margin-bottom:14px;">'+ccEsc(_ccTdMsg)+'</div>'
+      +(senzaNum?('<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;'
+        +'font-size:12px;color:#78350f;line-height:1.5;margin-bottom:12px;">'
+        +'Il numero di Renato non \u00e8 ancora nei Parametri: WhatsApp le chieder\u00e0 a chi mandarlo.</div>'):'')
+      +'<a href="'+ccTdLink()+'" target="_blank" rel="noopener" onclick="ccTdFatto(\'whatsapp\')" '
+      +'style="display:block;text-align:center;padding:14px;border-radius:11px;background:#25D366;color:#fff;'
+      +'font-weight:800;font-size:15.5px;text-decoration:none;margin-bottom:9px;">\ud83d\udcac Avvisa Renato su WhatsApp</a>'
+      +'<button onclick="ccTdCopia()" style="width:100%;padding:11px;border-radius:9px;border:1px solid #cbd5e1;'
+      +'background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;margin-bottom:9px;">'
+      +'Copia il messaggio</button>'
+      +'<button onclick="ccTdAltro()" style="width:100%;padding:9px;border-radius:9px;border:none;background:transparent;'
+      +'color:#94a3b8;font-family:inherit;font-size:12.5px;cursor:pointer;">L\u2019ho gi\u00e0 avvisato in un altro modo</button>'
+      +'</div>';
+  }
+  function ccTdFatto(come){
+    /* Resta scritto sull'appuntamento: se il giorno dopo l'auto non c'e',
+       si sa se l'avviso era partito e come. */
+    try{
+      if(_ccTdApp){
+        var list=ccLoad();
+        list.forEach(function(x){
+          if(x && x.id===_ccTdApp.id){
+            x.renatoAvvisato=come;
+            x.renatoAvvisatoTs=Date.now();
+            x.renatoAvvisatoDa=((typeof ccUtente==='function')?(ccUtente().nome||''):'');
+            try{ ccSync(x); }catch(e){}
+          }
+        });
+        ccSave(list);
+      }
+    }catch(e){}
+    setTimeout(function(){
+      try{ var ov=document.getElementById('cc-td-modale'); if(ov) ov.remove(); }catch(e){}
+      try{ if(typeof ccRenderList==='function') ccRenderList(); }catch(e){}
+      try{ if(typeof ccRenderCal==='function') ccRenderCal(); }catch(e){}
+    }, come==='whatsapp' ? 700 : 0);
+  }
+  function ccTdAltro(){
+    if(!confirm('Confermi di aver gi\u00e0 avvisato Renato che l\u2019auto va portata in sede?\n\n'
+      +'Resta scritto sull\u2019appuntamento che l\u2019avviso non \u00e8 passato da qui.')) return;
+    ccTdFatto('a voce');
   }
   var _ccTdMsg='';
   function ccTdNum(){
@@ -15787,8 +15936,7 @@ document.addEventListener('DOMContentLoaded',function(){
       ccToast('Messaggio copiato');
     }catch(e){}
   }
-  function ccTdChiudi(){ try{ var b=document.getElementById('cc-testdrive-avviso'); if(b) b.remove(); }catch(e){} }
-  try{ window.ccTdCopia=ccTdCopia; window.ccTdChiudi=ccTdChiudi; }catch(e){}
+  try{ window.ccTdCopia=ccTdCopia; window.ccTdFatto=ccTdFatto; window.ccTdAltro=ccTdAltro; }catch(e){}
   function ccToggle(id){
     var u = ccUtente(); var list = ccLoad();
     list.forEach(function(c){ if (c.id===id){ c.fatto=!c.fatto; c.fattoDa=c.fatto?u.nome:''; ccSync(c); } });
@@ -19210,7 +19358,9 @@ function prnDataIt(d){
 function prnCopiaLink(){
   /* Sul pulsante del modello va la parte fissa, che finisce con ?prenota= :
      la coda con la scadenza la mette il gestionale a ogni invio. */
-  var l=prnLink('').replace(/=$/,'=');
+  /* prnLink con codice vuoto ripiega su "wa": qui serve davvero la parte
+     fissa e basta, cosi' la coda con la scadenza si attacca pulita. */
+  var l=''; try{ l=location.origin+location.pathname+'?prenota='; }catch(e){}
   try{
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(l).then(function(){
@@ -34202,6 +34352,83 @@ var CF_MESI={A:1,B:2,C:3,D:4,E:5,H:6,L:7,M:8,P:9,R:10,S:11,T:12};
 /* Pratiche finanziate di una categoria. A differenza delle fasce d'eta',
    questo elenco lo vede anche chi vende: mostra la SUA provvigione, non il
    margine dell'azienda. */
+/* ===== LE PROVVIGIONI: DUE COSE CON LO STESSO NOME =====
+   Quelle della finanziaria sono soldi che entrano in azienda dalla banca.
+   Quelle del venditore sono la sua paga. Nella stessa casella comparivano
+   le prime anche a Rudy, che vedeva 9.645 \u20ac e non erano suoi.
+   L'amministratore continua a vedere quelle d'azienda. Chi vende vede le
+   proprie, prese dal registro provvigioni sullo stesso periodo. */
+function stProvvMie(P){
+  try{
+    if(typeof pLoadReg!=='function') return null;
+    var righe=pLoadReg()||[];
+    var tot=0, n=0;
+    righe.forEach(function(r){
+      if(!r || !r.mese || r.bozza) return;
+      var m=String(r.mese).split('-');            /* YYYY-MM */
+      if(m.length<2) return;
+      var y=parseInt(m[0],10), mm=parseInt(m[1],10);
+      if(!(y>0) || !(mm>0)) return;
+      /* Il registro ragiona a mesi interi: si prende il mese se il suo
+         primo giorno cade dentro il periodo, oppure se il periodo comincia
+         dentro quel mese. */
+      var ini=new Date(y, mm-1, 1).getTime();
+      var fin=new Date(y, mm, 0, 23, 59, 59, 999).getTime();
+      if(fin < P.da || ini > P.a) return;
+      tot += parseFloat(r.provvigione)||0;
+      n++;
+    });
+    return { totale:tot, righe:n };
+  }catch(e){ return null; }
+}
+
+/* Sommare il margine d'azienda alle provvigioni della banca ha senso per
+   chi guarda i conti dell'azienda. A Rudy quella somma non dice niente:
+   al suo posto quanto rende in media una pratica sua. */
+function stCartaMargProvv(box, marg, provvAzienda, ivaM, P, fmt){
+  /* fmt e' la stM del blocco chiamante: euro per l'amministratore,
+     percentuale per gli altri. Sta dentro quel blocco e da qui non si
+     vede: va passata. */
+  fmt = fmt || stEu;
+  var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  if(adm){
+    return '<div style="'+box+'border-left:4px solid #d97706;">'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+fmt(marg+provvAzienda)+'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>';
+  }
+  var mie=stProvvMie(P);
+  var media=(mie && mie.righe) ? (mie.totale/mie.righe) : 0;
+  return '<div style="'+box+'border-left:4px solid #d97706;">'
+    +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media a pratica</div>'
+    +'<div style="font-size:22px;font-weight:900;">'+stEu(media)+'</div>'
+    +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">'
+    +((mie&&mie.righe)?'sulle tue provvigioni del periodo':'nessuna pratica nel periodo')+'</div></div>';
+}
+
+function stCartaProvv(box, provvAzienda, provvSenza, P){
+  var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  if(adm){
+    return '<div style="'+box+'border-left:4px solid #7c3aed;">'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
+      +'<div style="font-size:22px;font-weight:900;">'+stEu(provvAzienda)+'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">Deutsche Bank, dal simulatore'
+      +(provvSenza?(' \u00b7 '+provvSenza+' senza calcolo'):'')+'</div></div>';
+  }
+  var mie=stProvvMie(P);
+  if(!mie){
+    return '<div style="'+box+'border-left:4px solid #7c3aed;">'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Le tue provvigioni</div>'
+      +'<div style="font-size:16px;font-weight:800;color:#94a3b8;">non disponibili</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">Le trovi nella sezione Provvigioni</div></div>';
+  }
+  return '<div style="'+box+'border-left:4px solid #7c3aed;">'
+    +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Le tue provvigioni</div>'
+    +'<div style="font-size:22px;font-weight:900;">'+stEu(mie.totale)+'</div>'
+    +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">'
+    +(mie.righe===1?'1 pratica':(mie.righe+' pratiche'))+' nel periodo</div></div>';
+}
+
 function stFinVedi(idsEnc, titolo){ stFasciaApri(idsEnc, titolo, true); }
 
 function stFasciaApri(idsEnc, titolo, senzaMargine){
@@ -34358,10 +34585,8 @@ function statMarginiHTML(){
       +(delta!=null?('<div style="font-size:11.5px;font-weight:800;color:'+(delta>=0?'#16a34a':'#dc2626')+';">'+(delta>=0?'\u25b2':'\u25bc')+' '+stPct(Math.abs(delta))+' sul periodo precedente</div>'):'')+'</div>'
     +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto'+(_isAdmSt?'':' %')+'</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stM(V.length?marg/V.length:0, V.length?_fattTot/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
-    +'<div style="'+box+'border-left:4px solid #7c3aed;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stEu(provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">Deutsche Bank, dal simulatore'+(provvSenza?(' \u00b7 '+provvSenza+' senza calcolo'):'')+'</div></div>'
-    +'<div style="'+box+'border-left:4px solid #d97706;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni'+(_isAdmSt?'':' %')+'</div>'
-      +'<div style="font-size:22px;font-weight:900;">'+stM(marg+provv)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">IVA sul margine: '+stEu(ivaM)+'</div></div>'
+    + stCartaProvv(box, provv, provvSenza, P)
+    + stCartaMargProvv(box, marg, provv, ivaM, P, stM)
     +'</div>';
   if(senzaAcq) h+='<div style="margin-top:8px;font-size:12px;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;">\u26a0 '+senzaAcq+' vendite del periodo non hanno il prezzo di acquisto in magazzino: escluse dal calcolo.</div>';
 
@@ -35345,7 +35570,7 @@ function crmLeads(){
     var am=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||''; if(am) l.autos[am]=true;
     var ts=cv.updatedAt||cv.createdAt||0; if(ts>l.ultimo) l.ultimo=ts;
     /* Lo storico importato ha updatedAt = data di import: userebbe la
-       pipeline come archivio. Per la finestra dei 21 giorni conta solo
+       pipeline come archivio. Per la finestra dei 30 giorni conta solo
        la data reale di creazione dei preventivi non storici. */
     var _sto=(cv.origine==='sicom'||cv.origine==='sicom_prev'||cv.origine==='sicom_ap');
     if(!_sto){ var tsp=cv.createdAt||cv.updatedAt||0; if(tsp>l.ultimoPrev) l.ultimoPrev=tsp; }
@@ -37179,7 +37404,7 @@ function crmKeyJs(k){
   return "'" + String(k==null?'':k).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ') + "'";
 }
 function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI.length) return; crmSetStato(key,CRM_STATI[ni]); }
-var CRM_GIORNI_CALDI=21;   /* finestra di lavorazione: tre settimane */
+var CRM_GIORNI_CALDI=30;   /* finestra di lavorazione: un mese */
 function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   /* Una pipeline con tutti i contatti non e' una pipeline: e' un archivio.
      Restano le trattative degli ultimi giorni, piu' quelle che hai gia'
@@ -37188,7 +37413,7 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   var _tot=leads.length;
   leads=leads.filter(function(l){
     if(l.contrattoAperto) return false;                                      /* ha gia' la proposta: sta in Vendite */
-    if((l.ultimoPrevAperto||0)>=_lim) return true;                           /* preventivo aperto negli ultimi 21 giorni */
+    if((l.ultimoPrevAperto||0)>=_lim) return true;                           /* preventivo aperto negli ultimi 30 giorni */
     if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
     return false;
   });
