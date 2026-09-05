@@ -32486,9 +32486,10 @@ function cvVeicoloLink(cv){
     if(key){ var found=mzLoad().filter(function(x){ return x && [String(x.telaio||''),String(x.targa||''),String(x.numero_interno||'')].map(function(s){return s.toLowerCase();}).indexOf(key)>=0; })[0]; if(found) autoId=found.id; }
   }
   var idHtml='';
-  if(estera && num){ idHtml=' \u00b7 <span style="color:#16a34a;">N\u00b0 '+cvEsc(num)+'</span>'; }
-  else if(targa){ idHtml=' \u00b7 '+cvEsc(targa); }
-  else if(num){ idHtml=' \u00b7 '+cvEsc(num); }
+  var _tag='display:inline-block;margin-left:10px;padding:1px 7px;border-radius:5px;background:#f1f5f9;color:#334155;font-size:12px;font-weight:800;letter-spacing:.04em;vertical-align:middle;';
+  if(estera && num){ idHtml='<span style="'+_tag+'color:#16a34a;">N\u00b0 '+cvEsc(num)+'</span>'; }
+  else if(targa){ idHtml='<span style="'+_tag+'">'+cvEsc(targa)+'</span>'; }
+  else if(num){ idHtml='<span style="'+_tag+'">'+cvEsc(num)+'</span>'; }
   /* Sempre cliccabile, anche quando il veicolo non si riesce ad agganciare:
      senza onclick il clic scivolava al riquadro sotto e apriva il contratto,
      facendo sembrare sparito il collegamento. Meglio un avviso chiaro. */
@@ -32842,9 +32843,9 @@ function cvVendCard(cv){
   if(st==='consegnato'){
     var _admC=(typeof getCurrentRole==='function'&&getCurrentRole()==='admin');
     var _demoC=(_admC && typeof eaDemoOn==='function' && eaDemoOn())?('<a onclick="event.stopPropagation();cvVendEliminaConsegnato(\''+cv.id+'\')" style="font-size:11px;color:#fff;background:#dc2626;padding:7px 11px;border-radius:7px;cursor:pointer;font-weight:800;white-space:nowrap;">🗑 Elimina</a>'):'';
-    return '<div onclick="cvRiepilogo(\''+cv.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvRiepilogo(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)'), cv.cliente, cv.clienteKey)+'</div>'+cvVeicoloLink(cv)+'</div><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;">Consegnato</div></div>'
-      +'<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700;">✅ Consegnato il '+cvVendData(cv.consegnatoTs)+'</div>'
+    return '<div onclick="cvRiepilogo(\''+cv.id+'\')" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div onclick="event.stopPropagation();cvRiepilogo(\''+cv.id+'\')" style="cursor:pointer;flex:1;min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(cvEsc(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')||'(cliente)'), cv.cliente, cv.clienteKey)+'</div>'+cvVeicoloLink(cv)+'</div><div style="text-align:right;flex:0 0 auto;"><div style="font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;background:#dcfce7;color:#166534;white-space:nowrap;display:inline-block;">\u2705 Consegnato</div>'
+      +(cv.consegnatoTs?('<div style="font-size:11px;color:#16a34a;font-weight:700;margin-top:4px;white-space:nowrap;">'+cvVendData(cv.consegnatoTs)+'</div>'):'')+'</div></div>'
       +(function(){
         var r=cv.recensione||null;
         var quando=r&&r.richiestaTs?new Date(r.richiestaTs).toLocaleDateString('it-IT'):'';
@@ -36920,8 +36921,22 @@ function crmLeadInserisci(id){
    resta contato e si ritrova. Vale solo per i nuovi mai toccati: chi e'
    stato inserito nel CRM o scartato a mano non si tocca. */
 var LEAD_GIORNI_MAX=10;
+/* A trenta giorni dalla richiesta, uno scaduto da solo si cancella davvero:
+   fra i dieci e i trenta ha avuto la sua finestra per essere ripescato,
+   dopo e' solo una riga in piu'. Chi e' stato scartato a mano, con un
+   motivo scritto da una persona, non si tocca: quel motivo e' informazione. */
+var LEAD_GIORNI_ELIMINA=30;
 function crmLeadScadenza(){
   var lim=Date.now()-LEAD_GIORNI_MAX*86400000, n=0;
+  var limE=Date.now()-LEAD_GIORNI_ELIMINA*86400000, sb=(typeof sbClient==='function')?sbClient():null;
+  var daTogliere=(_leadCache||[]).filter(function(l){
+    return l && l.scadutoAuto && (l.stato||'')==='scartato' && +(l.ricevutaTs||l.ts||0)>0 && +(l.ricevutaTs||l.ts||0)<limE;
+  });
+  if(daTogliere.length){
+    var ids=daTogliere.map(function(l){ return l.id; });
+    _leadCache=_leadCache.filter(function(l){ return ids.indexOf(l.id)<0; });
+    if(sb){ try{ sb.from('contatti_in').delete().in('id', ids).then(function(){}); }catch(e){} }
+  }
   (_leadCache||[]).forEach(function(l){
     if(!l || (l.stato||'nuovo')!=='nuovo') return;
     var t=+(l.ricevutaTs||l.ts||0); if(!t || t>lim) return;
@@ -36986,6 +37001,11 @@ function crmRenderLeadOnline(){
   perCanale.forEach(function(l){ var st=l.stato||'nuovo'; if(conta[st]!=null) conta[st]++; });
 
   var lista=perCanale.filter(function(l){ return (l.stato||'nuovo')===_leadFiltro; });
+  /* Fra gli scartati, quelli scaduti da soli vanno in fondo: chi ha scartato
+     a mano, con un motivo suo, e' l'informazione che conta. */
+  if(_leadFiltro==='scartato'){
+    lista=lista.slice().sort(function(a,b){ return (a.scadutoAuto?1:0)-(b.scadutoAuto?1:0); });
+  }
 
   var bott=function(v,et,n){
     var on=(_leadFiltro===v);
@@ -37161,6 +37181,21 @@ function crmRenderLeadOnline(){
     var col=(fonte==='AutoScout')?['#fef9c3','#854d0e']:((fonte==='Sito web')?['#dbeafe','#1e40af']:['#f1f5f9','#64748b']);
     var tel=String(l.telefono||'');
     var wa=tel?('39'+tel.replace(/^39/,'')):'';
+
+    /* Scaduto da solo: una riga sola, grigia. Il perche' al passaggio del
+       mouse, e i pulsanti per riprenderlo o toglierlo di mezzo. */
+    if(l.scadutoAuto){
+      h+='<div title="Scartato in automatico: nessun contatto in '+LEAD_GIORNI_MAX+' giorni dalla richiesta" '
+        +'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:7px 11px;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#94a3b8;">'
+        +'<span style="font-weight:700;color:#64748b;">'+crmEsc(l.nome||'(senza nome)')+'</span>'
+        +(l.auto?('<span>\u00b7 '+crmEsc(l.auto)+'</span>'):'')
+        +(tel?('<span>\u00b7 '+crmEsc(tel)+'</span>'):(l.email?('<span>\u00b7 '+crmEsc(l.email)+'</span>'):''))
+        +'<span style="margin-left:auto;">\u23f1 scaduto \u00b7 '+crmLeadQuando(l.ricevutaTs)+'</span>'
+        +'<button onclick="crmLeadRiapri(\''+l.id+'\')" title="Rimetti fra i nuovi" style="padding:3px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">\u21a9</button>'
+        +'<button onclick="crmLeadElimina(\''+l.id+'\')" title="Elimina definitivamente" style="padding:3px 8px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#94a3b8;font-family:inherit;font-size:11px;cursor:pointer;">\ud83d\uddd1</button>'
+        +'</div>';
+      return;
+    }
 
     h+='<div style="background:#fff;border:1px solid '+(nuovo?'#fcd34d':'#e2e8f0')+';border-radius:12px;padding:14px;margin-bottom:12px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
