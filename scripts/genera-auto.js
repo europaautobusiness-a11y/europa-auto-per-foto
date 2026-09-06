@@ -42,6 +42,11 @@ const CONFIG = {
      sono le diciture approvate dalla finanziaria, meglio niente. */
   MOSTRA_RATA: false,
 
+  /* Google vuole il telaio (VIN) su ogni riga del feed e lo vuole scritto
+     anche sulla pagina. Senza telaio la riga verrebbe bocciata: meglio
+     lasciarla fuori dal feed (la pagina resta, per il sito). */
+  FEED_RICHIEDE_TELAIO: true,
+
   DIR_AUTO: 'auto',
   DIR_FEED: 'feed',
   FEED_FILE: 'veicoli.tsv'
@@ -177,14 +182,17 @@ function paginaAuto(a){
     +'<meta property="og:type" content="product"><meta property="og:title" content="'+esc(nome+(prz?(' — '+euro(prz)):''))+'"><meta property="og:description" content="'+esc(desc)+'"><meta property="og:image" content="'+esc(fs_[0].url)+'"><meta property="og:url" content="'+esc(url)+'">'
     +'<script type="application/ld+json">'+JSON.stringify(ld)+'</script>'
     +'<style>'+CSS+'</style></head><body>'
-    +'<header class="hd"><a class="lg" href="'+esc(CONFIG.VETRINA_URL)+'"><img src="'+esc(CONFIG.LOGO_URL)+'" alt="'+esc(CONFIG.AZIENDA)+'" onerror="this.replaceWith(document.createTextNode(\''+esc(CONFIG.AZIENDA).toUpperCase()+'\'))"></a>'
+    +'<header class="hd"><a class="lg" href="'+esc(CONFIG.VETRINA_URL)+'" style="display:flex;align-items:center;gap:10px;"><img src="'+esc(CONFIG.LOGO_URL)+'" alt="'+esc(CONFIG.AZIENDA)+'" onerror="this.replaceWith(document.createTextNode(\''+esc(CONFIG.AZIENDA).toUpperCase()+'\'))"><span style="font-size:12px;color:#64748b;font-weight:600;">'+esc(CONFIG.AZIENDA)+' · Paderno Dugnano (MI)</span></a>'
     +'<div class="tl"><a href="'+CONFIG.TEL_HREF+'">'+esc(CONFIG.TEL)+'</a><a class="wa" href="'+esc(waHref)+'" target="_blank" rel="noopener">WhatsApp</a></div></header>'
     +'<main class="wrap">'
     +'<div class="crumb"><a href="'+esc(CONFIG.VETRINA_URL)+'">Tutte le auto</a> › '+esc(nome)+'</div>'
     +gal
     +'<div class="tit"><div><h1>'+esc(nome)+'</h1>'+(a.allestimento?('<div class="all">'+esc(a.allestimento)+'</div>'):'')+'</div>'
     +'<div class="prz"><div class="p">'+esc(euro(prz))+'</div><div class="l">'+(a.ivaEsposta?'IVA inclusa':'prezzo in unica soluzione')
-    +((lst&&prz&&lst>prz)?(' · da nuova <s>'+esc(euro(lst))+'</s> · <b style="color:#c81e1e;">risparmi '+esc(euro(lst-prz))+'</b>'):'')+'</div></div></div>'
+    +((lst&&prz&&lst>prz)?(' · da nuova <s>'+esc(euro(lst))+'</s> · <b style="color:#c81e1e;">risparmi '+esc(euro(lst-prz))+'</b>'):'')+'</div>'
+    +'<div class="l" style="margin-top:6px;font-weight:700;color:#0f172a;">'+[kmFmt(a.km), anno?('anno '+anno):''].filter(Boolean).join(' · ')+'</div>'
+    +'<div class="l"><b style="color:#16a34a;">'+((a.stato==='prenotata'||a.stato==='opzionata')?'Opzionata':'Disponibile in sede')+'</b>'+(a.telaio?(' · Telaio '+esc(a.telaio)):'')+'</div>'
+    +'</div></div>'
     +'<div class="badges">'+badges+'</div>'
     +'<div class="cta"><a class="wa" href="'+esc(waHref)+'" target="_blank" rel="noopener">💬 Scrivici su WhatsApp</a><a class="tel" href="'+CONFIG.TEL_HREF+'">📞 Chiama '+esc(CONFIG.TEL)+'</a></div>'
     +'<div class="box"><h2>Scheda tecnica</h2>'+rows.map(r=>'<div class="srow"><span class="k">'+esc(r[0])+'</span><span class="v">'+esc(r[1])+'</span></div>').join('')+'</div>'
@@ -283,7 +291,11 @@ async function main(){
   fs.readdirSync(dirAuto).forEach(f=>{ if(f.endsWith('.html') && !attesi.has(f)){ fs.unlinkSync(path.join(dirAuto,f)); tolte++; } });
 
   /* feed */
-  fs.writeFileSync(path.join(dirFeed,CONFIG.FEED_FILE), FEED_COLS.join('\t')+'\n'+lista.map(rigaFeed).join('\n')+'\n');
+  /* Nel feed vanno solo le auto che Google accetta: disponibili (le
+     opzionate per lui sono "reserved", vietato) e con telaio. */
+  const perFeed=lista.filter(a=> !(a.stato==='prenotata'||a.stato==='opzionata') && (!CONFIG.FEED_RICHIEDE_TELAIO || a.telaio));
+  fs.writeFileSync(path.join(dirFeed,CONFIG.FEED_FILE), FEED_COLS.join('\t')+'\n'+perFeed.map(rigaFeed).join('\n')+(perFeed.length?'\n':''));
+  console.log('Righe nel feed Google: '+perFeed.length+' su '+lista.length+' pubblicate');
 
   /* sitemap */
   const oggi=new Date().toISOString().slice(0,10);
@@ -294,6 +306,6 @@ async function main(){
   console.log('Auto lette: '+piatte.length+' · pubblicate: '+lista.length+' · pagine tolte: '+tolte);
   Object.keys(scarti).forEach(k=> console.log('  scartate ('+k+'): '+scarti[k]));
   const senzaTelaio=lista.filter(a=>!a.telaio).length;
-  if(senzaTelaio) console.log('  ATTENZIONE: '+senzaTelaio+' auto senza telaio nel feed (Google potrebbe chiederlo)');
+  if(senzaTelaio) console.log('  ATTENZIONE: '+senzaTelaio+' auto senza telaio: pagina fatta, ma FUORI dal feed Google');
 }
 main().catch(e=>{ console.error('ERRORE: '+(e&&e.message||e)); process.exit(1); });
