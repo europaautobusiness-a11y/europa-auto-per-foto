@@ -1,0 +1,50 @@
+# ============================================================================
+# EUROPA AUTO — pagine statiche per ogni auto in vetrina + feed per Google
+#
+# Ogni notte (e a mano dal pulsante "Run workflow") legge le auto pubblicate
+# in vetrina da Supabase e riscrive:
+#   auto/<TARGA>.html   una pagina vera per ogni auto (leggibile da Google)
+#   auto/index.html     l'elenco
+#   feed/veicoli.tsv    il feed per Google Merchant Center (annunci di veicoli)
+#   sitemap.xml         la mappa del sito
+# Se non cambia niente non fa nessun commit.
+# ============================================================================
+name: Genera pagine auto e feed
+
+on:
+  schedule:
+    - cron: '15 3 * * *'      # ogni notte alle 05:15 ora italiana (03:15 UTC)
+  workflow_dispatch:          # pulsante "Run workflow" su GitHub
+
+permissions:
+  contents: write
+
+concurrency:
+  group: genera-auto
+  cancel-in-progress: true
+
+jobs:
+  genera:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Genera pagine e feed
+        run: node scripts/genera-auto.js
+
+      - name: Salva se qualcosa e' cambiato
+        run: |
+          git config user.name  "europa-auto-bot"
+          git config user.email "no-reply@europaautosrl.it"
+          git add -A auto feed sitemap.xml
+          if git diff --cached --quiet; then
+            echo "Niente da aggiornare."
+          else
+            git commit -m "Auto e feed aggiornati $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+
