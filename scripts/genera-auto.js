@@ -35,7 +35,7 @@ const CONFIG = {
   /* Codice negozio: deve essere IDENTICO al "codice negozio" impostato sul
      profilo dell'attivita' Google (Business Profile) collegato a Merchant
      Center. Si imposta li' una volta sola. */
-  STORE_CODE: 'EUROPAAUTO-PADERNO',
+  STORE_CODE: '09508044153399500827',
 
   /* La rata sulle pagine e' spenta: per legge un esempio di finanziamento in
      pubblicita' richiede TAN, TAEG, durata e importo totale. Finche' non ci
