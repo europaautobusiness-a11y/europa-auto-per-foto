@@ -25230,6 +25230,21 @@ function cvStampaById(id, tipo){
    stampa normale: meglio la sola proposta che nessuna stampa. */
 function cvStampaFascicolo(cv, tipo, allegati){
   var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
+  /* ===== LA FINESTRA SI APRE SUBITO, NON ALLA FINE =====
+     Il fascicolo si costruisce in qualche secondo: unire i PDF, scaricare i
+     moduli. Se la finestra di stampa si chiedeva DOPO, il browser non la
+     collegava piu' al clic e la bloccava come pubblicita'. Aprendola qui,
+     mentre il dito e' ancora sul pulsante, passa sempre; poi ci si scrive
+     dentro il documento appena e' pronto. */
+  var _w=null;
+  try{
+    _w=window.open('','_blank');
+    if(_w){ _w.document.open(); _w.document.write('<!doctype html><meta charset="utf-8"><title>Preparo il fascicolo\u2026</title>'
+      +'<body style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#334155;">'
+      +'<div style="text-align:center;"><div style="font-size:34px;">\ud83d\udcc4</div>'
+      +'<div style="font-weight:800;margin-top:8px;">Preparo il fascicolo\u2026</div>'
+      +'<div style="font-size:13px;color:#94a3b8;margin-top:4px;">proposta e moduli da allegare</div></div>'); _w.document.close(); }
+  }catch(e){}
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
@@ -25258,32 +25273,49 @@ function cvStampaFascicolo(cv, tipo, allegati){
       });
     })
     .then(function(out){
-      /* gli allegati si accodano nell'ordine in cui sono elencati */
+      /* gli allegati si accodano nell'ordine in cui sono elencati.
+         Se uno non si scarica prima non lo diceva nessuno: il fascicolo
+         usciva corto e ce ne si accorgeva davanti al cliente. */
+      var _saltati=[];
       var seq=Promise.resolve();
       allegati.forEach(function(a){
         seq=seq.then(function(){
           return fetch(a.url).then(function(r){ return r.ok?r.arrayBuffer():null; })
             .then(function(b){
-              if(!b) { console.log('allegato non scaricato:', a.nome); return; }
+              if(!b) { _saltati.push(a.nome); console.log('allegato non scaricato:', a.nome); return; }
               return PDFLib.PDFDocument.load(b)
                 .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
                 .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); });
             })
-            .catch(function(){ console.log('allegato saltato:', a.nome); });
+            .catch(function(){ _saltati.push(a.nome); console.log('allegato saltato:', a.nome); });
         });
       });
-      return seq.then(function(){ return out.save(); });
+      return seq.then(function(){
+        if(_saltati.length){
+          alert('Questi moduli non sono stati scaricati e NON sono nel fascicolo:\n\n\u2022 '
+            +_saltati.join('\n\u2022 ')
+            +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2): '
+            +'va aggiunto il nuovo indirizzo del gestionale fra le origini consentite.');
+        }
+        return out.save();
+      });
     })
     .then(function(bytes){
       var url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
-      /* serve il riferimento alla finestra: e' un documento nostro */
-      var w=window.open(url,'_blank');
+      var w=_w;
+      if(!w || w.closed){ w=window.open(url,'_blank'); }
+      else { try{ w.location.href=url; }catch(e){ w=window.open(url,'_blank'); } }
       if(!w){ alert('Consenti le finestre pop-up per stampare il fascicolo.'); return; }
-      avviso('\u2713 Fascicolo pronto: proposta + '+allegati.length+(allegati.length===1?' allegato':' allegati'));
+      /* appena il PDF e' a video parte la stampa: se il browser non lo
+         permette resta comunque aperto e si stampa a mano */
+      setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 1800);
+      var _ok=allegati.length-_saltati.length;
+      avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' allegato':' allegati'));
       setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} }, 60000);
     })
     .catch(function(e){
       console.log('fascicolo non riuscito:', e);
+      try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
       alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.');
       window._cvFascicoloInCorso=true;      /* evita di rientrare all'infinito */
       try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
