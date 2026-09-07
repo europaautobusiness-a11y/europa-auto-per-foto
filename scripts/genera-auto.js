@@ -18,9 +18,9 @@ const CONFIG = {
   SB_URL: 'https://jasrectyddshjizpxiia.supabase.co',
   SB_KEY: 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw',   /* chiave pubblica, la stessa della vetrina */
 
-  BASE_URL: 'https://prenota.europaautosrl.it',                /* dove stanno le pagine */
-  VETRINA_URL: 'https://prenota.europaautosrl.it/vetrina.html',
-  LOGO_URL: 'https://prenota.europaautosrl.it/logo.png',
+  BASE_URL: 'https://auto.europaautosrl.it',                /* dove stanno le pagine */
+  VETRINA_URL: 'https://auto.europaautosrl.it/vetrina.html',
+  LOGO_URL: 'https://auto.europaautosrl.it/logo.png',
 
   AZIENDA: 'Europa Auto',
   RAGIONE: 'Europa Auto S.r.l.',
