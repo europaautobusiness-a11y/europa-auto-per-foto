@@ -21356,7 +21356,8 @@ function mzForm(id){
       +(_cl.trim()?('<span style="display:block;font-weight:600;font-size:11.5px;color:#64748b;margin-top:2px;">'+mzEsc(_cl.trim())+'</span>'):'')
       +'</button>';
   })();
-  h+='<button onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva</button>';
+  h+='<button id="mz-btn-salva" onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;transition:background .2s;">💾 Salva</button>';
+  h+='<div id="mz-salva-esito" style="text-align:center;font-size:12px;color:#15803d;font-weight:700;margin-top:6px;min-height:16px;"></div>';
   /* Venduta subito: si salva e si passa al contratto senza rientrare
      nel magazzino a ricercare la stessa auto. Non compare su quelle
      gia' vendute, come per il pulsante nelle schede. */
@@ -21589,6 +21590,17 @@ function mzSalva(){
      Ora la scheda resta aperta e si limita a riallineare l'elenco dietro. */
   try{ mzRender(); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('💾 Auto salvata',true);
+  /* La scheda resta aperta, quindi il pulsante stesso deve dire che ha
+     salvato: diventa "Salvato" per due secondi e sotto resta l'ora. */
+  try{
+    var _bs=document.getElementById('mz-btn-salva'), _es=document.getElementById('mz-salva-esito');
+    if(_bs){
+      _bs.textContent='\u2705 Salvato'; _bs.style.background='#15803d';
+      clearTimeout(window._mzBtnSalvaT);
+      window._mzBtnSalvaT=setTimeout(function(){ try{ _bs.textContent='\ud83d\udcbe Salva'; _bs.style.background='#16a34a'; }catch(e){} }, 2000);
+    }
+    if(_es){ var _d=new Date(); _es.textContent='Salvato alle '+_d.getHours()+':'+String(_d.getMinutes()).padStart(2,'0')+':'+String(_d.getSeconds()).padStart(2,'0'); }
+  }catch(e){}
   /* Notifica del veicolo nuovo tolta su richiesta: restano permuta e perizia. */
   if(false && _isNewAuto && !(typeof isAdmin==='function'&&isAdmin()) && typeof notifPush==='function'){ try{ var _chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'un collaboratore'); notifPush('🚗 Nuovo veicolo inserito da '+_chi+': '+((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):''), '🚗'); }catch(_e){} }
 }
@@ -25415,6 +25427,8 @@ function cvStampaFascicolo(cv, tipo, allegati){
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
   if(!html || typeof eaHtmlToPdf!=='function'){
+    try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
+    alert('Non riesco a preparare il fascicolo ('+(!html?'documento vuoto':'conversione PDF assente')+'): stampo la sola proposta, SENZA allegati.');
     window._cvFascicoloInCorso=true;
     try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
     return;
@@ -26038,8 +26052,26 @@ function cvStampaDoc(c, tipo){
     try{
       var _all=(typeof apPerPratica==='function')?apPerPratica(c):[];
       if(_all.length){
-        if(window.PDFLib){ cvStampaFascicolo(c, tipo, _all); return; }
-        console.log('allegati presenti ma libreria PDF non caricata: stampo la sola proposta');
+        /* ===== NIENTE PIU' USCITE SILENZIOSE =====
+           Se i moduli ci sono ma il fascicolo non si puo' fare, prima si
+           stampava la proposta nuda scrivendolo solo nella console, dove non
+           guarda nessuno. Chi stampa deve saperlo, e sapere PERCHE'. */
+        var _manca=[];
+        if(!window.PDFLib) _manca.push('pdf-lib');
+        if(!(window.jspdf && window.jspdf.jsPDF)) _manca.push('jsPDF');
+        if(!window.html2canvas) _manca.push('html2canvas');
+        if(!_manca.length){ cvStampaFascicolo(c, tipo, _all); return; }
+        if(!confirm('I moduli da allegare ci sono ('+_all.length+'), ma su questo browser non sono caricate le librerie che servono per unirli: '
+          +_manca.join(', ')+'.\n\n'
+          +'Di solito basta ricaricare la pagina (Ctrl+Shift+R). Se succede sempre, qualcosa sul PC (antivirus, estensione, filtro di rete) blocca cdnjs.cloudflare.com.\n\n'
+          +'Stampare lo stesso la sola proposta, SENZA allegati?')) return;
+      } else if(typeof apLoad==='function' && apLoad().length){
+        /* I moduli esistono ma nessuno vale per questo veicolo: quasi sempre
+           sono stati caricati per il gruppo sbagliato (solo italiane/estere). */
+        var _tot=apLoad().length, _att=apLoad().filter(function(x){ return x && x.attivo!==false; }).length;
+        if(!confirm('In Parametri ci sono '+_tot+' moduli ('+_att+' attivi), ma nessuno vale per questo veicolo: '
+          +'controlla il gruppo (Per tutte / Solo italiane / Solo estere) e la spunta \u201cattivo\u201d.\n\n'
+          +'Stampare lo stesso la sola proposta, SENZA allegati?')) return;
       } else if(typeof apLoad==='function' && !apLoad().length){
         /* Nessun modulo: o non sono stati caricati in Parametri, o non sono
            ancora arrivati dal database. Prima usciva la proposta nuda e se ne
@@ -27182,7 +27214,39 @@ function apPannelloHTML(){
     +'<button type="button" onclick="apCarica()" style="padding:9px 14px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Carica</button>'
     +'</div>'
     +'<div id="ap-esito" style="font-size:12.5px;margin-top:8px;min-height:18px;"></div>'
+    +'<div style="margin-top:12px;"><button type="button" onclick="apVerifica()" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">\ud83e\ude7a Verifica su questo browser</button>'
+    +'<div id="ap-verifica" style="font-size:12.5px;margin-top:8px;line-height:1.6;"></div></div>'
     +'</div>';
+}
+/* ===== "IO NON LI VEDO, RUDY SI'" =====
+   Il fascicolo dipende da tre cose che cambiano da PC a PC: le librerie
+   scaricate da cdnjs, l'elenco arrivato dal database, e il permesso di
+   scaricare i PDF da Cloudflare (CORS). Questo pulsante le prova tutte e
+   tre sul browser in uso, cosi' non si va a tentativi. */
+function apVerifica(){
+  var el=document.getElementById('ap-verifica'); if(!el) return;
+  var ok=function(t){ return '<div style="color:#15803d;">\u2705 '+t+'</div>'; };
+  var ko=function(t){ return '<div style="color:#b91c1c;font-weight:700;">\u274c '+t+'</div>'; };
+  var h='';
+  h+= window.PDFLib ? ok('pdf-lib caricata') : ko('pdf-lib NON caricata (cdnjs bloccato?) \u2192 ricarica con Ctrl+Shift+R');
+  h+= (window.jspdf && window.jspdf.jsPDF) ? ok('jsPDF caricata') : ko('jsPDF NON caricata');
+  h+= window.html2canvas ? ok('html2canvas caricata') : ko('html2canvas NON caricata');
+  var l=apLoad();
+  h+= l.length ? ok(l.length+' moduli in elenco ('+l.filter(function(x){return x&&x.attivo!==false;}).length+' attivi)') : ko('elenco moduli vuoto su questo browser'+(_apCaricato?'':' \u2014 non ancora arrivato dal database'));
+  h+= '<div>Dominio: <b>'+location.origin+'</b></div>';
+  el.innerHTML=h+'<div style="color:#64748b;">Provo a scaricare i moduli\u2026</div>';
+  var seq=Promise.resolve(), righe=[];
+  l.forEach(function(a){
+    seq=seq.then(function(){
+      if(!a||!a.url) { righe.push(ko((a&&a.nome)||'?')+' senza indirizzo'); return; }
+      return fetch(a.url).then(function(r){
+        righe.push(r.ok ? ok(a.nome+' scaricabile ('+Math.round((+r.headers.get('content-length')||0)/1024)+' KB)') : ko(a.nome+': risposta '+r.status));
+      }).catch(function(e){
+        righe.push(ko(a.nome+': download bloccato \u2192 CORS su Cloudflare R2: aggiungi '+location.origin+' fra le origini consentite'));
+      });
+    });
+  });
+  seq.then(function(){ el.innerHTML=h+righe.join(''); });
 }
 
 function apRenderLista(){
