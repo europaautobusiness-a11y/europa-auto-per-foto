@@ -25426,126 +25426,111 @@ function cvStampaFascicolo(cv, tipo, allegati){
   try{ localStorage.removeItem('ea_fasc_log'); }catch(e){}
   var _saltati=[];
   cvFascLog('inizio', 'tipo='+tipo+', moduli='+allegati.length+' ['+allegati.map(function(a){return a.nome;}).join(', ')+']');
-  /* ===== IL FASCICOLO AL CONTRARIO =====
-     Prima la proposta veniva fotografata (immagine a ~190 dpi, 24 MB) per
-     poterla incollare davanti ai moduli PDF: testo morbido e file enorme.
-     Ora si fa l'inverso: la proposta resta la SUA pagina HTML, identica a
-     quella che si stampa da sola, con il testo vero del browser; sono i
-     moduli a diventare immagini (a ~290 dpi), accodate in fondo una per
-     pagina. I moduli sono stampati prefatti: fotografarli non toglie nulla.
-     Un solo documento, una sola stampa, stesso impaginato di sempre. */
-  var _w=null;
-  try{
-    _w=window.open('','_blank');
-    if(_w){ _w.document.open(); _w.document.write('<!doctype html><meta charset="utf-8"><title>Preparo il fascicolo\u2026</title>'
-      +'<body style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#334155;">'
-      +'<div style="text-align:center;"><div style="font-size:34px;">\ud83d\udcc4</div>'
-      +'<div style="font-weight:800;margin-top:8px;">Preparo il fascicolo\u2026</div>'
-      +'<div style="font-size:13px;color:#94a3b8;margin-top:4px;">proposta e moduli da allegare</div></div>'); _w.document.close(); }
-  }catch(e){}
-  if(!_w){ cvFascLog('FINESTRA BLOCCATA'); alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
-  avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
+  /* ===== NIENTE FINESTRA NUOVA =====
+     Aprire una scheda nuova per stampare aveva un costo nascosto: sul
+     telefono la scheda del gestionale finiva in secondo piano e Chrome la
+     congelava, cosi' tutto quello che restava da fare (disegnare un modulo
+     di 4 KB) ci metteva quaranta secondi. Ora il fascicolo si compone
+     dentro un riquadro invisibile della pagina stessa, in primo piano, e
+     la stampa parte da li': nessun popup da autorizzare, nessuna scheda
+     congelata. La proposta e' sempre la stessa pagina HTML, con il testo
+     vero del browser. */
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
-  if(!html){
-    cvFascLog('RINUNCIA', 'documento vuoto');
-    try{ _w.close(); }catch(_x){}
-    alert('Non riesco a preparare la proposta.');
-    return;
-  }
+  if(!html){ cvFascLog('RINUNCIA', 'documento vuoto'); alert('Non riesco a preparare la proposta.'); return; }
   if(tipo!=='preventivo') html=cvDoppiaCopia(html);
-  var _scala=2.5;     /* 595 pt di A4 x 2.5 = ~1490 px di larghezza, ~290 dpi in stampa */
+  avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var _pagine=[];
-  /* ===== IL CANE DA GUARDIA =====
-     Se un passaggio non risponde (pdf.js che non arriva, una pagina che non
-     si disegna) la finestra restava per sempre su "Preparo il fascicolo".
-     Dopo 25 secondi si smette di aspettare e si stampa la sola proposta,
-     annotando nel diario dov'era fermo. */
   var _fatto=false, _dove='avvio';
+  var _tappa=function(t){ _dove=t; cvFascLog(t); };
+  var _stampaHtml=function(fin){
+    /* la pagina va in un iframe nascosto e si stampa da li' */
+    try{
+      var vecchio=document.getElementById('ea-fasc-iframe'); if(vecchio) vecchio.parentNode.removeChild(vecchio);
+      var ifr=document.createElement('iframe');
+      ifr.id='ea-fasc-iframe';
+      ifr.style.cssText='position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
+      document.body.appendChild(ifr);
+      var d=ifr.contentDocument||ifr.contentWindow.document;
+      d.open(); d.write(fin); d.close();
+      var lancia=function(){
+        if(lancia._ok) return; lancia._ok=true;
+        cvFascLog('stampa avviata', _pagine.length+' pagine di moduli');
+        try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }
+        catch(e){
+          cvFascLog('stampa dal riquadro fallita, apro una finestra', String((e&&e.message)||e));
+          var w=window.open('','_blank');
+          if(w){ w.document.open(); w.document.write(fin); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
+          else alert('Per stampare, consenti i popup per questo sito nel browser.');
+        }
+        /* il riquadro resta finche' la finestra di stampa e' aperta; si toglie dopo */
+        setTimeout(function(){ try{ ifr.parentNode.removeChild(ifr); }catch(e){} }, 120000);
+      };
+      var imgs=d.images, att=0, tot=imgs.length;
+      if(!tot){ setTimeout(lancia, 300); return; }
+      var uno=function(){ att++; if(att>=tot) setTimeout(lancia, 300); };
+      for(var i=0;i<tot;i++){ if(imgs[i].complete) uno(); else { imgs[i].onload=uno; imgs[i].onerror=uno; } }
+      setTimeout(lancia, 10000);   /* rete di sicurezza: immagini lente */
+    }catch(e){
+      cvFascLog('ERRORE nel riquadro di stampa', String((e&&e.message)||e));
+      var w=window.open('','_blank');
+      if(w){ w.document.open(); w.document.write(fin); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
+    }
+  };
+  var _componi=function(){
+    var blocco='';
+    _pagine.forEach(function(p){
+      blocco+='<div class="ea-allegato" style="page-break-before:always;break-before:page;text-align:center;">'
+        +'<img src="'+p.src+'" alt="'+docEsc(p.nome)+'" style="display:block;margin:0 auto;'
+        +(p.orizz?'width:100%;':'max-width:100%;max-height:96vh;')+'height:auto;"></div>';
+    });
+    var stile='<style>@media print{ .ea-allegato{ page-break-inside:avoid; break-inside:avoid; } }</style>';
+    var f=html.lastIndexOf('</body>');
+    return (f>=0) ? html.slice(0,f)+stile+blocco+html.slice(f) : html+stile+blocco;
+  };
   var _guardia=setTimeout(function(){
     if(_fatto) return; _fatto=true;
-    cvFascLog('TEMPO SCADUTO, stampo la sola proposta', 'fermo a: '+_dove);
-    try{ _w.document.open(); _w.document.write(html); _w.document.close(); setTimeout(function(){ try{ _w.print(); }catch(_e){} }, 500); }catch(_x){}
-    alert('I moduli non sono arrivati in tempo (fermo a: '+_dove+'). Stampo la sola proposta.');
-  }, 25000);
-  var _tappa=function(t){ _dove=t; cvFascLog(t); };
-  Promise.resolve()
-    .then(function(){
-      _tappa('carico pdf.js');
-      if(allegati.every(function(a){ return a.img && a.img.length; })) return;   /* tutto pronto: pdf.js non serve */
-      if(typeof caricaPdfJs!=='function') throw new Error('pdf.js assente');
-      return caricaPdfJs();
-    })
-    .then(function(){
-      _tappa('pdf.js pronto');
-      var seq=Promise.resolve();
-      allegati.forEach(function(a){
-        seq=seq.then(function(){
-          if(a.img && a.img.length){
-            /* gia' preparato: le immagini ci sono, niente da disegnare */
-            a.img.forEach(function(im,k){ _pagine.push({ nome:a.nome, n:k+1, tot:a.img.length, src:im.url, orizz:!!im.orizz }); });
-            cvFascLog('accodato '+a.nome, a.img.length+' pagine gia\u2019 pronte');
-            return;
-          }
-          return fetch(a.url)
-            .then(function(r){ _dove='scarico '+a.nome; cvFascLog('scarico '+a.nome, 'risposta '+r.status+' (modulo non ancora preparato: lo disegno ora)'); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
-            .then(function(buf){ _dove='apro '+a.nome; return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
-            .then(function(pdf){
-              _dove='disegno '+a.nome;
-              var p=Promise.resolve(), tot=pdf.numPages;
-              for(var i=1;i<=tot;i++){ (function(n){
-                p=p.then(function(){ return pdf.getPage(n); }).then(function(pg){
-                  var vp=pg.getViewport({scale:_scala});
-                  var c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
-                  var ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
-                  return pg.render({canvasContext:ctx, viewport:vp}).promise.then(function(){
-                    _pagine.push({ nome:a.nome, n:n, tot:tot, src:c.toDataURL('image/jpeg',0.9), orizz:(vp.width>vp.height) });
-                  });
-                });
-              })(i); }
-              return p.then(function(){ cvFascLog('accodato '+a.nome, tot+' pagine'); });
-            })
-            .catch(function(e){ _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, String((e&&e.message)||e)); });
-        });
-      });
-      return seq;
-    })
-    .then(function(){
-      if(_fatto) return; _fatto=true; clearTimeout(_guardia);
-      if(_saltati.length){
-        alert('Questi moduli non sono stati scaricati e NON sono nel fascicolo:\n\n\u2022 '+_saltati.join('\n\u2022 ')
-          +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2).');
+    cvFascLog('TEMPO SCADUTO', 'fermo a: '+_dove+' \u2014 stampo con quello che c\u2019e\u2019');
+    avviso('\u26a0\ufe0f Un modulo non e\u2019 arrivato in tempo ('+_dove+'): stampo il resto');
+    _stampaHtml(_componi());
+  }, 40000);
+  var seq=Promise.resolve();
+  allegati.forEach(function(a){
+    seq=seq.then(function(){
+      if(a.img && a.img.length){
+        a.img.forEach(function(im,k){ _pagine.push({ nome:a.nome, n:k+1, tot:a.img.length, src:im.url, orizz:!!im.orizz }); });
+        cvFascLog('accodato '+a.nome, a.img.length+' pagine gia\u2019 pronte');
+        return;
       }
-      var blocco='';
-      _pagine.forEach(function(p){
-        blocco+='<div class="ea-allegato" style="page-break-before:always;break-before:page;text-align:center;">'
-          +'<img src="'+p.src+'" alt="'+docEsc(p.nome)+'" style="display:block;margin:0 auto;'
-          +(p.orizz?'width:100%;':'max-width:100%;max-height:96vh;')+'height:auto;"></div>';
-      });
-      var stile='<style>@media print{ .ea-allegato{ page-break-inside:avoid; break-inside:avoid; } }</style>';
-      var f=html.lastIndexOf('</body>');
-      var fin = (f>=0) ? html.slice(0,f)+stile+blocco+html.slice(f) : html+stile+blocco;
-      cvFascLog('fascicolo composto', _pagine.length+' pagine di moduli accodate alla proposta, saltati='+_saltati.length);
-      _w.document.open(); _w.document.write(fin); _w.document.close();
-      try{ _w.focus(); }catch(e){}
-      /* la stampa parte quando le immagini sono in pagina, non a tempo */
-      var _stampa=function(){ try{ _w.focus(); _w.print(); }catch(e){} };
-      var _imgs=_w.document.images, _att=0, _tot=_imgs.length;
-      if(!_tot){ setTimeout(_stampa, 500); }
-      else {
-        var _uno=function(){ _att++; if(_att>=_tot) setTimeout(_stampa, 300); };
-        for(var i=0;i<_tot;i++){ if(_imgs[i].complete) _uno(); else { _imgs[i].onload=_uno; _imgs[i].onerror=_uno; } }
-        setTimeout(_stampa, 8000);   /* rete di sicurezza */
-      }
-      var _ok=allegati.length-_saltati.length;
-      avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' modulo':' moduli')+' ('+_pagine.length+' pagine)');
-    })
-    .catch(function(e){
-      if(_fatto) return; _fatto=true; clearTimeout(_guardia);
-      cvFascLog('ERRORE, stampo la sola proposta', String((e&&e.message)||e));
-      alert('Non sono riuscito ad accodare i moduli: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
-      try{ _w.document.open(); _w.document.write(html); _w.document.close(); setTimeout(function(){ try{ _w.print(); }catch(_e){} }, 500); }catch(_x){}
+      /* non ancora preparato: lo si prepara adesso, in primo piano, e resta
+         pronto per tutti dalla prossima volta */
+      _tappa('preparo '+a.nome+' (prima volta)');
+      avviso('\u23f3 Preparo '+a.nome+' per la stampa (solo la prima volta)\u2026');
+      return apPreparaModulo(a).then(function(ok){
+        var agg=apLoad().filter(function(x){ return x && x.id===a.id; })[0];
+        if(ok && agg && agg.img && agg.img.length){
+          agg.img.forEach(function(im,k){ _pagine.push({ nome:a.nome, n:k+1, tot:agg.img.length, src:im.url, orizz:!!im.orizz }); });
+          cvFascLog('accodato '+a.nome, agg.img.length+' pagine (preparato ora)');
+        } else { _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, 'preparazione non riuscita'); }
+      }).catch(function(e){ _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, String((e&&e.message)||e)); });
     });
+  });
+  seq.then(function(){
+    if(_fatto) return; _fatto=true; clearTimeout(_guardia);
+    if(_saltati.length){
+      alert('Questi moduli NON sono nel fascicolo:\n\n\u2022 '+_saltati.join('\n\u2022 ')
+        +'\n\nApri Parametri \u2192 Documenti da allegare e controlla che risultino \u201cpronti per la stampa\u201d.');
+    }
+    cvFascLog('fascicolo composto', _pagine.length+' pagine di moduli accodate alla proposta, saltati='+_saltati.length);
+    var _ok=allegati.length-_saltati.length;
+    avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' modulo':' moduli')+' ('+_pagine.length+' pagine)');
+    _stampaHtml(_componi());
+  }).catch(function(e){
+    if(_fatto) return; _fatto=true; clearTimeout(_guardia);
+    cvFascLog('ERRORE', String((e&&e.message)||e));
+    alert('Non sono riuscito ad accodare i moduli: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
+    _stampaHtml(html);
+  });
 }
 function cvContrattoFinaleStampa(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
