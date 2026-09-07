@@ -25472,6 +25472,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
   Promise.resolve()
     .then(function(){
       _tappa('carico pdf.js');
+      if(allegati.every(function(a){ return a.img && a.img.length; })) return;   /* tutto pronto: pdf.js non serve */
       if(typeof caricaPdfJs!=='function') throw new Error('pdf.js assente');
       return caricaPdfJs();
     })
@@ -25480,8 +25481,14 @@ function cvStampaFascicolo(cv, tipo, allegati){
       var seq=Promise.resolve();
       allegati.forEach(function(a){
         seq=seq.then(function(){
+          if(a.img && a.img.length){
+            /* gia' preparato: le immagini ci sono, niente da disegnare */
+            a.img.forEach(function(im,k){ _pagine.push({ nome:a.nome, n:k+1, tot:a.img.length, src:im.url, orizz:!!im.orizz }); });
+            cvFascLog('accodato '+a.nome, a.img.length+' pagine gia\u2019 pronte');
+            return;
+          }
           return fetch(a.url)
-            .then(function(r){ _dove='scarico '+a.nome; cvFascLog('scarico '+a.nome, 'risposta '+r.status); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
+            .then(function(r){ _dove='scarico '+a.nome; cvFascLog('scarico '+a.nome, 'risposta '+r.status+' (modulo non ancora preparato: lo disegno ora)'); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
             .then(function(buf){ _dove='apro '+a.nome; return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
             .then(function(pdf){
               _dove='disegno '+a.nome;
@@ -27305,13 +27312,77 @@ function apRenderLista(){
       +(voci.length?voci.map(function(x){
         return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;background:'+(x.attivo===false?'#f8fafc':'#fff')+';">'
           +'<input type="checkbox" '+(x.attivo===false?'':'checked')+' onchange="apAttiva(\''+x.id+'\',this.checked)" title="Allega alle proposte" style="cursor:pointer;">'
-          +'<div style="flex:1;min-width:0;font-size:13px;'+(x.attivo===false?'color:#94a3b8;':'')+'">'+fnEsc(x.nome||'documento.pdf')+'</div>'
+          +'<div style="flex:1;min-width:0;font-size:13px;'+(x.attivo===false?'color:#94a3b8;':'')+'">'+fnEsc(x.nome||'documento.pdf')
+          +(x.img&&x.img.length?'<div style="font-size:10.5px;color:#15803d;">\u2713 pronto per la stampa ('+x.img.length+(x.img.length===1?' pagina':' pagine')+')</div>'
+            :'<div style="font-size:10.5px;color:#b45309;">\u23f3 da preparare per la stampa</div>')+'</div>'
           +'<a href="'+(x.url||'#')+'" target="_blank" style="flex:0 0 auto;font-size:12px;font-weight:700;color:#1a4fa0;text-decoration:none;">apri</a>'
           +'<button type="button" onclick="apElimina(\''+x.id+'\')" style="flex:0 0 auto;padding:4px 8px;border-radius:6px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;font-family:inherit;font-size:11px;font-weight:800;cursor:pointer;">togli</button>'
           +'</div>';
       }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun documento.</div>')
       +'</div>';
   }).join('');
+  /* i moduli senza immagini si preparano da soli appena qualcuno apre i
+     Parametri: una volta sola, poi restano pronti per tutti */
+  try{ apPreparaTutti(); }catch(e){}
+}
+
+/* ===== I MODULI SI PREPARANO UNA VOLTA, NON A OGNI STAMPA =====
+   Disegnare un modulo ministeriale da PDF a immagine costa: sul telefono,
+   con la scheda in secondo piano, ci volevano 40 secondi per una pagina.
+   Farlo a ogni stampa era un errore. Ora si fa UNA volta, quando il modulo
+   viene caricato (o al primo giro sui moduli gia' esistenti), e le pagine
+   finiscono su Cloudflare come immagini a ~290 dpi. La stampa poi le
+   infila e basta: istantanea, anche dal telefono. */
+var _apPrepInCorso=false;
+function apPreparaModulo(a){
+  if(!a || !a.url) return Promise.resolve(false);
+  return Promise.resolve()
+    .then(function(){ if(typeof caricaPdfJs!=='function') throw new Error('pdf.js assente'); return caricaPdfJs(); })
+    .then(function(){ return fetch(a.url); })
+    .then(function(r){ if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
+    .then(function(buf){ return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
+    .then(function(pdf){
+      var urls=[], p=Promise.resolve();
+      for(var i=1;i<=pdf.numPages;i++){ (function(nP){
+        p=p.then(function(){ return pdf.getPage(nP); }).then(function(pg){
+          var vp=pg.getViewport({scale:2.5});
+          var c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+          var ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+          return pg.render({canvasContext:ctx, viewport:vp}).promise.then(function(){
+            return new Promise(function(res,rej){ c.toBlob(function(b){ b?res(b):rej(new Error('immagine vuota')); }, 'image/jpeg', 0.9); });
+          }).then(function(blob){
+            return eaR2Upload(blob, 'allegati-proposta', String(a.id).replace(/[^\w-]/g,'')+'-p'+nP+'-'+Date.now()+'.jpg');
+          }).then(function(u){ urls.push({ url:u, orizz:(vp.width>vp.height) }); });
+        });
+      })(i); }
+      return p.then(function(){ return urls; });
+    })
+    .then(function(urls){
+      var l=apLoad().slice(); var i=l.findIndex(function(x){ return x && x.id===a.id; });
+      if(i<0) return false;
+      l[i].img=urls; l[i].imgTs=Date.now();
+      apSave(l);
+      return true;
+    });
+}
+function apPreparaTutti(){
+  if(_apPrepInCorso) return;
+  var da=apLoad().filter(function(x){ return x && x.url && !(x.img&&x.img.length); });
+  if(!da.length) return;
+  _apPrepInCorso=true;
+  var es=document.getElementById('ap-esito');
+  var seq=Promise.resolve(), fatti=0;
+  da.forEach(function(a){
+    seq=seq.then(function(){
+      if(es) es.innerHTML='<span style="color:#64748b;">Preparo per la stampa: '+fnEsc(a.nome)+'\u2026</span>';
+      return apPreparaModulo(a).then(function(ok){ if(ok) fatti++; }).catch(function(e){ console.log('preparazione modulo fallita', a.nome, e); });
+    });
+  });
+  seq.then(function(){
+    _apPrepInCorso=false;
+    if(es) es.innerHTML=fatti?'<span style="color:#15803d;font-weight:700;">\u2713 '+fatti+(fatti===1?' modulo pronto':' moduli pronti')+' per la stampa.</span>':'';
+    try{ if(document.getElementById('ap-lista')) apRenderLista(); }catch(e){}
+  });
 }
 
 function apCarica(){
@@ -27326,9 +27397,9 @@ function apCarica(){
     .then(function(url){
       var l=apLoad().slice();
       l.push({ id:'ap_'+Date.now(), gruppo:gr, nome:f.name, url:url, attivo:true, ts:Date.now() });
-      apSave(l); apRenderLista();
+      apSave(l); apRenderLista();   /* apRenderLista fa partire anche la preparazione */
       if(fi) fi.value='';
-      if(es) es.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Caricato.</span>';
+      if(es) es.innerHTML='<span style="color:#15803d;font-weight:700;">\u2713 Caricato.</span> <span style="color:#64748b;">Lo preparo per la stampa\u2026</span>';
     })
     .catch(function(e){
       if(es) es.innerHTML='<span style="color:#b91c1c;font-weight:700;">Caricamento non riuscito: '+((e&&e.message)||e)+'</span>';
