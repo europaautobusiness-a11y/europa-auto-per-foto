@@ -64,10 +64,20 @@ function kmFmt(v){ const n=num(v); return n==null?null:n.toLocaleString('it-IT',
 function cap(s){ return String(s||'').split(/\s+/).map(w=> (w.length<=3||/\d/.test(w))?w:(w.charAt(0).toUpperCase()+w.slice(1).toLowerCase())).join(' '); }
 function dataIT(v){ const m=String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m?(m[3]+'/'+m[2]+'/'+m[1]):String(v||''); }
 function annoDa(a){ if(a.anno) return String(a.anno).slice(0,4); if(a.dataImm){ const m=String(a.dataImm).match(/(\d{4})/); if(m) return m[1]; } return ''; }
-function slug(a){
+/* Il riferimento e' quello che il cliente vede e che Google usa come
+   identificativo: la targa se c'e', altrimenti un codice nostro tipo
+   EA1855. L'id interno (sicom_...) non esce mai da qui. */
+function rif(a){
   const t=String(a.targa||'').replace(/[^A-Za-z0-9]/g,'').toUpperCase();
   if(t) return t;
-  return 'id-'+String(a.id||'').replace(/[^A-Za-z0-9]/g,'').slice(0,24);
+  const n=String(a.id||'').replace(/[^0-9]/g,'').slice(-6);
+  return 'EA'+(n||'0');
+}
+function slug(a){
+  const r=rif(a);
+  if(String(a.targa||'').trim()) return r;
+  const nome=(cap(a.marca)+' '+cap(a.modello)).trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  return (nome?nome+'-':'')+r;
 }
 function tsv(v){ return String(v==null?'':v).replace(/[\t\r\n]+/g,' ').trim(); }
 
@@ -191,7 +201,8 @@ function paginaAuto(a){
     +'<div class="prz"><div class="p">'+esc(euro(prz))+'</div><div class="l">'+(a.ivaEsposta?'IVA inclusa':'prezzo in unica soluzione')
     +((lst&&prz&&lst>prz)?(' · da nuova <s>'+esc(euro(lst))+'</s> · <b style="color:#c81e1e;">risparmi '+esc(euro(lst-prz))+'</b>'):'')+'</div>'
     +'<div class="l" style="margin-top:6px;font-weight:700;color:#0f172a;">'+[kmFmt(a.km), anno?('anno '+anno):''].filter(Boolean).join(' · ')+'</div>'
-    +'<div class="l"><b style="color:#16a34a;">'+((a.stato==='prenotata'||a.stato==='opzionata')?'Opzionata':'Disponibile in sede')+'</b>'+(a.telaio?(' · Telaio '+esc(a.telaio)):'')+'</div>'
+    +'<div class="l"><b style="color:#16a34a;">'+((a.stato==='prenotata'||a.stato==='opzionata')?'Opzionata':'Disponibile in sede')+'</b>'
+    +' \u00b7 Rif. '+esc(rif(a))+(a.telaio?(' · Telaio '+esc(a.telaio)):'')+'</div>'
     +'</div></div>'
     +'<div class="badges">'+badges+'</div>'
     +'<div class="cta"><a class="wa" href="'+esc(waHref)+'" target="_blank" rel="noopener">💬 Scrivici su WhatsApp</a><a class="tel" href="'+CONFIG.TEL_HREF+'">📞 Chiama '+esc(CONFIG.TEL)+'</a></div>'
@@ -219,48 +230,56 @@ function paginaIndice(lista){
 }
 
 /* ------------------------------- feed ------------------------------------ */
-function fuel(s){
+/* ============================ FEED GOOGLE ================================
+   I nomi delle colonne non sono liberi: Google accetta solo quelli della
+   sua specifica per gli annunci di veicoli e scarta le righe con nomi
+   diversi. Da qui in giu' e' tutto copiato da li'.
+   Tre trappole gia' pagate: "availability" sui veicoli da' errore e non va
+   inviato; per una sola sede basta store_code (niente vehicle_fulfillment);
+   l'id deve comparire anche sulla pagina dell'auto. */
+function engineVal(s){
   const t=String(s||'').toLowerCase();
-  if(/plug|phev/.test(t)) return 'plug-in hybrid';
+  if(/plug|phev/.test(t)) return 'plug-in_hybrid';
   if(/ibrid|hybrid|mild|mhev/.test(t)) return 'hybrid';
-  if(/elettr|electric|ev\b/.test(t)) return 'electric';
+  if(/elettr|electric|\bev\b/.test(t)) return 'electric';
   if(/diesel|gasolio/.test(t)) return 'diesel';
-  if(/metano|cng|natural/.test(t)) return 'natural gas';
+  if(/metano|cng/.test(t)) return 'methane';
   if(/gpl|lpg/.test(t)) return 'lpg';
   if(/benz|gasoline|petrol/.test(t)) return 'gasoline';
   return t?'other':'';
 }
-function trasm(s){
-  const t=String(s||'').toLowerCase();
-  if(/auto|dsg|cvt|edc|dct|robot/.test(t)) return 'automatic';
-  if(/man/.test(t)) return 'manual';
-  return t?'other':'';
+function primaImmat(a){          /* AAAA-MM, richiesto sull'usato */
+  const m=String(a.dataImm||'').match(/^(\d{4})-(\d{2})/);
+  if(m) return m[1]+'-'+m[2];
+  const y=annoDa(a); return y?(y+'-01'):'';
 }
-const FEED_COLS=['vehicle_id','vin','brand','model','trim','year','mileage','price','condition','image_link','additional_image_link','link','exterior_color','vehicle_fuel_type','vehicle_transmission','engine','store_code','availability'];
+const FEED_COLS=['id','VIN','google_product_category','store_code','brand','model','trim','year','mileage','price','condition','color','engine','date_first_registered','image_link','additional_image_link','link','link_template','description'];
 function rigaFeed(a){
   const url=CONFIG.BASE_URL+'/'+CONFIG.DIR_AUTO+'/'+slug(a)+'.html';
   const kmN=num(a.km), prz=num(a.prezzoVen);
-  const cc=String(a.cilindrata||'').replace(/[^\d]/g,'');
-  const kw=num(a.potenza);
+  const nome=cap(a.marca)+' '+cap(a.modello);
+  const desc=[nome, a.allestimento, kmFmt(a.km), a.alimentazione?cap(a.alimentazione):'', a.cambio?cap(a.cambio):'', a.colore?cap(a.colore):'']
+    .filter(Boolean).join(' \u00b7 ')+'. Garanzia inclusa, permuta e finanziamento in sede.';
   return [
-    tsv(a.id),
+    tsv(rif(a)),
     tsv(a.telaio||''),
+    '916',
+    CONFIG.STORE_CODE,
     tsv(cap(a.marca)),
     tsv(cap(a.modello)),
     tsv(a.allestimento||''),
     tsv(annoDa(a)),
     kmN!=null?(Math.round(kmN)+' km'):'',
     prz!=null?(prz.toFixed(2)+' EUR'):'',
-    'used',
+    'Used',
+    tsv(a.colore?cap(a.colore):''),
+    engineVal(a.alimentazione),
+    primaImmat(a),
     tsv(a.foto[0].url),
     a.foto.slice(1,11).map(f=>tsv(f.url)).join(','),
     url,
-    tsv(a.colore?cap(a.colore):''),
-    fuel(a.alimentazione),
-    trasm(a.cambio),
-    tsv([cc?(cc+' cc'):'', kw!=null?(Math.round(kw*1.3596)+' CV'):''].filter(Boolean).join(' ')),
-    CONFIG.STORE_CODE,
-    'in_stock'
+    url+'?s={store_code}',
+    tsv(desc)
   ].join('\t');
 }
 
