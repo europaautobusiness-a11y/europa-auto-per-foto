@@ -25456,16 +25456,35 @@ function cvStampaFascicolo(cv, tipo, allegati){
   if(tipo!=='preventivo') html=cvDoppiaCopia(html);
   var _scala=2.5;     /* 595 pt di A4 x 2.5 = ~1490 px di larghezza, ~290 dpi in stampa */
   var _pagine=[];
+  /* ===== IL CANE DA GUARDIA =====
+     Se un passaggio non risponde (pdf.js che non arriva, una pagina che non
+     si disegna) la finestra restava per sempre su "Preparo il fascicolo".
+     Dopo 25 secondi si smette di aspettare e si stampa la sola proposta,
+     annotando nel diario dov'era fermo. */
+  var _fatto=false, _dove='avvio';
+  var _guardia=setTimeout(function(){
+    if(_fatto) return; _fatto=true;
+    cvFascLog('TEMPO SCADUTO, stampo la sola proposta', 'fermo a: '+_dove);
+    try{ _w.document.open(); _w.document.write(html); _w.document.close(); setTimeout(function(){ try{ _w.print(); }catch(_e){} }, 500); }catch(_x){}
+    alert('I moduli non sono arrivati in tempo (fermo a: '+_dove+'). Stampo la sola proposta.');
+  }, 25000);
+  var _tappa=function(t){ _dove=t; cvFascLog(t); };
   Promise.resolve()
-    .then(function(){ return (typeof caricaPdfJs==='function') ? caricaPdfJs() : Promise.reject(new Error('pdf.js assente')); })
     .then(function(){
+      _tappa('carico pdf.js');
+      if(typeof caricaPdfJs!=='function') throw new Error('pdf.js assente');
+      return caricaPdfJs();
+    })
+    .then(function(){
+      _tappa('pdf.js pronto');
       var seq=Promise.resolve();
       allegati.forEach(function(a){
         seq=seq.then(function(){
           return fetch(a.url)
-            .then(function(r){ cvFascLog('scarico '+a.nome, 'risposta '+r.status); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
-            .then(function(buf){ return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
+            .then(function(r){ _dove='scarico '+a.nome; cvFascLog('scarico '+a.nome, 'risposta '+r.status); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
+            .then(function(buf){ _dove='apro '+a.nome; return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
             .then(function(pdf){
+              _dove='disegno '+a.nome;
               var p=Promise.resolve(), tot=pdf.numPages;
               for(var i=1;i<=tot;i++){ (function(n){
                 p=p.then(function(){ return pdf.getPage(n); }).then(function(pg){
@@ -25485,6 +25504,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
       return seq;
     })
     .then(function(){
+      if(_fatto) return; _fatto=true; clearTimeout(_guardia);
       if(_saltati.length){
         alert('Questi moduli non sono stati scaricati e NON sono nel fascicolo:\n\n\u2022 '+_saltati.join('\n\u2022 ')
           +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2).');
@@ -25514,6 +25534,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
       avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' modulo':' moduli')+' ('+_pagine.length+' pagine)');
     })
     .catch(function(e){
+      if(_fatto) return; _fatto=true; clearTimeout(_guardia);
       cvFascLog('ERRORE, stampo la sola proposta', String((e&&e.message)||e));
       alert('Non sono riuscito ad accodare i moduli: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
       try{ _w.document.open(); _w.document.write(html); _w.document.close(); setTimeout(function(){ try{ _w.print(); }catch(_e){} }, 500); }catch(_x){}
