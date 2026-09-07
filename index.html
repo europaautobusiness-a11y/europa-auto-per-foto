@@ -4987,10 +4987,10 @@ function eaCanvasToPdfBlob(canvas, tagli){
       ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c2.width,c2.height);
       ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
       if(!primo) pdf.addPage();
-      /* PNG e non JPEG: la compressione JPEG sgrana i bordi delle lettere, e
-         su un contratto stampato la differenza si vede a occhio nudo. Il file
-         pesa di piu', ma un contratto si stampa una volta sola. */
-      pdf.addImage(c2.toDataURL('image/png'),'PNG',mg,mg,iw, h*iw/canvas.width);
+      /* JPEG al 95%: a 290 dpi la compressione non si vede piu' a occhio,
+         e il PDF passa da 24 MB a pochi MB (sono i preventivi che partono
+         per mail). */
+      pdf.addImage(c2.toDataURL('image/jpeg',0.95),'JPEG',mg,mg,iw, h*iw/canvas.width);
       primo=false; y+=h;
     }
   }
@@ -5044,7 +5044,9 @@ function eaHtmlToPdf(html){
                che rendeva lenta la stampa della proposta. A 2 il documento
                resta nitido in stampa (circa 300 dpi su A4) e il disegno
                impiega meno della meta' del tempo. */
-            html2canvas(body, {scale:2, useCORS:true, backgroundColor:'#ffffff', logging:false,
+            /* Tornata a 3 (~290 dpi): a 2 il testo piccolo delle condizioni
+               usciva morbido. Il peso lo tiene giu' il JPEG qui sotto. */
+            html2canvas(body, {scale:3, useCORS:true, backgroundColor:'#ffffff', logging:false,
             windowWidth: EA_PDF_LARG, width: EA_PDF_LARG, height: alt})
             .then(function(c){
               var k=(alt>0)?(c.height/alt):1;
@@ -25422,13 +25424,16 @@ function cvFascLog(passo, dettaglio){
 function cvStampaFascicolo(cv, tipo, allegati){
   var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
   try{ localStorage.removeItem('ea_fasc_log'); }catch(e){}
+  var _saltati=[];
   cvFascLog('inizio', 'tipo='+tipo+', moduli='+allegati.length+' ['+allegati.map(function(a){return a.nome;}).join(', ')+']');
-  /* ===== LA FINESTRA SI APRE SUBITO, NON ALLA FINE =====
-     Il fascicolo si costruisce in qualche secondo: unire i PDF, scaricare i
-     moduli. Se la finestra di stampa si chiedeva DOPO, il browser non la
-     collegava piu' al clic e la bloccava come pubblicita'. Aprendola qui,
-     mentre il dito e' ancora sul pulsante, passa sempre; poi ci si scrive
-     dentro il documento appena e' pronto. */
+  /* ===== IL FASCICOLO AL CONTRARIO =====
+     Prima la proposta veniva fotografata (immagine a ~190 dpi, 24 MB) per
+     poterla incollare davanti ai moduli PDF: testo morbido e file enorme.
+     Ora si fa l'inverso: la proposta resta la SUA pagina HTML, identica a
+     quella che si stampa da sola, con il testo vero del browser; sono i
+     moduli a diventare immagini (a ~290 dpi), accodate in fondo una per
+     pagina. I moduli sono stampati prefatti: fotografarli non toglie nulla.
+     Un solo documento, una sola stampa, stesso impaginato di sempre. */
   var _w=null;
   try{
     _w=window.open('','_blank');
@@ -25438,93 +25443,80 @@ function cvStampaFascicolo(cv, tipo, allegati){
       +'<div style="font-weight:800;margin-top:8px;">Preparo il fascicolo\u2026</div>'
       +'<div style="font-size:13px;color:#94a3b8;margin-top:4px;">proposta e moduli da allegare</div></div>'); _w.document.close(); }
   }catch(e){}
+  if(!_w){ cvFascLog('FINESTRA BLOCCATA'); alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
-  if(!html || typeof eaHtmlToPdf!=='function'){
-    cvFascLog('RINUNCIA', !html?'documento vuoto':'eaHtmlToPdf assente');
-    try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
-    alert('Non riesco a preparare il fascicolo ('+(!html?'documento vuoto':'conversione PDF assente')+'): stampo la sola proposta, SENZA allegati.');
-    window._cvFascicoloInCorso=true;
-    try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
+  if(!html){
+    cvFascLog('RINUNCIA', 'documento vuoto');
+    try{ _w.close(); }catch(_x){}
+    alert('Non riesco a preparare la proposta.');
     return;
   }
-  eaHtmlToPdf(html)
-    .then(function(blob){ return blob.arrayBuffer(); })
-    .then(function(buf){
-      /* Il documento si genera una volta e le sue pagine si accodano DUE
-         volte: una copia per il cliente, una per la concessionaria. Duplicare
-         invece l'HTML non funzionava, perche' la conversione in PDF disegna
-         tutto come un'unica immagine lunga e i salti pagina spariscono.
-         Sul preventivo la seconda copia non si accoda: stessa regola della
-         stampa normale, li' non si firma niente. */
-      var _doppia = (tipo !== 'preventivo');
-      cvFascLog('proposta convertita in PDF', Math.round(buf.byteLength/1024)+' KB');
-      return PDFLib.PDFDocument.create().then(function(out){
-        return PDFLib.PDFDocument.load(buf).then(function(d){
-          var idx=d.getPageIndices();
-          return out.copyPages(d, idx)
-            .then(function(pg1){ pg1.forEach(function(p){ out.addPage(p); }); return _doppia ? out.copyPages(d, idx) : []; })
-            .then(function(pg2){ pg2.forEach(function(p){ out.addPage(p); }); return out; });
-        });
-      });
-    })
-    .then(function(out){
-      /* gli allegati si accodano nell'ordine in cui sono elencati.
-         Se uno non si scarica prima non lo diceva nessuno: il fascicolo
-         usciva corto e ce ne si accorgeva davanti al cliente. */
-      var _saltati=[];
+  if(tipo!=='preventivo') html=cvDoppiaCopia(html);
+  var _scala=2.5;     /* 595 pt di A4 x 2.5 = ~1490 px di larghezza, ~290 dpi in stampa */
+  var _pagine=[];
+  Promise.resolve()
+    .then(function(){ return (typeof caricaPdfJs==='function') ? caricaPdfJs() : Promise.reject(new Error('pdf.js assente')); })
+    .then(function(){
       var seq=Promise.resolve();
       allegati.forEach(function(a){
         seq=seq.then(function(){
-          return fetch(a.url).then(function(r){ cvFascLog('scarico '+a.nome, 'risposta '+r.status); return r.ok?r.arrayBuffer():null; })
-            .then(function(b){
-              if(!b) { _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, 'download fallito'); return; }
-              /* ignoreEncryption: i moduli ministeriali sono spesso PDF
-                 "protetti" (senza password ma con restrizioni); senza questa
-                 opzione pdf-lib li rifiuta e il modulo sparisce dal fascicolo. */
-              return PDFLib.PDFDocument.load(b, { ignoreEncryption:true })
-                .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
-                .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); cvFascLog('accodato '+a.nome, pg.length+' pagine'); });
+          return fetch(a.url)
+            .then(function(r){ cvFascLog('scarico '+a.nome, 'risposta '+r.status); if(!r.ok) throw new Error('risposta '+r.status); return r.arrayBuffer(); })
+            .then(function(buf){ return pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
+            .then(function(pdf){
+              var p=Promise.resolve(), tot=pdf.numPages;
+              for(var i=1;i<=tot;i++){ (function(n){
+                p=p.then(function(){ return pdf.getPage(n); }).then(function(pg){
+                  var vp=pg.getViewport({scale:_scala});
+                  var c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+                  var ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+                  return pg.render({canvasContext:ctx, viewport:vp}).promise.then(function(){
+                    _pagine.push({ nome:a.nome, n:n, tot:tot, src:c.toDataURL('image/jpeg',0.9), orizz:(vp.width>vp.height) });
+                  });
+                });
+              })(i); }
+              return p.then(function(){ cvFascLog('accodato '+a.nome, tot+' pagine'); });
             })
             .catch(function(e){ _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, String((e&&e.message)||e)); });
         });
       });
-      return seq.then(function(){
-        if(_saltati.length){
-          alert('Questi moduli non sono stati scaricati e NON sono nel fascicolo:\n\n\u2022 '
-            +_saltati.join('\n\u2022 ')
-            +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2): '
-            +'va aggiunto il nuovo indirizzo del gestionale fra le origini consentite.');
-        }
-        try{ window._cvFascPagine=out.getPageCount(); }catch(e){ window._cvFascPagine=0; }
-        cvFascLog('fascicolo unito', window._cvFascPagine+' pagine totali, saltati='+_saltati.length);
-        return out.save();
-      });
+      return seq;
     })
-    .then(function(bytes){
-      var url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
-      var w=_w;
-      if(!w || w.closed){ w=window.open(url,'_blank'); }
-      else { try{ w.location.href=url; }catch(e){ w=window.open(url,'_blank'); } }
-      if(!w){ cvFascLog('FINESTRA BLOCCATA'); alert('Consenti le finestre pop-up per stampare il fascicolo.'); return; }
-      cvFascLog('PDF mostrato', (_w&&!_w.closed)?'nella finestra aperta subito':'in finestra nuova');
-      /* appena il PDF e' a video parte la stampa: se il browser non lo
-         permette resta comunque aperto e si stampa a mano */
-      setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 1800);
+    .then(function(){
+      if(_saltati.length){
+        alert('Questi moduli non sono stati scaricati e NON sono nel fascicolo:\n\n\u2022 '+_saltati.join('\n\u2022 ')
+          +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2).');
+      }
+      var blocco='';
+      _pagine.forEach(function(p){
+        blocco+='<div class="ea-allegato" style="page-break-before:always;break-before:page;text-align:center;">'
+          +'<img src="'+p.src+'" alt="'+docEsc(p.nome)+'" style="display:block;margin:0 auto;'
+          +(p.orizz?'width:100%;':'max-width:100%;max-height:96vh;')+'height:auto;"></div>';
+      });
+      var stile='<style>@media print{ .ea-allegato{ page-break-inside:avoid; break-inside:avoid; } }</style>';
+      var f=html.lastIndexOf('</body>');
+      var fin = (f>=0) ? html.slice(0,f)+stile+blocco+html.slice(f) : html+stile+blocco;
+      cvFascLog('fascicolo composto', _pagine.length+' pagine di moduli accodate alla proposta, saltati='+_saltati.length);
+      _w.document.open(); _w.document.write(fin); _w.document.close();
+      try{ _w.focus(); }catch(e){}
+      /* la stampa parte quando le immagini sono in pagina, non a tempo */
+      var _stampa=function(){ try{ _w.focus(); _w.print(); }catch(e){} };
+      var _imgs=_w.document.images, _att=0, _tot=_imgs.length;
+      if(!_tot){ setTimeout(_stampa, 500); }
+      else {
+        var _uno=function(){ _att++; if(_att>=_tot) setTimeout(_stampa, 300); };
+        for(var i=0;i<_tot;i++){ if(_imgs[i].complete) _uno(); else { _imgs[i].onload=_uno; _imgs[i].onerror=_uno; } }
+        setTimeout(_stampa, 8000);   /* rete di sicurezza */
+      }
       var _ok=allegati.length-_saltati.length;
-      /* Il numero di pagine e' la prova che gli allegati ci sono: se il
-         PDF a video ne mostra meno, il problema e' nel visualizzatore. */
-      avviso('\u2713 Fascicolo pronto: '+(window._cvFascPagine||'?')+' pagine \u2014 proposta \u00d72 + '+_ok+(_ok===1?' allegato':' allegati'));
-      setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} }, 60000);
+      avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' modulo':' moduli')+' ('+_pagine.length+' pagine)');
     })
     .catch(function(e){
-      console.log('fascicolo non riuscito:', e);
       cvFascLog('ERRORE, stampo la sola proposta', String((e&&e.message)||e));
-      try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
-      alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
-      window._cvFascicoloInCorso=true;      /* evita di rientrare all'infinito */
-      try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
+      alert('Non sono riuscito ad accodare i moduli: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
+      try{ _w.document.open(); _w.document.write(html); _w.document.close(); setTimeout(function(){ try{ _w.print(); }catch(_e){} }, 500); }catch(_x){}
     });
 }
 function cvContrattoFinaleStampa(id){
