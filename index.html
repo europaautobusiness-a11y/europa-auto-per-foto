@@ -25406,8 +25406,23 @@ function cvStampaById(id, tipo){
 
 /* Proposta + allegati in un solo PDF. Se qualcosa non riesce si torna alla
    stampa normale: meglio la sola proposta che nessuna stampa. */
+/* ===== IL DIARIO DELL'ULTIMO FASCICOLO =====
+   Sul telefono gli avvisi si perdono: il PDF si apre in un'altra scheda e
+   l'alert resta dietro, mai visto. Cosi' ogni passaggio viene annotato e lo
+   si rilegge con calma da Parametri -> "Verifica su questo browser". */
+function cvFascLog(passo, dettaglio){
+  try{
+    var l=JSON.parse(localStorage.getItem('ea_fasc_log')||'[]'); if(!Array.isArray(l)) l=[];
+    var d=new Date();
+    l.push(d.getHours()+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')+' '+passo+(dettaglio?(' \u2014 '+dettaglio):''));
+    if(l.length>40) l=l.slice(-40);
+    localStorage.setItem('ea_fasc_log', JSON.stringify(l));
+  }catch(e){}
+}
 function cvStampaFascicolo(cv, tipo, allegati){
   var avviso=function(t){ try{ if(typeof tcToastNew==='function') tcToastNew(t,true); }catch(e){} };
+  try{ localStorage.removeItem('ea_fasc_log'); }catch(e){}
+  cvFascLog('inizio', 'tipo='+tipo+', moduli='+allegati.length+' ['+allegati.map(function(a){return a.nome;}).join(', ')+']');
   /* ===== LA FINESTRA SI APRE SUBITO, NON ALLA FINE =====
      Il fascicolo si costruisce in qualche secondo: unire i PDF, scaricare i
      moduli. Se la finestra di stampa si chiedeva DOPO, il browser non la
@@ -25427,6 +25442,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
   var html='';
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
   if(!html || typeof eaHtmlToPdf!=='function'){
+    cvFascLog('RINUNCIA', !html?'documento vuoto':'eaHtmlToPdf assente');
     try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
     alert('Non riesco a preparare il fascicolo ('+(!html?'documento vuoto':'conversione PDF assente')+'): stampo la sola proposta, SENZA allegati.');
     window._cvFascicoloInCorso=true;
@@ -25443,6 +25459,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
          Sul preventivo la seconda copia non si accoda: stessa regola della
          stampa normale, li' non si firma niente. */
       var _doppia = (tipo !== 'preventivo');
+      cvFascLog('proposta convertita in PDF', Math.round(buf.byteLength/1024)+' KB');
       return PDFLib.PDFDocument.create().then(function(out){
         return PDFLib.PDFDocument.load(buf).then(function(d){
           var idx=d.getPageIndices();
@@ -25460,14 +25477,17 @@ function cvStampaFascicolo(cv, tipo, allegati){
       var seq=Promise.resolve();
       allegati.forEach(function(a){
         seq=seq.then(function(){
-          return fetch(a.url).then(function(r){ return r.ok?r.arrayBuffer():null; })
+          return fetch(a.url).then(function(r){ cvFascLog('scarico '+a.nome, 'risposta '+r.status); return r.ok?r.arrayBuffer():null; })
             .then(function(b){
-              if(!b) { _saltati.push(a.nome); console.log('allegato non scaricato:', a.nome); return; }
-              return PDFLib.PDFDocument.load(b)
+              if(!b) { _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, 'download fallito'); return; }
+              /* ignoreEncryption: i moduli ministeriali sono spesso PDF
+                 "protetti" (senza password ma con restrizioni); senza questa
+                 opzione pdf-lib li rifiuta e il modulo sparisce dal fascicolo. */
+              return PDFLib.PDFDocument.load(b, { ignoreEncryption:true })
                 .then(function(d){ return out.copyPages(d, d.getPageIndices()); })
-                .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); });
+                .then(function(pg){ pg.forEach(function(p){ out.addPage(p); }); cvFascLog('accodato '+a.nome, pg.length+' pagine'); });
             })
-            .catch(function(){ _saltati.push(a.nome); console.log('allegato saltato:', a.nome); });
+            .catch(function(e){ _saltati.push(a.nome); cvFascLog('SALTATO '+a.nome, String((e&&e.message)||e)); });
         });
       });
       return seq.then(function(){
@@ -25477,6 +25497,8 @@ function cvStampaFascicolo(cv, tipo, allegati){
             +'\n\nQuasi sempre e\u2019 il permesso di accesso ai file (CORS su Cloudflare R2): '
             +'va aggiunto il nuovo indirizzo del gestionale fra le origini consentite.');
         }
+        try{ window._cvFascPagine=out.getPageCount(); }catch(e){ window._cvFascPagine=0; }
+        cvFascLog('fascicolo unito', window._cvFascPagine+' pagine totali, saltati='+_saltati.length);
         return out.save();
       });
     })
@@ -25485,18 +25507,22 @@ function cvStampaFascicolo(cv, tipo, allegati){
       var w=_w;
       if(!w || w.closed){ w=window.open(url,'_blank'); }
       else { try{ w.location.href=url; }catch(e){ w=window.open(url,'_blank'); } }
-      if(!w){ alert('Consenti le finestre pop-up per stampare il fascicolo.'); return; }
+      if(!w){ cvFascLog('FINESTRA BLOCCATA'); alert('Consenti le finestre pop-up per stampare il fascicolo.'); return; }
+      cvFascLog('PDF mostrato', (_w&&!_w.closed)?'nella finestra aperta subito':'in finestra nuova');
       /* appena il PDF e' a video parte la stampa: se il browser non lo
          permette resta comunque aperto e si stampa a mano */
       setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 1800);
       var _ok=allegati.length-_saltati.length;
-      avviso('\u2713 Fascicolo pronto: proposta + '+_ok+(_ok===1?' allegato':' allegati'));
+      /* Il numero di pagine e' la prova che gli allegati ci sono: se il
+         PDF a video ne mostra meno, il problema e' nel visualizzatore. */
+      avviso('\u2713 Fascicolo pronto: '+(window._cvFascPagine||'?')+' pagine \u2014 proposta \u00d72 + '+_ok+(_ok===1?' allegato':' allegati'));
       setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} }, 60000);
     })
     .catch(function(e){
       console.log('fascicolo non riuscito:', e);
+      cvFascLog('ERRORE, stampo la sola proposta', String((e&&e.message)||e));
       try{ if(_w && !_w.closed) _w.close(); }catch(_x){}
-      alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.');
+      alert('Non sono riuscito a unire gli allegati: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
       window._cvFascicoloInCorso=true;      /* evita di rientrare all'infinito */
       try{ cvStampaDoc(cv, tipo); }finally{ window._cvFascicoloInCorso=false; }
     });
@@ -27234,6 +27260,13 @@ function apVerifica(){
   var l=apLoad();
   h+= l.length ? ok(l.length+' moduli in elenco ('+l.filter(function(x){return x&&x.attivo!==false;}).length+' attivi)') : ko('elenco moduli vuoto su questo browser'+(_apCaricato?'':' \u2014 non ancora arrivato dal database'));
   h+= '<div>Dominio: <b>'+location.origin+'</b></div>';
+  try{
+    var _lg=JSON.parse(localStorage.getItem('ea_fasc_log')||'[]');
+    if(Array.isArray(_lg) && _lg.length){
+      h+='<div style="margin-top:8px;font-weight:800;color:#1a4fa0;">Ultimo fascicolo stampato su questo browser</div>';
+      h+='<div style="font-family:monospace;font-size:11.5px;white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px;">'+_lg.map(function(r){ return (typeof fnEsc==='function')?fnEsc(r):r; }).join('\n')+'</div>';
+    } else h+='<div style="color:#64748b;">Nessun fascicolo ancora stampato su questo browser.</div>';
+  }catch(e){}
   el.innerHTML=h+'<div style="color:#64748b;">Provo a scaricare i moduli\u2026</div>';
   var seq=Promise.resolve(), righe=[];
   l.forEach(function(a){
