@@ -25842,6 +25842,13 @@ function cvStampaDoc(c, tipo){
       if(_all.length){
         if(window.PDFLib){ cvStampaFascicolo(c, tipo, _all); return; }
         console.log('allegati presenti ma libreria PDF non caricata: stampo la sola proposta');
+      } else if(typeof apLoad==='function' && !apLoad().length){
+        /* Nessun modulo: o non sono stati caricati in Parametri, o non sono
+           ancora arrivati dal database. Prima usciva la proposta nuda e se ne
+           accorgeva il cliente. */
+        if(!confirm('Attenzione: i moduli da allegare (autocertificazioni) non risultano caricati.\n\n'
+          +'Se sono stati messi in Parametri, aspetta qualche secondo e riprova: potrebbero non essere ancora arrivati.\n\n'
+          +'Stampare lo stesso la sola proposta?')) return;
       }
     }catch(e){}
   }
@@ -26145,7 +26152,7 @@ var DOC_CAT={
   intervento:[['fattura_intervento','Fattura dell\u2019intervento']],
   auto:[['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
-  pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
+  pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['fattura_minivoltura','Fattura minivoltura'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
   sinistro:[['denuncia','Denuncia sinistro'],['libretto','Libretto veicolo'],['cid','CID / constatazione amichevole'],['foto_danni','Foto danni'],['perizia','Perizia'],['preventivo','Preventivo riparazione'],['cessione','Atto di cessione'],['fattura','Fattura'],['altro','Altro']]
 };
@@ -26170,14 +26177,16 @@ var DOC_CAT_TUTTE=[
        archiviati con quella categoria restano leggibili. */
     ['libretto_nuovo','Libretto nuovo intestato'],
     ['minivoltura','Minivoltura / cert. propriet\u00e0'],
-    /* La fattura della minivoltura va nei documenti della vendita: e' una
-       spesa di quella pratica, e sta insieme al contratto e alla fattura. */
-    ['fattura_minivoltura','Fattura minivoltura'],
     ['coc','COC (conformit\u00e0 import)'],
     ['libretto_estero','Libretto estero'],
     ['fattura_acquisto','Fattura di acquisto'], ['tagliando','Tagliando / manutenzione'],
     ['libretto_permuta','Libretto auto in permuta']]],
   ['\u2014 Documenti della vendita \u2014', [
+    /* La fattura della minivoltura e' una spesa di QUELLA vendita: sta con il
+       contratto e la fattura, non sulla scheda del veicolo che poi passa al
+       cliente. Era gia' instradata qui, ma nella tendina compariva sotto
+       "Documenti del veicolo" e nessuno la trovava. */
+    ['fattura_minivoltura','Fattura minivoltura'],
     ['contratto_firmato','Contratto firmato'], ['fattura_vendita','Fattura di vendita'],
     ['f24','F24'], ['doc_finanziamento','Documenti finanziamento']]],
   ['\u2014 Officina e sinistri \u2014', [
@@ -26774,9 +26783,21 @@ function diagRicarica(){
    con un comando solo invece di ricordarsi ogni volta quali fogli servono. */
 var AP_KEY='ea_allegati_proposta';
 var _apMem=null;
+/* ===== PERCHE' LE AUTOCERTIFICAZIONI SONO SPARITE DALLA STAMPA =====
+   L'elenco dei moduli sta in due posti: una copia veloce nel browser e
+   l'originale su Supabase. La copia nel browser e' legata all'indirizzo del
+   sito: cambiando dominio il browser ne ha aperta una nuova, vuota. Restava
+   solo l'originale, che veniva letto una volta sola tre secondi dopo
+   l'avvio: se in quel momento il collegamento non era ancora pronto,
+   l'elenco restava vuoto per tutta la sessione e la proposta usciva senza
+   allegati, senza dire niente a nessuno.
+   Ora si ritenta finche' non arriva, e chi stampa viene avvisato se
+   l'elenco e' ancora vuoto. */
+var _apCaricato=false;
 function apLoad(){
   if(_apMem) return _apMem;
   try{ _apMem=JSON.parse(localStorage.getItem(AP_KEY)||'[]')||[]; }catch(e){ _apMem=[]; }
+  if(!_apMem.length && !_apCaricato){ try{ apSupaLoad(); }catch(e){} }
   return _apMem;
 }
 function apSave(l){
@@ -26787,16 +26808,21 @@ function apSave(l){
     if(sb) sb.from('allegati_proposta').upsert({ id:'config', data:{ lista:_apMem, updatedAt:Date.now() } }).then(function(){});
   }catch(e){}
 }
-function apSupaLoad(){
+function apSupaLoad(tent){
+  tent=tent||0;
+  var _ancora=function(){ if(tent<6) setTimeout(function(){ apSupaLoad(tent+1); }, 4000); };
   try{
-    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ _ancora(); return; }
     sb.from('allegati_proposta').select('id,data').eq('id','config').then(function(r){
-      if(!r||r.error||!r.data||!r.data.length) return;
+      if(!r||r.error||!r.data||!r.data.length){ _ancora(); return; }
       var d=r.data[0].data;
-      if(d && Array.isArray(d.lista)){ _apMem=d.lista; try{ localStorage.setItem(AP_KEY, JSON.stringify(_apMem)); }catch(e){} 
-        try{ if(document.getElementById('par-form') && typeof apRenderLista==='function') apRenderLista(); }catch(e){} }
-    });
-  }catch(e){}
+      if(d && Array.isArray(d.lista)){
+        _apMem=d.lista; _apCaricato=true;
+        try{ localStorage.setItem(AP_KEY, JSON.stringify(_apMem)); }catch(e){}
+        try{ if(document.getElementById('par-form') && typeof apRenderLista==='function') apRenderLista(); }catch(e){}
+      } else { _ancora(); }
+    }, function(){ _ancora(); });
+  }catch(e){ _ancora(); }
 }
 var AP_GRUPPI=[['sempre','Per tutte le proposte'],['italiana','Solo veicoli italiani'],['estera','Solo veicoli esteri']];
 
@@ -33200,14 +33226,14 @@ function cvRecLink(){
 /* Il paragrafo del grazie, in testo semplice e in HTML. */
 function cvRecGrazie(tipo){
   if(tipo==='service') return {
-    testo:'Per ringraziarti, al tuo prossimo tagliando in officina ti riserviamo un buono Service da 50 \u20ac. Nessun codice: ce lo ricordiamo noi.',
+    testo:'\uD83C\uDF81 Per ringraziarti del tempo dedicato, al tuo prossimo tagliando nella nostra officina ti riserviamo un buono Service da 50 \u20ac. Non serve ricordare nessun codice: ce lo ricordiamo noi.',
     html:'<p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:13px 16px;font-size:15px;color:#166534;">'
-      +'\uD83C\uDF81 <b>Il nostro grazie:</b> buono <b>Service da 50 \u20ac</b> sul tuo prossimo tagliando in officina.<br>'
-      +'<span style="font-size:13px;">Nessun codice: ce lo ricordiamo noi.</span></p>' };
+      +'\uD83C\uDF81 <b>Per ringraziarti del tempo dedicato</b>, al tuo prossimo tagliando nella nostra officina ti riserviamo un <b>buono Service da 50 \u20ac</b>.<br>'
+      +'<span style="font-size:13px;">Non serve ricordare nessun codice: ce lo ricordiamo noi.</span></p>' };
   if(tipo==='amazon') return {
-    testo:'Per ringraziarti, appena vediamo la recensione ti mandiamo un buono Amazon da 10 \u20ac.',
+    testo:'\uD83C\uDF81 Per ringraziarti del tempo dedicato, non appena vedremo la tua recensione ti invieremo un buono Amazon da 10 \u20ac.',
     html:'<p style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:13px 16px;font-size:15px;color:#92400e;">'
-      +'\uD83C\uDF81 <b>Il nostro grazie:</b> appena vediamo la recensione ti mandiamo un <b>buono Amazon da 10 \u20ac</b>.</p>' };
+      +'\uD83C\uDF81 <b>Per ringraziarti del tempo dedicato</b>, non appena vedremo la tua recensione ti invieremo un <b>buono Amazon da 10 \u20ac</b>.</p>' };
   return { testo:'', html:'' };
 }
 function cvRecTesto(cv, tipo){
@@ -33215,14 +33241,18 @@ function cvRecTesto(cv, tipo){
   var nome=eaNomeBello((cv.cliente&&cv.cliente.nome)||'');
   var auto=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'auto';
   var link=cvRecLink(), g=cvRecGrazie(tipo);
-  var t='Ciao '+(nome||'')+'! Come sta andando la tua '+auto+'?'
-    +'\n\nSe ti sei trovato bene con noi, ci farebbe piacere una recensione su Google: ci vogliono 30 secondi '
-    +'e per una piccola azienda come la nostra contano pi\u00f9 di qualsiasi pubblicit\u00e0.'
-    +'\n\nSe l\u2019esperienza \u00e8 stata all\u2019altezza, 5 stelle ci aiutano davvero: su Google anche 4 abbassano la media.'
+  var t='Ciao '+(nome||'')+'! Come sta andando la tua '+auto+'? \uD83D\uDE97'
+    +'\n\nSe ti sei trovato bene con noi, ti andrebbe di dedicarci 30 secondi per una recensione su Google? '
+    +'Per una realt\u00e0 locale come la nostra, il passaparola dei clienti vale pi\u00f9 di qualsiasi pubblicit\u00e0.'
+    +'\n\n\u2b50 Come aiutarci al meglio con un click:'
+    +'\nI sistemi di valutazione considerano \u201ceccellente\u201d solo il punteggio massimo. Per questo motivo, anche un bell\u20198/10 '
+    +'(4 stelle) rischia involontariamente di abbassare la media di chi lavora per mantenere uno standard da 5 stelle! '
+    +'Se la tua esperienza \u00e8 stata da 10, il tuo voto massimo per noi fa davvero la differenza.'
     +(link?('\n\n'+link):'')
     +(g.testo?('\n\n'+g.testo):'')
-    +'\n\nSe invece qualcosa non \u00e8 andato come speravi, scrivicelo prima: preferiamo sistemarlo noi.'
-    +'\n\nGrazie ancora per averci scelto!'
+    +'\n\nSe invece qualcosa non ha soddisfatto al 100% le tue aspettative, ti chiediamo di scrivercelo direttamente qui '
+    +'prima di pubblicare: ci terremo tantissimo a risolvere subito ogni dettaglio!'
+    +'\n\nGrazie ancora per aver scelto Europa Auto! \uD83D\uDE4F'
     +'\nIl team di Europa Auto';
   return { testo:t, link:link, nome:nome, auto:auto, tipo:tipo };
 }
@@ -33249,16 +33279,18 @@ function cvRecMail(id, tipo){
   var r=cvRecTesto(cv, tipo), g=cvRecGrazie(tipo);
   var h='<p>Ciao '+docEsc(r.nome||'')+',</p>'
     +'<p>come sta andando la tua <b>'+docEsc(r.auto)+'</b>? \uD83D\uDE97</p>'
-    +'<p>Se ti sei trovato bene con noi, ti chiediamo trenta secondi: <b>una recensione su Google</b>. '
-    +'Per una piccola azienda come la nostra vale pi\u00f9 di qualsiasi pubblicit\u00e0, perch\u00e9 chi sta ancora '
-    +'decidendo legge l\u2019esperienza di chi ha gi\u00e0 comprato.</p>'
-    +'<p>Se l\u2019esperienza \u00e8 stata all\u2019altezza, una <b>recensione a 5 stelle</b> ci aiuta davvero: '
-      +'su Google anche 4 stelle abbassano la media.</p>'
+    +'<p>Se ti sei trovato bene con noi, ti andrebbe di dedicarci <b>30 secondi</b> per una recensione su Google? '
+    +'Per una realt\u00e0 locale come la nostra, il passaparola dei clienti vale pi\u00f9 di qualsiasi pubblicit\u00e0.</p>'
+    +'<p style="background:#f8fafc;border-left:3px solid #f59e0b;border-radius:0 8px 8px 0;padding:12px 16px;font-size:14.5px;line-height:1.6;">'
+      +'<b>\u2b50 Come aiutarci al meglio con un click</b><br>'
+      +'I sistemi di valutazione considerano \u201ceccellente\u201d solo il punteggio massimo. Per questo motivo, anche un bell\u2019<b>8/10 '
+      +'(4 stelle)</b> rischia involontariamente di abbassare la media di chi lavora per mantenere uno standard da 5 stelle! '
+      +'Se la tua esperienza \u00e8 stata da 10, il tuo voto massimo per noi fa davvero la differenza.</p>'
     +(r.link?('<p style="text-align:center;margin:22px 0;"><a href="'+docEsc(r.link)+'" style="background:#16a34a;color:#fff;padding:13px 26px;border-radius:9px;text-decoration:none;font-weight:800;font-size:15px;display:inline-block;">\u2b50 Lascia una recensione</a></p>'):'')
     +g.html
-    +'<p style="color:#64748b;font-size:13px;">Se invece qualcosa non \u00e8 andato come speravi, scrivicelo prima: '
-    +'preferiamo sistemarlo noi che leggerlo online.</p>'
-    +'<p>Grazie ancora per averci scelto,<br><b>Il team di Europa Auto</b></p>';
+    +'<p style="color:#64748b;font-size:13px;">Se invece qualcosa non ha soddisfatto al 100% le tue aspettative, ti chiediamo di '
+    +'scrivercelo direttamente prima di pubblicare: ci terremo tantissimo a risolvere subito ogni dettaglio!</p>'
+    +'<p>Grazie ancora per aver scelto Europa Auto! \uD83D\uDE4F<br><b>Il team di Europa Auto</b></p>';
   var _ogg = tipo==='service' ? 'Un buono Service da 50 \u20ac per te \u2014 bastano trenta secondi'
            : tipo==='amazon'  ? 'Un buono Amazon da 10 \u20ac per te \u2014 bastano trenta secondi'
            : 'Come va la tua '+(r.auto||'auto')+'? Un favore da trenta secondi';
