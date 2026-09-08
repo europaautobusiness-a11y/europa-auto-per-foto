@@ -23244,7 +23244,8 @@ function cvForm(id, fromVend){
        e facevano la stessa identica cosa — dove finisce il documento lo
        decide la categoria scelta nella tendina, non da quale casella lo
        carichi. Averne due era solo una scelta in piu' da sbagliare. */
-    h+='<button onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">💾 Salva modifiche</button>';
+    h+='<button id="cv-btn-salva" onclick="cvSalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;transition:background .2s;">💾 Salva modifiche</button>';
+    h+='<div id="cv-salva-esito" style="text-align:center;font-size:12px;color:#15803d;font-weight:700;margin-top:6px;min-height:16px;"></div>';
     h+='<button onclick="cvStampa(\'pre\')" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">🖨️ Stampa proposta d’acquisto</button>';
     h+='<button onclick="cvDatiFatturazione()" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🧾 Dati anagrafici e fatturazione</button>';
     h+='<button onclick="cvLogMostra(\''+_cv.id+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🕓 Storico modifiche</button>';
@@ -25346,9 +25347,25 @@ function cvSalva(){
     }
   }catch(e){}
   try{ cvLogRegistra(_prima, _cv, isNew?'creazione':'modifica'); }catch(e){}
-  cvChiudi(); cvRender();
+  /* ===== SALVA NON CHIUDE PIU' =====
+     Sulle modifiche la scheda resta aperta: si salva, si carica un
+     documento, si stampa, si salva ancora. Il pulsante conferma da solo.
+     La creazione invece chiude, perche' da li' si torna all'elenco. */
+  if(isNew){ cvChiudi(); }
+  cvRender();
   try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
-  if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Preventivo salvato',true);
+  if(typeof tcToastNew==='function') tcToastNew(isNew?'💾 Preventivo salvato — email al cliente tra 1h se non trasformato':'💾 Salvato',true);
+  if(!isNew){
+    try{
+      var _bs=document.getElementById('cv-btn-salva'), _es=document.getElementById('cv-salva-esito');
+      if(_bs){
+        _bs.textContent='\u2705 Modifiche salvate'; _bs.style.background='#15803d';
+        clearTimeout(window._cvBtnSalvaT);
+        window._cvBtnSalvaT=setTimeout(function(){ try{ _bs.textContent='\ud83d\udcbe Salva modifiche'; _bs.style.background='#16a34a'; }catch(e){} }, 2000);
+      }
+      if(_es){ var _d=new Date(); _es.textContent='Salvato alle '+_d.getHours()+':'+String(_d.getMinutes()).padStart(2,'0')+':'+String(_d.getSeconds()).padStart(2,'0'); }
+    }catch(e){}
+  }
 }
 var CV_DEL_KEY='ea_preventivi_deleted_v1';
 var _cvDeleted={};
@@ -26915,12 +26932,28 @@ function docListaRender(tipo, id, pfx, soloCat, titolo, escludiCat){
     var _fine=function(){ docListaDisegna(c, list, tipo, id, pfx, soloCat, _tit); };
     if(tipo==='pratica' && !(soloCat&&soloCat.length)){
       var ctx=(typeof docContesto==='function')?docContesto('pratica', id):null;
-      if(ctx && ctx.auto){
-        sb.from('documenti').select('*').eq('entita_tipo','auto').eq('entita_id',String(ctx.auto))
-          .in('categoria', DOC_CAT_PONTE).then(function(r2){
-            if(r2 && !r2.error && r2.data) list=list.concat(r2.data.map(function(d){ d._daVeicolo=true; return d; }));
-            _fine();
-          });
+      /* Anche i documenti del CLIENTE (carta d'identita', codice fiscale,
+         patente...) si vedono qui: chi chiude la vendita li vuole sotto
+         mano insieme a contratto e fattura, senza aprire l'anagrafica.
+         Restano archiviati una volta sola, sulla scheda del cliente. */
+      var _attese=0, _chiudi=function(){ if(--_attese<=0) _fine(); };
+      if(ctx && ctx.auto) _attese++;
+      if(ctx && ctx.cliente) _attese++;
+      if(_attese){
+        if(ctx.auto){
+          sb.from('documenti').select('*').eq('entita_tipo','auto').eq('entita_id',String(ctx.auto))
+            .in('categoria', DOC_CAT_PONTE).then(function(r2){
+              if(r2 && !r2.error && r2.data) list=list.concat(r2.data.map(function(d){ d._daVeicolo=true; return d; }));
+              _chiudi();
+            }, _chiudi);
+        }
+        if(ctx.cliente){
+          sb.from('documenti').select('*').eq('entita_tipo','cliente').eq('entita_id',String(ctx.cliente))
+            .order('created_at',{ascending:false}).then(function(r3){
+              if(r3 && !r3.error && r3.data) list=list.concat(r3.data.map(function(d){ d._daCliente=true; return d; }));
+              _chiudi();
+            }, _chiudi);
+        }
         return;
       }
     }
@@ -26945,9 +26978,9 @@ function docListaDisegna(c, list, tipo, id, pfx, soloCat, _tit){
     if(!list.length){ c.innerHTML=_tit?'':'<div style="font-size:12px;color:#94a3b8;">Nessun documento allegato.</div>'; return; }
     c.innerHTML=_tit+list.map(function(d){
       return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;background:#fff;">'
-        +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div><div style="font-size:11px;color:#94a3b8;">'+docEsc(docCatLabel(d._daVeicolo?'auto':tipo,d.categoria))+(d._daVeicolo?' <span style="color:#1a4fa0;">\u00b7 dalla scheda veicolo</span>':'')+'</div></div>'
+        +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div><div style="font-size:11px;color:#94a3b8;">'+docEsc(docCatLabel(d._daVeicolo?'auto':(d._daCliente?'cliente':tipo),d.categoria))+(d._daVeicolo?' <span style="color:#1a4fa0;">\u00b7 dalla scheda veicolo</span>':'')+(d._daCliente?' <span style="color:#7c3aed;">\u00b7 dalla scheda cliente</span>':'')+'</div></div>'
         +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
-        +'<button type="button" onclick="docElimina(\''+d.id+'\',\''+docEsc(d.storage_path)+'\',\''+tipo+'\',\''+id+'\',\''+pfx+'\')" title="'+(d._daVeicolo?'Archiviato sulla scheda veicolo':'Elimina')+'" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;height:32px;font-size:14px;cursor:pointer;">🗑</button>'
+        +'<button type="button" onclick="docElimina(\''+d.id+'\',\''+docEsc(d.storage_path)+'\',\''+tipo+'\',\''+id+'\',\''+pfx+'\')" title="'+(d._daVeicolo?'Archiviato sulla scheda veicolo':(d._daCliente?'Archiviato sulla scheda cliente':'Elimina'))+'" style="flex:0 0 auto;border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;height:32px;font-size:14px;cursor:pointer;">🗑</button>'
         +'</div>';
     }).join('');
   })();
@@ -37096,7 +37129,7 @@ function crmRender(){
      importato compreso: migliaia di schede da disegnare a ogni apertura,
      per un elenco che nessuno usava. La ricerca dei clienti sta gia' nella
      barra in alto e nella sezione Clienti. */
-  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['online','Lead online','\ud83d\udce5'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f']];
+  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['online','Lead online','\ud83d\udce5'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f'],['mail7','Mail 7 gg','\u2709\ufe0f']];
   /* Sulla scheda dei lead il numero di quelli ancora da guardare. */
   try{
     var _nl=(_leadCache||[]).filter(function(x){ return (x.stato||'nuovo')==='nuovo'; }).length;
@@ -37104,7 +37137,7 @@ function crmRender(){
   }catch(e){}
   if(_crmTab==='lead') _crmTab='pipeline';   /* chi ci era rimasto dentro */
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : crmRenderKanban())));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='mail7' ? ml7Render() : crmRenderKanban()))));
   wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
@@ -37346,8 +37379,96 @@ var _leadLetto = false;        /* la lettura e' andata a buon fine almeno una vo
 
    Le sessioni scadono da sole, quindi il caso e' destinato a ripetersi: va
    distinto una volta per tutte "non c'e' niente" da "non riesco a leggere". */
+/* ===== LA MAIL DEI SETTE GIORNI =====
+   Parte da sola ogni mattina da Supabase (funzione mail-lead): a chi ci ha
+   scritto da 7 giorni senza avere ne' preventivo ne' contratto, racconta
+   la ricerca su richiesta. Qui nel gestionale non si manda niente: si vede
+   chi l'ha ricevuta, chi si e' tolto, e si puo' bloccare un indirizzo a
+   mano prima che gli arrivi. */
+var _ml7Inviate=[], _ml7Stop=[], _ml7Letto=false;
+function ml7Carica(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ if(cb) cb(); return; }
+  var fatti=0, fine=function(){ if(++fatti>=2){ _ml7Letto=true; if(cb) cb(); } };
+  try{
+    sb.from('mail_lead').select('id,lead_id,email,nome,auto,fonte,quale,inviata').order('inviata',{ascending:false}).limit(1000)
+      .then(function(r){ if(r&&!r.error) _ml7Inviate=r.data||[]; fine(); }, fine);
+    sb.from('mail_stop').select('email,nome,origine,quando').order('quando',{ascending:false}).limit(1000)
+      .then(function(r){ if(r&&!r.error) _ml7Stop=r.data||[]; fine(); }, fine);
+  }catch(e){ if(cb) cb(); }
+}
+function ml7Norm(e){ return String(e||'').trim().toLowerCase(); }
+function ml7Etichetta(email){
+  var e=ml7Norm(email); if(!e) return '';
+  var st=_ml7Stop.filter(function(x){ return ml7Norm(x.email)===e; })[0];
+  if(st) return '<span title="'+crmEsc('Disiscritto il '+crmDMY(Date.parse(st.quando))+(st.origine?(' ('+st.origine+')'):''))+'" style="margin-left:8px;padding:1px 7px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11px;font-weight:800;">\ud83d\udeab niente mail</span>';
+  var inv=_ml7Inviate.filter(function(x){ return ml7Norm(x.email)===e; })[0];
+  if(inv) return '<span title="Mail dei 7 giorni inviata" style="margin-left:8px;padding:1px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:800;">\u2709\ufe0f mail 7 gg il '+crmDMY(Date.parse(inv.inviata))+'</span>';
+  return '';
+}
+function ml7Blocca(email, nome){
+  var e=ml7Norm(email); if(!e) return;
+  if(!confirm('Bloccare '+e+'?\n\nNon ricever\u00e0 pi\u00f9 la mail dei 7 giorni n\u00e9 le altre mail promozionali.')) return;
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  sb.from('mail_stop').upsert({ email:e, nome:nome||'', origine:'bloccato a mano da '+((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'gestionale') }).then(function(r){
+    if(r&&r.error){ alert('Non sono riuscito a bloccare: '+r.error.message); return; }
+    ml7Carica(function(){ if(typeof crmRender==='function') crmRender(); });
+  });
+}
+function ml7Sblocca(email){
+  var e=ml7Norm(email); if(!e) return;
+  if(!confirm('Togliere il blocco a '+e+'?\n\nSe si era disiscritto da solo, rimetterlo in lista non e\u2019 corretto: fallo solo se il blocco era stato messo a mano per sbaglio.')) return;
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  sb.from('mail_stop').delete().eq('email', e).then(function(r){
+    if(r&&r.error){ alert('Non sono riuscito: '+r.error.message); return; }
+    ml7Carica(function(){ if(typeof crmRender==='function') crmRender(); });
+  });
+}
+function ml7Render(){
+  if(!_ml7Letto){ ml7Carica(function(){ if(_crmTab==='mail7' && typeof crmRender==='function') crmRender(); }); }
+  var h='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;font-size:13px;color:#1e3a8a;line-height:1.55;margin-bottom:16px;">'
+    +'<b>Come funziona.</b> Ogni mattina Supabase scrive da solo a chi ci ha contattato da almeno 7 giorni (AutoScout, sito, ...) e non ha n\u00e9 preventivo n\u00e9 contratto: la mail racconta la ricerca su richiesta. '
+    +'Ognuno la riceve una volta sola; chi clicca \u201cnon voglio pi\u00f9 ricevere\u201d finisce fra i bloccati e non riceve pi\u00f9 niente. '
+    +'Da qui puoi bloccare un indirizzo prima che gli arrivi.'
+    +'</div>';
+  /* blocco a mano */
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px;">'
+    +'<input id="ml7-blocca-email" type="email" placeholder="email da bloccare" style="flex:1;min-width:200px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;">'
+    +'<button onclick="ml7Blocca(document.getElementById(\'ml7-blocca-email\').value)" style="padding:9px 14px;border-radius:9px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udeab Blocca</button>'
+    +'<button onclick="ml7Carica(crmRender)" style="padding:9px 14px;border-radius:9px;border:1px solid #e2e8f0;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">\u21bb Aggiorna</button>'
+    +'</div>';
+  var riga=function(cols, testa){
+    var tag=testa?'th':'td';
+    return '<tr>'+cols.map(function(c){ return '<'+tag+' style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:left;font-size:12.5px;'+(testa?'color:#64748b;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.04em;':'')+'">'+c+'</'+tag+'>'; }).join('')+'</tr>';
+  };
+  h+='<div style="font-size:15px;font-weight:800;color:#0f172a;margin-bottom:8px;">\u2709\ufe0f Inviate ('+_ml7Inviate.length+')</div>';
+  if(!_ml7Letto) h+='<div style="font-size:13px;color:#94a3b8;">Carico\u2026</div>';
+  else if(!_ml7Inviate.length) h+='<div style="font-size:13px;color:#94a3b8;margin-bottom:18px;">Ancora nessuna: la prima partir\u00e0 con i contatti che compiono 7 giorni.</div>';
+  else {
+    h+='<div style="overflow-x:auto;margin-bottom:22px;"><table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">'
+      +riga(['Quando','Nome','Email','Auto richiesta','Fonte',''], true)
+      +_ml7Inviate.slice(0,300).map(function(x){
+        var bl=_ml7Stop.some(function(s){ return ml7Norm(s.email)===ml7Norm(x.email); });
+        return riga([crmDMY(Date.parse(x.inviata)), crmEsc(x.nome||'\u2014'), crmEsc(x.email), crmEsc(x.auto||'\u2014'), crmEsc(x.fonte||'\u2014'),
+          bl?'<span style="color:#991b1b;font-weight:800;">\ud83d\udeab bloccato</span>':'<a href="#" onclick="ml7Blocca(\''+crmEsc(x.email)+'\',\''+crmEsc(x.nome||'')+'\');return false;" style="color:#991b1b;font-weight:700;text-decoration:none;">blocca</a>']);
+      }).join('')+'</table></div>';
+  }
+  h+='<div style="font-size:15px;font-weight:800;color:#0f172a;margin-bottom:8px;">\ud83d\udeab Bloccati e disiscritti ('+_ml7Stop.length+')</div>';
+  if(!_ml7Letto) h+='';
+  else if(!_ml7Stop.length) h+='<div style="font-size:13px;color:#94a3b8;">Nessuno.</div>';
+  else {
+    h+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">'
+      +riga(['Quando','Email','Nome','Come',''], true)
+      +_ml7Stop.map(function(x){
+        return riga([crmDMY(Date.parse(x.quando)), crmEsc(x.email), crmEsc(x.nome||'\u2014'), crmEsc(x.origine||'\u2014'),
+          '<a href="#" onclick="ml7Sblocca(\''+crmEsc(x.email)+'\');return false;" style="color:#64748b;font-size:12px;text-decoration:none;">sblocca</a>']);
+      }).join('')+'</table></div>';
+  }
+  return h;
+}
+
 function crmLeadCarica(cb){
   var sb=(typeof sbClient==='function')?sbClient():null;
+  try{ ml7Carica(null); }catch(e){}
   if(!sb){ _leadErrore='Database non raggiungibile.'; _leadNoSessione=false; if(cb) cb(); return; }
   var leggi=function(){
     try{
@@ -37797,6 +37918,7 @@ function crmRenderLeadOnline(){
       +(tel?('\ud83d\udcde '+crmEsc(tel)+'&nbsp;&nbsp;'):'')
       +(l.email?('\u2709\ufe0f '+crmEsc(l.email)):'')
       +(!tel&&!l.email?'<span style="color:#dc2626;">Nessun recapito riconosciuto \u2014 apri l\'email originale</span>':'')
+      +(typeof ml7Etichetta==='function'?ml7Etichetta(l.email):'')
       +'</div>';
 
     if(l.budget) h+='<div style="margin-top:4px;font-size:12px;color:#94a3b8;">Budget indicato: '+crmEsc(l.budget)+'</div>';
