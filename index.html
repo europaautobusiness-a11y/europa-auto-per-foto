@@ -435,6 +435,7 @@ html, body{
   <span></span><span></span><span></span>
 </button>
 <button id="notifBell" onclick="notifApri()" title="Notifiche e automazioni" style="position:fixed;top:12px;right:14px;z-index:100080;width:44px;height:44px;border-radius:12px;border:none;background:#1a4fa0;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);">🔔<span id="notifBellBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc2626;color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 4px;line-height:18px;text-align:center;box-sizing:border-box;">0</span></button>
+<button id="waBell" onclick="waAvvisiApri()" title="Risposte WhatsApp dei clienti" style="display:none;position:fixed;top:12px;right:66px;z-index:100080;width:44px;height:44px;border-radius:12px;border:none;background:#25d366;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);">💬<span id="waBellBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc2626;color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 4px;line-height:18px;text-align:center;box-sizing:border-box;">0</span></button>
 
 <div class="app-layout">
 
@@ -10838,6 +10839,17 @@ function eaVistaDaUrl(){
 }
 function applyRoleUI() {
   var role = getCurrentRole();
+  /* La campanella verde delle risposte WhatsApp la vede solo
+     l'amministratore: Rudy e la contabilita' non devono trovarsi davanti
+     le conversazioni dei clienti. */
+  try{
+    var _wb=document.getElementById('waBell');
+    if(_wb){
+      _wb.style.display=(role==='admin')?'block':'none';
+      if(role==='admin'){ if(typeof waAvvisiAvvia==='function') waAvvisiAvvia(); }
+      else if(typeof waAvvisiFerma==='function') waAvvisiFerma();
+    }
+  }catch(e){}
   try{ var _rg=document.getElementById('mz-tab-reg'); if(_rg) _rg.style.display=(role==='admin')?'':'none'; }catch(e){}
   try{ var _bc=document.getElementById('btnContabApp'); if(_bc){ var _em=(typeof _currentUserEmail!=='undefined'?String(_currentUserEmail||'').toLowerCase():''); _bc.style.display=(role==='admin'||eaIsContabilita(_em))?'block':'none'; } }catch(e){}
   var ROLE_VIEWS = {
@@ -20683,13 +20695,14 @@ function gsearchRun(){
       var st=gsearchStato(a);
       var titolo=((a.marca||'')+' '+(a.modello||'')).trim()||'Veicolo';
       var idv=a.targa?a.targa:(a.numero_interno?('N\u00b0 '+a.numero_interno):'');
-      /* Su un'auto venduta la domanda e' sempre "a chi?": il cognome vale piu'
-         dell'anno di immatricolazione. Dove non c'e' una vendita collegata
-         resta l'allestimento o l'anno, come prima. */
+      /* Su un'auto VENDUTA la domanda e' sempre "a chi?": il cognome vale
+         piu' dell'anno di immatricolazione. Su un preventivo no: l'auto e'
+         ancora disponibile e mostrare un cognome faceva credere che fosse
+         gia' impegnata. Li' resta l'allestimento o l'anno, come prima. */
       var chi='';
       try{
         var _cvv=(typeof gsVendPerAuto==='function')?gsVendPerAuto(a.id):null;
-        var _cl=(_cvv&&_cvv.cliente)||null;
+        var _cl=(_cvv && _cvv.isContratto && _cvv.cliente)||null;
         if(_cl) chi=((_cl.business&&_cl.ragSociale)?_cl.ragSociale:(_cl.cognome||_cl.nome||'')).trim();
       }catch(e){}
       var sub=(idv?(idv+' \u00b7 '):'')+(chi||a.allestimento||a.anno||'');
@@ -36704,12 +36717,16 @@ function crmPaccBtn(chiave, nome, tel){
    solo chi guarda la scheda. */
 var WA_MOD_KEY='ea_wa_modelli_v1';
 var WA_MOD_DEF={
-  consegnate: { nome:'sconto_manutenzione', lingua:'it', conNome:true, conScadenza:false, urlDinamico:false, giorni:7 }
+  consegnate: { nome:'crm_man_sconto20', lingua:'it', conNome:true, conScadenza:true, urlDinamico:true, giorni:7 }
 };
 /* Il numero non appartiene al singolo modello ma a tutto l'invio: sta a
    parte, cosi' vale anche per i messaggi che aggiungeremo dopo. */
 var WA_NUM_KEY='ea_wa_numero_vero';
-function waNumVero(){ try{ return localStorage.getItem(WA_NUM_KEY)==='1'; }catch(e){ return false; } }
+/* Di partenza si scrive dal numero vero di Europa Auto: il numero di
+   prova di Meta arriva solo ai destinatari abilitati a mano, quindi come
+   impostazione iniziale non serviva a niente. Chi vuole tornarci mette la
+   spunta e il valore '0' resta salvato. */
+function waNumVero(){ try{ return localStorage.getItem(WA_NUM_KEY)!=='0'; }catch(e){ return true; } }
 function waNumSet(v){
   try{ localStorage.setItem(WA_NUM_KEY, v?'1':'0'); }catch(e){}
   try{ if(typeof cfgSupaSave==='function') cfgSupaSave('wa_numero', {vero:!!v}); }catch(e){}
@@ -36766,7 +36783,7 @@ function waModBox(){
        quello vecchio, e sembrava che il tasto non funzionasse.
        Ora ogni campo scrive appena lo si lascia: il tasto resta solo per
        conferma, ma non serve piu' a niente. */
-    +'<input id="wamod-consegnate" value="'+crmEsc(m.nome)+'" placeholder="sconto_manutenzione" '
+    +'<input id="wamod-consegnate" value="'+crmEsc(m.nome)+'" placeholder="crm_man_sconto20" '
     +'onchange="waModSalva()" onblur="waModSalva()" '
     +'style="flex:1;min-width:170px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
     +'<input id="wamod-consegnate-lng" value="'+crmEsc(m.lingua)+'" title="lingua del modello su Meta" '
@@ -38433,6 +38450,295 @@ function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].sta
 function crmSetNote(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].note=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
 function crmSupaUpsert(key,rec){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').upsert({ id:String(key), data:rec }).then(function(res){ if(res&&res.error) console.log('crm upsert:',res.error.message); }); }catch(e){} }
 function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ supaSelectAll(sb,'crm',function(res){ if(!res||res.error) return; var s=crmLoad(); (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){try{d=JSON.parse(d);}catch(e){d=null;}} if(d&&r.id){ s[r.id]=d; } }); crmSave(s); crmRender(); }); }catch(e){} }
+
+/* =====================================================================
+   CONFERMA DI SALVATAGGIO IN TUTTA L'APP
+   ---------------------------------------------------------------------
+   Ogni pulsante "Salva" passa da qui. Se la funzione finisce senza
+   errori, senza alert e senza aver gia' mostrato un messaggio suo,
+   compare la conferma verde "Salvato con successo"; se qualcosa va
+   storto esce il messaggio rosso con l'errore vero.
+   Le funzioni non vengono toccate: vengono avvolte. Cosi' se un domani
+   cambiano dentro, la conferma continua a funzionare lo stesso.
+   Per aggiungere un altro tasto Salva basta scrivere il suo nome
+   nell'elenco qui sotto.
+   ===================================================================== */
+(function(){
+  var SALVATAGGI = [
+    'mzSalva',                  /* scheda veicolo (magazzino) */
+    'cvSalva',                  /* preventivo / contratto */
+    'cvModSalva',               /* modifiche al contratto */
+    'cvDeliberaSalva',          /* delibera del finanziamento */
+    'cvFinaleDatiSalvaStampa',  /* dati finali della vendita */
+    'cvStampaESalva',           /* stampa e salva */
+    'pvSalva',                  /* provvigioni */
+    'pSalva',                   /* permessi di circolazione */
+    'pmSalva',                  /* pratiche / minivoltura */
+    'parSalva',                 /* parametri */
+    'regSalva',                 /* registro carico e scarico */
+    'nlSalva',                  /* noleggi */
+    'fnSalva',                  /* fornitori */
+    'sinSalva',                 /* sinistri */
+    'clSalvaAnagrafica',        /* anagrafica cliente */
+    'clAddIndSalva',            /* indirizzo aggiuntivo del cliente */
+    'bmSalvaVal',               /* valutazione BM Value */
+    'salvaPermessiTutti',       /* permessi degli utenti */
+    'tcForzaSalva',             /* timbrature */
+    'waSalvaMsg',               /* messaggio WhatsApp */
+    'waModSalva',               /* modello WhatsApp */
+    'crmWaSaveMsg',             /* messaggio WhatsApp dal CRM */
+    'saveTemplate',             /* modello di testo */
+    'eaFotoSalvaR2'             /* foto del veicolo su Cloudflare */
+  ];
+
+  /* Quando l'app ha gia' parlato da sola (toast o alert) non si aggiunge
+     un secondo messaggio sopra al primo. */
+  var _ultimoAvviso = 0;
+  function _segna(){ _ultimoAvviso = Date.now(); }
+
+  try{
+    if(typeof window.tcToastNew === 'function' && !window.tcToastNew._eaOsservato){
+      var _toastOrig = window.tcToastNew;
+      window.tcToastNew = function(){ _segna(); return _toastOrig.apply(this, arguments); };
+      window.tcToastNew._eaOsservato = true;
+    }
+  }catch(e){}
+  try{
+    if(!window.alert._eaOsservato){
+      var _alertOrig = window.alert;
+      window.alert = function(){ _segna(); return _alertOrig.apply(this, arguments); };
+      window.alert._eaOsservato = true;
+    }
+  }catch(e){}
+
+  function conferma(){
+    try{ if(typeof tcToastNew === 'function') tcToastNew('\u2705 Salvato con successo', true); }catch(e){}
+  }
+  function fallito(err){
+    var t = String((err && err.message) || err || 'errore sconosciuto');
+    try{ if(typeof tcToastNew === 'function') tcToastNew('\u274c Salvataggio non riuscito: ' + t, false); }catch(e){}
+  }
+
+  var mancanti = [];
+  SALVATAGGI.forEach(function(nome){
+    var f = window[nome];
+    if(typeof f !== 'function'){ mancanti.push(nome); return; }
+    if(f._eaAvvolta) return;
+    var avvolta = function(){
+      var inizio = Date.now(), esito;
+      try{
+        esito = f.apply(this, arguments);
+      }catch(err){
+        fallito(err); throw err;
+      }
+      /* una funzione che restituisce false ha bocciato la convalida:
+         niente conferma */
+      if(esito === false) return esito;
+      /* se restituisce una promessa si aspetta l'esito vero */
+      if(esito && typeof esito.then === 'function'){
+        try{
+          esito.then(function(v){ if(_ultimoAvviso < inizio) conferma(); return v; },
+                     function(err){ fallito(err); throw err; });
+        }catch(e){}
+        return esito;
+      }
+      /* un quarto di secondo di attesa: il tempo perche' un eventuale
+         messaggio di convalida compaia prima del nostro */
+      setTimeout(function(){ if(_ultimoAvviso < inizio) conferma(); }, 250);
+      return esito;
+    };
+    avvolta._eaAvvolta = true;
+    window[nome] = avvolta;
+  });
+  if(mancanti.length) console.log('Conferma salvataggio: funzioni non trovate \u2192', mancanti.join(', '));
+})();
+
+/* =====================================================================
+   RISPOSTE WHATSAPP DEI CLIENTI  —  campanella verde
+   ---------------------------------------------------------------------
+   La funzione wa-ricevi su Supabase salva i messaggi in arrivo anche col
+   gestionale chiuso, ma finora nessuno avvisava che erano arrivati: si
+   scopriva la risposta solo aprendo la conversazione a mano. Ora accanto
+   alla campanella delle notifiche c'e' un secondo pulsante verde con il
+   numero di conversazioni che hanno una risposta non ancora letta.
+   Premendolo si apre l'elenco; da li' si entra nella chat.
+
+   Cosa conta come "non letto": l'ultimo messaggio in arrivo di quel
+   numero e' piu' recente dell'ultima volta che quella conversazione e'
+   stata aperta. Il segno di lettura si salva anche su Supabase, cosi'
+   aprendo la chat dal computer non resta il pallino sul telefono.
+
+   Lo vede solo l'amministratore (vedi applyRoleUI).
+   ===================================================================== */
+(function(){
+  var LETTI_KEY = 'ea_wa_letti_v1';   /* { "39333...": ultimoTsLetto } */
+  var _waAvvTimer = null;
+  var _waAvvisi = [];                  /* conversazioni con risposta nuova */
+
+  function letti(){
+    try{ return JSON.parse(localStorage.getItem(LETTI_KEY)||'{}') || {}; }catch(e){ return {}; }
+  }
+  function lettiSalva(o){
+    try{ localStorage.setItem(LETTI_KEY, JSON.stringify(o)); }catch(e){}
+    try{ if(typeof cfgSupaSave==='function') cfgSupaSave('wa_letti', o); }catch(e){}
+  }
+  /* Segna letta una conversazione: si chiama quando si apre la chat. */
+  function segnaLetta(tel){
+    if(!tel) return;
+    var o=letti(); o[tel]=Date.now(); lettiSalva(o);
+    waAvvisiControlla();
+  }
+
+  /* Legge da Supabase gli ultimi messaggi in arrivo e conta le
+     conversazioni con qualcosa di nuovo. */
+  function waAvvisiControlla(){
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(!sb) return;
+    try{
+      sb.from('wa_messaggi').select('id,data')
+        .order('created_at',{ascending:false}).limit(400)
+        .then(function(res){
+          if(!res || res.error) return;
+          var righe=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
+          var ultimo={};        /* per numero: l'ultimo messaggio del CLIENTE */
+          righe.forEach(function(m){
+            if(String(m.direzione)!=='in') return;
+            var t=String(m.telefono||''); if(!t) return;
+            var ts=+(m.ts||0);
+            if(!ultimo[t] || ts>ultimo[t].ts) ultimo[t]={ ts:ts, nome:(m.nome||''), testo:(m.testo||''), telefono:t };
+          });
+          var L=letti(), fuori=[];
+          Object.keys(ultimo).forEach(function(t){
+            if(ultimo[t].ts > (+(L[t]||0))) fuori.push(ultimo[t]);
+          });
+          fuori.sort(function(a,b){ return b.ts-a.ts; });
+          _waAvvisi=fuori;
+          waAvvisiBadge();
+          var el=document.getElementById('wa-avvisi-lista');
+          if(el) el.innerHTML=waAvvisiHtml();
+        }, function(){});
+    }catch(e){}
+  }
+
+  function waAvvisiBadge(){
+    var b=document.getElementById('waBellBadge'); if(!b) return;
+    if(_waAvvisi.length){ b.textContent=String(_waAvvisi.length); b.style.display='block'; }
+    else b.style.display='none';
+  }
+
+  function quando(ts){
+    try{
+      var d=new Date(ts), oggi=new Date();
+      var hh=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+      if(d.toDateString()===oggi.toDateString()) return hh;
+      return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+' '+hh;
+    }catch(e){ return ''; }
+  }
+
+  function waAvvisiHtml(){
+    if(!_waAvvisi.length){
+      return '<div style="text-align:center;color:#64748b;font-size:13px;padding:26px 16px;line-height:1.6;">'
+        +'Nessuna risposta nuova.<br><span style="font-size:12px;">Quando un cliente scrive, compare qui.</span></div>';
+    }
+    var h='';
+    _waAvvisi.forEach(function(c){
+      var jq=function(x){ return "'"+String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'"; };
+      h+='<div onclick="waAvvisiEntra('+jq(c.telefono)+','+jq(c.nome)+')" '
+        +'style="display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-bottom:1px solid #eef2f7;cursor:pointer;">'
+        +'<div style="width:34px;height:34px;line-height:34px;border-radius:50%;background:#25d366;color:#fff;'
+        +'text-align:center;font-size:16px;flex:0 0 auto;">\ud83d\udcac</div>'
+        +'<div style="flex:1;min-width:0;">'
+        +'<div style="display:flex;justify-content:space-between;gap:8px;">'
+        +'<div style="font-size:13.5px;font-weight:800;color:#0f2f6b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+        + eaEscq(c.nome||c.telefono)+'</div>'
+        +'<div style="font-size:11px;color:#94a3b8;flex:0 0 auto;">'+quando(c.ts)+'</div></div>'
+        +'<div style="font-size:12.5px;color:#475569;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+        + eaEscq(String(c.testo||'').slice(0,90))+'</div></div></div>';
+    });
+    return h;
+  }
+
+  function waAvvisiApri(){
+    var v=document.getElementById('wa-avvisi'); if(v){ v.remove(); return; }
+    var d=document.createElement('div');
+    d.id='wa-avvisi';
+    d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:100090;display:flex;'
+      +'align-items:flex-start;justify-content:flex-end;padding:64px 12px 12px;';
+    d.innerHTML='<div style="background:#fff;border-radius:14px;width:100%;max-width:380px;max-height:76vh;'
+      +'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+      +'<div style="background:#075e54;color:#fff;padding:12px 15px;display:flex;justify-content:space-between;align-items:center;">'
+      +'<div style="font-weight:800;font-size:14.5px;">Risposte dei clienti</div>'
+      +'<button onclick="waAvvisiChiudi()" style="padding:5px 11px;border-radius:8px;border:none;'
+      +'background:rgba(255,255,255,.2);color:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button></div>'
+      +'<div id="wa-avvisi-lista" style="flex:1;overflow-y:auto;">'+waAvvisiHtml()+'</div>'
+      +'<div style="border-top:1px solid #e2e8f0;padding:9px 13px;text-align:right;">'
+      +'<button onclick="waAvvisiTutteLette()" style="padding:7px 12px;border-radius:8px;border:1px solid #cbd5e1;'
+      +'background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">'
+      +'Segna tutte come lette</button></div></div>';
+    d.addEventListener('click', function(ev){ if(ev.target===d) waAvvisiChiudi(); });
+    document.body.appendChild(d);
+    waAvvisiControlla();
+  }
+  function waAvvisiChiudi(){ var v=document.getElementById('wa-avvisi'); if(v) v.remove(); }
+
+  function waAvvisiEntra(tel, nome){
+    segnaLetta(tel);
+    waAvvisiChiudi();
+    try{ if(typeof waChatApri==='function') waChatApri(tel, nome); }catch(e){}
+  }
+  function waAvvisiTutteLette(){
+    var o=letti(), ora=Date.now();
+    _waAvvisi.forEach(function(c){ o[c.telefono]=ora; });
+    lettiSalva(o);
+    _waAvvisi=[];
+    waAvvisiBadge();
+    var el=document.getElementById('wa-avvisi-lista'); if(el) el.innerHTML=waAvvisiHtml();
+  }
+
+  /* Aprendo una chat da qualunque punto del gestionale la conversazione
+     risulta letta: senza questo il pallino resterebbe acceso anche dopo
+     aver risposto. */
+  try{
+    if(typeof window.waChatApri==='function' && !window.waChatApri._eaLetta){
+      var _apriOrig=window.waChatApri;
+      window.waChatApri=function(numero, nome){
+        try{ segnaLetta((typeof waNum==='function')?waNum(numero):String(numero||'')); }catch(e){}
+        return _apriOrig.apply(this, arguments);
+      };
+      window.waChatApri._eaLetta=true;
+    }
+  }catch(e){}
+
+  function waAvvisiAvvia(){
+    if(_waAvvTimer) return;
+    waAvvisiControlla();
+    _waAvvTimer=setInterval(waAvvisiControlla, 60000);
+  }
+  function waAvvisiFerma(){
+    if(_waAvvTimer){ clearInterval(_waAvvTimer); _waAvvTimer=null; }
+    _waAvvisi=[]; waAvvisiBadge();
+  }
+
+  /* Il segno di lettura arriva anche dagli altri dispositivi. */
+  try{
+    if(typeof cfgSupaLoad==='function'){
+      cfgSupaLoad('wa_letti', function(body){
+        if(body && typeof body==='object'){
+          try{ localStorage.setItem(LETTI_KEY, JSON.stringify(body)); }catch(e){}
+          waAvvisiControlla();
+        }
+      }, letti);
+    }
+  }catch(e){}
+
+  window.waAvvisiApri=waAvvisiApri;
+  window.waAvvisiChiudi=waAvvisiChiudi;
+  window.waAvvisiEntra=waAvvisiEntra;
+  window.waAvvisiTutteLette=waAvvisiTutteLette;
+  window.waAvvisiAvvia=waAvvisiAvvia;
+  window.waAvvisiFerma=waAvvisiFerma;
+  window.waAvvisiControlla=waAvvisiControlla;
+})();
 </script>
 
 </body>
