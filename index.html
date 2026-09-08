@@ -513,6 +513,7 @@ html, body{
     <button class="sidebar-item" id="si-welfare" onclick="sidebarNav('welfare',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127873;</span><span class="si-label"> Fringe benefit</span></button>
     <button class="sidebar-item" id="si-statistiche" onclick="sidebarNav('statistiche',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128202;</span><span class="si-label"> Statistiche</span></button>
     <button class="sidebar-item" id="si-clienti" onclick="sidebarNav('clienti',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Clienti</span></button>
+    <button class="sidebar-item" id="si-whatsapp" onclick="sidebarNav('whatsapp',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128241;</span><span class="si-label"> WhatsApp</span></button>
     <button class="sidebar-item" id="si-impostazioni" onclick="apriGestioneCredenziali()" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9881;&#65039;</span><span class="si-label"> Impostazioni</span></button>
     </div>
   </div>
@@ -38573,7 +38574,8 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
 (function(){
   var LETTI_KEY = 'ea_wa_letti_v1';   /* { "39333...": ultimoTsLetto } */
   var _waAvvTimer = null;
-  var _waAvvisi = [];                  /* conversazioni con risposta nuova */
+  var _waAvvisi = [];                  /* solo quelle con risposta non letta */
+  var _waTutte  = [];                  /* tutte, per l'elenco */
 
   function letti(){
     try{ return JSON.parse(localStorage.getItem(LETTI_KEY)||'{}') || {}; }catch(e){ return {}; }
@@ -38600,19 +38602,30 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
         .then(function(res){
           if(!res || res.error) return;
           var righe=(res.data||[]).map(function(r){ var d=r.data||{}; d.id=r.id; return d; });
-          var ultimo={};        /* per numero: l'ultimo messaggio del CLIENTE */
+          /* Si raggruppa per numero tenendo due date: l'ultimo messaggio in
+             assoluto, che serve per l'ordine dell'elenco, e l'ultimo del
+             CLIENTE, che e' quello che decide se c'e' qualcosa da leggere.
+             Distinguerli evita che rispondendo a una chat questa risalga in
+             cima come se fosse arrivata una risposta nuova. */
+          var conv={};
           righe.forEach(function(m){
-            if(String(m.direzione)!=='in') return;
             var t=String(m.telefono||''); if(!t) return;
             var ts=+(m.ts||0);
-            if(!ultimo[t] || ts>ultimo[t].ts) ultimo[t]={ ts:ts, nome:(m.nome||''), testo:(m.testo||''), telefono:t };
+            var c=conv[t] || (conv[t]={ telefono:t, nome:'', ts:0, testo:'', tsIn:0, miaUltima:false });
+            if(!c.nome && m.nome) c.nome=m.nome;
+            var inArrivo=(String(m.direzione)==='in');
+            if(ts>c.ts){ c.ts=ts; c.testo=(m.testo||''); c.miaUltima=!inArrivo; }
+            if(inArrivo && ts>c.tsIn) c.tsIn=ts;
           });
-          var L=letti(), fuori=[];
-          Object.keys(ultimo).forEach(function(t){
-            if(ultimo[t].ts > (+(L[t]||0))) fuori.push(ultimo[t]);
+          var L=letti(), tutte=[];
+          Object.keys(conv).forEach(function(t){
+            var c=conv[t];
+            c.nuovo = c.tsIn>0 && c.tsIn > (+(L[t]||0));
+            tutte.push(c);
           });
-          fuori.sort(function(a,b){ return b.ts-a.ts; });
-          _waAvvisi=fuori;
+          tutte.sort(function(a,b){ return b.ts-a.ts; });
+          _waTutte=tutte;
+          _waAvvisi=tutte.filter(function(c){ return c.nuovo; });
           waAvvisiBadge();
           var el=document.getElementById('wa-avvisi-lista');
           if(el) el.innerHTML=waAvvisiHtml();
@@ -38636,24 +38649,47 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
   }
 
   function waAvvisiHtml(){
-    if(!_waAvvisi.length){
+    if(!_waTutte.length){
       return '<div style="text-align:center;color:#64748b;font-size:13px;padding:26px 16px;line-height:1.6;">'
-        +'Nessuna risposta nuova.<br><span style="font-size:12px;">Quando un cliente scrive, compare qui.</span></div>';
+        +'Nessuna conversazione.<br><span style="font-size:12px;">Quando scrivi a un cliente o lui risponde, compare qui.</span></div>';
     }
     var h='';
-    _waAvvisi.forEach(function(c){
+    if(_waAvvisi.length){
+      h+='<div style="padding:7px 13px;background:#f0fdf4;border-bottom:1px solid #dcfce7;font-size:11px;'
+        +'font-weight:800;color:#15803d;text-transform:uppercase;letter-spacing:.4px;">'
+        +'Da leggere ('+_waAvvisi.length+')</div>';
+    }
+    var messo=false;
+    _waTutte.forEach(function(c){
+      /* Le lette vanno sotto, con un'intestazione che le separa dalle
+         altre: cosi' l'elenco resta completo ma l'occhio va subito
+         dove c'e' qualcosa da fare. */
+      if(!c.nuovo && !messo && _waAvvisi.length){
+        messo=true;
+        h+='<div style="padding:7px 13px;background:#f8fafc;border-bottom:1px solid #eef2f7;font-size:11px;'
+          +'font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.4px;">Gi\u00e0 lette</div>';
+      }
       var jq=function(x){ return "'"+String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'"; };
+      var pallino = c.nuovo
+        ? '<div style="width:9px;height:9px;border-radius:50%;background:#25d366;flex:0 0 auto;margin-top:12px;"></div>'
+        : '<div style="width:9px;flex:0 0 auto;"></div>';
+      /* L'ultimo messaggio e' mio? si antepone "Tu:", come nell'app vera:
+         serve a sapere se la palla e' nel mio campo o nel suo. */
+      var anteprima = (c.miaUltima ? 'Tu: ' : '') + String(c.testo||'');
       h+='<div onclick="waAvvisiEntra('+jq(c.telefono)+','+jq(c.nome)+')" '
-        +'style="display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-bottom:1px solid #eef2f7;cursor:pointer;">'
-        +'<div style="width:34px;height:34px;line-height:34px;border-radius:50%;background:#25d366;color:#fff;'
-        +'text-align:center;font-size:16px;flex:0 0 auto;">\ud83d\udcac</div>'
+        +'style="display:flex;gap:9px;align-items:flex-start;padding:11px 13px;border-bottom:1px solid #eef2f7;'
+        +'cursor:pointer;background:'+(c.nuovo?'#fff':'#fcfdfe')+';">'
+        + pallino
+        +'<div style="width:34px;height:34px;line-height:34px;border-radius:50%;background:'+(c.nuovo?'#25d366':'#cbd5e1')+';'
+        +'color:#fff;text-align:center;font-size:16px;flex:0 0 auto;">\ud83d\udcac</div>'
         +'<div style="flex:1;min-width:0;">'
         +'<div style="display:flex;justify-content:space-between;gap:8px;">'
-        +'<div style="font-size:13.5px;font-weight:800;color:#0f2f6b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-        + eaEscq(c.nome||c.telefono)+'</div>'
+        +'<div style="font-size:13.5px;font-weight:'+(c.nuovo?'800':'700')+';color:'+(c.nuovo?'#0f2f6b':'#334155')+';'
+        +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+ eaEscq(c.nome||c.telefono)+'</div>'
         +'<div style="font-size:11px;color:#94a3b8;flex:0 0 auto;">'+quando(c.ts)+'</div></div>'
-        +'<div style="font-size:12.5px;color:#475569;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-        + eaEscq(String(c.testo||'').slice(0,90))+'</div></div></div>';
+        +'<div style="font-size:12.5px;color:'+(c.nuovo?'#475569':'#94a3b8')+';margin-top:2px;'
+        +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+        + eaEscq(anteprima.slice(0,90))+'</div></div></div>';
     });
     return h;
   }
@@ -38667,7 +38703,7 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
     d.innerHTML='<div style="background:#fff;border-radius:14px;width:100%;max-width:380px;max-height:76vh;'
       +'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
       +'<div style="background:#075e54;color:#fff;padding:12px 15px;display:flex;justify-content:space-between;align-items:center;">'
-      +'<div style="font-weight:800;font-size:14.5px;">Risposte dei clienti</div>'
+      +'<div style="font-weight:800;font-size:14.5px;">Conversazioni WhatsApp</div>'
       +'<button onclick="waAvvisiChiudi()" style="padding:5px 11px;border-radius:8px;border:none;'
       +'background:rgba(255,255,255,.2);color:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button></div>'
       +'<div id="wa-avvisi-lista" style="flex:1;overflow-y:auto;">'+waAvvisiHtml()+'</div>'
@@ -38691,6 +38727,7 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
     _waAvvisi.forEach(function(c){ o[c.telefono]=ora; });
     lettiSalva(o);
     _waAvvisi=[];
+    _waTutte.forEach(function(c){ c.nuovo=false; });   /* restano in elenco, senza pallino */
     waAvvisiBadge();
     var el=document.getElementById('wa-avvisi-lista'); if(el) el.innerHTML=waAvvisiHtml();
   }
@@ -38716,7 +38753,7 @@ function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; i
   }
   function waAvvisiFerma(){
     if(_waAvvTimer){ clearInterval(_waAvvTimer); _waAvvTimer=null; }
-    _waAvvisi=[]; waAvvisiBadge();
+    _waAvvisi=[]; _waTutte=[]; waAvvisiBadge();
   }
 
   /* Il segno di lettura arriva anche dagli altri dispositivi. */
