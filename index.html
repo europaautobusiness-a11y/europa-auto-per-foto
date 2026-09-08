@@ -24914,6 +24914,7 @@ function cvTrasformaContrattoFinale(){
   }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
   try{ cvLogRegistra(_pr, _cv, 'proposta'); }catch(e){}
+  try{ cvAvvisaEsteraContabilita(_cv); }catch(e){}
   try{ if(typeof pProvvAuto==='function') pProvvAuto(_cv); }catch(e){}
   if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
@@ -24924,6 +24925,60 @@ function cvTrasformaContrattoFinale(){
   cvModChiudi(); cvChiudi(); cvRender();
   if(typeof tcToastNew==='function') tcToastNew('Trasformato in contratto \u2014 in attesa pagamento',true);
   try{ if(typeof notifPush==='function') notifPush('Nuovo proposta d’acquisto: '+(((_cv.cliente&&_cv.cliente.cognome)||'')+' '+((_cv.cliente&&_cv.cliente.nome)||'')).trim()+' \u2014 in attesa pagamento', '\ud83d\udcc4'); }catch(e){}
+}
+/* ===== CONTRATTO SU UN'AUTO ESTERA: LA CONTABILITA' LO SA SUBITO =====
+   Un'auto di importazione porta con se' pratiche che partono dal giorno del
+   contratto (immatricolazione italiana, documenti doganali, IVA), e chi le
+   segue e' la contabilita', non il venditore. Quindi appena una proposta
+   diventa contratto su un veicolo estero parte una mail ad
+   amministrazione@europaautosrl.it con tutto quello che serve per iniziare. */
+function cvAvvisaEsteraContabilita(cv){
+  if(!cv || !cv.autoId || typeof mzById!=='function') return;
+  var a=mzById(cv.autoId); if(!a || a.estera!==true) return;
+  if(cv.mailEsteraTs) return;               /* gia' avvisata per questa pratica */
+  if(typeof eaInviaMessaggio!=='function') return;
+  var E=function(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var cl=cv.cliente||{};
+  var cliente=((cl.cognome||'')+' '+(cl.nome||'')).trim()||'\u2014';
+  var veicolo=((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim();
+  var tot=0; try{ var t=cvCalcola(cv); tot=(t.totaleScontato||0)+(t.permVal||0); }catch(e){}
+  var pag=(cv.pagamenti||[]).filter(function(x){ return cvNum(x.importo); }).map(function(x){
+    var sc=String(x.scadenza||'').split('-'); var scIt=(sc.length===3)?(sc[2]+'/'+sc[1]+'/'+sc[0]):'';
+    return '<tr><td style="padding:3px 14px 3px 0;color:#64748b;">'+E(x.tipo||'Pagamento')+'</td><td style="padding:3px 14px 3px 0;">'+E(x.metodo||'')+'</td><td style="padding:3px 0;font-weight:700;text-align:right;">'+cvEuro(x.importo)+' \u20ac</td><td style="padding:3px 0 3px 14px;color:#64748b;">'+(scIt?('entro '+scIt):'')+'</td></tr>';
+  }).join('');
+  var riga=function(k,v){ return v?('<tr><td style="padding:5px 18px 5px 0;color:#64748b;white-space:nowrap;">'+k+'</td><td style="padding:5px 0;font-weight:700;">'+E(v)+'</td></tr>'):''; };
+  var corpo='<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;line-height:1.6;">'
+    +'<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:10px;padding:14px 16px;margin-bottom:14px;">'
+    +'<div style="font-size:16px;font-weight:800;color:#9a3412;">\ud83c\udf0d Nuovo contratto su un\u2019auto ESTERA</div>'
+    +'<div style="font-size:13px;color:#7c2d12;margin-top:4px;">Partono le pratiche di importazione: la proposta \u00e8 stata trasformata in contratto adesso.</div></div>'
+    +'<table style="border-collapse:collapse;">'
+    +riga('Cliente', cliente)
+    +riga('Telefono', cl.telefono)
+    +riga('Email', cl.email)
+    +riga('Veicolo', veicolo)
+    +riga('Targa estera', a.targa)
+    +riga('Telaio', a.telaio)
+    +riga('Numero interno', a.numeroInterno||a.id)
+    +riga('Totale contratto', tot?(cvEuro(tot)+' \u20ac'):'')
+    +riga('Venditore', cv.venditore)
+    +riga('Contratto del', new Date(cv.contrattoTs||Date.now()).toLocaleDateString('it-IT'))
+    +'</table>'
+    +(pag?('<div style="margin-top:14px;font-weight:800;color:#1a4fa0;">Pagamenti concordati</div><table style="border-collapse:collapse;margin-top:4px;">'+pag+'</table>'):'')
+    +'<p style="margin-top:16px;color:#64748b;font-size:13px;">Apri la pratica nel gestionale (Vendite \u2192 '+E(cliente)+') per documenti e dettagli.</p>'
+    +'</div>';
+  cv.mailEsteraTs=Date.now();
+  /* due caselle: quella amministrativa e quella della contabilita' */
+  var _dest=['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'];
+  Promise.all(_dest.map(function(d){ return eaInviaMessaggio({
+    to:d,
+    subject:'\ud83c\udf0d Contratto auto estera \u2014 '+cliente+' \u2014 '+(veicolo||'veicolo')+(a.targa?(' ('+a.targa+')'):''),
+    html:(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo
+  }); })).then(function(){
+    if(typeof tcToastNew==='function') tcToastNew('\u2709\ufe0f Avvisata la contabilit\u00e0: auto estera', true);
+  }, function(e){
+    cv.mailEsteraTs=null;
+    if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f Mail alla contabilit\u00e0 non partita: '+((e&&e.message)||e), false);
+  });
 }
 function cvValidaAssic(){
   if(typeof cvEImportata==='function' && cvEImportata(_cv)) return true;
@@ -25834,7 +25889,12 @@ function cvBuildHTML(c, tipo){
     doc+='<div class="nospezza" style="display:block;page-break-inside:avoid;break-inside:avoid;"><div class="cvh">Dati contratto &mdash; pagamenti</div>'; pagList.forEach(function(x){ doc+='<div class="cvrow"><div><b>'+cvEsc(x.tipo)+'</b> '+cvPromoRisalta(cvEsc(x.metodo||''))+(function(){ /* TAN e TAEG non vanno mai in stampa */
      var _n=String(x.note||'').replace(/TAN\s*[\d.,\u2013\u2014\-]*\s*%?/ig,'').replace(/TAEG\s*[\d.,\u2013\u2014\-]*\s*%?/ig,'')
         .replace(/[\u00b7\-\u2013\u2014,;]\s*(?=[\u00b7\-\u2013\u2014,;]|$)/g,'').replace(/^[\s\u00b7\-\u2013\u2014,;]+|[\s\u00b7\-\u2013\u2014,;]+$/g,'').trim();
-     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()+'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML();
+     return _n?(' <span class="cvsmall">&middot; '+cvEsc(_n)+'</span>'):''; })()
+     /* La scadenza concordata va sul documento: senza, un piano di acconti
+        mensili stampato e' una lista di cifre senza date, e il cliente
+        non sa quando deve pagare. */
+     +(function(){ var _sc=String(x.scadenza||'').trim(); if(!_sc) return ''; var _p=_sc.split('-'); var _it=(_p.length===3)?(_p[2]+'/'+_p[1]+'/'+_p[0]):_sc; return ' <span class="cvsmall">&middot; entro il <b>'+cvEsc(_it)+'</b></span>'; })()
+     +'</div><div class="amt">'+cvEuro(x.importo)+'</div></div>'; if(false){ doc+='<div style="background:#eff6ff;border:1px solid #dbe4f0;border-radius:6px;padding:7px 11px;margin:3px 0 8px;font-size:12.5px;font-weight:800;color:#1a4fa0;">Finanziamento: '+cvEsc(x.rate||'—')+' rate da '+cvEuro(x.importoRata)+' al mese</div>'; } }); doc+='<div style="margin-top:10px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Beneficiario: '+EA_BENEF+' &middot; IBAN: '+EA_IBAN+'</div>'; if(pagList.some(function(x){return /bonifico/i.test(x.metodo||'');})){ doc+='<div style="margin-top:2px;font-size:11px;font-weight:800;color:#0f172a;line-height:1.45;">Causale bonifico: '+cvEsc(cvCausale(c))+'</div>'; } if(tipo!=='preventivo' && !_haPenale) doc+=cvFirmaHTML();
     doc+='</div>';   /* chiude il blocco pagamenti che non si spezza */
   }
   if(tipo==='finale'){ var _ef=''; if(c.assicOn && c.compagniaAssic) _ef+='<div>Compagnia assicurativa: <b>'+cvEsc(c.compagniaAssic)+'</b></div>'; if(c.finanziaria) _ef+='<div>Finanziaria: <b>'+cvEsc(c.finanziaria)+'</b></div>'; if(_ef) doc+='<div class="cvh">Assicurazione e finanziamento</div><div class="cvbox" style="font-size:12px;line-height:1.6;">'+_ef+'</div>'; }
