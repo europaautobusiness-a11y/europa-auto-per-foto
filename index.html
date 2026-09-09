@@ -12235,10 +12235,11 @@ function wfRender(){
     return;
   }
   var dip=wfPersone();
+  if(_wfTab==='buoni'){ wfBuoniRender(); return; }
 
   var h='<div style="max-width:900px;margin:0 auto;">'
     +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px;">'
-    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit e trasferte '+wfAnno()+'</h2>'
+    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit e buoni carburante '+wfAnno()+'</h2>'
     +'<div style="display:flex;gap:6px;">'
     +'<button onclick="wfAggiungiCollab()" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">+ collaboratore</button>'
     +'<button onclick="wfRiepilogo()" style="padding:8px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Riepilogo per lo studio paghe</button>'
@@ -12246,7 +12247,8 @@ function wfRender(){
     +'<div style="font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:16px;">'
     +'Soglia annua <b>'+wfEuro(WF_SOGLIA_BASE)+'</b>, <b>'+wfEuro(WF_SOGLIA_FIGLI)+'</b> con figli fiscalmente a carico. '
     +'Superandola anche di un euro diventa imponibile <b>l\u2019intero importo</b> dell\u2019anno, non l\u2019eccedenza. '
-    +'La busta paga resta quella dello studio: qui si decide prima di erogare.</div>';
+    +'La busta paga resta quella dello studio: qui si decide prima di erogare.</div>'
+    + wfSchede();
 
   if(!dip.length){
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;text-align:center;color:#94a3b8;font-size:14px;">'
@@ -12412,7 +12414,7 @@ function wfRender(){
          un'auto per un appuntamento, quindi c'e' quasi sempre. L'elenco
          si restringe da solo alle auto che a quella data erano gia' in
          magazzino: senza data resta tutto disponibile. */
-      +'<select id="wf_tauto_'+wfEsc(k)+'" title="veicolo portato" style="flex:2 1 210px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><option value="">\u2014 veicolo (facoltativo) \u2014</option></select>'
+      +'<select id="wf_tauto_'+wfEsc(k)+'" title="veicolo portato" onfocus="wfAutoDelGiorno(\''+wfEsc(k)+'\')" onmousedown="wfAutoDelGiorno(\''+wfEsc(k)+'\')" style="flex:2 1 210px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><option value="">\u2014 veicolo (facoltativo) \u2014</option></select>'
       +'<input id="wf_tout_'+wfEsc(k)+'" type="time" title="ora di uscita" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_tin_'+wfEsc(k)+'" type="time" title="ora di rientro" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_td_'+wfEsc(k)+'" type="text" placeholder="oppure a parole (es. 12-14 marzo)" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
@@ -12493,6 +12495,222 @@ function wfAggiungi(k){
    perche' quelle in azienda ancora non c'erano.
    Le vendute restano in elenco, segnate come tali.
    ===================================================================== */
+
+/* =====================================================================
+   BUONI CARBURANTE AZIENDALI
+   ---------------------------------------------------------------------
+   Cosa diversa dai buoni dati come fringe benefit: questi li compra
+   l'azienda e si consumano muovendo le auto, per portarle in carrozzeria,
+   dal gommista, a un appuntamento. In caso di controllo la domanda non e'
+   quanti buoni sono stati comprati ma dove sono finiti, quindi ogni buono
+   va agganciato a un veicolo e a un viaggio: data, da dove a dove, quanti
+   chilometri.
+
+   I dati stanno nello stesso archivio del welfare (ea_welfare_v1), sotto
+   la voce "buoni", quindi si sincronizzano da soli su Supabase senza
+   bisogno di una tabella nuova.
+   ===================================================================== */
+var _wfTab = 'benefit';
+
+/* Le cose per cui il carburante se ne va davvero. Ognuna precompila quello
+   che si sa gia', cosi' registrare un mese arretrato non vuol dire riscrivere
+   quaranta volte "Bovisio" e "Paderno".
+   km: chilometri del giro completo, andata e ritorno, perche' l'auto si va a
+   prendere e si riporta indietro. Zero quando non e' uno spostamento.
+   litri: quanto si mette di solito; sulla consegna sono i quattro litri di
+   autonomia che si lasciano al cliente. */
+var WF_CAUSALI = [
+  { id:'nav_bov_pad', testo:'Navetta Bovisio \u21c4 Paderno', da:'Bovisio Masciago', a:'Paderno Dugnano', km:12, litri:0 },
+  { id:'nav_bov_nov', testo:'Navetta Bovisio \u21c4 Nova Milanese', da:'Bovisio Masciago', a:'Nova Milanese', km:12, litri:0 },
+  { id:'prova',       testo:'Prova su strada', da:'', a:'', km:0, litri:1 },
+  { id:'lavaggio',    testo:'Lavaggio', da:'', a:'', km:0, litri:0 },
+  { id:'officina',    testo:'Carrozzeria / gommista / officina', da:'', a:'', km:0, litri:0 },
+  { id:'consegna',    testo:'Autonomia lasciata al cliente', da:'', a:'', km:0, litri:4 },
+  { id:'altro',       testo:'Altro', da:'', a:'', km:0, litri:0 }
+];
+
+function wfCausale(id){
+  for(var i=0;i<WF_CAUSALI.length;i++) if(WF_CAUSALI[i].id===id) return WF_CAUSALI[i];
+  return null;
+}
+/* Scelta la causale si riempie il resto, ma solo i campi ancora vuoti:
+   chi ha gia' scritto qualcosa a mano non se lo vede sovrascrivere. */
+function wfCausaleScelta(){
+  var c=wfCausale(((document.getElementById('bc-causale')||{}).value)||'');
+  if(!c) return;
+  var set=function(id, val){
+    var el=document.getElementById(id);
+    if(el && !String(el.value||'').trim() && val) el.value=val;
+  };
+  set('bc-da', c.da); set('bc-a', c.a);
+  if(c.km) set('bc-km', c.km);
+  if(c.litri) set('bc-litri', c.litri);
+}
+
+function wfTab(t){ _wfTab = (t==='buoni') ? 'buoni' : 'benefit'; wfRender(); }
+
+function wfSchede(){
+  var b=function(id, testo){
+    var on=(_wfTab===id);
+    return '<button onclick="wfTab(\''+id+'\')" style="padding:9px 16px;border-radius:9px;border:1px solid '
+      +(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')
+      +';font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">'+testo+'</button>';
+  };
+  return '<div style="display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap;">'
+    + b('benefit','\ud83c\udf81 Fringe benefit e trasferte')
+    + b('buoni','\u26fd Buoni carburante')
+    + '</div>';
+}
+
+function wfBuoni(){
+  var t=wfLoad();
+  if(!Array.isArray(t.buoni)) t.buoni=[];
+  return t.buoni;
+}
+function wfBuoniScrivi(arr){
+  var t=wfLoad(); t.buoni=arr||[]; t.updatedAt=Date.now(); wfSave(t);
+}
+
+/* Le auto gia' in magazzino alla data indicata. Stessa regola delle
+   trasferte: si scartano solo quelle caricate DOPO, perche' quel giorno
+   in azienda non c'erano ancora. Le vendute restano, segnate. */
+function wfBuonoAuto(){
+  var sel=document.getElementById('bc-auto'); if(!sel) return;
+  var gg=((document.getElementById('bc-data')||{}).value||'').trim();
+  var scelto=sel.value, lista=[];
+  try{ lista=(typeof mzLoad==='function')?(mzLoad()||[]):[]; }catch(e){ lista=[]; }
+  var buone=lista.filter(function(a){
+    if(!a) return false;
+    if(!a.targa && !a.modello) return false;
+    if(gg && a.dataCarico && String(a.dataCarico)>gg) return false;
+    return true;
+  });
+  buone.sort(function(a,b){ return String(b.dataCarico||'').localeCompare(String(a.dataCarico||'')); });
+  var h='<option value="">\u2014 veicolo \u2014</option>';
+  if(!buone.length){
+    h+='<option value="" disabled>'
+      +(lista.length?'nessuna auto in magazzino a quella data':'magazzino non ancora caricato')+'</option>';
+  }
+  buone.forEach(function(a){
+    var d=((a.marca||'')+' '+(a.modello||'')).trim()||'(veicolo)';
+    var tg=a.targa?(' \u00b7 '+a.targa):'';
+    h+='<option value="'+wfEsc(a.id)+'"'+(String(a.id)===scelto?' selected':'')+'>'+wfEsc(d+tg)+'</option>';
+  });
+  sel.innerHTML=h;
+}
+
+function wfBuoniAggiungi(){
+  var v=function(id){ return String(((document.getElementById(id)||{}).value)||'').trim(); };
+  var data=v('bc-data'), imp=parseFloat(v('bc-imp').replace(',','.'))||0;
+  var km=parseFloat(v('bc-km').replace(',','.'))||0;
+  var da=v('bc-da'), a=v('bc-a'), chi=v('bc-chi'), note=v('bc-note');
+  var litri=parseFloat(v('bc-litri').replace(',','.'))||0;
+  var caus=v('bc-causale');
+  if(!data){ alert('Metti la data del rifornimento.'); return false; }
+  if(!(imp>0)){ alert('Metti l\u2019importo del buono.'); return false; }
+
+  /* Il veicolo si copia, non si collega: fra due anni l'auto sara' venduta
+     e sparita dal magazzino, ma sul buono deve restare scritto su quale
+     macchina e' finito. */
+  var auto=null;
+  try{
+    var idA=v('bc-auto');
+    if(idA && typeof mzById==='function'){
+      var x=mzById(idA);
+      if(x) auto={ id:x.id, targa:(x.targa||''), marca:(x.marca||''), modello:(x.modello||'') };
+    }
+  }catch(e){}
+
+  var arr=wfBuoni();
+  arr.push({ id:'bc'+Date.now(), data:data, importo:imp, km:km, litri:litri,
+             causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
+             creato:Date.now() });
+  wfBuoniScrivi(arr);
+  wfBuoniRender();
+  return true;
+}
+
+function wfBuoniElimina(id){
+  if(!confirm('Cancellare questo buono?')) return;
+  wfBuoniScrivi(wfBuoni().filter(function(x){ return String(x.id)!==String(id); }));
+  wfBuoniRender();
+}
+
+function wfBuoniRender(){
+  var wrap=document.getElementById('view-welfare'); if(!wrap) return;
+  var arr=wfBuoni().slice().sort(function(a,b){ return String(b.data||'').localeCompare(String(a.data||'')); });
+  var tot=arr.reduce(function(s,x){ return s+(Number(x.importo)||0); },0);
+  var totKm=arr.reduce(function(s,x){ return s+(Number(x.km)||0); },0);
+  var totL =arr.reduce(function(s,x){ return s+(Number(x.litri)||0); },0);
+  var inp='padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;';
+
+  var dip=[];
+  try{ dip=(typeof wfPersone==='function')?(wfPersone()||[]):[]; }catch(e){}
+  var opzChi='<option value="">\u2014 chi ha guidato \u2014</option>';
+  dip.forEach(function(d){ opzChi+='<option value="'+wfEsc(d.nome||'')+'">'+wfEsc(d.nome||'')+'</option>'; });
+  var opzCaus='<option value="">\u2014 perch\u00e9 \u2014</option>';
+  WF_CAUSALI.forEach(function(c){ opzCaus+='<option value="'+wfEsc(c.id)+'">'+wfEsc(c.testo)+'</option>'; });
+
+  var h='<div style="max-width:900px;margin:0 auto;">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px;">'
+    +'<h2 style="margin:0;font-size:20px;color:#0f172a;">\ud83c\udf81 Fringe benefit e buoni carburante '+wfAnno()+'</h2></div>'
+    +'<div style="font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:16px;">'
+    +'Buoni comprati dall\u2019azienda e usati per muovere le auto. Ogni buono va agganciato al veicolo '
+    +'e al viaggio: in caso di controllo serve sapere dove \u00e8 finito, non solo quanto si \u00e8 speso.</div>'
+    + wfSchede()
+
+    +'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:14px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:10px;">NUOVO BUONO</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    +'<input id="bc-data" type="date" title="giorno del rifornimento" onchange="wfBuonoAuto()" style="flex:1 1 140px;'+inp+'">'
+    +'<select id="bc-auto" title="veicolo rifornito" onfocus="wfBuonoAuto()" onmousedown="wfBuonoAuto()" style="flex:2 1 220px;'+inp+'"><option value="">\u2014 veicolo \u2014</option></select>'
+    +'<input id="bc-imp" type="number" step="0.01" min="0" placeholder="importo \u20ac" style="flex:0 1 110px;'+inp+'">'
+    +'<input id="bc-litri" type="number" step="0.1" min="0" placeholder="litri" style="flex:0 1 90px;'+inp+'">'
+    +'<input id="bc-km" type="number" step="1" min="0" placeholder="km" style="flex:0 1 90px;'+inp+'">'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
+    +'<select id="bc-causale" onchange="wfCausaleScelta()" style="flex:1 1 220px;'+inp+'">'+opzCaus+'</select>'
+    +'<input id="bc-da" type="text" placeholder="partenza" style="flex:1 1 160px;'+inp+'">'
+    +'<input id="bc-a" type="text" placeholder="destinazione" style="flex:1 1 160px;'+inp+'">'
+    +'<select id="bc-chi" style="flex:1 1 150px;'+inp+'">'+opzChi+'</select>'
+    +'<input id="bc-note" type="text" placeholder="note (es. carrozzeria)" style="flex:1 1 150px;'+inp+'">'
+    +'<button onclick="wfBuoniAggiungi()" style="flex:0 0 auto;padding:9px 16px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Aggiungi</button>'
+    +'</div></div>';
+
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;">BUONI REGISTRATI ('+arr.length+')</div>'
+    +'<div style="font-size:13px;color:#0f172a;font-weight:800;">'+wfEuro(tot)+' \u00b7 <span style="color:#64748b;font-weight:700;">'
+    +totKm.toLocaleString('it-IT')+' km \u00b7 '+String(Math.round(totL*10)/10).replace('.',',')+' l</span></div></div>';
+
+  if(!arr.length){
+    h+='<div style="text-align:center;color:#94a3b8;font-size:13px;padding:22px 10px;">Nessun buono registrato.</div>';
+  } else {
+    arr.forEach(function(x){
+      var auto = x.auto ? (((x.auto.marca||'')+' '+(x.auto.modello||'')).trim()+(x.auto.targa?(' \u00b7 '+x.auto.targa):'')) : '';
+      var trag = [x.partenza, x.destinazione].filter(Boolean).join(' \u2192 ');
+      var cs = wfCausale(x.causale);
+      if(cs && cs.id!=='altro') trag = cs.testo + (trag?(' \u00b7 '+trag):'');
+      h+='<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid #f1f5f9;">'
+        +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-size:13.5px;font-weight:800;color:#0f172a;">'+wfEsc(wfDataIt(x.data))
+        + (auto?(' \u00b7 <span style="color:#1a4fa0;">'+wfEsc(auto)+'</span>'):'')+'</div>'
+        + (trag?('<div style="font-size:12.5px;color:#475569;margin-top:2px;">'+wfEsc(trag)+'</div>'):'')
+        + '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'
+        + [ (x.km?(Number(x.km).toLocaleString('it-IT')+' km'):''),
+            (x.litri?(String(x.litri).replace('.',',')+' l'):'') ].filter(Boolean).join(' \u00b7 ')
+        + (x.chi?(' \u00b7 '+wfEsc(x.chi)):'')
+        + (x.note?(' \u00b7 '+wfEsc(x.note)):'')+'</div></div>'
+        +'<div style="flex:0 0 auto;text-align:right;">'
+        +'<div style="font-size:14px;font-weight:800;color:#0f172a;">'+wfEuro(x.importo)+'</div>'
+        +'<button onclick="wfBuoniElimina(\''+wfEsc(x.id)+'\')" style="margin-top:3px;background:none;border:none;color:#dc2626;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;">\u2715 elimina</button>'
+        +'</div></div>';
+    });
+  }
+  h+='</div></div>';
+  wrap.innerHTML=h;
+}
+
 function wfAutoDelGiorno(k){
   var sel=document.getElementById('wf_tauto_'+k); if(!sel) return;
   var gg=((document.getElementById('wf_tdata_'+k)||{}).value||'').trim();
@@ -12514,6 +12732,15 @@ function wfAutoDelGiorno(k){
   buone.sort(function(a,b){ return String(b.dataCarico||'').localeCompare(String(a.dataCarico||'')); });
 
   var h='<option value="">\u2014 veicolo (facoltativo) \u2014</option>';
+  /* Un menu vuoto non dice niente: senza questa riga sembrava che il
+     programma non funzionasse, mentre magari il magazzino non era ancora
+     stato caricato o la data scelta e' precedente a tutte le auto. */
+  if(!buone.length){
+    h+='<option value="" disabled>'
+      + (lista.length ? 'nessuna auto gi\u00e0 in magazzino a quella data'
+                      : 'magazzino non ancora caricato, riprova fra un istante')
+      + '</option>';
+  }
   buone.forEach(function(a){
     var d=((a.marca||'')+' '+(a.modello||'')).trim() || '(veicolo)';
     var tg=a.targa?(' \u00b7 '+a.targa):'';
@@ -20552,12 +20779,18 @@ function mzRender(){
 /* ===================== RICERCA GLOBALE VEICOLI ===================== */
 /* ---- libretti dei veicoli: indice per la barra di ricerca ---- */
 var _gsLib = null;   /* null = non ancora caricato, {} = caricato */
+/* Le categorie che valgono come libretto del veicolo. "libretto_estero" e'
+   quella che si sceglie caricando dalla scheda di un'auto estera, ed era
+   rimasta fuori: il documento veniva archiviato bene ma l'indice non lo
+   trovava, quindi il tastino non compariva mai proprio sulle auto per cui
+   serve di piu'. */
+var LIB_CATS = ['libretto','libretto_nuovo','libretto_estero'];
 function gsLibCarica(cb){
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb){ if(cb)cb(); return; }
   try{
     sb.from('documenti').select('entita_id,categoria,nome_file,storage_path,created_at')
-      .eq('entita_tipo','auto').in('categoria',['libretto','libretto_nuovo'])
+      .eq('entita_tipo','auto').in('categoria',LIB_CATS)
       .order('created_at',{ascending:false})
       .then(function(r){
         if(!r || r.error){ if(cb)cb(); return; }
@@ -20581,7 +20814,7 @@ function gsLibApri(ev, autoId){
   if(!sb){ alert('Archivio non disponibile: ricarica la pagina.'); return; }
   sb.from('documenti').select('storage_path,nome_file,created_at')
     .eq('entita_tipo','auto').eq('entita_id',String(autoId))
-    .in('categoria',['libretto','libretto_nuovo'])
+    .in('categoria',LIB_CATS)
     .order('created_at',{ascending:false})
     .then(function(r){
       var d=(r && r.data && r.data[0]) || null;
@@ -21452,7 +21685,7 @@ function mzForm(id){
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
   mzProvVenditore(_mzProvVend);
-  try{ docListaRender('auto', _mzId, 'mzdoc'); }catch(e){}
+  try{ docListaRender('auto', _mzId, 'mzdoc', docSoloVendita()); }catch(e){}
   try{ mzDocPratiche(_mzId, 'mz-doc-pratiche'); }catch(e){}
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
@@ -26883,6 +27116,30 @@ function docVinDaTesto(testo, targa){
   }catch(e){ return null; }
 }
 /* Categorie che quasi sempre riportano il telaio. */
+/* =====================================================================
+   COSA VEDE CHI VENDE FRA I DOCUMENTI DEL VEICOLO
+   ---------------------------------------------------------------------
+   Sulla scheda del veicolo finisce tutto: fattura di acquisto, COC,
+   minivoltura, corrispondenza col fornitore. Sono i conti dell'azienda,
+   non roba da sala vendita: chi tratta col cliente non deve avere sotto
+   gli occhi a quanto l'auto e' stata pagata.
+   Restano visibili solo i documenti che nascono DOPO la vendita e che
+   servono davvero a chi consegna: fattura di vendita, F24 (l'inversione
+   IVA sulle estere), libretto e libretto estero.
+   Vale per i ruoli staff e dipendente. Amministratore e contabilita'
+   continuano a vedere tutto.
+   ===================================================================== */
+var DOC_CAT_VENDITORE=['fattura_vendita','f24','libretto','libretto_nuovo','libretto_estero'];
+
+function docSoloVendita(){
+  try{
+    if(typeof eaIsContabilita==='function' && eaIsContabilita()) return null;
+    var r=(typeof getCurrentRole==='function')?getCurrentRole():'';
+    if(r==='admin' || r==='contabilita') return null;   /* vedono tutto */
+    return DOC_CAT_VENDITORE;
+  }catch(e){ return DOC_CAT_VENDITORE; }   /* nel dubbio si restringe */
+}
+
 var DOC_CAT_TELAIO=['minivoltura','libretto','libretto_nuovo','libretto_permuta','coc','fattura_acquisto','fattura_minivoltura'];
 /* Un telaio valido: 17 caratteri, senza I O Q, con lettere e cifre insieme. */
 function docTelaioValido(v){
@@ -27004,7 +27261,7 @@ function docCarica(tipo, id, pfx){
       }catch(e){}
       /* se e' un libretto, l'indice della barra di ricerca va rinfrescato */
       try{ if(tipo==='auto' && /libretto/.test(cat) && typeof gsLibCarica==='function') gsLibCarica(); }catch(e){}
-      docListaRender(tipo,id,pfx); return;
+      docListaRender(tipo,id,pfx, (tipo==='auto'&&typeof docSoloVendita==='function')?docSoloVendita():null); return;
     }
     var file=files[i++];
     var safe=(file.name||'file').replace(/[^\w.\-]/g,'_');
@@ -27146,7 +27403,7 @@ function docElimina(docId, path, tipo, id, pfx){
   if(!confirm('Eliminare questo documento dall\'archivio?')) return;
   var sb=sbClient(); if(!sb) return;
   sb.storage.from('documenti').remove([path]).then(function(){
-    sb.from('documenti').delete().eq('id',docId).then(function(){ docListaRender(tipo,id,pfx); });
+    sb.from('documenti').delete().eq('id',docId).then(function(){ docListaRender(tipo,id,pfx, (tipo==='auto'&&typeof docSoloVendita==='function')?docSoloVendita():null); });
   });
 }
 
