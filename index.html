@@ -12328,31 +12328,13 @@ function wfRender(){
       +' \u00b7 esente <b style="color:#16a34a;">'+wfEuro(_trEsente)+'</b>'
       +(_trImpon>0?(' \u00b7 imponibile <b style="color:#dc2626;">'+wfEuro(_trImpon)+'</b>'):'')
       +'</div>'
-      +'<button onclick="wfPrecompilaAnno(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:6px 11px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Registra i mesi arretrati</button>'
       +'</div>';
 
-    /* ===== IL MESE IN CORSO E' L'UNICO APERTO =====
-       Come nelle provvigioni: i mesi passati si consultano nel riepilogo qui
-       sotto, e si scrive solo su quello che si sta vivendo. Quando cambia il
-       mese, il riquadro passa da solo al nuovo: non c'e' niente da chiudere
-       a mano.
-       I mesi arretrati si sistemano con "Registra i mesi arretrati". */
-    var _mc=wfMeseCorrente();
-    var _giaMese=wfTrasferteDelMese(rec, _mc);
-    var _ggMese=_giaMese.reduce(function(n,t){ return n+(Number(t.giorni)||0); },0);
-
-    h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;margin-top:8px;">'
-      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:5px;">'
-      +'Mese in corso \u2014 '+WF_MESI[_mc]+' '+wfAnno()
-      +(_ggMese?('<span style="color:#16a34a;"> \u00b7 gi\u00e0 registrate '+_ggMese+'</span>'):'')
-      +'</div>'
-      +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
-      +'<input type="hidden" id="wf_tm_'+wfEsc(k)+'" value="'+_mc+'">'
-      +'<input id="wf_tn_'+wfEsc(k)+'" type="number" min="1" placeholder="quante" style="flex:1 1 80px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
-      +'<input id="wf_tmi_'+wfEsc(k)+'" type="number" step="0.01" placeholder="\u20ac/giorno" style="flex:1 1 90px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
-      +'<input id="wf_tdove_'+wfEsc(k)+'" type="text" placeholder="dove (es. carrozzeria Novate)" style="flex:2 1 170px;padding:7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:12.5px;">'
-      +'<button onclick="wfMeseTrasferte(\''+wfEsc(k)+'\')" style="flex:0 0 auto;padding:7px 13px;border-radius:6px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">Registra</button>'
-      +'</div></div>';
+    /* Qui c'era un riquadro per registrare in blocco "quante trasferte
+       questo mese". Serviva a recuperare gli arretrati, ma produceva
+       trasferte inventate: una data finta, nessun luogo, nessun veicolo.
+       Le trasferte si segnano una per una, qui sotto, con la loro data
+       e l'auto che si e' portata. */
 
     /* ---- riepilogo per mese ---- */
     if(_tr.length){
@@ -12404,6 +12386,12 @@ function wfRender(){
             })()
 
           +(t.note?(' \u00b7 '+wfEsc(t.note)):'')
+          +(function(){
+              if(!t.auto) return '';
+              var d=((t.auto.marca||'')+' '+(t.auto.modello||'')).trim();
+              var tg=t.auto.targa?(' '+t.auto.targa):'';
+              return '<div style="color:#1a4fa0;font-size:11.5px;font-weight:700;">\ud83d\ude97 '+wfEsc(d+tg)+'</div>';
+            })()
           +'<div style="color:#94a3b8;font-size:11.5px;">'+wfEuro(t.indennita)+'/giorno \u00b7 soglia esente '+wfEuro(lim)
           +(ecc>0?(' \u2192 imponibile '+wfEuro(ecc)):'')+'</div></div>'
           +'<button onclick="wfTogliTrasferta(\''+wfEsc(k)+'\','+i+')" style="border:none;background:none;color:#94a3b8;font-size:14px;cursor:pointer;padding:2px 4px;">\u2715</button>'
@@ -12419,7 +12407,12 @@ function wfRender(){
        Restano facoltative: una trasferta di piu' giorni non ha un'ora di
        uscita sola, e non ha senso pretenderla. */
     h+='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
-      +'<input id="wf_tdata_'+wfEsc(k)+'" type="date" title="giorno della trasferta" style="flex:1 1 140px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wf_tdata_'+wfEsc(k)+'" type="date" title="giorno della trasferta" onchange="wfAutoDelGiorno(\''+wfEsc(k)+'\')" style="flex:1 1 140px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      /* Il veicolo che si e' portato: si va in carrozzeria o si sposta
+         un'auto per un appuntamento, quindi c'e' quasi sempre. L'elenco
+         si restringe da solo alle auto che a quella data erano gia' in
+         magazzino: senza data resta tutto disponibile. */
+      +'<select id="wf_tauto_'+wfEsc(k)+'" title="veicolo portato" style="flex:2 1 210px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><option value="">\u2014 veicolo (facoltativo) \u2014</option></select>'
       +'<input id="wf_tout_'+wfEsc(k)+'" type="time" title="ora di uscita" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_tin_'+wfEsc(k)+'" type="time" title="ora di rientro" style="flex:0 1 100px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
       +'<input id="wf_td_'+wfEsc(k)+'" type="text" placeholder="oppure a parole (es. 12-14 marzo)" style="flex:1 1 150px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
@@ -12440,6 +12433,15 @@ function wfRender(){
 
   h+='</div>';
   wrap.innerHTML=h;
+  /* Gli elenchi dei veicoli si riempiono dopo che il riquadro esiste:
+     prima non ci sarebbe niente da riempire. Senza data selezionata
+     mostrano tutto il magazzino. */
+  try{
+    var _sel=wrap.querySelectorAll('select[id^="wf_tauto_"]');
+    for(var _i=0;_i<_sel.length;_i++){
+      wfAutoDelGiorno(_sel[_i].id.replace('wf_tauto_',''));
+    }
+  }catch(e){}
 }
 
 function wfFigli(k, on){
@@ -12480,6 +12482,48 @@ function wfAggiungi(k){
   if(typeof tcToastNew==='function') tcToastNew('Registrato \u00b7 restano '+wfEuro(soglia-wfErogato(rec)), true);
 }
 
+/* =====================================================================
+   I VEICOLI DISPONIBILI A UNA CERTA DATA
+   ---------------------------------------------------------------------
+   Le trasferte si registrano a posteriori, spesso a settimane di distanza:
+   a quel punto l'auto che si era portata in carrozzeria puo' essere gia'
+   stata venduta e non comparire piu' fra le disponibili. Per questo il
+   filtro non guarda cosa c'e' in magazzino adesso, ma cosa c'era il giorno
+   della trasferta: si scartano solo le auto caricate DOPO quella data,
+   perche' quelle in azienda ancora non c'erano.
+   Le vendute restano in elenco, segnate come tali.
+   ===================================================================== */
+function wfAutoDelGiorno(k){
+  var sel=document.getElementById('wf_tauto_'+k); if(!sel) return;
+  var gg=((document.getElementById('wf_tdata_'+k)||{}).value||'').trim();
+  var scelto=sel.value;
+  var lista=[];
+  try{ lista=(typeof mzLoad==='function')?(mzLoad()||[]):[]; }catch(e){ lista=[]; }
+
+  var buone=lista.filter(function(a){
+    if(!a) return false;
+    if(!a.targa && !a.modello) return false;
+    if(gg && a.dataCarico){
+      /* Le date sono tutte in forma anno-mese-giorno, quindi il confronto
+         fra testi e' gia' quello giusto e non servono conversioni. */
+      if(String(a.dataCarico) > gg) return false;
+    }
+    return true;
+  });
+
+  buone.sort(function(a,b){ return String(b.dataCarico||'').localeCompare(String(a.dataCarico||'')); });
+
+  var h='<option value="">\u2014 veicolo (facoltativo) \u2014</option>';
+  buone.forEach(function(a){
+    var d=((a.marca||'')+' '+(a.modello||'')).trim() || '(veicolo)';
+    var tg=a.targa?(' \u00b7 '+a.targa):'';
+    var st=(a.stato==='venduta')?' \u00b7 venduta':'';
+    h+='<option value="'+wfEsc(a.id)+'"'+(String(a.id)===scelto?' selected':'')+'>'
+      + wfEsc(d+tg+st)+'</option>';
+  });
+  sel.innerHTML=h;
+}
+
 function wfAggiungiTrasferta(k){
   var g=parseFloat((document.getElementById('wf_tg_'+k)||{}).value||'0');
   var i=parseFloat((document.getElementById('wf_ti_'+k)||{}).value||'0');
@@ -12512,10 +12556,22 @@ function wfAggiungiTrasferta(k){
   var _et = _gg ? wfDataIt(_gg) : (_libero || (new Date()).toLocaleDateString('it-IT'));
   if(_out || _in) _et += ' \u00b7 ' + (_out||'?') + '\u2013' + (_in||'?');
 
+  /* Il veicolo si salva copiato, non per riferimento: fra due anni l'auto
+     sara' venduta e sparita dal magazzino, ma sulla trasferta deve restare
+     scritto cosa si era portato. */
+  var _auto=null;
+  try{
+    var _sel=document.getElementById('wf_tauto_'+k);
+    if(_sel && _sel.value){
+      var _a=(typeof mzById==='function')?mzById(_sel.value):null;
+      if(_a) _auto={ id:_a.id, targa:(_a.targa||''), marca:(_a.marca||''), modello:(_a.modello||'') };
+    }
+  }catch(e){}
+
   var rec=wfDati(k);
   rec.trasferte=rec.trasferte||[];
   rec.trasferte.push({
-    data:_et, giorno:_gg, uscita:_out, rientro:_in,
+    data:_et, giorno:_gg, uscita:_out, rientro:_in, auto:_auto,
     mese:(_gg?(parseInt(_gg.slice(5,7),10)-1):wfMeseCorrente()),
     giorni:g, indennita:Math.round(i*100)/100, estero:est, coperto:cop, ts:Date.now()
   });
@@ -28141,6 +28197,38 @@ function cvHaFinanziamento(cv){
 }
 
 /* Il pulsante sulla scheda vendita */
+/* =====================================================================
+   QUALI CONTRATTI ENTRANO NELLA RICERCA DELLE FIRME
+   ---------------------------------------------------------------------
+   Non basta "contratto con finanziamento senza firma registrata": messa
+   cosi' la lista comprendeva 750 pratiche, quasi tutte auto consegnate
+   anni fa su cui la firma non era mai stata segnata. Ogni mail della
+   banca veniva confrontata con 750 telai e 750 targhe, con il rischio
+   di agganciare la pratica sbagliata.
+
+   La firma serve a sbloccare una vendita ferma. Quindi si guardano solo
+   le vendite ancora in corso: in attesa di pagamento, di finanziamento
+   o di immatricolazione. Da "Da consegnare" in poi il finanziamento e'
+   gia' andato a buon fine e la firma non serve piu' a niente.
+
+   Questa funzione e' l'unico posto dove la regola e' scritta: la usano
+   la diagnosi, la ricerca automatica e quella manuale. Prima la stessa
+   condizione era ripetuta in quattro punti, e cambiarne uno solo non
+   avrebbe avuto alcun effetto visibile.
+   ===================================================================== */
+var CV_FIRMA_STATI = ['in_attesa_pagamento','in_attesa_delibera','in_attesa_firma','in_attesa_immatricolazione'];
+
+function cvFirmaInAttesa(cv){
+  try{
+    if(!cv || !cv.isContratto) return false;
+    if(cv.annullato) return false;
+    if(typeof cvHaFinanziamento!=='function' || !cvHaFinanziamento(cv)) return false;
+    if(cv.firmaDigitale && cv.firmaDigitale.confermata) return false;
+    var st = cv.statoVendita || 'in_attesa_pagamento';
+    return CV_FIRMA_STATI.indexOf(st) >= 0;
+  }catch(e){ return false; }
+}
+
 function cvFirmaBottone(cv){
   try{
     if(!cv || !cv.isContratto) return '';
@@ -28395,10 +28483,7 @@ async function cvFirmaDiagnosi(){
     /* 2 - contratti in attesa di firma */
     var attesa=[];
     cvLoad().forEach(function(cv){
-      if(!cv.isContratto) return;
-      var fin=(typeof cvHaFinanziamento==='function') && cvHaFinanziamento(cv);
-      var conf=!!(cv.firmaDigitale && cv.firmaDigitale.confermata);
-      if(!fin || conf) return;
+      if(!cvFirmaInAttesa(cv)) return;
       var a=cv.autoSnapshot||{};
       attesa.push({ id:cv.id,
         chi:(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(senza nome)',
@@ -28406,7 +28491,7 @@ async function cvFirmaDiagnosi(){
     });
     if(!attesa.length){
       ko('Nessun contratto in attesa di firma.');
-      info('Il contratto entra in questa ricerca solo se: \u00e8 un CONTRATTO (non un preventivo), ha un pagamento a finanziamento, e la firma non risulta gi\u00e0 confermata.');
+      info('Il contratto entra in questa ricerca solo se: \u00e8 un CONTRATTO (non un preventivo), ha un pagamento a finanziamento, la firma non risulta gi\u00e0 confermata, e la vendita \u00e8 ancora aperta (in attesa di pagamento, finanziamento o immatricolazione). Le consegnate restano fuori.');
       mostra(); return;
     }
     ok(attesa.length+' contratti in attesa di firma:');
@@ -28436,8 +28521,7 @@ async function cvFirmaDiagnosi(){
     /* 4 - dentro le mail */
     var lista=[];
     cvLoad().forEach(function(cv){
-      if(!cv.isContratto || !cvHaFinanziamento(cv)) return;
-      if(cv.firmaDigitale && cv.firmaDigitale.confermata) return;
+      if(!cvFirmaInAttesa(cv)) return;
       var a=cv.autoSnapshot||{};
       var tel=cvFirmaNorm(a.telaio||''), tg=cvFirmaNorm(cv.nuovaTarga||a.targa||'');
       if(tel.length>=11) lista.push({id:cv.id, tel:tel, come:'telaio'});
@@ -28507,9 +28591,7 @@ async function cvFirmaCercaGmail(){
     if(!cvFirmaCasellaAbilitata()) return 0;
 
     /* C'e' qualcosa da cercare? Se no si esce senza nemmeno svegliare Google. */
-    var _daFirmare = cvLoad().filter(function(cv){
-      return cv.isContratto && cvHaFinanziamento(cv) && !(cv.firmaDigitale && cv.firmaDigitale.confermata);
-    }).length;
+    var _daFirmare = cvLoad().filter(cvFirmaInAttesa).length;
     if(!_daFirmare) return 0;
 
     /* Il token dura un'ora: se e' scaduto si rinnova da solo, senza popup.
@@ -28537,8 +28619,7 @@ async function cvFirmaCercaGmail(){
        caratteri alfanumerici non produce falsi positivi. */
     var telai = [];
     cvLoad().forEach(function(cv){
-      if(!cv.isContratto || !cvHaFinanziamento(cv)) return;
-      if(cv.firmaDigitale && cv.firmaDigitale.confermata) return;
+      if(!cvFirmaInAttesa(cv)) return;
       var a = cv.autoSnapshot || {};
       var tel = cvFirmaNorm(a.telaio||'');
       var tg  = cvFirmaNorm(cv.nuovaTarga || a.targa || '');
@@ -33640,6 +33721,30 @@ function cvVendCard(cv){
   }
   firmaTag=firmaTag+delTag;
   var daConf=pagsAll.filter(function(p){return !p.confermato;}).length;
+
+  /* =====================================================================
+     LO STATO DIVENTA VERDE QUANDO NON MANCA PIU' NIENTE
+     ---------------------------------------------------------------------
+     Le etichette piccole (firma, delibera, pagamenti da confermare) dicono
+     cosa manca; quella grande dice a che punto siamo. Finora la grande
+     restava sempre dello stesso colore, anche quando tutte le altre erano
+     verdi: bisognava leggerle una per una per capire se la pratica era a
+     posto o ferma. Ora, se non manca nulla, si accende in verde anche lei.
+     Cosi' scorrendo l'elenco si vede subito chi aspetta qualcosa.
+     Nota: verde non vuol dire consegnata, vuol dire che da parte nostra
+     e' tutto fatto e la pratica puo' andare avanti. */
+  (function(){
+    try{
+      if(st==='consegnato') return;                 /* gia' verde di suo */
+      var _fin=(typeof cvHaFinanziamento==='function') && cvHaFinanziamento(cv);
+      var _okFirma = !_fin || !!(cv.firmaDigitale && cv.firmaDigitale.confermata);
+      var _okDel   = !_fin || !!(cv.finDelibera && cv.finDelibera.confermata);
+      var _okPag   = (daConf===0);
+      if(_okFirma && _okDel && _okPag){
+        sb=['#dcfce7','#166534',sb[2]];             /* stesso testo, verde */
+      }
+    }catch(e){}
+  })();
   /* il rimando a "Vedi dettaglio pagamenti" non serve piu': le righe
      con la conferma stanno adesso direttamente sulla scheda */
   /* Riquadro arancione quando c'e' una richiesta aperta: scorrendo l'elenco si
