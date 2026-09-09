@@ -12521,7 +12521,9 @@ var _wfTab = 'benefit';
    autonomia che si lasciano al cliente. */
 var WF_CAUSALI = [
   { id:'nav_bov_pad', testo:'Navetta Bovisio \u21c4 Paderno', da:'Bovisio Masciago', a:'Paderno Dugnano', km:12, litri:0 },
+  { id:'nav_pad_bov', testo:'Navetta Paderno \u21c4 Bovisio', da:'Paderno Dugnano', a:'Bovisio Masciago', km:12, litri:0 },
   { id:'nav_bov_nov', testo:'Navetta Bovisio \u21c4 Nova Milanese', da:'Bovisio Masciago', a:'Nova Milanese', km:12, litri:0 },
+  { id:'nav_nov_bov', testo:'Navetta Nova Milanese \u21c4 Bovisio', da:'Nova Milanese', a:'Bovisio Masciago', km:12, litri:0 },
   { id:'prova',       testo:'Prova su strada', da:'', a:'', km:0, litri:1 },
   { id:'lavaggio',    testo:'Lavaggio', da:'', a:'', km:0, litri:0 },
   { id:'officina',    testo:'Carrozzeria / gommista / officina', da:'', a:'', km:0, litri:0 },
@@ -12694,10 +12696,35 @@ function wfBuoniScrivi(arr){
 /* Le auto gia' in magazzino alla data indicata. Stessa regola delle
    trasferte: si scartano solo quelle caricate DOPO, perche' quel giorno
    in azienda non c'erano ancora. Le vendute restano, segnate. */
+/* Con settanta auto in magazzino un menu a tendina non si scorre: si
+   scrive. Il campo e' una casella di testo con i suggerimenti del browser
+   (datalist): si battono tre o quattro lettere della targa o del modello
+   e compaiono solo le auto che corrispondono. L'identificativo vero
+   dell'auto scelta finisce nel campo nascosto bc-auto, che e' quello che
+   il resto del codice legge. */
+var _wfAutoMappa = {};   /* testo mostrato -> id del veicolo */
+
+function wfBuonoAutoScelta(){
+  var txt=document.getElementById('bc-auto-txt'), hid=document.getElementById('bc-auto');
+  if(!txt || !hid) return;
+  var t=String(txt.value||'').trim();
+  var id=_wfAutoMappa[t]||'';
+  if(!id){
+    /* si prova anche col solo inizio, per chi scrive la targa e non
+       seleziona il suggerimento */
+    var tl=t.toLowerCase(), trovati=[];
+    for(var k in _wfAutoMappa){ if(tl && k.toLowerCase().indexOf(tl)>=0) trovati.push(_wfAutoMappa[k]); }
+    if(trovati.length===1) id=trovati[0];
+  }
+  var cambiato=(hid.value!==id);
+  hid.value=id;
+  if(cambiato && id) wfBuonoRicalcola('auto');
+}
+
 function wfBuonoAuto(){
-  var sel=document.getElementById('bc-auto'); if(!sel) return;
+  var sel=document.getElementById('bc-auto-list'); if(!sel) return;
   var gg=((document.getElementById('bc-data')||{}).value||'').trim();
-  var scelto=sel.value, lista=[];
+  var scelto='', lista=[];
   try{ lista=(typeof mzLoad==='function')?(mzLoad()||[]):[]; }catch(e){ lista=[]; }
   var buone=lista.filter(function(a){
     if(!a) return false;
@@ -12706,17 +12733,18 @@ function wfBuonoAuto(){
     return true;
   });
   buone.sort(function(a,b){ return String(b.dataCarico||'').localeCompare(String(a.dataCarico||'')); });
-  var h='<option value="">\u2014 veicolo \u2014</option>';
-  if(!buone.length){
-    h+='<option value="" disabled>'
-      +(lista.length?'nessuna auto in magazzino a quella data':'magazzino non ancora caricato')+'</option>';
-  }
+  var h='';
+  _wfAutoMappa={};
   buone.forEach(function(a){
     var d=((a.marca||'')+' '+(a.modello||'')).trim()||'(veicolo)';
-    var tg=a.targa?(' \u00b7 '+a.targa):'';
-    h+='<option value="'+wfEsc(a.id)+'"'+(String(a.id)===scelto?' selected':'')+'>'+wfEsc(d+tg)+'</option>';
+    var testo=(a.targa?(a.targa+' \u00b7 '):'')+d;   /* la targa davanti: e' quella che si batte */
+    _wfAutoMappa[testo]=String(a.id);
+    h+='<option value="'+wfEsc(testo)+'"></option>';
   });
   sel.innerHTML=h;
+  var txt=document.getElementById('bc-auto-txt');
+  if(txt) txt.placeholder = buone.length ? 'targa o modello, bastano 3 lettere'
+    : (lista.length ? 'nessuna auto in magazzino a quella data' : 'magazzino non ancora caricato');
 }
 
 function wfBuoniAggiungi(){
@@ -12791,7 +12819,9 @@ function wfBuoniRender(){
     +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:10px;">NUOVO BUONO</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
     +'<input id="bc-data" type="date" title="giorno del rifornimento" onchange="wfBuonoAuto();wfBuonoRicalcola(\'data\')" style="flex:1 1 140px;'+inp+'">'
-    +'<select id="bc-auto" title="veicolo rifornito" onfocus="wfBuonoAuto()" onmousedown="wfBuonoAuto()" onchange="wfBuonoRicalcola(\'auto\')" style="flex:2 1 220px;'+inp+'"><option value="">\u2014 veicolo \u2014</option></select>'
+    +'<input id="bc-auto-txt" list="bc-auto-list" autocomplete="off" placeholder="targa o modello, bastano 3 lettere" title="veicolo rifornito" onfocus="wfBuonoAuto()" oninput="wfBuonoAutoScelta()" onchange="wfBuonoAutoScelta()" style="flex:2 1 220px;'+inp+'">'
+    +'<datalist id="bc-auto-list"></datalist>'
+    +'<input id="bc-auto" type="hidden" value="">'
     +'<select id="bc-carb" title="carburante" onchange="wfBuonoRicalcola(\'carb\')" style="flex:0 1 110px;'+inp+'">'
     +'<option value="">\u2014 carburante \u2014</option><option value="benzina">Benzina</option><option value="gasolio">Diesel</option><option value="gpl">GPL</option><option value="metano">Metano</option></select>'
     +'</div>'
@@ -16894,8 +16924,10 @@ document.addEventListener('DOMContentLoaded',function(){
       var parte=ccPromQuando(c), appunt=ccApptQuando(c);
       if(parte===null || appunt===null) return;
       if(now<parte || now>appunt) return;                    // troppo presto, oppure gia' passato
+      if(ccPromGiaMandato(c)) return;                        // gia' avvisato, da qui o da un altro dispositivo
       /* prima si segna, poi si spedisce: se qualcosa va storto e' meglio
          un promemoria mancato che dieci mail allo stesso cliente */
+      ccPromSegna(c);
       c.promClienteAt=now; c.updatedAt=Date.now(); cambiato=true;
       try{ if(typeof ccSupaUpsert==='function') ccSupaUpsert(c); }catch(e){}
       try{ eaInviaMessaggio({ to:em, subject:'Promemoria appuntamento \u2014 Europa Auto',
@@ -16904,6 +16936,59 @@ document.addEventListener('DOMContentLoaded',function(){
     });
     if(cambiato) ccSave(list);
   }
+
+  /* =====================================================================
+     QUALI PROMEMORIA SONO GIA' PARTITI
+     ---------------------------------------------------------------------
+     Il segno stava sul record dell'appuntamento (avvisato, promClienteAt) e
+     viaggiava con lui: bastava che un secondo dispositivo, con la copia
+     vecchia in memoria, la risincronizzasse su Supabase per cancellare il
+     segno. Il primo ricaricava, non lo trovava piu' e rispediva. Da qui le
+     quattro mail allo stesso cliente a un'ora di distanza.
+     Questo registro sta a parte, e' un elenco di appuntamenti gia' avvisati
+     e non viene mai sovrascritto dalla sincronizzazione degli appuntamenti:
+     si aggiunge soltanto. Un promemoria mancato e' un fastidio, quattro
+     mail uguali al cliente sono una figuraccia.
+     ===================================================================== */
+  var CC_PROM_KEY='ea_prom_inviati_v1';
+
+  function ccPromInviati(){
+    try{ return JSON.parse(localStorage.getItem(CC_PROM_KEY)||'{}')||{}; }catch(e){ return {}; }
+  }
+  /* La chiave tiene dentro data e ora: se l'appuntamento viene spostato,
+     il promemoria nuovo deve poter partire. */
+  function ccPromChiave(c){
+    return String((c&&c.id)||'')+'|'+String((c&&c.data)||'')+'|'+String((c&&c.ora)||'');
+  }
+  function ccPromGiaMandato(c){
+    var k=ccPromChiave(c);
+    if(ccPromInviati()[k]) return true;
+    return !!(c && c.promClienteAt);      /* vale anche il segno vecchio */
+  }
+  function ccPromSegna(c){
+    try{
+      var o=ccPromInviati(); o[ccPromChiave(c)]=Date.now();
+      /* si tiene solo l'ultimo mese: oltre non serve e occupa spazio */
+      var limite=Date.now()-35*86400000;
+      Object.keys(o).forEach(function(k){ if(o[k]<limite) delete o[k]; });
+      localStorage.setItem(CC_PROM_KEY, JSON.stringify(o));
+      if(typeof cfgSupaSave==='function') cfgSupaSave('prom_inviati', o);
+    }catch(e){}
+  }
+  /* Il registro arriva anche dagli altri dispositivi: si fondono, non si
+     sostituiscono, altrimenti si tornerebbe al problema di prima. */
+  try{
+    if(typeof cfgSupaLoad==='function'){
+      cfgSupaLoad('prom_inviati', function(body){
+        if(!body || typeof body!=='object') return;
+        try{
+          var o=ccPromInviati();
+          Object.keys(body).forEach(function(k){ if(!o[k] || body[k]<o[k]) o[k]=body[k]; });
+          localStorage.setItem(CC_PROM_KEY, JSON.stringify(o));
+        }catch(e){}
+      }, ccPromInviati);
+    }
+  }catch(e){}
 
   function ccControllaPromemoria(){
     var now=Date.now(), list=ccLoad(), cambiato=false;
@@ -16914,7 +16999,7 @@ document.addEventListener('DOMContentLoaded',function(){
            prima, anche a gestionale chiuso, e segna promClienteAt sulla riga.
            Qui si avvisa comunque a video chi sta lavorando, ma la mail non
            parte una seconda volta: al cliente ne arriverebbero due. */
-        var _giaMandata = !!c.promClienteAt;
+        var _giaMandata = ccPromGiaMandato(c);
         if (!isNaN(t) && t<=now){ ccAvvisa(c); if(c.email && !_giaMandata && typeof eaInviaMessaggio==='function'){
           /* Ultima email uscita da Apps Script: ora passa da Resend. */
           try{ eaInviaMessaggio({
@@ -16935,6 +17020,7 @@ document.addEventListener('DOMContentLoaded',function(){
             });
             /* Segnata anche qui, cosi' la funzione su Supabase non la rimanda
                se dovesse girare dopo. Il segno vale in entrambe le direzioni. */
+            ccPromSegna(c);
             c.promClienteAt = Date.now(); cambiato = true;
           }catch(e){} try{ if(typeof notifPush==='function') notifPush('Promemoria appuntamento inviato: '+(c.titolo||'')+' ('+(c.data||'')+' '+(c.ora||'')+')', '\u23f0'); }catch(e){} } c.avvisato=true; c.updatedAt=Date.now(); cambiato=true;
           /* senza spingerlo sul cloud, "avvisato" resta solo qui: al primo
@@ -35051,9 +35137,26 @@ function notifPush(testo, icon, extra){
       });
       if(_gia) return;
     }
-    var n={ id:'nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5), ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+    /* L'identificativo di una notifica non ripetibile si ricava dal testo e
+       dall'ora, non dal caso: cosi' tre dispositivi che generano lo stesso
+       avviso nello stesso momento producono lo stesso identificativo, e su
+       Supabase la riga viene sovrascritta invece che aggiunta. Il controllo
+       di sopra guarda solo l'elenco locale e non puo' sapere cosa hanno
+       fatto gli altri: era il motivo dei tre promemoria uguali. */
+    var _idn;
+    try{
+      if(extra && extra.ripetibile){ _idn='nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5); }
+      else {
+        var _h=0, _st=String(testo||'');
+        for(var _i=0;_i<_st.length;_i++){ _h=((_h<<5)-_h+_st.charCodeAt(_i))|0; }
+        _idn='ntf'+Math.abs(_h).toString(36)+'_'+Math.floor(Date.now()/3600000).toString(36);
+      }
+    }catch(e){ _idn='nt_'+Date.now()+'_'+Math.random().toString(36).slice(2,5); }
+    var n={ id:_idn, ts:Date.now(), updatedAt:Date.now(), testo:String(testo||''), icon:icon||'\u2699\ufe0f', autore:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
     if(extra && typeof extra==='object'){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra,k)) n[k]=extra[k]; } }
-    var list=notifLoad(); list.push(n); notifSave(list);
+    var list=notifLoad();
+    if(list.some(function(x){ return x && String(x.id)===String(n.id); })) return;
+    list.push(n); notifSave(list);
     if(typeof supaUpsert==='function'){ try{ supaUpsert('notifiche', n); }catch(e){} }
     if(notifPerMe(n)) notifShowCards([n]);
     notifSetLastSeen(n.ts); if(typeof notifBadgeUpdate==='function') notifBadgeUpdate();
