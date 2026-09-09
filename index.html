@@ -12529,6 +12529,126 @@ var WF_CAUSALI = [
   { id:'altro',       testo:'Altro', da:'', a:'', km:0, litri:0 }
 ];
 
+/* =====================================================================
+   IL PREZZO AL LITRO DEL GIORNO
+   ---------------------------------------------------------------------
+   Ogni mattina un cron scarica dal Ministero la media lombarda dei prezzi
+   alla pompa e la mette in prezzi_carburante_app. Qui si legge quella
+   tabella e si calcola l'importo dai litri, cosi' chi registra un buono
+   non deve andare a cercarsi quanto costava il gasolio quel giorno.
+
+   Per un giorno in cui il dato non c'e' (i mesi prima che il cron
+   partisse) si prende il giorno piu' vicino, ma solo entro una settimana:
+   oltre, il prezzo puo' essere cambiato di parecchio e si preferisce
+   chiederlo. Il prezzo scritto a mano viene salvato nella tabella con
+   fonte 'manuale', cosi' il giorno dopo per la stessa data non lo si
+   riscrive.
+   ===================================================================== */
+var _wfPrezzi = null;          /* { 'aaaa-mm-gg': {benzina,gasolio,gpl,metano,fonte} } */
+var WF_PREZZI_TOLL = 7;        /* giorni di tolleranza intorno alla data */
+
+function wfPrezziCarica(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb) cb(); return; }
+  try{
+    sb.from('prezzi_carburante_app').select('*').order('giorno',{ascending:false}).limit(2000)
+      .then(function(r){
+        _wfPrezzi={};
+        ((r&&r.data)||[]).forEach(function(x){ _wfPrezzi[String(x.giorno)]=x; });
+        if(cb) cb();
+      }, function(){ _wfPrezzi=_wfPrezzi||{}; if(cb) cb(); });
+  }catch(e){ _wfPrezzi=_wfPrezzi||{}; if(cb) cb(); }
+}
+
+/* Quale colonna della tabella vale per un'auto: la sua alimentazione. Le
+   ibride vanno a benzina; le bifuel si riforniscono col carburante che
+   costa meno, ma qui si registra cosa si e' messo davvero, quindi si
+   propone il primo e chi registra corregge se serve. */
+function wfCarburanteDa(alim){
+  var a=String(alim||'').toLowerCase();
+  if(!a) return '';
+  if(a.indexOf('diesel')>=0 || a.indexOf('gasolio')>=0) return 'gasolio';
+  if(a.indexOf('elettric')>=0) return '';
+  if(a.indexOf('gpl')>=0 && a.indexOf('benzina')<0) return 'gpl';
+  if(a.indexOf('metano')>=0 && a.indexOf('benzina')<0) return 'metano';
+  return 'benzina';
+}
+
+/* Il prezzo per un giorno e un carburante. Ritorna {prezzo, giorno, fonte}
+   oppure null. */
+function wfPrezzoDel(gg, carb){
+  if(!_wfPrezzi || !gg || !carb) return null;
+  var esatto=_wfPrezzi[gg];
+  if(esatto && esatto[carb]!=null) return { prezzo:Number(esatto[carb]), giorno:gg, fonte:esatto.fonte||'' };
+  /* il piu' vicino entro la tolleranza, preferendo i giorni prima */
+  var base=new Date(gg+'T12:00:00'); if(isNaN(base)) return null;
+  for(var d=1; d<=WF_PREZZI_TOLL; d++){
+    var prima=new Date(base); prima.setDate(prima.getDate()-d);
+    var dopo =new Date(base); dopo.setDate(dopo.getDate()+d);
+    var k1=prima.toISOString().slice(0,10), k2=dopo.toISOString().slice(0,10);
+    if(_wfPrezzi[k1] && _wfPrezzi[k1][carb]!=null) return { prezzo:Number(_wfPrezzi[k1][carb]), giorno:k1, fonte:_wfPrezzi[k1].fonte||'' };
+    if(_wfPrezzi[k2] && _wfPrezzi[k2][carb]!=null) return { prezzo:Number(_wfPrezzi[k2][carb]), giorno:k2, fonte:_wfPrezzi[k2].fonte||'' };
+  }
+  return null;
+}
+
+/* Un prezzo scritto a mano si salva, cosi' non lo si chiede due volte. */
+function wfPrezzoSalvaManuale(gg, carb, prezzo){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb || !gg || !carb || !(prezzo>0)) return;
+  try{
+    var rec={ giorno:gg, fonte:'manuale', updated_at:new Date().toISOString() };
+    rec[carb]=prezzo;
+    var gia=_wfPrezzi && _wfPrezzi[gg];
+    if(gia && gia.fonte==='mimit') return;          /* il dato ufficiale non si tocca */
+    if(gia){ ['benzina','gasolio','gpl','metano'].forEach(function(c){ if(c!==carb && gia[c]!=null) rec[c]=gia[c]; }); }
+    sb.from('prezzi_carburante_app').upsert(rec).then(function(){
+      _wfPrezzi=_wfPrezzi||{}; _wfPrezzi[gg]=rec;
+    }, function(){});
+  }catch(e){}
+}
+
+/* Si chiama ogni volta che cambia data, veicolo, carburante o litri:
+   ricalcola prezzo e importo. Non tocca mai un importo scritto a mano. */
+function wfBuonoRicalcola(daCosa){
+  var v=function(id){ return document.getElementById(id); };
+  var gg=(v('bc-data')||{}).value||'';
+  var carbSel=v('bc-carb'); if(!carbSel) return;
+
+  /* carburante: dal veicolo, se il campo non e' stato scelto a mano */
+  if(daCosa==='auto' || (!carbSel.value && daCosa!=='carb')){
+    try{
+      var idA=(v('bc-auto')||{}).value||'';
+      var a=idA&&typeof mzById==='function'?mzById(idA):null;
+      var c=a?wfCarburanteDa(a.alimentazione):'';
+      if(c) carbSel.value=c;
+    }catch(e){}
+  }
+  var carb=carbSel.value;
+
+  /* prezzo: dalla tabella, se il campo non e' stato scritto a mano */
+  var pEl=v('bc-prezzo'), nota=v('bc-prezzo-nota');
+  if(pEl && daCosa!=='prezzo' && !pEl.dataset.manuale){
+    var p=wfPrezzoDel(gg, carb);
+    if(p){
+      pEl.value=String(p.prezzo.toFixed(3)).replace('.',',');
+      if(nota) nota.textContent=(p.fonte==='manuale'?'prezzo inserito a mano':'media Lombardia MIMIT')
+        +(p.giorno!==gg?(' del '+wfDataIt(p.giorno)):'');
+    } else {
+      pEl.value='';
+      if(nota) nota.textContent=(gg&&carb)?'prezzo non disponibile per quel giorno: scrivilo tu':'';
+    }
+  }
+  /* importo = litri x prezzo, se l'importo non e' stato scritto a mano */
+  var lEl=v('bc-litri'), iEl=v('bc-imp');
+  if(lEl && iEl && pEl && !iEl.dataset.manuale){
+    var litri=parseFloat(String(lEl.value||'').replace(',','.'))||0;
+    var prezzo=parseFloat(String(pEl.value||'').replace(',','.'))||0;
+    if(litri>0 && prezzo>0) iEl.value=(Math.round(litri*prezzo*100)/100).toFixed(2);
+  }
+}
+function wfBuonoManuale(id){ var el=document.getElementById(id); if(el) el.dataset.manuale='1'; }
+
 function wfCausale(id){
   for(var i=0;i<WF_CAUSALI.length;i++) if(WF_CAUSALI[i].id===id) return WF_CAUSALI[i];
   return null;
@@ -12606,6 +12726,12 @@ function wfBuoniAggiungi(){
   var da=v('bc-da'), a=v('bc-a'), chi=v('bc-chi'), note=v('bc-note');
   var litri=parseFloat(v('bc-litri').replace(',','.'))||0;
   var caus=v('bc-causale');
+  var carb=v('bc-carb');
+  var prezzo=parseFloat(v('bc-prezzo').replace(',','.'))||0;
+  try{
+    var _pEl=document.getElementById('bc-prezzo');
+    if(_pEl && _pEl.dataset.manuale && prezzo>0) wfPrezzoSalvaManuale(data, carb, prezzo);
+  }catch(e){}
   if(!data){ alert('Metti la data del rifornimento.'); return false; }
   if(!(imp>0)){ alert('Metti l\u2019importo del buono.'); return false; }
 
@@ -12623,6 +12749,7 @@ function wfBuoniAggiungi(){
 
   var arr=wfBuoni();
   arr.push({ id:'bc'+Date.now(), data:data, importo:imp, km:km, litri:litri,
+             carburante:carb, prezzoLitro:prezzo,
              causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
              creato:Date.now() });
   wfBuoniScrivi(arr);
@@ -12638,6 +12765,7 @@ function wfBuoniElimina(id){
 
 function wfBuoniRender(){
   var wrap=document.getElementById('view-welfare'); if(!wrap) return;
+  if(_wfPrezzi===null){ wfPrezziCarica(function(){ try{ wfBuonoRicalcola('data'); }catch(e){} }); }
   var arr=wfBuoni().slice().sort(function(a,b){ return String(b.data||'').localeCompare(String(a.data||'')); });
   var tot=arr.reduce(function(s,x){ return s+(Number(x.importo)||0); },0);
   var totKm=arr.reduce(function(s,x){ return s+(Number(x.km)||0); },0);
@@ -12662,11 +12790,17 @@ function wfBuoniRender(){
     +'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:14px;">'
     +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:10px;">NUOVO BUONO</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
-    +'<input id="bc-data" type="date" title="giorno del rifornimento" onchange="wfBuonoAuto()" style="flex:1 1 140px;'+inp+'">'
-    +'<select id="bc-auto" title="veicolo rifornito" onfocus="wfBuonoAuto()" onmousedown="wfBuonoAuto()" style="flex:2 1 220px;'+inp+'"><option value="">\u2014 veicolo \u2014</option></select>'
-    +'<input id="bc-imp" type="number" step="0.01" min="0" placeholder="importo \u20ac" style="flex:0 1 110px;'+inp+'">'
-    +'<input id="bc-litri" type="number" step="0.1" min="0" placeholder="litri" style="flex:0 1 90px;'+inp+'">'
-    +'<input id="bc-km" type="number" step="1" min="0" placeholder="km" style="flex:0 1 90px;'+inp+'">'
+    +'<input id="bc-data" type="date" title="giorno del rifornimento" onchange="wfBuonoAuto();wfBuonoRicalcola(\'data\')" style="flex:1 1 140px;'+inp+'">'
+    +'<select id="bc-auto" title="veicolo rifornito" onfocus="wfBuonoAuto()" onmousedown="wfBuonoAuto()" onchange="wfBuonoRicalcola(\'auto\')" style="flex:2 1 220px;'+inp+'"><option value="">\u2014 veicolo \u2014</option></select>'
+    +'<select id="bc-carb" title="carburante" onchange="wfBuonoRicalcola(\'carb\')" style="flex:0 1 110px;'+inp+'">'
+    +'<option value="">\u2014 carburante \u2014</option><option value="benzina">Benzina</option><option value="gasolio">Diesel</option><option value="gpl">GPL</option><option value="metano">Metano</option></select>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
+    +'<input id="bc-litri" type="number" step="0.1" min="0" placeholder="litri" oninput="wfBuonoRicalcola(\'litri\')" style="flex:0 1 90px;'+inp+'">'
+    +'<input id="bc-prezzo" type="text" inputmode="decimal" placeholder="\u20ac/litro" oninput="wfBuonoManuale(\'bc-prezzo\');wfBuonoRicalcola(\'prezzo\')" style="flex:0 1 95px;'+inp+'">'
+    +'<span id="bc-prezzo-nota" style="flex:1 1 180px;font-size:11px;color:#64748b;"></span>'
+    +'<input id="bc-imp" type="number" step="0.01" min="0" placeholder="importo \u20ac" oninput="wfBuonoManuale(\'bc-imp\')" style="flex:0 1 110px;'+inp+'">'
+    +'<input id="bc-km" type="number" step="1" min="0" placeholder="km" style="flex:0 1 80px;'+inp+'">'
     +'</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
     +'<select id="bc-causale" onchange="wfCausaleScelta()" style="flex:1 1 220px;'+inp+'">'+opzCaus+'</select>'
@@ -12698,7 +12832,9 @@ function wfBuoniRender(){
         + (trag?('<div style="font-size:12.5px;color:#475569;margin-top:2px;">'+wfEsc(trag)+'</div>'):'')
         + '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">'
         + [ (x.km?(Number(x.km).toLocaleString('it-IT')+' km'):''),
-            (x.litri?(String(x.litri).replace('.',',')+' l'):'') ].filter(Boolean).join(' \u00b7 ')
+            (x.litri?(String(x.litri).replace('.',',')+' l'):''),
+            ({benzina:'benzina',gasolio:'diesel',gpl:'GPL',metano:'metano'})[x.carburante]||'',
+            (x.prezzoLitro?(String(Number(x.prezzoLitro).toFixed(3)).replace('.',',')+' \u20ac/l'):'') ].filter(Boolean).join(' \u00b7 ')
         + (x.chi?(' \u00b7 '+wfEsc(x.chi)):'')
         + (x.note?(' \u00b7 '+wfEsc(x.note)):'')+'</div></div>'
         +'<div style="flex:0 0 auto;text-align:right;">'
@@ -26603,9 +26739,18 @@ function eaSbSessioneAttiva(){ return !!_eaSbSessione; }
 
 /* Chiede a Supabase se c'e' gia' una sessione valida salvata dal browser.
    Se c'e', non si chiede piu' niente a nessuno. */
-function eaSbControllaSessione(cb){
+function eaSbControllaSessione(cb, _giri){
   var sb=sbClient();
-  if(!sb || !sb.auth){ if(cb) cb(false); return; }
+  /* La libreria arriva da internet e a volte non c'e' ancora quando si
+     chiede la sessione. Prima si rispondeva "no" e un secondo e mezzo dopo
+     si rimandava l'utente su Google: la sessione era gia' nell'indirizzo,
+     ma nessuno era in grado di leggerla. Risultato: due o tre giri di
+     accesso prima che andasse bene. Ora si aspetta, fino a dieci secondi. */
+  if(!sb || !sb.auth){
+    _giri=(_giri||0)+1;
+    if(_giri<=33){ setTimeout(function(){ eaSbControllaSessione(cb, _giri); }, 300); return; }
+    if(cb) cb(false); return;
+  }
   try{
     sb.auth.getSession().then(function(r){
       _eaSbSessione = (r && r.data && r.data.session) ? r.data.session : null;
@@ -26782,26 +26927,59 @@ try{
           return;
         }
         /* Sessione assente: chi e' gia' entrato nel gestionale viene
-           ricollegato da solo, senza dover premere niente. */
+           ricollegato da solo, senza dover premere niente.
+           MA se nell'indirizzo c'e' la risposta di Google (si torna
+           adesso dall'accesso), rimandare su Google butterebbe via quella
+           risposta. Si aspetta invece che venga letta: la libreria lo fa
+           da sola, ci vuole solo qualche istante in piu'. */
+        var _daGoogle=false;
+        try{ _daGoogle=/access_token=|refresh_token=|[?&#]code=|error=/.test(location.hash+location.search); }catch(e){}
+        if(_daGoogle){
+          var _tent=0;
+          var _aspetta=function(){
+            eaSbControllaSessione(function(ok2){
+              if(ok2){
+                eaSbEntrataCompletata(_eaSbSessione);
+                try{ sessionStorage.removeItem('ea_sb_riconn'); }catch(e){}
+                try{ eaSbTieniVivo(); }catch(e){}
+                return;
+              }
+              if(++_tent<20){ setTimeout(_aspetta, 500); return; }
+              /* Dieci secondi senza sessione: la risposta di Google era
+                 scaduta o non valida. Ora si', si rifa' il giro. */
+              try{ eaSbRiconnetti(); }catch(e){}
+            });
+          };
+          setTimeout(_aspetta, 500);
+          return;
+        }
         setTimeout(function(){ try{ eaSbRiconnetti(); }catch(e){} }, 1500);
       });
     }, 900);
   });
-  /* Il token scade e si rinnova da solo: qui si tiene aggiornata la copia. */
-  setTimeout(function(){
+  /* Il token scade e si rinnova da solo: qui si tiene aggiornata la copia.
+     Il sensore si accende appena la libreria e' disponibile, non a un
+     orario fisso: prima partiva a due secondi e una sessione arrivata
+     prima passava inosservata. */
+  (function _accendi(giri){
     try{
       var sb=sbClient();
-      if(sb && sb.auth && sb.auth.onAuthStateChange){
-        sb.auth.onAuthStateChange(function(_ev, sess){
-          _eaSbSessione = sess || null;
-          try{ eaSbAggiornaAvviso(); }catch(e){}
-          if(sess && (_ev==='SIGNED_IN' || _ev==='TOKEN_REFRESHED')){
-            try{ eaSbEntrataCompletata(sess); }catch(e){}
-          }
-        });
+      if(!sb || !sb.auth || !sb.auth.onAuthStateChange){
+        if((giri||0)<40) setTimeout(function(){ _accendi((giri||0)+1); }, 250);
+        return;
       }
+      if(window._eaSbSensore) return;
+      window._eaSbSensore=true;
+      sb.auth.onAuthStateChange(function(_ev, sess){
+        _eaSbSessione = sess || null;
+        try{ eaSbAggiornaAvviso(); }catch(e){}
+        if(sess && (_ev==='SIGNED_IN' || _ev==='TOKEN_REFRESHED')){
+          try{ eaSbEntrataCompletata(sess); }catch(e){}
+          try{ sessionStorage.removeItem('ea_sb_riconn'); }catch(e){}
+        }
+      });
     }catch(e){}
-  }, 2000);
+  })(0);
 }catch(e){}
 
 function docEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
