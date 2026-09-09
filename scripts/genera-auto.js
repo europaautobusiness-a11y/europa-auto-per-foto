@@ -48,6 +48,8 @@ const CONFIG = {
   FEED_RICHIEDE_TELAIO: true,
 
   DIR_AUTO: 'auto',
+  /* Fino a questi km l'auto e' dichiarata nuova (km 0) invece che usata. */
+  KM_NUOVA: 100,
   DIR_FEED: 'feed',
   FEED_FILE: 'veicoli.tsv'
 };
@@ -253,7 +255,7 @@ function primaImmat(a){          /* AAAA-MM, richiesto sull'usato */
   if(m) return m[1]+'-'+m[2];
   const y=annoDa(a); return y?(y+'-01'):'';
 }
-const FEED_COLS=['id','VIN','google_product_category','store_code','brand','model','trim','year','mileage','price','condition','color','engine','date_first_registered','image_link','additional_image_link','link','link_template','description'];
+const FEED_COLS=['id','VIN','google_product_category','store_code','title','brand','model','trim','year','mileage','price','condition','color','engine','date_first_registered','image_link','additional_image_link','link','link_template','description'];
 function rigaFeed(a){
   const url=CONFIG.BASE_URL+'/'+CONFIG.DIR_AUTO+'/'+slug(a)+'.html';
   const kmN=num(a.km), prz=num(a.prezzoVen);
@@ -265,13 +267,25 @@ function rigaFeed(a){
     tsv(a.telaio||''),
     '916',
     CONFIG.STORE_CODE,
+    /* Il titolo mancava, ed e' il motivo per cui Merchant Center segnava
+       ogni riga come "Titolo in sospeso o mancante": marca e modello da
+       soli non gli bastano, il titolo va scritto e mandato.
+       Marca, modello e allestimento, senza l'anno: l'anno ha gia' la sua
+       colonna e in vetrina il cliente legge il nome dell'auto. */
+    tsv([cap(a.marca), cap(a.modello), a.allestimento||'']
+        .filter(Boolean).join(' ').slice(0,150)),
     tsv(cap(a.marca)),
     tsv(cap(a.modello)),
     tsv(a.allestimento||''),
     tsv(annoDa(a)),
     kmN!=null?(Math.round(kmN)+' km'):'',
     prz!=null?(prz.toFixed(2)+' EUR'):'',
-    'Used',
+    /* Un'auto con il contachilometri a zero, o quasi, non e' un'usata: e'
+       una km 0, e dichiararla "Used" con 0 km era una contraddizione che
+       Google puo' bocciare. Sotto i 100 km si dichiara nuova.
+       Il chilometraggio mancante NON conta come nuova: km non compilati
+       vogliono dire che non lo sappiamo, non che l'auto sia nuova. */
+    (kmN!=null && kmN<=CONFIG.KM_NUOVA) ? 'New' : 'Used',
     tsv(a.colore?cap(a.colore):''),
     engineVal(a.alimentazione),
     primaImmat(a),
