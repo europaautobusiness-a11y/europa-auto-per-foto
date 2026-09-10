@@ -48,8 +48,6 @@ const CONFIG = {
   FEED_RICHIEDE_TELAIO: true,
 
   DIR_AUTO: 'auto',
-  /* Fino a questi km l'auto e' dichiarata nuova (km 0) invece che usata. */
-  KM_NUOVA: 100,
   DIR_FEED: 'feed',
   FEED_FILE: 'veicoli.tsv'
 };
@@ -280,12 +278,19 @@ function rigaFeed(a){
     tsv(annoDa(a)),
     kmN!=null?(Math.round(kmN)+' km'):'',
     prz!=null?(prz.toFixed(2)+' EUR'):'',
-    /* Un'auto con il contachilometri a zero, o quasi, non e' un'usata: e'
-       una km 0, e dichiararla "Used" con 0 km era una contraddizione che
-       Google puo' bocciare. Sotto i 100 km si dichiara nuova.
-       Il chilometraggio mancante NON conta come nuova: km non compilati
-       vogliono dire che non lo sappiamo, non che l'auto sia nuova. */
-    (kmN!=null && kmN<=CONFIG.KM_NUOVA) ? 'New' : 'Used',
+    /* Tutte "Used", anche le km 0.
+       Per un periodo le auto sotto i 100 km sono state dichiarate "New",
+       perche' "usata con 0 km" sembrava una contraddizione. Google le ha
+       bocciate tutte e sei: sui veicoli NUOVI pretende co2_emissions,
+       emissions_standard e fuel_consumption, dati che non abbiamo (il
+       consumo non e' nemmeno sul libretto, sta solo nelle banche dati a
+       pagamento).
+       E a ben vedere "Used" e' anche piu' esatto: per Google "nuovo"
+       significa MAI IMMATRICOLATO, mentre una km 0 italiana la targa ce
+       l'ha, e infatti mandiamo pure date_first_registered.
+       Se un domani si vorranno gli annunci "New", serviranno prima quei
+       tre dati in magazzino. */
+    'Used',
     tsv(a.colore?cap(a.colore):''),
     engineVal(a.alimentazione),
     primaImmat(a),
