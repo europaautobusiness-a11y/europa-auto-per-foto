@@ -24860,7 +24860,15 @@ function cvPreparaPdfPreventivo(cv){
   if(typeof cvBuildHTML!=='function' || typeof eaHtmlToPdf!=='function' || typeof eaR2Upload!=='function') return;
   var id=cv.id;
   var tg=String((cv.autoSnapshot&&cv.autoSnapshot.targa)||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  /* Nome del file salvato su R2. Deve restare univoco (finisce in un
+     magazzino condiviso, due file con lo stesso nome si sovrascrivono),
+     quindi targa e identificativo restano. */
   var nomeFile='preventivo-'+(tg||'auto')+'-'+id+'.pdf';
+  /* Ma il cliente vede il nome dell'ALLEGATO, non quello sul magazzino:
+     quello puo' essere leggibile. "Preventivo ROSSI - Fiat Panda.pdf" si
+     ritrova in mezzo ai download, "preventivo-GK508LJ-sicom_p_426.pdf" no. */
+  var nomeMail=nomeFile;
+  try{ if(typeof cvNomeDocumento==='function') nomeMail=cvNomeDocumento(cv,'preventivo')+'.pdf'; }catch(e){}
   var html='';
   try{ html=cvBuildHTML(cv,'preventivo'); }catch(e){ return; }
   if(!html) return;
@@ -24879,9 +24887,9 @@ function cvPreparaPdfPreventivo(cv){
             l[i].mailProg = { to:((l[i].cliente&&l[i].cliente.email)||''),
                               subject:'Il tuo preventivo \u2014 Europa Auto',
                               html:cvMailArricchisci(l[i], cvMailPreventivoHtml(l[i])),
-                              pdfUrl:url, pdfNome:nomeFile };
+                              pdfUrl:url, pdfNome:nomeMail };
           }catch(e){
-            if(l[i].mailProg){ l[i].mailProg.pdfUrl=url; l[i].mailProg.pdfNome=nomeFile; }
+            if(l[i].mailProg){ l[i].mailProg.pdfUrl=url; l[i].mailProg.pdfNome=nomeMail; }
           }
           if(typeof cvSave==='function') cvSave(l);
           if(typeof supaUpsert==='function') supaUpsert('preventivi', l[i]);
@@ -26204,11 +26212,13 @@ function cvStampaFascicolo(cv, tipo, allegati){
       var lancia=function(){
         if(lancia._ok) return; lancia._ok=true;
         cvFascLog('stampa avviata', _pagine.length+' pagine di moduli');
-        try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }
+        try{ try{ ifr.contentWindow.document.title = cvNomeDocumento(cv, tipo); }catch(_t){} ifr.contentWindow.focus(); ifr.contentWindow.print(); }
         catch(e){
           cvFascLog('stampa dal riquadro fallita, apro una finestra', String((e&&e.message)||e));
           var w=window.open('','_blank');
-          if(w){ w.document.open(); w.document.write(fin); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
+          if(w){ w.document.open(); w.document.write(fin); w.document.close();
+             try{ w.document.title = cvNomeDocumento(cv, tipo); }catch(_t){}
+             setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
           else alert('Per stampare, consenti i popup per questo sito nel browser.');
         }
         /* il riquadro resta finche' la finestra di stampa e' aperta; si toglie dopo */
@@ -26222,7 +26232,9 @@ function cvStampaFascicolo(cv, tipo, allegati){
     }catch(e){
       cvFascLog('ERRORE nel riquadro di stampa', String((e&&e.message)||e));
       var w=window.open('','_blank');
-      if(w){ w.document.open(); w.document.write(fin); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
+      if(w){ w.document.open(); w.document.write(fin); w.document.close();
+             try{ w.document.title = cvNomeDocumento(cv, tipo); }catch(_t){}
+             setTimeout(function(){ try{ w.print(); }catch(_e){} }, 1500); }
     }
   };
   var _componi=function(){
@@ -26843,6 +26855,40 @@ function cvEtichettaTotale(cv){
   return 'Totale';
 }
 
+/* =====================================================================
+   COME SI CHIAMA IL FILE CHE ESCE DALLA STAMPA
+   ---------------------------------------------------------------------
+   Salvando in PDF, il browser usa il titolo della pagina come nome del
+   file. Non essendo mai stato impostato, uscivano nomi tipo "about:blank"
+   o "documento", e chi ne salvava dieci si ritrovava una cartella di file
+   indistinguibili da riaprire uno per uno.
+   Il nome dice tre cose, nell'ordine in cui servono per cercarlo:
+   che documento e', di chi, e su quale auto.
+     Preventivo ROSSI - Fiat Panda
+     Proposta d'acquisto BIANCHI - BMW 118
+   ===================================================================== */
+function cvNomeDocumento(c, tipo){
+  try{
+    var che = (tipo==='fattura')   ? 'Fattura'
+            : (tipo==='preventivo')? 'Preventivo'
+            : (tipo==='finale')    ? 'Contratto'
+            : 'Proposta d\u2019acquisto';
+    var cognome = String((c && c.cliente && c.cliente.cognome) || '').trim().toUpperCase();
+    var auto = '';
+    try{
+      var a=(c && c.autoSnapshot) || {};
+      auto = ((a.marca||'')+' '+(a.modello||'')).trim();
+      if(!auto) auto = String((c && c.autoDesc) || '').trim();
+    }catch(e){}
+    var parti=[che];
+    if(cognome) parti.push(cognome);
+    var nome = parti.join(' ') + (auto ? (' - ' + auto) : '');
+    /* I caratteri che i sistemi non accettano nei nomi di file vanno tolti,
+       altrimenti il salvataggio li sostituisce con simboli a caso. */
+    return nome.replace(/[\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim();
+  }catch(e){ return 'Documento'; }
+}
+
 function cvStampaDoc(c, tipo){
   /* Gli allegati si controllano QUI e non nei singoli pulsanti: la stampa
      parte da tre punti diversi (scheda vendite, modulo del contratto, menu)
@@ -26895,6 +26941,7 @@ function cvStampaDoc(c, tipo){
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
+  try{ w.document.title = cvNomeDocumento(c, tipo); }catch(e){}
   setTimeout(function(){ try{ w.print(); }catch(e){} }, 500);
 }
 
@@ -34726,12 +34773,69 @@ function cvRecSegna(id, canale, tipo){
   try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', list[i]); }catch(e){}
   try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
 }
+/* =====================================================================
+   LA RICHIESTA DI RECENSIONE SU WHATSAPP
+   ---------------------------------------------------------------------
+   Si prova a mandarla dal server, cosi' parte davvero senza aprire nulla
+   e senza passare dal telefono di nessuno.
+   Ma c'e' una regola di Meta, non nostra: si puo' scrivere testo libero
+   solo entro 24 ORE dall'ultimo messaggio del cliente. La recensione la
+   si chiede giorni dopo la consegna, quindi quasi sempre siamo fuori da
+   quella finestra e Meta rifiuta. Per scrivere per primi servirebbe un
+   modello approvato, e per le recensioni non ne abbiamo.
+   Quindi: si tenta, e se Meta dice di no si apre WhatsApp come prima. Il
+   messaggio parte comunque, in un modo o nell'altro; cambia solo se lo
+   spedisce il server o se lo devi premere tu.
+   Il segno "richiesta" si mette solo quando e' partita per davvero: un
+   contatore che conta anche i tentativi falliti non serve a niente.
+   ===================================================================== */
+/* I tre modelli approvati da Meta il 7 settembre 2026, uno per tipo di
+   buono. Il nome e la lingua sono quelli registrati in WhatsApp Manager e
+   vanno scritti IDENTICI, refusi compresi: "recenzione_amazon" con la z, e
+   in lingua inglese, e' cosi' che si chiama la' e cosi' va chiamato qui.
+   Se un giorno se ne registra uno corretto, si cambia in questa tabella e
+   basta.
+   Le due variabili del corpo sono, nell'ordine, nome del cliente e auto:
+   "Ciao Mario! Come sta andando la tua Citroen?". Il pulsante RECENSIONE
+   GOOGLE ha l'indirizzo fisso dentro il modello. */
+var WA_REC_MOD = {
+  gratuita: { nome:'recensione_gratuita', lingua:'it' },
+  service:  { nome:'recensione_service',  lingua:'it' },
+  amazon:   { nome:'recenzione_amazon',   lingua:'en' }
+};
+
 function cvRecWa(id, tipo){
+  tipo=cvRecTipo(tipo);
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
   var tel=(cv.cliente&&cv.cliente.telefono)||'';
   if(typeof waValido==='function' && !waValido(tel)){ alert('Il cliente non ha un numero di cellulare valido per WhatsApp.'); return; }
-  waOpen(tel, cvRecTesto(cv, tipo).testo);
-  cvRecSegna(id, 'whatsapp', tipo);
+  var r0=cvRecTesto(cv, tipo), testo=r0.testo;
+
+  var ripiego=function(){ waOpen(tel, testo); cvRecSegna(id, 'whatsapp', tipo); };
+
+  if(typeof waApiInvia!=='function' || typeof waNumero!=='function'){ ripiego(); return; }
+
+  var m=WA_REC_MOD[tipo]||WA_REC_MOD.gratuita;
+  var dati={ to: waNumero(tel), template:m.nome, lingua:m.lingua,
+             variabili:[ String(r0.nome||'').trim()||'cliente', String(r0.auto||'auto').trim() ],
+             vero:(typeof waNumVero==='function')?waNumVero():true };
+  if(typeof tcToastNew==='function') tcToastNew('Invio in corso\u2026', true);
+
+  waApiInvia(dati)
+    .then(function(r){
+      if(r && (r.ok===true || r.messages)){
+        cvRecSegna(id, 'whatsapp', tipo);
+        try{
+          if(typeof tcToastNew==='function') tcToastNew('Richiesta di recensione inviata su WhatsApp', true);
+          if(typeof notifPush==='function') notifPush('Recensione chiesta su WhatsApp \u2014 '+((cv.cliente&&cv.cliente.cognome)||''), '\u2b50');
+        }catch(e){}
+      } else {
+        /* Fuori dalle 24 ore, o qualsiasi altro rifiuto: si apre WhatsApp
+           e la manda l'operatore. Nessun messaggio perso. */
+        ripiego();
+      }
+    })
+    .catch(function(){ ripiego(); });
 }
 function cvRecMail(id, tipo){
   tipo=cvRecTipo(tipo);
