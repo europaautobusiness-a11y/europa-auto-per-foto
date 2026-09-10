@@ -12684,6 +12684,39 @@ function wfSchede(){
     + '</div>';
 }
 
+/* =====================================================================
+   IL REGISTRO DIVISO PER ANNO E PER MESE
+   ---------------------------------------------------------------------
+   Un elenco unico funziona finche' i buoni sono sette. Fra due anni saranno
+   mille, e la domanda a cui questo registro deve rispondere non e' "quanto
+   hai speso" ma "cosa hai fatto con i buoni di luglio 2027": serve poter
+   aprire quel mese e vedere solo quello, con il suo totale.
+   Anni chiusi e mesi chiusi: si apre quello che serve. L'anno in corso e il
+   mese in corso partono gia' aperti, perche' sono quelli che si guardano
+   tutti i giorni.
+   ===================================================================== */
+var _wfBcAperti = null;   /* { '2026':true, '2026-09':true } */
+
+function wfBcApertiInit(){
+  if(_wfBcAperti) return;
+  _wfBcAperti = {};
+  try{
+    var og = new Date();
+    var a = String(og.getFullYear());
+    var m = a + '-' + String(og.getMonth()+1).padStart(2,'0');
+    _wfBcAperti[a] = true;
+    _wfBcAperti[m] = true;
+  }catch(e){}
+}
+function wfBcApri(k){
+  wfBcApertiInit();
+  _wfBcAperti[k] = !_wfBcAperti[k];
+  wfBuoniRender();
+}
+
+var WF_MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
+               'luglio','agosto','settembre','ottobre','novembre','dicembre'];
+
 function wfBuoni(){
   var t=wfLoad();
   if(!Array.isArray(t.buoni)) t.buoni=[];
@@ -12850,7 +12883,43 @@ function wfBuoniRender(){
   if(!arr.length){
     h+='<div style="text-align:center;color:#94a3b8;font-size:13px;padding:22px 10px;">Nessun buono registrato.</div>';
   } else {
+    wfBcApertiInit();
+    /* si raggruppa per anno e, dentro, per mese */
+    var perAnno={};
     arr.forEach(function(x){
+      var d=String(x.data||''); if(d.length<7) d='0000-00';
+      var a=d.slice(0,4), m=d.slice(0,7);
+      if(!perAnno[a]) perAnno[a]={ tot:0, km:0, litri:0, mesi:{} };
+      if(!perAnno[a].mesi[m]) perAnno[a].mesi[m]={ tot:0, km:0, litri:0, righe:[] };
+      perAnno[a].tot+=Number(x.importo)||0; perAnno[a].km+=Number(x.km)||0; perAnno[a].litri+=Number(x.litri)||0;
+      var mm=perAnno[a].mesi[m];
+      mm.tot+=Number(x.importo)||0; mm.km+=Number(x.km)||0; mm.litri+=Number(x.litri)||0;
+      mm.righe.push(x);
+    });
+    var _n=function(v){ return Number(v||0).toLocaleString('it-IT'); };
+    var _l=function(v){ return String(Math.round((Number(v)||0)*10)/10).replace('.',','); };
+
+    Object.keys(perAnno).sort().reverse().forEach(function(a){
+      var A=perAnno[a], apertoA=!!_wfBcAperti[a];
+      h+='<div onclick="wfBcApri(\''+a+'\')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;'
+        +'padding:10px 12px;margin:10px 0 0;background:#1a4fa0;color:#fff;border-radius:9px;cursor:pointer;">'
+        +'<div style="font-weight:800;font-size:14px;">'+(apertoA?'\u25be':'\u25b8')+' '+a+'</div>'
+        +'<div style="font-size:13px;font-weight:800;">'+wfEuro(A.tot)
+        +' <span style="opacity:.75;font-weight:700;">\u00b7 '+_n(A.km)+' km \u00b7 '+_l(A.litri)+' l</span></div></div>';
+      if(!apertoA) return;
+
+      Object.keys(A.mesi).sort().reverse().forEach(function(m){
+        var M=A.mesi[m], apertoM=!!_wfBcAperti[m];
+        var nomeMese=WF_MESI[parseInt(m.slice(5,7),10)-1]||m;
+        h+='<div onclick="wfBcApri(\''+m+'\')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;'
+          +'padding:8px 12px;margin:6px 0 0 10px;background:#eef2f8;border-radius:8px;cursor:pointer;">'
+          +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:capitalize;">'
+          +(apertoM?'\u25be':'\u25b8')+' '+nomeMese+' <span style="color:#94a3b8;font-weight:700;">('+M.righe.length+')</span></div>'
+          +'<div style="font-size:12.5px;font-weight:800;color:#0f172a;">'+wfEuro(M.tot)
+          +' <span style="color:#64748b;font-weight:700;">\u00b7 '+_n(M.km)+' km \u00b7 '+_l(M.litri)+' l</span></div></div>';
+        if(!apertoM) return;
+        h+='<div style="margin-left:10px;">';
+        M.righe.forEach(function(x){
       var auto = x.auto ? (((x.auto.marca||'')+' '+(x.auto.modello||'')).trim()+(x.auto.targa?(' \u00b7 '+x.auto.targa):'')) : '';
       var trag = [x.partenza, x.destinazione].filter(Boolean).join(' \u2192 ');
       var cs = wfCausale(x.causale);
@@ -12871,6 +12940,9 @@ function wfBuoniRender(){
         +'<div style="font-size:14px;font-weight:800;color:#0f172a;">'+wfEuro(x.importo)+'</div>'
         +'<button onclick="wfBuoniElimina(\''+wfEsc(x.id)+'\')" style="margin-top:3px;background:none;border:none;color:#dc2626;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;">\u2715 elimina</button>'
         +'</div></div>';
+        });
+        h+='</div>';
+      });
     });
   }
   h+='</div></div>';
@@ -21079,7 +21151,7 @@ function gsLibCarica(cb){
         var m={};
         (r.data||[]).forEach(function(d){
           if(!d || !d.entita_id) return;
-          if(!m[d.entita_id]) m[d.entita_id]={ path:d.storage_path, nome:d.nome_file };  /* il piu' recente */
+          if(!m[d.entita_id]) m[d.entita_id]={ path:d.storage_path, nome:d.nome_file, cat:d.categoria };  /* il piu' recente */
         });
         _gsLib=m;
         if(cb)cb();
@@ -33869,7 +33941,13 @@ function cvVeicoloLink(cv){
      L'indice dei libretti si carica all'avvio (vedi gsLibCarica) e si
      aggiorna da solo appena se ne carica uno nuovo. */
   try{
-    if(estera && autoId && typeof _gsLib!=='undefined' && _gsLib && _gsLib[autoId]){
+    /* Solo il libretto NUOVO, quello italiano che arriva a immatricolazione
+       avvenuta. Il libretto estero c'e' fin dall'acquisto: mostrarlo qui
+       faceva credere che l'auto fosse gia' immatricolata quando non lo era,
+       e chi premeva si trovava davanti il documento sbagliato. La targhetta
+       vale quindi anche come segnale: se c'e', l'immatricolazione e' fatta. */
+    if(estera && autoId && typeof _gsLib!=='undefined' && _gsLib && _gsLib[autoId]
+       && _gsLib[autoId].cat==='libretto_nuovo'){
       idHtml += '<span onclick="event.stopPropagation();gsLibApri(event,\''+autoId+'\')" '
         + 'title="Apri il libretto di circolazione" '
         + 'style="display:inline-block;margin-left:7px;padding:1px 8px;border-radius:5px;'
