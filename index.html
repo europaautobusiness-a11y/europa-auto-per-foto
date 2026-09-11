@@ -30459,6 +30459,7 @@ function tgRender(){
     + (String(_tgId||'').indexOf('iv_')===0
         ? '<button onclick="ivElimina(\''+_tgId+'\')" title="Elimina l\'intero intervento" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-weight:700;cursor:pointer;">\ud83d\uddd1\ufe0f Elimina</button>'
         : '')
+    + (f.numero ? '' : '<button onclick="tgOrdineConferma()" title="Conferma il lavoro senza fattura: vale anche a costo zero" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\ud83d\udccb '+((c.ordineCliente)?'Ristampa ordine':'Ordine cliente')+'</button>')
     + (f.numero ? '' : '<button onclick="tgGenera()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\uD83E\uDDFE Genera fattura</button>')
     +'</div></div>';
   m.innerHTML=h;
@@ -30619,9 +30620,45 @@ function tgScarica(id, forza){
 }
 
 /* ---- Stampa: ricalca il modulo della fattura di officina ---- */
-function tgStampa(id){
+/* =====================================================================
+   ORDINE CLIENTE
+   ---------------------------------------------------------------------
+   Non tutto quello che passa in officina si fattura. Il lavoro in
+   garanzia, la cortesia al cliente, il ritocco compreso nella vendita: il
+   cliente firma comunque l'accettazione, e serve un documento che dica
+   cosa si e' fatto e su quale auto. Prima, con importo zero, il modulo si
+   rifiutava ("Inserisci almeno un importo") e non restava traccia.
+   L'ordine cliente e' quel documento. Stessa impaginazione della proforma,
+   ma senza numero della serie fiscale: non e' una fattura e non consuma
+   un numero. Si conferma anche a zero euro.
+   ===================================================================== */
+function tgOrdineConferma(){
+  tgSalvaBozza();
+  var c=tgById(_tgId); if(!c) return;
+  var f=c.fatturaTag||{};
+  if(!f.nome){ alert('Manca l\u2019intestatario.'); return; }
+  var t=tgTotali();
+  var tot=tgEu(t.totale);
+  if(!confirm('Confermo l\u2019ordine cliente intestato a '+f.nome+'?\n\nTotale \u20ac '+tot+(t.totale>0?'':' (a costo zero)'))) return;
+  var _f=tgListaFonte(); var list=_f.list, i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
+  list[i].ordineCliente={ data:new Date().toISOString().slice(0,10),
+                          da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''),
+                          totale:t.totale };
+  list[i].fatturaTag=f;
+  _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
+  try{ ccSync(list[i]); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('\ud83d\udccb Ordine cliente confermato', true);
+  tgRender();
+  _tgId=_tgId; _tgRighe=JSON.parse(JSON.stringify(f.righe||[]));
+  tgStampa(_tgId, 'ordine');
+}
+
+function tgStampa(id, tipoDoc){
   var c=tgById(id); if(!c || !c.fatturaTag) return;
   var f=c.fatturaTag, t=tgTotali();
+  var _ordine=(tipoDoc==='ordine');
+  var _num = _ordine ? '' : (E0(f.numero)+'/'+E0(f.anno));
+  function E0(x){ return String(x==null?'':x); }
   var righe=(f.righe||_tgRighe||[]);
   var E=tgEsc;
   var rh='';
@@ -30670,20 +30707,21 @@ function tgStampa(id){
   +'.pf{border:2px solid #000;text-align:center;font-weight:bold;font-size:10px;letter-spacing:1px;padding:3px;margin-bottom:6px;}'
   +'.pfs{font-weight:normal;font-size:7px;letter-spacing:0;}'
   +'</style></head><body><div class="foglio">'
-  +'<div class="pf">FATTURA PROFORMA<span class="pfs"> \u2014 documento non valido ai fini fiscali</span></div>'
+  +'<div class="pf">'+(_ordine?'ORDINE CLIENTE':'FATTURA PROFORMA')+'<span class="pfs"> \u2014 documento non valido ai fini fiscali</span></div>'
   +'<div class="hd"><div><div class="az">EUROPA AUTO S.R.L.</div>'
   +'<div class="azs">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI)<br>Tel./Fax '+eaTel()+'<br>amministrazione@europaautosrl.it</div></div>'
   +'<div style="text-align:left;min-width:300px;">'
-  +'<div style="font-size:16px;margin-bottom:6px;">Fattura proforma</div>'
-  +'<table class="nob" style="width:auto;"><tr><td style="padding-right:22px;"><span class="lab">Data documento</span><span class="big">'+E((f.data||'').split('-').reverse().join('/'))+'</span></td>'
-  +'<td><span class="lab">Documento Nr.</span><span class="big">'+E(f.numero)+'/'+E(f.anno)+'</span></td></tr></table>'
+  +'<div style="font-size:16px;margin-bottom:6px;">'+(_ordine?'Ordine cliente':'Fattura proforma')+'</div>'
+  +'<table class="nob" style="width:auto;"><tr><td style="padding-right:22px;"><span class="lab">Data documento</span><span class="big">'
+  +E(((_ordine&&c.ordineCliente&&c.ordineCliente.data)||f.data||'').split('-').reverse().join('/'))+'</span></td>'
+  +(_ordine?'':('<td><span class="lab">Documento Nr.</span><span class="big">'+E(f.numero)+'/'+E(f.anno)+'</span></td>'))+'</tr></table>'
   +'<div style="margin-top:8px;font-size:9px;">Spettabile</div>'
   +'<div class="big" style="font-size:14px;">'+E(f.nome||'')+'</div><div style="font-size:11px;line-height:1.4;">'+E(f.indirizzo||'')+'</div>'
   +'</div></div>'
   +'<table><tr><td colspan="3"><span class="lab">Num. Telaio</span>'+E(f.telaio||'')+'</td>'
   +'<td colspan="2"><span class="lab">Modello</span>'+E(f.modello||'')+'</td>'
   +'<td colspan="2"><span class="lab">Pratica/Anno</span>&nbsp;</td>'
-  +'<td colspan="2"><span class="lab">Num. Ordine</span>'+E(f.numero||'')+'/'+E(f.anno||'')+'</td></tr>'
+  +'<td colspan="2"><span class="lab">Num. Ordine</span>'+(_ordine?'&nbsp;':(E(f.numero||'')+'/'+E(f.anno||'')))+'</td></tr>'
   +'<tr><td><span class="lab">Km Percorsi</span>'+E(f.km||'')+'</td>'
   +'<td><span class="lab">Num. Motore</span>&nbsp;</td>'
   +'<td><span class="lab">Targa</span>'+E(f.targa||'')+'</td>'
@@ -34383,14 +34421,24 @@ function cvVendCard(cv){
              commerciale col cliente, non un'operazione di contabilita'.
              Arianna vede se e come la recensione e' gia' stata chiesta. */
           +(eaIsContabilita() ? '' :
-           /* Tre righe, una per tipo di grazie. */
-           Object.keys(CV_REC_TIPI).map(function(k){ var T=CV_REC_TIPI[k];
+           /* Tre righe, una per tipo di grazie. Ma una volta che la richiesta
+              e' partita le tre righe SPARISCONO: con sei pulsanti uguali uno
+              sotto l'altro capitava di premerne un secondo per sbaglio, e al
+              cliente arrivavano due richieste con due buoni diversi. Resta
+              solo la riga che dice cosa e' stato mandato e un tasto per
+              rimandare, che chiede conferma. */
+           (quando
+             ? ('<div style="display:flex;gap:6px;margin-top:6px;align-items:center;">'
+               +'<span style="flex:1;font-size:11px;color:#64748b;">Richiesta gi\u00e0 inviata. Per mandarla di nuovo:</span>'
+               +'<button onclick="event.stopPropagation();cvRecRimanda(\''+cv.id+'\')" style="padding:7px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u21bb Rimanda</button>'
+               +'</div>')
+             : Object.keys(CV_REC_TIPI).map(function(k){ var T=CV_REC_TIPI[k];
               var st='flex:1;padding:8px;border-radius:8px;border:1px solid '+T.bordo+';background:'+T.sfondo+';color:'+T.colore+';font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;';
               return '<div style="display:flex;gap:6px;margin-top:6px;align-items:center;">'
                 +'<span style="flex:1.3;font-size:11px;font-weight:800;color:'+T.colore+';">'+T.etichetta+'</span>'
                 +'<button onclick="event.stopPropagation();cvRecMail(\''+cv.id+'\',\''+k+'\')" style="'+st+'">\u2709\ufe0f Mail</button>'
                 +'<button onclick="event.stopPropagation();cvRecWa(\''+cv.id+'\',\''+k+'\')" style="'+st+'">\uD83D\uDCAC WhatsApp</button>'
-                +'</div>'; }).join(''))
+                +'</div>'; }).join('')))
           +'</div>';
       })()
       +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
@@ -34804,11 +34852,32 @@ var WA_REC_MOD = {
   amazon:   { nome:'recenzione_amazon',   lingua:'en' }
 };
 
+/* Riapre i tre pulsanti dopo che la richiesta e' gia' partita. Chiede
+   conferma perche' e' l'unico modo per mandare una seconda richiesta allo
+   stesso cliente, e va fatto apposta, non per sbaglio. */
+function cvRecRimanda(id){
+  var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
+  var r=cv.recensione||{};
+  var quando=r.richiestaTs?new Date(r.richiestaTs).toLocaleDateString('it-IT'):'';
+  if(!confirm('A questo cliente la richiesta di recensione \u00e8 gi\u00e0 stata mandata'+(quando?(' il '+quando):'')+'.\n\nVuoi mandargliene un\u2019altra?')) return;
+  var list=cvLoad(), i=-1;
+  for(var j=0;j<list.length;j++){ if(list[j].id===id){ i=j; break; } }
+  if(i<0) return;
+  /* si conserva la storia: la richiesta precedente resta scritta */
+  list[i].recensionePrecedenti=(list[i].recensionePrecedenti||[]).concat([list[i].recensione||{}]);
+  list[i].recensione=null;
+  list[i].updatedAt=Date.now();
+  cvSave(list);
+  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', list[i]); }catch(e){}
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+}
+
 function cvRecWa(id, tipo){
   tipo=cvRecTipo(tipo);
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
   var tel=(cv.cliente&&cv.cliente.telefono)||'';
   if(typeof waValido==='function' && !waValido(tel)){ alert('Il cliente non ha un numero di cellulare valido per WhatsApp.'); return; }
+  if(cv.recensione && cv.recensione.richiestaTs){ alert('La richiesta di recensione a questo cliente \u00e8 gi\u00e0 stata mandata. Per rimandarla usa il tasto Rimanda.'); return; }
   var r0=cvRecTesto(cv, tipo), testo=r0.testo;
 
   var ripiego=function(){ waOpen(tel, testo); cvRecSegna(id, 'whatsapp', tipo); };
@@ -34842,6 +34911,7 @@ function cvRecMail(id, tipo){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
   var em=(cv.cliente&&cv.cliente.email)||'';
   if(!/.+@.+\..+/.test(em)){ alert('Il cliente non ha un\u2019email valida.'); return; }
+  if(cv.recensione && cv.recensione.richiestaTs){ alert('La richiesta di recensione a questo cliente \u00e8 gi\u00e0 stata mandata. Per rimandarla usa il tasto Rimanda.'); return; }
   var r=cvRecTesto(cv, tipo), g=cvRecGrazie(tipo);
   var h='<p>Ciao '+docEsc(r.nome||'')+',</p>'
     +'<p>come sta andando la tua <b>'+docEsc(r.auto)+'</b>? \uD83D\uDE97</p>'
