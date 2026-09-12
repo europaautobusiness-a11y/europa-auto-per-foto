@@ -1354,6 +1354,10 @@ html, body{
 .tc-admin-tab{padding:10px 20px;border:none;background:none;font-family:inherit;font-size:14px;font-weight:700;color:#64748b;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;}
 .tc-admin-tab.active{color:#1a4fa0;border-bottom-color:#1a4fa0;}
 .tc-panel{display:none;}.tc-panel.active{display:block;}
+/* ===== "i" di informazione: spiegazione al passaggio del mouse ===== */
+.st-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800;font-style:normal;cursor:help;position:relative;vertical-align:middle;margin-left:6px;outline:none;}
+.st-info::after{content:attr(data-tip);position:absolute;left:0;top:22px;z-index:50;width:min(340px,80vw);background:#0f172a;color:#fff;font-size:12px;font-weight:500;line-height:1.5;padding:10px 12px;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.25);white-space:normal;text-align:left;opacity:0;pointer-events:none;transition:opacity .12s;}
+.st-info:hover::after,.st-info:focus::after{opacity:1;}
 </style>
 
 <div id="tc-vista-dip" style="display:none;">
@@ -10921,7 +10925,18 @@ function applyRoleUI() {
     var _accessoVeroA = false;
     try{ _accessoVeroA = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
     var _doveA = 'vendite';
-    if (!_accessoVeroA) {
+    /* ===== L'INDIRIZZO COMANDA, ANCHE PER L'AMMINISTRATORE =====
+       Tasto destro su una voce del menu apre una scheda nuova con la sezione
+       nell'indirizzo (#magazzino, #vendite/da_consegnare). Il ramo di chi non
+       e' amministratore lo leggeva; questo no: guardava solo l'ultima sezione
+       salvata, e la scheda nuova si apriva sempre li'. Il controllo sull'URL
+       che c'e' piu' sotto non veniva mai raggiunto, perche' questo ramo esce
+       prima. */
+    var _daUrlA = (typeof eaVistaDaUrl==='function') ? eaVistaDaUrl() : '';
+    var _visUrlA = false;
+    try{ var _btU=document.getElementById('si-'+_daUrlA); _visUrlA=!!(_btU && _btU.style.display!=='none'); }catch(e){}
+    if (_daUrlA && (allowed.indexOf(_daUrlA) !== -1 || _visUrlA)) { _doveA = _daUrlA; _landingUrlFatto = true; }
+    else if (!_accessoVeroA) {
       var _ultA=''; try{ _ultA=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
       /* Auto online e Simulatore non compaiono in ROLE_VIEWS nemmeno per
          l'admin, quindi il controllo sull'elenco le scartava e la pagina
@@ -10932,7 +10947,11 @@ function applyRoleUI() {
       if (_ultA && (allowed.indexOf(_ultA) !== -1 || _visibile)) _doveA = _ultA;
     }
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
-    setTimeout(function(){ try{ if(!eaVaiA(_doveA)) eaVaiA('vendite'); }catch(e){} }, 200);
+    setTimeout(function(){ try{ if(!eaVaiA(_doveA)) eaVaiA('vendite'); if(_daUrlA) eaApriSotto(); }catch(e){} }, 200);
+    /* La scheda aperta si riapre solo se non si arriva da un indirizzo: chi
+       apre #magazzino col tasto destro vuole il magazzino, non il contratto
+       che stava guardando nell'altra scheda. */
+    if(!_accessoVeroA && !_daUrlA) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
     return;
   }
   /* ===== DOVE SI APRE =====
@@ -10973,6 +10992,7 @@ function applyRoleUI() {
       try{ eaCaricaBase(); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
+    if(!_accessoVero && !_daUrl) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
     return;
   }
   /* Stessa cosa per l'amministratore, che passa da un ramo diverso. */
@@ -11054,6 +11074,7 @@ function fetchUserEmailAndSetRole(token) {
 
 function disconnettiUtente() {
   try{ localStorage.removeItem('ea_ultima_vista'); }catch(e){}
+  try{ localStorage.removeItem('ea_posto_v1'); }catch(e){}
   if (!confirm("Vuoi uscire?")) return;
   try{ localStorage.removeItem('ea_last_login'); }catch(e){}
   _driveAccessToken = null;
@@ -15141,6 +15162,105 @@ function eaSalvaSotto(vista, valore){
 function eaLeggiSotto(vista){
   try{ return localStorage.getItem('ea_ultima_sotto_'+vista)||''; }catch(e){ return ''; }
 }
+/* ===== RITROVARE LA SCHEDA APERTA, NON SOLO LA SEZIONE =====
+   La sezione si ritrovava gia'. Ma Rudy stava dentro l'anagrafica di un
+   cliente, o dentro un contratto: cambiava scheda su Chrome, tornava, e il
+   browser nel frattempo aveva buttato via la pagina (Chrome lo fa da solo,
+   "risparmio memoria"). Il gestionale ripartiva sui Clienti, si', ma
+   sull'elenco: la scheda aperta era sparita. Da fuori sembra di essere
+   stati "buttati fuori".
+   Qui si tiene da parte anche la scheda: quale cliente, quale contratto,
+   quale auto, quale sinistro, quale permuta. Ogni apertura la segna, ogni
+   chiusura la toglie. All'avvio, dopo aver ritrovato la sezione, si riapre.
+   Si riapre solo se la sezione e' la stessa in cui era stata aperta e solo
+   se il record esiste ancora: una scheda cancellata nel frattempo non si
+   riapre su un modulo vuoto. Cambiando sezione dalla barra si dimentica
+   tutto: chi va altrove ha finito con quella scheda. */
+var EA_POSTO_KEY='ea_posto_v1';
+var EA_POSTO_MAX_ETA=12*3600*1000;   /* dopo mezza giornata non vale piu' */
+function eaPostoLeggi(){
+  try{
+    var p=JSON.parse(localStorage.getItem(EA_POSTO_KEY)||'null');
+    if(!p || !Array.isArray(p.aperti) || !p.ts) return null;
+    if(Date.now()-p.ts>EA_POSTO_MAX_ETA) return null;
+    return p;
+  }catch(e){ return null; }
+}
+function eaPostoSalva(tipo, id, extra){
+  try{
+    if(!tipo || !id) return;
+    var p=eaPostoLeggi()||{aperti:[]};
+    p.aperti=p.aperti.filter(function(x){ return x && x.tipo!==tipo; });
+    p.aperti.push({tipo:tipo, id:String(id), extra:extra||null});
+    if(p.aperti.length>3) p.aperti=p.aperti.slice(-3);
+    p.vista=(typeof eaVistaAttiva==='function')?eaVistaAttiva():'';
+    p.ts=Date.now();
+    localStorage.setItem(EA_POSTO_KEY, JSON.stringify(p));
+  }catch(e){}
+}
+function eaPostoPulisci(tipo){
+  try{
+    if(!tipo){ localStorage.removeItem(EA_POSTO_KEY); return; }
+    var p=eaPostoLeggi(); if(!p) return;
+    p.aperti=p.aperti.filter(function(x){ return x && x.tipo!==tipo; });
+    if(!p.aperti.length){ localStorage.removeItem(EA_POSTO_KEY); return; }
+    p.ts=Date.now();
+    localStorage.setItem(EA_POSTO_KEY, JSON.stringify(p));
+  }catch(e){}
+}
+/* Letto UNA volta all'avvio e subito tolto dal disco: la navigazione di
+   ripristino (che passa dalla barra laterale) cancellerebbe il posto prima
+   che si faccia in tempo a usarlo. */
+var _eaPostoBoot=null;
+try{ _eaPostoBoot=eaPostoLeggi(); localStorage.removeItem(EA_POSTO_KEY); }catch(e){}
+function eaPostoRiapri(x){
+  var id=x.id, ex=x.extra||{};
+  switch(x.tipo){
+    case 'cliente':
+      if(typeof clFind!=='function' || !clFind(id)) return false;
+      if(typeof clApri==='function') clApri(encodeURIComponent(id));
+      return true;
+    case 'cv':
+      if(typeof cvById!=='function' || !cvById(id)) return false;
+      if(typeof cvForm==='function') cvForm(id, !!ex.fromVend);
+      return true;
+    case 'cvVista':
+      if(typeof cvById!=='function' || !cvById(id)) return false;
+      if(typeof cvVista==='function') cvVista(id);
+      return true;
+    case 'mz':
+      if(typeof mzById!=='function' || !mzById(id)) return false;
+      if(typeof mzForm==='function') mzForm(id);
+      return true;
+    case 'sin':
+      if(typeof sinById!=='function' || !sinById(id)) return false;
+      if(typeof sinForm==='function') sinForm(id);
+      return true;
+    case 'pm':
+      if(typeof pmById!=='function' || !pmById(id)) return false;
+      if(typeof pmForm==='function') pmForm(id);
+      return true;
+  }
+  return false;
+}
+function eaPostoRipristina(tentativo){
+  try{
+    var p=_eaPostoBoot; if(!p || !p.aperti.length) return;
+    var vistaOra=(typeof eaVistaAttiva==='function')?eaVistaAttiva():'';
+    if(p.vista && vistaOra!==p.vista) { _eaPostoBoot=null; return; }
+    var rimasti=[];
+    p.aperti.forEach(function(x){
+      var ok=false;
+      try{ ok=eaPostoRiapri(x); }catch(e){}
+      if(!ok) rimasti.push(x);
+    });
+    /* Se un record non c'era ancora (i dati dal cloud arrivano qualche
+       istante dopo l'avvio) si riprova una volta, poi si lascia perdere. */
+    if(rimasti.length && !tentativo){ p.aperti=rimasti; setTimeout(function(){ eaPostoRipristina(1); }, 2500); }
+    else _eaPostoBoot=null;
+  }catch(e){}
+}
+try{ window.eaPostoSalva=eaPostoSalva; window.eaPostoPulisci=eaPostoPulisci; window.eaPostoRipristina=eaPostoRipristina; }catch(e){}
 /* Riporta alla sezione E alla scheda interna. Il pulsante della barra da solo
    non basta: quello di Vendite chiama cvVendGo senza argomenti e riparte
    sempre da "in attesa pagamento". */
@@ -15335,6 +15455,9 @@ function sidebarNav(view,btn){
     if(view && !(typeof eaVistaDaUrl==='function' && eaVistaDaUrl()))
       localStorage.setItem('ea_ultima_vista', view);
   }catch(e){}
+  /* Cambiata sezione, la scheda aperta prima non conta piu' (quella che si
+     sta ripristinando all'avvio e' gia' stata letta in memoria). */
+  try{ if(typeof eaPostoPulisci==='function') eaPostoPulisci(); }catch(e){}
   document.querySelectorAll('.sidebar-item').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
   var t = document.getElementById('contentTitle');
@@ -17981,6 +18104,7 @@ function sinConcorda(id){
 function sinForm(id){
   var s = id ? sinById(id) : { id:'sin_'+Date.now(), stato:'attesa_apertura', createdAt:Date.now() };
   if(!s){ return; }
+  try{ if(id) eaPostoSalva('sin', s.id); }catch(e){}
   var m=document.getElementById('sin-modal');
   var f=function(label,key,type,ph){
     var val=sinEsc(s[key]||'');
@@ -18160,7 +18284,7 @@ function sinFormDocRender(){
   }catch(e){}
 }
 
-function sinChiudi(){ var m=document.getElementById('sin-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+function sinChiudi(){ var m=document.getElementById('sin-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } try{ eaPostoPulisci('sin'); }catch(e){} }
 
 function sinSalva(id, isNew){
   var g=function(k){ var el=document.getElementById('sinf-'+k); return el?el.value.trim():''; };
@@ -18858,10 +18982,11 @@ function pmRender(){
 
 function pmNuovo(){ pmForm(null); }
 function pmApri(id){ pmForm(id); }
-function pmChiudi(){ var m=document.getElementById('pm-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } _pm=null; }
+function pmChiudi(){ var m=document.getElementById('pm-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } _pm=null; try{ eaPostoPulisci('pm'); }catch(e){} }
 
 function pmForm(id){
   var p = id ? pmById(id) : null;
+  try{ if(p) eaPostoSalva('pm', p.id); }catch(e){}
   _pm = { id:(p&&p.id)||('pm_'+Date.now()), rec:(p?JSON.parse(JSON.stringify(p)):{}), pins:(p&&p.pins)?JSON.parse(JSON.stringify(p.pins)):[], metodo:(p&&p.metodoFirma==='carta')?'carta':'otp', otpOk:false, firma:(p&&p.firma)||'', firmaTs:(p&&p.firmaTs)||null, createdAt:(p&&p.createdAt)||Date.now() };
   _pmSigUsed=false; _pmOtpCode=null;
   var v=function(k){ return p&&p[k]!=null?pmEsc(p[k]):''; };
@@ -21875,6 +22000,7 @@ function mzFotoCopertina(i){ if(i<=0 || i>=_mzFoto.length) return; var f=_mzFoto
 function mzForm(id){
 
   var a = id ? mzById(id) : null;
+  try{ if(a) eaPostoSalva('mz', a.id); }catch(e){}
   _mzId = (a&&a.id) || ('mz_'+Date.now());
   window._mzDoppiaChiave=(a&&a.doppiaChiave)||'';
   /* se la lista fornitori e' vuota si prova a riprenderla dall'archivio */
@@ -22056,7 +22182,7 @@ function mzForm(id){
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
 }
-function mzChiudi(){ var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
+function mzChiudi(){ try{ eaPostoPulisci('mz'); }catch(e){} var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
   try{ var c=document.getElementById('cv-modal'); if(!c || c.style.display!=='block') _eaLivello=10050; }catch(e){} }
 /* "Disponibile" e "impegnata" sono due cose distinte, e il filtro dei
    disponibili le guarda entrambe: mettere lo stato a mano senza spegnere
@@ -22848,8 +22974,13 @@ function clSupaLoad(){
   if(typeof supaLoadList!=='function') return;
   supaLoadList('clienti_app', clSupaList, clSupaSaveList, function(){
     try{
+      /* Con una scheda cliente aperta non si ridisegna: il rinfresco al
+         ritorno sulla scheda del browser rifaceva l'anagrafica da capo e
+         cancellava quello che si stava scrivendo. L'elenco si aggiorna
+         quando la scheda viene chiusa. */
       var v=document.getElementById('view-clienti');
-      if(v && v.classList.contains('active') && typeof clRender==='function') clRender();
+      if(v && v.classList.contains('active') && typeof clRender==='function'
+         && !(typeof _clSel!=='undefined' && _clSel)) clRender();
     }catch(e){}
   });
 }
@@ -22934,8 +23065,8 @@ function clKeyEnc(k){
     .replace(/\)/g,'%29').replace(/\*/g,'%2A');
 }
 
-function clApri(keyEnc){ _clSel=decodeURIComponent(keyEnc); clRender(); }
-function clChiudiDettaglio(){ _clSel=null; clRender(); }
+function clApri(keyEnc){ _clSel=decodeURIComponent(keyEnc); clRender(); try{ eaPostoSalva('cliente', _clSel); }catch(e){} }
+function clChiudiDettaglio(){ _clSel=null; clRender(); try{ eaPostoPulisci('cliente'); }catch(e){} }
 function clCittaAuto(){ var c=document.getElementById('cli_citta'); if(!c) return; var hit=eaComuneLookup(c.value); if(!hit) return; var cap=document.getElementById('cli_cap'); if(cap&&!(''+cap.value).trim()) cap.value=hit[0]; var p=document.getElementById('cli_prov'); if(p) p.value=hit[1]; }
 /* Elenco clienti: se ne mostrano 60 per volta perche' disegnarne duemila
    insieme rallenta il telefono. Prima pero' gli altri erano irraggiungibili:
@@ -23518,6 +23649,7 @@ function cvCalcola(c){
 function cvVista(id){
   var cv=(typeof cvById==='function')?cvById(id):null;
   if(!cv){ if(typeof cvForm==='function') cvForm(id); return; }
+  try{ eaPostoSalva('cvVista', id); }catch(e){}
   var t=(typeof cvCalcola==='function')?cvCalcola(cv):{};
   var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
   var eu=function(v){ v=parseFloat(v); return isNaN(v)?'\u2014':((typeof cvEuro==='function')?cvEuro(v):Math.round(v)+' \u20ac'); };
@@ -23597,7 +23729,7 @@ function cvVista(id){
   m.innerHTML=h2; m.style.display='flex';
   try{ docListaRender('pratica', cv.id, 'cvvd_'+cv.id); }catch(e){}
 }
-function cvVistaChiudi(){ var m=document.getElementById('cvVistaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+function cvVistaChiudi(){ var m=document.getElementById('cvVistaModal'); if(m){ m.style.display='none'; m.innerHTML=''; } try{ eaPostoPulisci('cvVista'); }catch(e){} }
 function cvVistaModifica(id){ cvVistaChiudi(); if(typeof cvForm==='function') cvForm(id); }
 /* Le pratiche create prima che il modulo avesse residenza e codice fiscale
    hanno quei campi vuoti, anche quando in anagrafica ci sono da sempre.
@@ -23683,6 +23815,7 @@ function cvRecuperaAnagrafica(cv){
 
 function cvForm(id, fromVend){
   var c = id ? cvById(id) : null;
+  try{ if(c) eaPostoSalva('cv', c.id, {fromVend:!!fromVend}); }catch(e){}
   _cv = c ? JSON.parse(JSON.stringify(c)) : { id:'cv_'+Date.now(), createdAt:Date.now(), data:cvOggi(), venditore:(typeof _currentUserName!=='undefined'&&_currentUserName)||'Rudy Scropetta', cliente:{}, garanziaMesi:'12', assicDettaglio:CV_ASSIC_DEF, assicMesi:'', permutaNote:CV_PERMUTA_DEF, costiExtra:[], pagamenti:[{tipo:'Caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'1\u00aa integrazione caparra',metodo:'Bonifico',importo:'',note:''},{tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}] };
   cvRecuperaAnagrafica(_cv);
   /* Da Vendite i non amministratori vedono la versione ridotta del contratto.
@@ -23947,7 +24080,7 @@ function cvForm(id, fromVend){
      lista dei documenti gia' caricati non compare mai */
   try{ docListaRender('pratica', _cv.id, 'cvdoc_'+_cv.id); }catch(e){}
 }
-function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } try{ eaPostoPulisci('cv'); }catch(e){} }
 function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')?parLoad():{}; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; _cv.garanziaImporto=(mesi==='24')?n(p.garanzia24):0; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} var gc=document.getElementById('cv-gar-costo'); if(gc){ gc.innerHTML=(mesi==='24')?('Costo garanzia 24 mesi (da Parametri): <b>'+cvEuro(_cv.garanziaImporto)+'</b>'):'Garanzia 12 mesi inclusa (legale)'; } if(typeof cvLive==='function') cvLive(); }
 /* Ricerca nel menu auto: si digita e restano solo i veicoli che
    corrispondono per marca, modello, targa, telaio o numero interno. */
@@ -36743,6 +36876,11 @@ function stChGiorni(cv){
     return Math.floor((b-a)/86400000);
   }catch(e){ return null; }
 }
+/* La "i" grigia accanto a un titolo: passandoci sopra col mouse (o
+   toccandola) compare la spiegazione di come si calcola il numero. */
+function stInfo(testo){
+  return '<span class="st-info" tabindex="0" data-tip="'+String(testo||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')+'">i</span>';
+}
 function stChMediana(arr){
   if(!arr || !arr.length) return null;
   var s=arr.slice().sort(function(x,y){return x-y;}), n=s.length, m=Math.floor(n/2);
@@ -36817,7 +36955,7 @@ function statChiusuraHTML(all, yr){
     });
 
     var h='<div style="max-width:920px;margin:0 auto;">';
-    h+='<div style="'+box+'">'+tit('Da preventivo a proposta','Giorni dal primo preventivo del cliente per quel veicolo fino alla proposta firmata. Solo pratiche con date reali: lo storico importato resta fuori.');
+    h+='<div style="'+box+'">'+tit('Da preventivo a proposta'+stInfo('Giorni che passano dal primo preventivo fatto al cliente per quel veicolo alla firma della proposta d\u0027acquisto. Mediana = il valore tipico, met\u00e0 sopra e met\u00e0 sotto. Media = somma dei giorni diviso il numero di proposte: sale se ci sono trattative lunghe. Le fasce sotto contano quante proposte si sono chiuse entro quei giorni. Sono comprese solo le pratiche con date reali: lo storico importato senza date dichiarate resta fuori.'),'Giorni dal primo preventivo del cliente per quel veicolo fino alla proposta firmata. Solo pratiche con date reali: lo storico importato resta fuori.');
     if(!tutti.length){
       var riga=function(l,v,c){ return v?('<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:12.5px;"><span style="color:#64748b;">'+l+'</span><b style="color:'+(c||'#334155')+';">'+v+'</b></div>'):''; };
       h+='<div style="color:#94a3b8;font-size:13px;margin-bottom:10px;">Nessuna proposta con date utilizzabili in questo periodo. Ecco cosa manca:</div>'
@@ -36866,18 +37004,25 @@ function statChiusuraHTML(all, yr){
     h+='</div>';
 
     /* ---- andamento mese per mese ---- */
+    /* ===== LA BARRA SEGUE LA MEDIA, NON LA MEDIANA =====
+       Sette proposte su dieci si firmano lo stesso giorno del preventivo,
+       quindi la mediana mensile e' quasi sempre 0 e le barre restavano tutte
+       vuote: il riquadro sembrava rotto. La mediana resta scritta (e' il
+       valore tipico), ma la barra si disegna sulla media, che sente i casi
+       lunghi ed e' quella che si muove da un mese all'altro. */
     var righe='';
     var maxMed=1;
-    perMese.forEach(function(arr){ var m=stChMediana(arr); if(m!==null && m>maxMed) maxMed=m; });
+    perMese.forEach(function(arr){ var m=stChMedia(arr); if(m!==null && m>maxMed) maxMed=m; });
     for(var i=0;i<12;i++){
       var m=stChMediana(perMese[i]); if(m===null) continue;
+      var md=stChMedia(perMese[i]);
       righe+='<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px;">'
         +'<div style="flex:0 0 40px;color:#64748b;">'+mesiN[i]+'</div>'
-        +'<div style="flex:1;background:#f1f5f9;border-radius:5px;height:16px;overflow:hidden;"><div style="width:'+Math.round(m/maxMed*100)+'%;height:100%;background:#0d9488;"></div></div>'
-        +'<div style="flex:0 0 92px;text-align:right;font-weight:700;color:#334155;">'+m+' gg <span style="color:#94a3b8;font-weight:600;">('+perMese[i].length+')</span></div></div>';
+        +'<div style="flex:1;background:#f1f5f9;border-radius:5px;height:16px;overflow:hidden;"><div style="width:'+Math.max(2,Math.round(md/maxMed*100))+'%;height:100%;background:#0d9488;"></div></div>'
+        +'<div style="flex:0 0 170px;text-align:right;font-weight:700;color:#334155;">'+m+' gg <span style="color:#94a3b8;font-weight:600;">\u00b7 media '+String(md).replace('.',',')+' gg ('+perMese[i].length+')</span></div></div>';
     }
     if(righe){
-      h+='<div style="'+box+'">'+tit('Andamento del tempo di chiusura','Mediana dei giorni per mese. Fra parentesi il numero di proposte.')+righe;
+      h+='<div style="'+box+'">'+tit('Andamento del tempo di chiusura'+stInfo('Per ogni proposta firmata si contano i giorni dal primo preventivo fatto a quel cliente per quel veicolo fino alla firma della proposta. Le proposte si raggruppano per mese di firma. Il numero grande \u00e8 la mediana: met\u00e0 delle proposte si \u00e8 chiusa in meno giorni, met\u00e0 in pi\u00f9. Se dice 0 gg vuol dire che pi\u00f9 della met\u00e0 si \u00e8 firmata lo stesso giorno del preventivo. La media invece risente delle trattative lunghe: \u00e8 lei che muove la barra. Fra parentesi quante proposte entrano nel calcolo. Restano fuori le pratiche storiche importate senza date reali e quelle con date mancanti o incoerenti.'),'Mediana e media dei giorni per mese di firma. Fra parentesi il numero di proposte.')+righe;
       /* confronto ultimi 90 giorni contro i 90 precedenti, indipendente dall'anno scelto */
       var ora=Date.now(), g90=90*86400000, rec=[], pre=[];
       all.forEach(function(cv){
@@ -37240,8 +37385,18 @@ function statRender(){
   var tasso=prevTot?Math.round(venduti/prevTot*100):0;
   var totVenduto=contratti.reduce(function(s,x){return s+((typeof cvCalcola==='function')?cvCalcola(x).totaleScontato:0);},0);
   var _prevYr=(yr!=='tutti')?String(parseInt(yr,10)-1):null;
-  var _prevRev=0; if(_prevYr){ all.forEach(function(x){ if(x.isContratto){ var d=new Date(x.contrattoTs||x.createdAt||Date.now()); if(String(d.getFullYear())===_prevYr) _prevRev+=((typeof cvCalcola==='function')?cvCalcola(x).totaleScontato:0); } }); }
+  /* ===== STESSO PERIODO, NON TUTTO L'ANNO =====
+     A settembre il 2026 conteggiava otto mesi e mezzo, il 2025 dodici: il
+     confronto usciva -50% e non voleva dire niente. Se l'anno scelto e'
+     quello in corso, dell'anno prima si conta solo fino alla stessa data di
+     oggi (1 gennaio - 12 settembre contro 1 gennaio - 12 settembre). Per un
+     anno gia' chiuso si confronta l'anno intero, com'era. */
+  var _oggiC=new Date();
+  var _stessoPeriodo=(yr!=='tutti' && parseInt(yr,10)===_oggiC.getFullYear());
+  var _prevFine=_stessoPeriodo?new Date(_oggiC.getFullYear()-1,_oggiC.getMonth(),_oggiC.getDate(),23,59,59,999).getTime():null;
+  var _prevRev=0; if(_prevYr){ all.forEach(function(x){ if(x.isContratto){ var d=new Date(x.contrattoTs||x.createdAt||Date.now()); if(String(d.getFullYear())===_prevYr && (_prevFine===null || d.getTime()<=_prevFine)) _prevRev+=((typeof cvCalcola==='function')?cvCalcola(x).totaleScontato:0); } }); }
   var _yoy=_prevRev?Math.round((totVenduto-_prevRev)/_prevRev*1000)/10:null;
+  var _prevLbl=_stessoPeriodo?(' (al '+('0'+_oggiC.getDate()).slice(-2)+'/'+('0'+(_oggiC.getMonth()+1)).slice(-2)+')'):'';
   var _revMese=[0,0,0,0,0,0,0,0,0,0,0,0]; recs.forEach(function(x){ if(x.isContratto){ var d2=new Date(x.contrattoTs||x.createdAt||Date.now()); _revMese[d2.getMonth()]+=((typeof cvCalcola==='function')?cvCalcola(x).totaleScontato:0); } });
   var _trim=[_revMese[0]+_revMese[1]+_revMese[2],_revMese[3]+_revMese[4]+_revMese[5],_revMese[6]+_revMese[7]+_revMese[8],_revMese[9]+_revMese[10]+_revMese[11]];
   var conFin=contratti.filter(function(x){return (x.pagamenti||[]).some(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';});}).length;
@@ -37313,7 +37468,7 @@ function statRender(){
   h+='</div></div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;"><div style="font-weight:800;color:#334155;margin-bottom:10px;">Confronto fatturato</div>';
   h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span>Fatturato '+(yr==='tutti'?'periodo':yr)+'</span><b>'+cvEuro(totVenduto)+'</b></div>';
-  if(_prevYr){ h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span>Fatturato '+_prevYr+'</span><b>'+cvEuro(_prevRev)+'</b></div>'; if(_yoy!==null){ var _yc=_yoy>=0?'#16a34a':'#dc2626'; h+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:800;"><span>Rispetto all\u2019anno precedente</span><b style="color:'+_yc+';">'+(_yoy>=0?'+':'')+_yoy+'%</b></div>'; } }
+  if(_prevYr){ h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;"><span>Fatturato '+_prevYr+_prevLbl+'</span><b>'+cvEuro(_prevRev)+'</b></div>'; if(_yoy!==null){ var _yc=_yoy>=0?'#16a34a':'#dc2626'; h+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:800;"><span>Rispetto all\u2019anno precedente'+(_stessoPeriodo?' (stesso periodo)':'')+'</span><b style="color:'+_yc+';">'+(_yoy>=0?'+':'')+_yoy+'%</b></div>'; } }
   if(yr!=='tutti' && parseInt(yr,10)===nowD.getFullYear()){ var _cm=nowD.getMonth(), _pm=_cm-1, _cmR=_revMese[_cm], _pmR=(_pm>=0)?_revMese[_pm]:0; var _mom=_pmR?Math.round((_cmR-_pmR)/_pmR*1000)/10:null; h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e2e8f0;margin-top:6px;"><span>Mese corrente ('+mesi[_cm]+')</span><b>'+cvEuro(_cmR)+'</b></div>'; if(_pm>=0){ h+='<div style="display:flex;justify-content:space-between;padding:8px 0;"><span>Mese precedente ('+mesi[_pm]+')</span><b>'+cvEuro(_pmR)+'</b></div>'; } if(_mom!==null){ var _mc=_mom>=0?'#16a34a':'#dc2626'; h+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:800;"><span>Rispetto al mese precedente</span><b style="color:'+_mc+';">'+(_mom>=0?'+':'')+_mom+'%</b></div>'; } }
   h+='</div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;"><div style="font-weight:800;color:#334155;margin-bottom:10px;">Fatturato per trimestre</div>';
@@ -37332,6 +37487,14 @@ function statRender(){
 /* ===================== CRM (contatti/lead) ===================== */
 var CRM_KEY='ea_crm_v1';
 var CRM_STATI=['nuovo','ricontattare','trattativa','chiuso vinto','chiuso perso'];
+/* ===== "CHIUSO VINTO" NON E' UNA COLONNA =====
+   Chi ha comprato non e' piu' un contatto da lavorare: e' un cliente, sta in
+   Vendite e in Anagrafica. Tenerlo nel CRM era una colonna in piu' da
+   scorrere per non farci niente. Lo stato resta nei dati (serve alle
+   statistiche per calcolare la conversione), ma nella pipeline, nell'elenco
+   e nei menu a tendina non compare: chi ha la consegna sparisce dal CRM da
+   solo, e con le frecce da "trattativa" si va dritti a "chiuso perso". */
+var CRM_STATI_BOARD=CRM_STATI.filter(function(s){ return s!=='chiuso vinto'; });
 function crmEsc(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function crmLoad(){ try{ return JSON.parse(localStorage.getItem(CRM_KEY)||'{}'); }catch(e){ return {}; } }
 function crmSave(o){ try{ localStorage.setItem(CRM_KEY, JSON.stringify(o)); }catch(e){} }
@@ -38245,7 +38408,7 @@ function crmRenderLead(){
      caldo ne' freddo, e' chiuso. */
   var _aperto=function(l){ return l._stato!=='chiuso vinto' && l._stato!=='chiuso perso'; };
   leads.forEach(function(l){ l._temp=_aperto(l)?crmTemperatura(l):null; l._gg=crmGiorniPrev(l); });
-  var vis=leads.filter(function(l){ if(fil!=='tutti'&&l._stato!==fil) return false; if(_crmTempFiltro && (!l._temp || l._temp.id!==_crmTempFiltro)) return false; if(q){ var blob=(l.nome+' '+l.cognome+' '+l.telefono+' '+l.email+' '+l.auto).toLowerCase(); if(blob.indexOf(q)<0) return false; } return true; });
+  var vis=leads.filter(function(l){ if(l._stato==='chiuso vinto') return false; if(fil!=='tutti'&&l._stato!==fil) return false; if(_crmTempFiltro && (!l._temp || l._temp.id!==_crmTempFiltro)) return false; if(q){ var blob=(l.nome+' '+l.cognome+' '+l.telefono+' '+l.email+' '+l.auto).toLowerCase(); if(blob.indexOf(q)<0) return false; } return true; });
   /* I caldi in cima: sono quelli da chiamare oggi. A parita' di
      temperatura, prima il piu' recente. */
   var _ordT={caldo:0,tiepido:1,freddo:2};
@@ -38257,8 +38420,8 @@ function crmRenderLead(){
   var _cntT={}; CRM_TEMP.forEach(function(t){ _cntT[t.id]=0; });
   leads.forEach(function(l){ if(l._temp) _cntT[l._temp.id]++; });
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
-  var h=crmDaFareBanner()+'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><input id="crm-cerca" oninput="crmRender()" placeholder="🔎 Cerca nome, telefono, email…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;"><select id="crm-filtro" onchange="crmRender()" style="padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"><option value="tutti">Tutti gli stati</option>'+CRM_STATI.map(function(s){return '<option'+(fil===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">👥 '+leads.length+' contatti · '+CRM_STATI.map(function(s){return '<b style="color:'+col[s]+'">'+cnt[s]+'</b> '+s;}).join(' · ')+'</div>';
+  var h=crmDaFareBanner()+'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><input id="crm-cerca" oninput="crmRender()" placeholder="🔎 Cerca nome, telefono, email…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;"><select id="crm-filtro" onchange="crmRender()" style="padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"><option value="tutti">Tutti gli stati</option>'+CRM_STATI_BOARD.map(function(s){return '<option'+(fil===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">👥 '+(leads.length-(cnt['chiuso vinto']||0))+' contatti · '+CRM_STATI_BOARD.map(function(s){return '<b style="color:'+col[s]+'">'+cnt[s]+'</b> '+s;}).join(' · ')+'</div>';
   /* Le tre temperature, da toccare per filtrare. Il numero e' quello che
      conta: a colpo d'occhio si vede quanti sono da chiamare oggi. */
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">';
@@ -38282,7 +38445,7 @@ function crmRenderLead(){
     }
     h+='<div class="'+(_due2?'crm-due':'')+'" style="background:#fff;border:2px solid '+(col[l._stato]||'#cbd5e1')+';border-radius:12px;padding:14px;margin-bottom:10px;'+(_due2?('--pc:'+(col[l._stato]||'#cbd5e1')+'99;'):'')+'">'+_tb
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1;min-width:180px;display:flex;gap:10px;align-items:flex-start;">'+crmAvatar(l.nome,l.cognome)+'<div style="min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.telefono?('📞 '+crmEsc(l.telefono)):'')+(l.email?('  ✉️ '+crmEsc(l.email)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:3px;">🚗 '+crmEsc(l.auto||'—')+' · '+l.nPrev+' preventivo/i</div></div></div>'
-      +'<select onchange="crmSetStato('+crmEsc(crmKeyJs(l.key))+',this.value)" style="height:38px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-weight:700;color:'+(col[l._stato]||'#334155')+';">'+CRM_STATI.map(function(s){return '<option'+(l._stato===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
+      +'<select onchange="crmSetStato('+crmEsc(crmKeyJs(l.key))+',this.value)" style="height:38px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-weight:700;color:'+(col[l._stato]||'#334155')+';">'+CRM_STATI_BOARD.map(function(s){return '<option'+(l._stato===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
       +'<textarea onchange="crmSetNote('+crmEsc(crmKeyJs(l.key))+',this.value)" placeholder="Note / promemoria…" style="width:100%;margin-top:8px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:44px;box-sizing:border-box;">'+crmEsc(rec.note||'')+'</textarea>'
       +crmFonteSelect(l.key,rec.fonte)+crmAttivitaHTML(l.key,rec)+'<div>'+crmWaBtn(l.telefono,'preventivi',l.nome,l.auto,'WhatsApp')+crmOffScegliBtn(l.key,((l.nome||'')+' '+(l.cognome||'')).trim(),l.telefono)+'</div>'
       +'</div>';
@@ -39417,7 +39580,7 @@ function crmDaFareBanner(){ var s=crmLoad(); var oggi=crmOggiISO(); var rit=0,og
 function crmKeyJs(k){
   return "'" + String(k==null?'':k).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ') + "'";
 }
-function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI.length) return; crmSetStato(key,CRM_STATI[ni]); }
+function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI_BOARD.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI_BOARD.length) return; crmSetStato(key,CRM_STATI_BOARD[ni]); }
 var CRM_GIORNI_CALDI=30;   /* finestra di lavorazione: un mese */
 function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   /* Una pipeline con tutti i contatti non e' una pipeline: e' un archivio.
@@ -39431,16 +39594,18 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
     if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
     return false;
   });
-  var _esclusi=_tot-leads.length; leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
+  leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
+  leads=leads.filter(function(l){ return l._stato!=='chiuso vinto'; });   /* ha comprato: e' un cliente, non un contatto */
+  var _esclusi=_tot-leads.length;
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
-    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti esclusi: proposta gi\u00e0 firmata o nessun preventivo aperto negli ultimi '+CRM_GIORNI_CALDI+' giorni</span>'):'')+'<br>'
+    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti esclusi: proposta gi\u00e0 firmata, auto consegnata o nessun preventivo aperto negli ultimi '+CRM_GIORNI_CALDI+' giorni</span>'):'')+'<br>'
     +'Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
   h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
   h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
   h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch;align-items:flex-start;">';
-  CRM_STATI.forEach(function(st){ var items=leads.filter(function(l){return l._stato===st;}); var si=CRM_STATI.indexOf(st);
+  CRM_STATI_BOARD.forEach(function(st){ var items=leads.filter(function(l){return l._stato===st;}); var si=CRM_STATI_BOARD.indexOf(st);
     h+='<div style="flex:1 1 240px;min-width:240px;background:#f1f5f9;border-radius:12px;padding:10px;"><div style="font-weight:800;font-size:13px;color:'+(col[st]||'#334155')+';margin-bottom:8px;display:flex;justify-content:space-between;"><span>'+st+'</span><span style="background:#fff;border-radius:20px;padding:1px 8px;font-size:12px;">'+items.length+'</span></div>';
     if(!items.length){ h+='<div style="font-size:12px;color:#94a3b8;padding:8px 0;">\u2014</div>'; }
     items.forEach(function(l){
@@ -39458,7 +39623,7 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
            rispondeva, ma solo per quel contatto: un guasto che sembrava
            casuale ed era invece l'apostrofo. */
         +'<button onclick="crmMoveStato('+crmEsc(crmKeyJs(l.key))+',-1)" '+(si<=0?'disabled':'')+' style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:34px;height:28px;cursor:pointer;'+(si<=0?'opacity:.3;':'')+'">\u25c0</button>'
-        +'<button onclick="crmMoveStato('+crmEsc(crmKeyJs(l.key))+',1)" '+(si>=CRM_STATI.length-1?'disabled':'')+' style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:34px;height:28px;cursor:pointer;'+(si>=CRM_STATI.length-1?'opacity:.3;':'')+'">\u25b6</button>'
+        +'<button onclick="crmMoveStato('+crmEsc(crmKeyJs(l.key))+',1)" '+(si>=CRM_STATI_BOARD.length-1?'disabled':'')+' style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:34px;height:28px;cursor:pointer;'+(si>=CRM_STATI_BOARD.length-1?'opacity:.3;':'')+'">\u25b6</button>'
         +'</div></div>';
     });
     h+='</div>';
