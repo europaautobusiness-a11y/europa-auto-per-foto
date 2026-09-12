@@ -15243,6 +15243,10 @@ function eaPostoRiapri(x){
   var id=x.id, ex=x.extra||{};
   switch(x.tipo){
     case 'cliente':
+      /* se nel frattempo e' gia' aperta una scheda (questa o un'altra scelta
+         a mano) non si sovrascrive niente */
+      if(typeof _clSel!=='undefined' && _clSel) return true;
+      try{ if(typeof clAggregaInvalida==='function') clAggregaInvalida(); }catch(e){}
       if(typeof clFind!=='function' || !clFind(id)) return false;
       if(typeof clApri==='function') clApri(encodeURIComponent(id));
       return true;
@@ -15271,8 +15275,10 @@ function eaPostoRiapri(x){
 }
 function eaPostoRipristina(tentativo){
   try{
+    tentativo=tentativo||0;
     var p=_eaPostoBoot; if(!p || !p.aperti.length) return;
     var vistaOra=(typeof eaVistaAttiva==='function')?eaVistaAttiva():'';
+    /* la persona e' andata altrove: si smette, senza riportarla indietro */
     if(p.vista && vistaOra!==p.vista) { _eaPostoBoot=null; return; }
     var rimasti=[];
     p.aperti.forEach(function(x){
@@ -15280,9 +15286,14 @@ function eaPostoRipristina(tentativo){
       try{ ok=eaPostoRiapri(x); }catch(e){}
       if(!ok) rimasti.push(x);
     });
-    /* Se un record non c'era ancora (i dati dal cloud arrivano qualche
-       istante dopo l'avvio) si riprova una volta, poi si lascia perdere. */
-    if(rimasti.length && !tentativo){ p.aperti=rimasti; setTimeout(function(){ eaPostoRipristina(1); }, 2500); }
+    /* ===== SI ASPETTA L'ARCHIVIO, NON SI MOLLA DOPO UN GIRO =====
+       Dopo un ricaricamento il browser ha solo una parte delle pratiche;
+       il resto arriva dal cloud a pagine di mille righe e con quattromila
+       preventivi e tremila clienti ci vogliono diversi secondi. Un solo
+       tentativo di riserva dopo due secondi e mezzo non bastava: il cliente
+       non si trovava ancora, si lasciava perdere e la persona si ritrovava
+       sull'elenco. Ora si riprova ogni due secondi per un minuto. */
+    if(rimasti.length && tentativo<30){ p.aperti=rimasti; setTimeout(function(){ eaPostoRipristina(tentativo+1); }, 2000); }
     else _eaPostoBoot=null;
   }catch(e){}
 }
