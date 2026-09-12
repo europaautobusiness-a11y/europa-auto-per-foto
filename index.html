@@ -10922,6 +10922,15 @@ function applyRoleUI() {
   // Schermata iniziale: l'admin apre le Vendite all'accesso, poi ritrova il suo posto
   if (role === 'admin' && !_landingApplied) {
     _landingApplied = true;
+    /* ===== L'INDIRIZZO SI LEGGE UNA VOLTA SOLA, ALL'AVVIO =====
+       Questa funzione viene richiamata anche dopo (ogni due minuti, quando
+       si rileggono i permessi). Il ramo "indirizzo" piu' in basso scattava
+       alla prima di quelle chiamate in cui trovava un indirizzo, e ora che
+       l'indirizzo c'e' sempre scattava per tutti: rifaceva la sezione da
+       capo e chi era dentro una scheda cliente si ritrovava sull'elenco,
+       senza aver toccato niente. L'avvio e' qui: dopo, l'indirizzo non
+       comanda piu'. */
+    _landingUrlFatto = true;
     var _accessoVeroA = false;
     try{ _accessoVeroA = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
     var _doveA = 'vendite';
@@ -10972,6 +10981,7 @@ function applyRoleUI() {
   var landing = _landingRuolo || ((role !== 'admin' && allowed.indexOf('presenze') !== -1) ? 'presenze' : allowed[0]);
   if (role !== 'admin' && !_landingApplied && (_landingRuolo || allowed.indexOf('presenze') !== -1)) {
     _landingApplied = true;
+    _landingUrlFatto = true;   /* stesso motivo del ramo amministratore */
     var _accessoVero = false;
     try{ _accessoVero = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
     var _dove = landing;
@@ -10997,8 +11007,8 @@ function applyRoleUI() {
   }
   /* Stessa cosa per l'amministratore, che passa da un ramo diverso. */
   var _urlAdmin=eaVistaDaUrl();
-  if(_urlAdmin && allowed.indexOf(_urlAdmin)!==-1 && !_landingUrlFatto){
-    _landingUrlFatto=true;
+  if(_urlAdmin && allowed.indexOf(_urlAdmin)!==-1 && !_landingUrlFatto && !_landingApplied){
+    _landingUrlFatto=true; _landingApplied=true;
     setTimeout(function(){ try{ eaVaiA(_urlAdmin); eaApriSotto(); eaCaricaBase(); }catch(e){} }, 200);
     return;
   }
@@ -32598,6 +32608,7 @@ var EA_SYNC_VISTE = {
   vendite:    function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); },
   crm:        function(){ if(typeof crmSupaLoad==='function') crmSupaLoad(); },
   clienti:    function(){ if(typeof clSupaLoad==='function') clSupaLoad(); },
+  statistiche:function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); },
   magazzino:  function(){ if(typeof mzSupaLoad==='function') mzSupaLoad(); },
   fornitori:  function(){ if(typeof fnSupaLoad==='function') fnSupaLoad(); },
   provv:      function(){ if(typeof pSupaLoad==='function') pSupaLoad(); },
@@ -35383,7 +35394,7 @@ function supaLoadList(table, localLoad, localSave, done){
   }
   try{ pagina(0); }catch(e){ if(done)done(); }
 }
-function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, function(arr){ cvSave(arr.filter(function(x){return x && x.deleted!==true && !(_cvDeleted&&_cvDeleted[x.id]);})); }, function(){ if(typeof cvVendBadge==='function') cvVendBadge(); var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); var vcl=document.getElementById('view-clienti'); if(vcl && vcl.classList.contains('active') && typeof clRender==='function' && !(typeof _clSel!=='undefined' && _clSel)) clRender(); var vcr=document.getElementById('view-crm'); if(vcr && vcr.classList.contains('active') && typeof crmRender==='function') crmRender(); }); }
+function cvSupaLoad(){ supaLoadList('preventivi', cvLoad, function(arr){ cvSave(arr.filter(function(x){return x && x.deleted!==true && !(_cvDeleted&&_cvDeleted[x.id]);})); }, function(){ if(typeof cvVendBadge==='function') cvVendBadge(); var vp=document.getElementById('view-preventivi'); if(vp && vp.classList.contains('active') && typeof cvRender==='function') cvRender(); var vv=document.getElementById('view-vendite'); if(vv && vv.classList.contains('active') && typeof cvVendRender==='function') cvVendRender(); var vcl=document.getElementById('view-clienti'); if(vcl && vcl.classList.contains('active') && typeof clRender==='function' && !(typeof _clSel!=='undefined' && _clSel)) clRender(); var vcr=document.getElementById('view-crm'); if(vcr && vcr.classList.contains('active') && typeof crmRender==='function') crmRender(); var vst=document.getElementById('view-statistiche'); if(vst && vst.classList.contains('active') && typeof statRender==='function') statRender(); }); }
 
 /* ===================== NOTIFICHE AUTOMAZIONI (per-utente) ===================== */
 var NOTIF_KEY='ea_notifiche_v1';
@@ -37399,7 +37410,14 @@ function bmRender(){
 }
 function bmSupaLoad(){ try{ if(typeof supaLoadList==='function') supaLoadList('bm_valutazioni_app', bmLoad, bmSave); }catch(e){} }
 
-function statInit(){ statRender(); }
+/* ===== LE STATISTICHE SI RIFANNO QUANDO ARRIVA L'ARCHIVIO =====
+   All'apertura si disegnava con quello che c'era nel browser, che dopo un
+   ricaricamento della pagina puo' essere una parte sola delle pratiche (le
+   piu' recenti): 27 vendite invece di 140, e il 2025 a zero. I dati veri
+   arrivavano dal cloud qualche secondo dopo, ma la pagina non si aggiornava:
+   bisognava cambiare periodo e rimetterlo per vederli. Ora l'apertura
+   chiede l'archivio e, appena arriva, ridisegna con il periodo scelto. */
+function statInit(){ statRender(); try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){} }
 function statAnni(){ var s={}; cvLoad().forEach(function(x){ var d=new Date(x.createdAt||x.contrattoTs||Date.now()); s[d.getFullYear()]=true; }); var arr=Object.keys(s).sort().reverse(); if(!arr.length) arr=[String(new Date().getFullYear())]; return arr; }
 function statRender(){
   var wrap=document.getElementById('view-statistiche'); if(!wrap) return;
