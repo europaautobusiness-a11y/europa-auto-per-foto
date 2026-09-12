@@ -33244,6 +33244,16 @@ function cvDeliberaForm(id){
     if(_acc>0) _antDef=Math.round(_acc);
     else if(_valDef!=='' && d.importoFinanziato) _antDef=Math.max(0, Math.round(_valDef-d.importoFinanziato));
   }catch(e){}
+  /* ===== SE SI E' APPENA SIMULATO, VALGONO I NUMERI DEL SIMULATORE =====
+     Il simulatore qui sopra chiede gia' valore del veicolo e anticipo, ma
+     poi le due caselle "dati per la provvigione" ripartivano dal contratto
+     e andavano ricopiate a mano. Ora si prendono dal simulatore appena
+     fatto; il contratto resta la riserva quando non si e' simulato. Le
+     caselle restano modificabili. */
+  try{
+    if(fromSim && fromSim.valoreVeicolo>0) _valDef=Math.round(fromSim.valoreVeicolo);
+    if(fromSim && fromSim.anticipo!=null && fromSim.anticipo>=0) _antDef=Math.round(fromSim.anticipo);
+  }catch(e){}
   var val=function(k){
     if(fromSim && fromSim[k]!==undefined && fromSim[k]!==null) return fromSim[k];
     if(d[k]!==undefined && d[k]!==null && d[k]!=='') return d[k];
@@ -33434,8 +33444,8 @@ function cvDeliberaForm(id){
    +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:12px;">'
    +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Dati per la provvigione</div>'
    +'<div style="display:flex;gap:10px;">'
-   +'<div style="flex:1;"><label style="'+lab+'">Valore del veicolo</label><input id="dl_valore" type="number" step="1" style="'+inp+'" value="'+(d.valoreVeicolo!=null?d.valoreVeicolo:_valDef)+'"></div>'
-   +'<div style="flex:1;"><label style="'+lab+'">Anticipo</label><input id="dl_anticipo" type="number" step="1" style="'+inp+'" value="'+(d.anticipo!=null?d.anticipo:_antDef)+'"></div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Valore del veicolo</label><input id="dl_valore" type="number" step="1" style="'+inp+'" value="'+((fromSim && fromSim.valoreVeicolo>0)?_valDef:(d.valoreVeicolo!=null?d.valoreVeicolo:_valDef))+'">'+(fromSim?'<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">dal simulatore</div>':'')+'</div>'
+   +'<div style="flex:1;"><label style="'+lab+'">Anticipo</label><input id="dl_anticipo" type="number" step="1" style="'+inp+'" value="'+((fromSim && fromSim.anticipo!=null)?_antDef:(d.anticipo!=null?d.anticipo:_antDef))+'">'+(fromSim?'<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">dal simulatore</div>':'')+'</div>'
    +'</div>'
    +'<div style="display:flex;gap:10px;">'
    +'<div style="flex:1;"><label style="'+lab+'">CPI</label><select id="dl_cpi" style="'+inp+'background:#fff;">'
@@ -33451,7 +33461,12 @@ function cvDeliberaForm(id){
      +(function(){
         var _v=[24,36,48,60,72];
         if(_polMesiDef>0 && _v.indexOf(_polMesiDef)<0){ _v.push(_polMesiDef); _v.sort(function(a,b){ return a-b; }); }
-        return _v.map(function(mm){ return '<option value="'+mm+'"'+(_polMesiDef===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('');
+        /* Senza polizza non c'e' una durata: la voce "Nessuna polizza" si
+           sceglie da sola quando il contratto non ne ha (o la delibera l'ha
+           gia' salvata cosi'), e si puo' scegliere a mano in ogni caso. */
+        var _nessuna = (d.polizzaMesi===0) || (d.polizzaMesi==null && _polTipo==='nessuna');
+        return '<option value="0"'+(_nessuna?' selected':'')+'>Nessuna polizza</option>'
+          + _v.map(function(mm){ return '<option value="'+mm+'"'+(!_nessuna && _polMesiDef===mm?' selected':'')+'>'+mm+' mesi</option>'; }).join('');
       })()
      +'</select>'
      +(_polMesiFonte?('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">'+_polMesiFonte+'</div>'):'')
@@ -33709,7 +33724,7 @@ function cvDeliberaSalva(id){
     cpi:(g('cpi')||'NO'), gap:(g('gap')||'NO'),
     /* La tendina un valore ce l'ha sempre: il vecchio ripiego a 48 poteva
        solo sostituire una durata buona con una sbagliata. */
-    polizzaMesi:(n('polMesi') || ((list[i].finDelibera && list[i].finDelibera.polizzaMesi) || null)),
+    polizzaMesi:(g('polMesi')==='0' ? 0 : (n('polMesi') || ((list[i].finDelibera && list[i].finDelibera.polizzaMesi) || null))),
     valoreVeicolo:n('valore'), anticipo:n('anticipo'),
     /* com'era impostato il simulatore l'ultima volta: si riapre da li' */
     simStato:((window._delibDaSim && window._delibDaSim.simStato)
