@@ -7328,8 +7328,11 @@ function pProvvAuto(cv){
                       mese:(typeof pGetMese==='function'?pGetMese():''), fonte:'' };
     e.cvId=cv.id; e.bozza=true;
     e.cliente=((cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()));
-    e.marca=a.marca||'';
-    e.modello=a.modello||String(cv.autoDesc||'');
+    (function(){
+      var _mm=(typeof pMarcaModelloDaCv==='function')?pMarcaModelloDaCv(cv):null;
+      e.marca=(_mm&&_mm.marca)||a.marca||'';
+      e.modello=(_mm&&_mm.modello)||pModelloSenzaMarca(e.marca, a.modello||String(cv.autoDesc||''));
+    })();
     if(!fin){
       e.tipo='noFin'; e.provv=25; e.provvigione=25; e.finanziaria='Senza Finanziamento';
       e.manca=e.fonte?[]:['fonte'];
@@ -7570,13 +7573,30 @@ function pIgnoraVendita(cvId){
    campi li ha; se il veicolo non c'e' piu', si spezza il testo tenendo
    conto delle marche a due parole. */
 var P_MARCHE_DUE=['ALFA ROMEO','LAND ROVER','RANGE ROVER','MERCEDES BENZ','ASTON MARTIN','DS AUTOMOBILE','DS AUTOMOBILES','ROLLS ROYCE','GREAT WALL','LYNK CO','MG MOTOR'];
+/* "VOLKSWAGEN" + "VOLKSWAGEN POLO" -> "VOLKSWAGEN" + "POLO". Le righe
+   vecchie del registro e certe schede in magazzino hanno la marca ripetuta
+   dentro il modello: qui si toglie, ovunque i due campi vengano mostrati o
+   proposti. */
+function pModelloSenzaMarca(marca, modello){
+  var m=String(marca||'').trim().toUpperCase(), d=String(modello||'').trim();
+  if(!m || !d) return d;
+  var du=d.toUpperCase();
+  while(m && du.indexOf(m+' ')===0){ d=d.slice(m.length).trim(); du=d.toUpperCase(); }
+  if(du===m) return '';
+  return d;
+}
+function pAutoLabel(r){
+  r=r||{};
+  var mo=pModelloSenzaMarca(r.marca, r.modello);
+  return [r.marca, mo].filter(Boolean).join(' ').trim();
+}
 function pMarcaModelloDaCv(cv){
   var out={marca:'', modello:''};
   try{
     var a=(cv && cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
     if(a && (a.marca||a.modello)){
-      out.marca=String(a.marca||'').trim();
-      out.modello=String(a.modello||'').trim();
+      out.marca=String(a.marca||'').trim().toUpperCase();
+      out.modello=pModelloSenzaMarca(out.marca, a.modello);
       return out;
     }
     var snap=(cv&&cv.autoSnapshot)||{};
@@ -7668,9 +7688,14 @@ function pDiffDelibera(){
     var mapFi={'NET':'net','FIT TO YOU':'fit2you'};
     var fiSel=(typeof PS!=='undefined')?(PS.fi||''):'';
     var dTipo=pNorm(d.polizzaTipo||'');
+    if(dTipo==='nessuna' || dTipo==='no' || dTipo==='none') dTipo='';
+    /* Prima "nessuna" nella delibera contava come una polizza, e il modulo
+       senza polizza risultava diverso da... nessuna polizza. */
     if(dTipo){
       if(fiSel==='NO') { out.diff.push(['Polizza','nessuna',d.polizzaTipo]); out.campi._fi=true; }
       else if(mapFi[fiSel] && mapFi[fiSel]!==dTipo){ out.diff.push(['Polizza',fiSel,d.polizzaTipo]); out.campi._fi=true; }
+    } else if(fiSel && fiSel!=='NO'){
+      out.diff.push(['Polizza',fiSel,'nessuna']); out.campi._fi=true;
     }
   }catch(e){}
   return out;
@@ -7705,9 +7730,10 @@ function pControllo(){
     box.innerHTML='<div style="background:#fff7ed;border:2px solid #9a3412;border-radius:9px;padding:11px 13px;">'
       +'<div style="font-size:13px;font-weight:800;color:#7c2d12;">\u26a0\ufe0f I dati non corrispondono alla delibera</div>'
       +'<div style="font-size:12px;color:#9a3412;margin-top:2px;">Controlla i campi in arancione prima di salvare.</div>'
+      +'<div style="font-size:11px;color:#a8a29e;margin-top:6px;">Per ogni campo: quello che c\u2019\u00e8 nel modulo \u2192 quello che dice la delibera</div>'
       +r.diff.map(function(x){
-        return '<span style="display:inline-block;background:#fff;border:1px solid #9a3412;border-radius:7px;padding:3px 8px;font-size:11.5px;font-weight:700;color:#7c2d12;margin:6px 6px 0 0;">'
-          +x[0]+': <b>'+x[1]+'</b> <span style="color:#a8a29e;font-weight:600;">delibera '+x[2]+'</span></span>';
+        return '<span style="display:inline-block;background:#fff;border:1px solid #9a3412;border-radius:7px;padding:4px 9px;font-size:11.5px;font-weight:700;color:#7c2d12;margin:6px 6px 0 0;">'
+          +x[0]+': <span style="color:#a8a29e;font-weight:600;">modulo</span> <b>'+x[1]+'</b> \u2192 <span style="color:#a8a29e;font-weight:600;">delibera</span> <b>'+x[2]+'</b></span>';
       }).join('')
       +rif+_btnFill+'</div>';
   }catch(e){}
@@ -8948,7 +8974,7 @@ function pRenderReg() {
     var pv    = r.provvigione||r.provv||(r.tipo==='noFin'?25:0)||0;
     var pvc   = '<strong style="font-size:14px;color:#27ae60;">&#8364;'+pv+'</strong>';
     var cl    = r.cliente||r.auto||'—';
-    var ve    = [r.marca,r.modello].filter(Boolean).join(' ')||'';
+    var ve    = pAutoLabel(r)||'';
     var clCell= '<strong>'+cl+'</strong>'+(r._bad||'')+(ve?'<br><span style="font-size:11px;color:#6b6b6b;">'+ve+'</span>':'');
     var btnM  = '<button onclick="pDettaglio('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #64748b;color:#475569;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#128269; Dettaglio</button>'
               + '<button onclick="pModifica('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#9998; Modifica</button>';
