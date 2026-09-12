@@ -7562,6 +7562,38 @@ function pIgnoraVendita(cvId){
     if(typeof tcToastNew==='function') tcToastNew('Tolta dalle provvigioni da completare', true);
   }catch(e){ alert('Non riuscito: '+(e && e.message || e)); }
 }
+/* ===== MARCA E MODELLO SEPARATI =====
+   La fotografia del veicolo dentro la vendita (autoSnapshot) ha un solo
+   campo "modello" con dentro tutto: "CITROEN C3 1.2 PURETECH". Il modulo
+   provvigioni ha due caselle, e finiva la marca vuota e "CITROEN C3..."
+   nel modello. Si prende prima dalla scheda vera del magazzino, che i due
+   campi li ha; se il veicolo non c'e' piu', si spezza il testo tenendo
+   conto delle marche a due parole. */
+var P_MARCHE_DUE=['ALFA ROMEO','LAND ROVER','RANGE ROVER','MERCEDES BENZ','ASTON MARTIN','DS AUTOMOBILE','DS AUTOMOBILES','ROLLS ROYCE','GREAT WALL','LYNK CO','MG MOTOR'];
+function pMarcaModelloDaCv(cv){
+  var out={marca:'', modello:''};
+  try{
+    var a=(cv && cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
+    if(a && (a.marca||a.modello)){
+      out.marca=String(a.marca||'').trim();
+      out.modello=String(a.modello||'').trim();
+      return out;
+    }
+    var snap=(cv&&cv.autoSnapshot)||{};
+    var t=String(snap.modello||cv.autoDesc||'').replace(/^#\S+\s*-\s*/,'').trim().toUpperCase();
+    if(!t) return out;
+    var due=P_MARCHE_DUE.filter(function(m){ return t.indexOf(m+' ')===0 || t===m; })[0];
+    if(due){ out.marca=due; out.modello=t.slice(due.length).trim(); }
+    else { var sp=t.indexOf(' '); if(sp<0){ out.marca=t; } else { out.marca=t.slice(0,sp); out.modello=t.slice(sp+1).trim(); } }
+    /* al modello basta la sigla: l'allestimento lungo non serve alla
+       provvigione. Si tiene la seconda parola solo se fa parte del nome
+       ("GRANDE PANDA", "SERIE 1"), non se e' motore o cilindrata ("1.2"). */
+    var pz=out.modello.split(' ').filter(Boolean);
+    var MOT=/^(\d+[.,]\d+|\d+(CV|KW|HP)|D|TDI|HDI|DCI|TSI|TFSI|MHEV|PHEV|HYBRID|BLUEHDI|MULTIJET|PURETECH|ECOBOOST|BENZINA|DIESEL|GPL|METANO|ELETTRICA)$/;
+    out.modello=pz.length>1 && !MOT.test(pz[1]) ? pz[0]+' '+pz[1] : (pz[0]||'');
+  }catch(e){}
+  return out;
+}
 function pCaricaVendita(cvId){
   try{
     var cv=(typeof cvById==='function')?cvById(cvId):null; if(!cv){ alert('Vendita non trovata.'); return; }
@@ -7570,8 +7602,9 @@ function pCaricaVendita(cvId){
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var set=function(id,v){ var el=document.getElementById(id); if(el) el.value=(v==null?'':v); };
     set('pCliente', (cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()));
-    set('pMarca', a.marca||'');
-    set('pModello', a.modello||String(cv.autoDesc||''));
+    var _mm=pMarcaModelloDaCv(cv);
+    set('pMarca', _mm.marca || a.marca || '');
+    set('pModello', _mm.modello || a.modello || String(cv.autoDesc||''));
     var fin=!!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv));
     if(!fin){
       /* Senza finanziamento la provvigione e' fissa: non c'e' niente da
@@ -20610,6 +20643,12 @@ function mzPraticheDi(id){
       .sort(function(a,b){ return (b.consegnatoTs||b.contrattoTs||b.updatedAt||0)-(a.consegnatoTs||a.contrattoTs||a.updatedAt||0); });
   }catch(e){ return []; }
 }
+/* Preventivo nuovo dalla scheda del veicolo: si apre sopra la scheda,
+   come il contratto, con l'auto gia' scelta. */
+function mzNuovoPreventivo(id){
+  try{ eaPortaSopra(document.getElementById('cv-modal')); }catch(e){}
+  try{ if(typeof mzFaiPreventivo==='function') mzFaiPreventivo(id); }catch(e){ alert('Non riesco ad aprire il preventivo.'); }
+}
 function mzApriContratto(id){
   var l=mzPraticheDi(id);
   if(!l.length){ alert('Questo veicolo non ha nessuna pratica collegata.'); return; }
@@ -21590,11 +21629,29 @@ function gsVendPerAuto(autoId){
     return _gsVendIdx[autoId]||null;
   }catch(e){ return null; }
 }
+/* ===== "PREVENTIVO" VUOL DIRE FARNE UNO NUOVO =====
+   Su un'auto ancora disponibile il pulsante riapriva il preventivo piu'
+   recente di un altro cliente: chi cercava la Polo per un cliente nuovo si
+   ritrovava nel preventivo di uno vecchio. Ora su un'auto disponibile
+   "Preventivo" apre un modulo nuovo con quel veicolo gia' scelto; solo su
+   un'auto venduta il pulsante resta "Vendita" e porta al contratto. I vecchi
+   preventivi si trovano nella sezione Preventivi, com'e' giusto. */
 function gsVendBtn(autoId){
-  var cv=gsVendPerAuto(autoId); if(!cv) return '';
-  var lab=cv.isContratto?'Vendita':'Preventivo';
-  return '<button onclick="event.stopPropagation();gsearchApriVendita(\''+cv.id+'\')" title="Apri la scheda '+lab.toLowerCase()+'" '
-    +'style="flex:0 0 auto;font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;cursor:pointer;font-family:inherit;">'+lab+'</button>';
+  var cv=gsVendPerAuto(autoId);
+  if(cv && cv.isContratto){
+    return '<button onclick="event.stopPropagation();gsearchApriVendita(\''+cv.id+'\')" title="Apri la scheda vendita" '
+      +'style="flex:0 0 auto;font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;cursor:pointer;font-family:inherit;">Vendita</button>';
+  }
+  var a=(typeof mzById==='function')?mzById(autoId):null;
+  if(!a || a.stato==='venduta' || a.nlt) return '';
+  return '<button onclick="event.stopPropagation();gsearchNuovoPreventivo(\''+autoId+'\')" title="Nuovo preventivo con questa auto" '
+    +'style="flex:0 0 auto;font-size:10px;font-weight:800;padding:4px 9px;border-radius:20px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;cursor:pointer;font-family:inherit;">Preventivo</button>';
+}
+function gsearchNuovoPreventivo(autoId){
+  var box=document.getElementById('gsearch-results'); if(box){ box.style.display='none'; }
+  var inp=document.getElementById('gsearch-input'); if(inp){ inp.value=''; inp.blur(); }
+  try{ if(typeof sidebarNav==='function') sidebarNav('preventivi', document.getElementById('si-preventivi')); }catch(e){}
+  setTimeout(function(){ try{ if(typeof mzFaiPreventivo==='function') mzFaiPreventivo(autoId); }catch(e){} }, 120);
 }
 function gsearchApriVendita(id){
   var box=document.getElementById('gsearch-results'); if(box){ box.style.display='none'; }
@@ -22207,10 +22264,23 @@ function mzForm(id){
     if(!_pr.length) return;
     var _c=_pr.filter(function(x){ return x.isContratto; })[0] || _pr[0];
     var _cl=((_c.cliente&&_c.cliente.cognome)||'')+' '+((_c.cliente&&_c.cliente.nome)||'');
-    h+='<button onclick="mzApriContratto(\''+a.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">'
-      +'\uD83D\uDCC4 Apri '+(_c.isContratto?'il contratto':'il preventivo')
-      +(_cl.trim()?('<span style="display:block;font-weight:600;font-size:11.5px;color:#64748b;margin-top:2px;">'+mzEsc(_cl.trim())+'</span>'):'')
-      +'</button>';
+    if(_c.isContratto){
+      h+='<button onclick="mzApriContratto(\''+a.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">'
+        +'\uD83D\uDCC4 Apri il contratto'
+        +(_cl.trim()?('<span style="display:block;font-weight:600;font-size:11.5px;color:#64748b;margin-top:2px;">'+mzEsc(_cl.trim())+'</span>'):'')
+        +'</button>';
+    } else if(a.stato!=='venduta' && !a.nlt){
+      /* Auto ancora in vendita: il pulsante grande fa un preventivo NUOVO.
+         Prima riapriva quello di un cliente vecchio, e per un cliente nuovo
+         bisognava uscire e ripartire dal magazzino. Il vecchio resta a
+         portata di mano, ma in piccolo. */
+      h+='<button onclick="mzNuovoPreventivo(\''+a.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">'
+        +'\u2795 Nuovo preventivo con questa auto</button>'
+        +'<div style="text-align:center;margin-top:8px;font-size:12px;color:#64748b;">'
+        +'<span onclick="mzApriContratto(\''+a.id+'\')" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">vedi il preventivo gi\u00e0 fatto'+(_cl.trim()?(' \u00b7 '+mzEsc(_cl.trim())):'')+'</span>'
+        +(_pr.length>1?(' <span style="color:#94a3b8;">(+'+(_pr.length-1)+')</span>'):'')
+        +'</div>';
+    }
   })();
   h+='<button id="mz-btn-salva" onclick="mzSalva()" style="margin-top:16px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;transition:background .2s;">💾 Salva</button>';
   h+='<div id="mz-salva-esito" style="text-align:center;font-size:12px;color:#15803d;font-weight:700;margin-top:6px;min-height:16px;"></div>';
@@ -24113,6 +24183,14 @@ function cvForm(id, fromVend){
     h+='<div style="border-top:1px solid #e2e8f0;margin-top:16px;padding-top:6px;">'
       +docPannelloHTML('pratica', _cv.id, 'cvdoc_'+_cv.id, null, 'Fattura, F24, libretto, documenti del cliente.', 'Documenti della pratica', true)
       +'</div>';
+    /* In fondo a tutto, solo per l'amministratore: eliminare il contratto.
+       Doppia conferma, e il veicolo torna disponibile in magazzino. */
+    if(typeof getCurrentRole==='function' && getCurrentRole()==='admin'){
+      h+='<div style="border-top:1px solid #e2e8f0;margin-top:18px;padding-top:14px;">'
+        +'<button onclick="cvEliminaContratto(\''+_cv.id+'\')" style="width:100%;padding:11px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">\uD83D\uDDD1 Elimina contratto</button>'
+        +'<div style="text-align:center;font-size:11px;color:#94a3b8;margin-top:6px;">Chiede conferma due volte. Il veicolo torna disponibile.</div>'
+        +'</div>';
+    }
   } else if(!_cv.isContratto){
     /* Residenza e codice fiscale erano raggiungibili solo dalle proposte
        aperte da Vendite: sul preventivo non c'era modo di scriverli, e in
@@ -36216,6 +36294,58 @@ function cvVendAnnulla(id){
   if(typeof cvVendBadge==="function") cvVendBadge();
   if(typeof cvRender==="function") cvRender();
   if(typeof tcToastNew==="function") tcToastNew("Contratto annullato \u2014 auto liberata, preventivo mantenuto",true);
+}
+
+/* ===================== ELIMINA CONTRATTO (dal modulo, solo admin) =====================
+   Una pratica firmata per sbaglio, o rifatta da capo, prima si poteva solo
+   annullare (che la riporta a preventivo) o, se consegnata, eliminare dalla
+   voce demo. Qui si elimina per davvero, da dentro il contratto, con due
+   conferme: la prima apre il riquadro, la seconda e' il pulsante rosso
+   premuto una seconda volta. Il veicolo torna disponibile e libero. */
+var _cvElimContrConf=null;
+function cvEliminaContratto(id){
+  _cvElimContrConf=null;
+  var cv=(cvLoad().filter(function(x){return x.id===id;})[0])||null; if(!cv){ return; }
+  var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
+  var auto=(cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'';
+  var m=(typeof cvModModal==='function')?cvModModal():null; if(!m) return;
+  try{ eaPortaSopra(m); }catch(e){}
+  m.innerHTML='<div style="max-width:440px;margin:8vh auto 0;background:#fff;border-radius:14px;overflow:hidden;border:2px solid #dc2626;">'
+    +'<div style="background:#dc2626;color:#fff;padding:14px 18px;font-weight:800;font-size:15px;">\uD83D\uDDD1 Elimina contratto</div>'
+    +'<div style="padding:18px;">'
+    +'<div style="font-size:14px;color:#0f172a;margin-bottom:8px;">Stai per eliminare <b>definitivamente</b> questo contratto:</div>'
+    +'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:13px;color:#991b1b;font-weight:700;">'+cvEsc(nome)+'<br>'+cvEsc(auto)+'</div>'
+    +'<div style="font-size:12.5px;color:#334155;margin-top:12px;line-height:1.6;">'
+    +'\u2022 Il veicolo torna <b>disponibile</b> in magazzino<br>'
+    +'\u2022 Contratto, pagamenti e delibera vengono rimossi<br>'
+    +'\u2022 Non si pu\u00f2 tornare indietro</div>'
+    +'<div id="cvelc-step2" style="display:none;margin-top:12px;background:#dc2626;color:#fff;border-radius:8px;padding:11px 12px;font-size:13px;font-weight:800;text-align:center;">SEI SICURO? Premi ancora \u201cCONFERMA ELIMINAZIONE\u201d per procedere.</div>'
+    +'<div style="display:flex;gap:8px;margin-top:16px;">'
+    +'<button onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button>'
+    +'<button id="cvelc-btn" onclick="cvEliminaContratto2(\''+id+'\')" style="flex:1;padding:12px;border-radius:9px;border:none;background:#dc2626;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Elimina</button>'
+    +'</div></div></div>';
+  m.style.display='block';
+}
+function cvEliminaContratto2(id){
+  var s2=document.getElementById('cvelc-step2'), btn=document.getElementById('cvelc-btn');
+  if(_cvElimContrConf!==id){ _cvElimContrConf=id; if(s2) s2.style.display='block'; if(btn){ btn.textContent='CONFERMA ELIMINAZIONE'; btn.style.background='#991b1b'; } return; }
+  _cvElimContrConf=null;
+  var list=cvLoad(); var cv=list.filter(function(x){return x.id===id;})[0];
+  if(cv) cvEliminaPeriziaPermuta(cv);
+  /* il veicolo torna in vendita: disponibile e non impegnato */
+  if(cv && cv.autoId && typeof mzLoad==='function'){
+    var ml=mzLoad(); var mi=ml.findIndex(function(x){return x.id===cv.autoId;});
+    if(mi>=0){ ml[mi].stato='disponibile'; ml[mi].impegnata=false; ml[mi].impegnataDa=null; ml[mi].updatedAt=Date.now(); mzSave(ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(ml[mi]); }
+  }
+  if(typeof cvSegnaDeleted==='function') cvSegnaDeleted(id); else if(typeof _cvDeleted!=='undefined') _cvDeleted[id]=true;
+  cvSave(list.filter(function(x){return x.id!==id;}));
+  if(typeof cvModChiudi==='function') cvModChiudi();
+  if(typeof cvChiudi==='function') cvChiudi();
+  if(typeof cvVendRender==='function') cvVendRender();
+  if(typeof cvVendBadge==='function') cvVendBadge();
+  if(typeof cvRender==='function') cvRender();
+  if(typeof mzRender==='function'){ try{ var vm=document.getElementById('view-magazzino'); if(vm && vm.classList.contains('active')) mzRender(); }catch(e){} }
+  if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDDD1 Contratto eliminato \u2014 il veicolo \u00e8 di nuovo disponibile',true);
 }
 
 /* ===================== ELIMINAZIONE DEMO (veicolo consegnato) ===================== */
