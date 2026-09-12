@@ -10948,10 +10948,10 @@ function applyRoleUI() {
     }
     try{ sessionStorage.removeItem('ea_login_manuale'); }catch(e){}
     setTimeout(function(){ try{ if(!eaVaiA(_doveA)) eaVaiA('vendite'); if(_daUrlA) eaApriSotto(); }catch(e){} }, 200);
-    /* La scheda aperta si riapre solo se non si arriva da un indirizzo: chi
-       apre #magazzino col tasto destro vuole il magazzino, non il contratto
-       che stava guardando nell'altra scheda. */
-    if(!_accessoVeroA && !_daUrlA) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
+    /* La scheda aperta si riapre solo se la sezione coincide (lo controlla
+       eaPostoRipristina): chi apre #magazzino col tasto destro non si
+       ritrova il contratto che stava guardando nell'altra scheda. */
+    if(!_accessoVeroA) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
     return;
   }
   /* ===== DOVE SI APRE =====
@@ -10992,7 +10992,7 @@ function applyRoleUI() {
       try{ eaCaricaBase(); }catch(e){}
       if(_dove==='presenze') setTimeout(presenzeInit, 150);
     }, 200);
-    if(!_accessoVero && !_daUrl) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
+    if(!_accessoVero) setTimeout(function(){ try{ eaPostoRipristina(); }catch(e){} }, 900);
     return;
   }
   /* Stessa cosa per l'amministratore, che passa da un ramo diverso. */
@@ -15158,6 +15158,22 @@ function eaBackAssicura(){ if(!_eaBackArmato) eaBackArma(); }
    premuto per ritrovare il proprio posto. Qui si tiene da parte anche quella. */
 function eaSalvaSotto(vista, valore){
   try{ if(vista && valore) localStorage.setItem('ea_ultima_sotto_'+vista, String(valore)); }catch(e){}
+  /* se si e' gia' in quella sezione, l'indirizzo si allinea subito */
+  try{
+    var _h=decodeURIComponent(String(location.hash||'').replace(/^#/,'')).split('/')[0];
+    if(_h===vista) eaAggiornaUrl(vista);
+  }catch(e){}
+}
+/* Riscrive l'indirizzo della scheda senza ricaricare e senza aggiungere
+   voci alla cronologia (replaceState): il tasto indietro non ne risente. */
+function eaAggiornaUrl(vista){
+  try{
+    if(!vista) return;
+    var sotto=(vista==='vendite'||vista==='compiti') ? eaLeggiSotto(vista) : '';
+    var nuovo='#'+encodeURIComponent(vista)+(sotto?('/'+encodeURIComponent(sotto)):'');
+    if(location.hash===nuovo) return;
+    history.replaceState(history.state, '', location.pathname+location.search+nuovo);
+  }catch(e){}
 }
 function eaLeggiSotto(vista){
   try{ return localStorage.getItem('ea_ultima_sotto_'+vista)||''; }catch(e){ return ''; }
@@ -15451,10 +15467,17 @@ function sidebarNav(view,btn){
      trova: altrimenti due schede aperte su sezioni diverse si
      sovrascriverebbero a vicenda, e al ricaricamento una delle due si
      ritroverebbe nella sezione dell'altra. */
-  try{
-    if(view && !(typeof eaVistaDaUrl==='function' && eaVistaDaUrl()))
-      localStorage.setItem('ea_ultima_vista', view);
-  }catch(e){}
+  try{ if(view) localStorage.setItem('ea_ultima_vista', view); }catch(e){}
+  /* ===== L'INDIRIZZO SEGUE SEMPRE LA POSIZIONE =====
+     Prima l'indirizzo restava quello con cui la scheda era stata aperta
+     (#magazzino, dal tasto destro) anche dopo essere andati altrove. Quando
+     Chrome buttava via la scheda e la rifaceva, l'indirizzo comandava e si
+     tornava al magazzino: chi stava sulle Vendite, Consegnate, si ritrovava
+     nel posto sbagliato. Ora a ogni spostamento l'indirizzo viene riscritto
+     con sezione e sottosezione: e' la memoria di QUELLA scheda, e ogni
+     scheda ha la sua. L'ultima sezione salvata nel browser resta come
+     riserva per chi entra senza indirizzo. */
+  try{ if(typeof eaAggiornaUrl==='function') eaAggiornaUrl(view); }catch(e){}
   /* Cambiata sezione, la scheda aperta prima non conta piu' (quella che si
      sta ripristinando all'avvio e' gia' stata letta in memoria). */
   try{ if(typeof eaPostoPulisci==='function') eaPostoPulisci(); }catch(e){}
@@ -21205,10 +21228,15 @@ function mzRender(){
        nella sezione Noleggio finisce fra le rese, ma qui restava
        "Disponibile" e sembrava ancora in casa. */
     if(a.nlt && a.nltReso) si=['reso','Resa al noleggiatore','#64748b'];
-    /* La contabilita' lavora sui dati del veicolo: prezzo d'acquisto, targa,
-       telaio, dati di immatricolazione. Le serve la scheda, non solo la lista. */
-    var _puoMod=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
-             || (typeof eaIsContabilita==='function' && eaIsContabilita());
+    /* ===== LA SCHEDA SI APRE A CHIUNQUE VEDA IL MAGAZZINO =====
+       Prima il riquadro reagiva al tocco solo per amministratore e
+       contabilita': Rudy vedeva l'elenco ma non poteva entrare nella scheda
+       dell'auto, e per guardare km, telaio o dotazioni doveva passare da un
+       contratto. Il vincolo serviva a nascondere il prezzo d'acquisto, ma
+       quello lo protegge gia' la scheda stessa: ai non amministratori il
+       campo compare come "riservato" e al salvataggio il valore non si tocca
+       (mzPuoPrezzoAcq). Quindi la scheda si apre a tutti. */
+    var _puoMod=true;
     h+='<div '+(_puoMod?('onclick="mzForm(\''+a.id+'\')" '):'')+'style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:10px 14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);'+(_puoMod?'cursor:pointer;':'')+'">';
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
     var _tgB=a.targa?(' <span style="font-size:11px;font-weight:800;background:#fff;color:#111827;border:1.5px solid #111827;padding:1px 7px;border-radius:4px;letter-spacing:.5px;vertical-align:middle;">'+mzEsc(a.targa)+'</span>'):'';
