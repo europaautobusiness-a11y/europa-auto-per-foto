@@ -35428,9 +35428,39 @@ function cfgSupaLoad(id, applica, salvaLocale){
 /* Un avviso per tabella per sessione: se il cloud rifiuta la scrittura
    bisogna saperlo subito, ma senza tempestare di toast a ogni tasto. */
 var _supaErrVisti = {};
+/* ===== UN SALVATAGGIO SUL CLOUD FALLITO NON PUO' PASSARE INOSSERVATO =====
+   Prima l'errore era un avviso di tre secondi, una volta sola per tabella:
+   chi non lo vedeva continuava a lavorare convinto che tutto fosse
+   condiviso, e sul suo dispositivo si accumulavano righe che gli altri non
+   avrebbero mai visto. Le provvigioni di Rudy e quelle di Davide diverse
+   sullo stesso mese nascono da qui. Ora resta una fascia rossa in alto
+   finche' un salvataggio non torna a riuscire, con il pulsante per
+   ricollegare il database, che e' la causa piu' frequente. */
+var _supaErrUltimo={};
+function supaFasciaErrore(table, msg){
+  try{
+    var f=document.getElementById('ea-cloud-errore');
+    if(!f){
+      f=document.createElement('div'); f.id='ea-cloud-errore';
+      f.style.cssText='position:fixed;left:0;right:0;top:0;z-index:12000;background:#b91c1c;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:10px 14px;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;box-shadow:0 2px 10px rgba(0,0,0,.3);';
+      document.body.appendChild(f);
+    }
+    var sess=(typeof _eaSbSessione!=='undefined' && _eaSbSessione);
+    f.innerHTML='<span>\u26a0\ufe0f I salvataggi sul cloud NON riescono ('+String(table)+'): quello che fai resta solo su questo dispositivo e gli altri non lo vedono.'
+      +(sess?'':' Il collegamento al database manca.')+'</span>'
+      +'<button onclick="if(typeof eaSbCollegaOra===\'function\')eaSbCollegaOra();" style="padding:6px 12px;border-radius:7px;border:none;background:#fff;color:#b91c1c;font-weight:800;font-family:inherit;cursor:pointer;">\uD83D\uDD17 Ricollega il database</button>'
+      +'<span title="'+String(msg||'').replace(/"/g,'')+'" style="opacity:.75;font-weight:500;font-size:11px;">dettaglio: '+String(msg||'').slice(0,80)+'</span>';
+    f.style.display='flex';
+  }catch(e){}
+}
+function supaFasciaOk(){
+  try{ var f=document.getElementById('ea-cloud-errore'); if(f) f.style.display='none'; }catch(e){}
+}
 function supaSegnalaErrore(table, msg){
   try{
     console.log('Supabase '+table+': '+msg);
+    _supaErrUltimo[table]=Date.now();
+    supaFasciaErrore(table, msg);
     if(_supaErrVisti[table]) return;
     _supaErrVisti[table] = 1;
     if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f '+table+': salvataggio sul cloud NON riuscito \u2014 i dati restano solo su questo dispositivo', false);
@@ -35443,6 +35473,7 @@ function supaUpsert(table, rec){
   try{
     sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){
       if(res&&res.error) supaSegnalaErrore(table, res.error.message);
+      else { _supaErrVisti[table]=0; supaFasciaOk(); }
     }, function(err){ supaSegnalaErrore(table, (err&&err.message)||err); });
   }catch(e){ supaSegnalaErrore(table, (e&&e.message)||e); }
 }
