@@ -22519,6 +22519,26 @@ function mzSalva(){
      se la targa e' stata scritta qui invece che dal pulsante sulla vendita.
      Prima il gestionale non se ne accorgeva: la pratica restava "in attesa di
      immatricolazione" e il pulsante continuava a comparire. */
+  /* ===== LA TARGA CORRETTA IN MAGAZZINO ARRIVA ANCHE SUL CONTRATTO =====
+     Il contratto tiene una sua copia della targa (nuovaTarga, scritta
+     all'immatricolazione, e la fotografia del veicolo). Correggere la targa
+     nella scheda dell'auto non la toccava: in Vendite restava quella
+     sbagliata, e cosi' sulla stampa e sulle mail. Ora, se la targa cambia,
+     tutte le pratiche legate a questo veicolo ricevono la nuova. */
+  try{
+    var _tgNuova=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(_tgNuova && _tgNuova!==_targaPrima && typeof cvLoad==='function' && typeof cvSave==='function'){
+      var _tutte=cvLoad(), _toccate=0;
+      _tutte.forEach(function(c){
+        if(!c || c.autoId!==a.id || c.deleted) return;
+        var _cambiato=false;
+        if(c.nuovaTarga && String(c.nuovaTarga).toUpperCase().replace(/[^A-Z0-9]/g,'')!==_tgNuova){ c.nuovaTarga=a.targa; _cambiato=true; }
+        if(c.autoSnapshot && String(c.autoSnapshot.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'')!==_tgNuova){ c.autoSnapshot.targa=a.targa; _cambiato=true; }
+        if(_cambiato){ c.updatedAt=Date.now(); _toccate++; }
+      });
+      if(_toccate){ cvSave(_tutte); try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){} }
+    }
+  }catch(e){}
   try{
     var _targaOra=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(a.estera && _targaOra && _targaOra!==_targaPrima && typeof cvLoad==='function'){
@@ -27569,7 +27589,7 @@ var DOC_CAT={
      "Libretto nuovo intestato" e i due si confondevano. I documenti gia'
      archiviati in quella categoria restano leggibili tramite DOC_CAT_STORICHE. */
   intervento:[['fattura_intervento','Fattura dell\u2019intervento']],
-  auto:[['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
+  auto:[['libretto_nuovo','Libretto nuovo intestato al cliente'],['libretto_estero','Libretto estero'],['minivoltura','Minivoltura / cert. proprietà'],['fattura_acquisto','Fattura di acquisto'],['fattura_vendita','Fattura di vendita'],['f24','F24'],['coc','COC (conformità import)'],['foto','Foto'],['altro','Altro']],
   cliente:[['carta_identita','Carta d\'identità'],['tessera_sanitaria','Tessera sanitaria / CF'],['busta_paga','Busta paga'],['denuncia_sinistro','Denuncia sinistro'],['libretto','Libretto veicolo'],['archivio_sicom','Archivio SICOM'],['altro','Altro']],
   pratica:[['contratto_firmato','Contratto firmato'],['fattura','Fattura di vendita'],['fattura_minivoltura','Fattura minivoltura'],['f24','F24'],['libretto_nuovo','Libretto nuovo intestato'],['libretto_permuta','Libretto auto in permuta'],['doc_cliente','Documenti cliente'],['doc_finanziamento','Documenti finanziamento'],['delibera','Delibera finanziaria'],['minivoltura','Minivoltura / passaggio'],['foto_consegna','Foto consegna'],['altro','Altro']],
   appuntamento:[['preventivo','Preventivo'],['fattura','Fattura'],['scheda_lavoro','Scheda lavoro / intervento'],['foto','Foto'],['altro','Altro']],
@@ -30861,6 +30881,9 @@ function tgScarica(id, forza){
     totale:tot,
     modoPrec:(prec&&prec.modo)||'',
     notaPrec:(prec&&prec.nota)||'',
+    /* scarica e basta: il pagamento non e' ancora noto, si chiedera' la
+       prossima volta (non viene registrato nulla) */
+    onSalta:function(){ try{ tgStampa(id); }catch(e){} },
     onOk:function(rec){
       try{
         var _fo=tgListaFonte(), list=_fo.list;
@@ -32992,15 +33015,32 @@ function eaPagRender(){
     h+='<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;line-height:1.5;">'
       +'La risposta viene inviata subito ad amministrazione e contabilit\u00e0. Ti viene chiesta una volta sola.</div>';
   }
+  /* ===== SI PUO' SCARICARE ANCHE SENZA SAPERE COME PAGHERA' =====
+     La fattura spesso si prepara prima che il cliente passi in cassa: chi
+     la scarica per averla pronta non sa ancora se pagher\u00e0 con POS o
+     bonifico, e prima l'unica alternativa era "Annulla", che non scaricava
+     niente. Il terzo pulsante scarica e basta: non registra nulla, non
+     manda mail, e alla prossima apertura la domanda torna. */
   h+='</div>'
-    +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px 18px;display:flex;gap:8px;">'
+    +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px 18px;">'
+    +'<div style="display:flex;gap:8px;">'
     +'<button type="button" onclick="eaPagChiudi()" style="flex:0 0 auto;padding:11px 15px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13.5px;cursor:pointer;">Annulla</button>'
     +'<button type="button" onclick="eaPagConferma()" '+(_eaPagModo?'':'disabled ')
     +'style="flex:1;padding:11px;border-radius:9px;border:none;font-family:inherit;font-weight:800;font-size:14px;'
     +(_eaPagModo?'background:#16a34a;color:#fff;cursor:pointer;':'background:#e2e8f0;color:#94a3b8;cursor:not-allowed;')+'">'
     +'\uD83D\uDDA8\uFE0F Conferma e scarica</button>'
+    +'</div>'
+    +(typeof c.onSalta==='function' && !gia
+      ? '<button type="button" onclick="eaPagSalta()" style="width:100%;margin-top:8px;padding:10px;border-radius:9px;border:1px dashed #cbd5e1;background:#f8fafc;color:#475569;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">'
+        +'\uD83D\uDCE5 Scarica senza indicare il pagamento <span style="font-weight:500;color:#94a3b8;">\u00b7 te lo richiedo la prossima volta</span></button>'
+      : '')
     +'</div></div>';
   ov.innerHTML=h;
+}
+function eaPagSalta(){
+  var ctx=_eaPagCtx; if(!ctx || typeof ctx.onSalta!=='function') return;
+  eaPagChiudi();
+  try{ ctx.onSalta(); }catch(e){ try{ console.log('scarica senza pagamento:', e&&e.message||e); }catch(e2){} }
 }
 function eaPagConferma(){
   if(!_eaPagModo){ alert('Scegli come ha pagato il cliente.'); return; }
@@ -33125,6 +33165,7 @@ function cvFatturaScarica(id, forza){
     totale:imp,
     modoPrec:(prec&&prec.modo)||'',
     notaPrec:(prec&&prec.nota)||'',
+    onSalta:function(){ try{ cvStampaById(id,'fattura'); }catch(e){} },
     onOk:function(rec){
       var list=cvLoad(), idx=list.findIndex(function(x){return x.id===id;});
       if(idx<0){ alert('Pratica non trovata.'); return; }
@@ -35028,7 +35069,15 @@ function cvVendImmatModal(id, cv){
   /* il libretto e' un documento del VEICOLO: si allega all'auto del
      contratto, cosi' lo ritrovi nella sua scheda in Magazzino.
      Se il contratto non ha un'auto collegata si ripiega sulla pratica. */
-  var _dTipo='auto', _dId=cv.autoId, _dCat='libretto', _dNota='Finisce nella scheda del veicolo, in Magazzino.';
+  /* ===== IL LIBRETTO NUOVO SI ALLEGA ANCHE DA QUI =====
+     La tendina del veicolo non aveva la voce "Libretto nuovo intestato" e la
+     categoria proposta ('libretto') non esisteva fra le scelte: il menu si
+     apriva su "che documento e'?" e il libretto finiva salvato come "Fattura
+     di acquisto" (si vede nella scheda: LIBRETTO 16235.pdf sotto quella
+     voce). Ora la voce c'e', e' la prima, ed e' gia' selezionata: e' la
+     stessa categoria (libretto_nuovo) che accende il badge "Libretto" nelle
+     vendite estere. */
+  var _dTipo='auto', _dId=cv.autoId, _dCat='libretto_nuovo', _dNota='Finisce nella scheda del veicolo, in Magazzino.';
   if(!_dId){ _dTipo='pratica'; _dId=cv.id; _dCat='libretto_nuovo'; _dNota='Nessun veicolo collegato: resta allegato alla pratica.'; }
   var docHtml=(typeof docPannelloHTML==='function')?docPannelloHTML(_dTipo, _dId, 'immatdoc', _dCat, _dNota):'';
   m.innerHTML='<div style="max-width:480px;margin:6vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
