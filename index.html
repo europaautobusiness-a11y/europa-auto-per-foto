@@ -24504,11 +24504,21 @@ function cvPromoBox(){
     if(!a || typeof mzPromoAttiva!=='function' || !mzPromoAttiva(a)){ box.style.display='none'; box.innerHTML=''; return; }
     var pieno=a.prezzoVen?('\u20ac '+parseFloat(a.prezzoVen).toLocaleString('it-IT')):'\u2014';
     var promo='\u20ac '+parseFloat(a.promoPrezzo).toLocaleString('it-IT');
+    var _btn='padding:8px 12px;border-radius:8px;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;';
+    if(!cvPacchettoRiga()){
+      /* pacchetto tolto: si vende a prezzo pieno */
+      box.innerHTML='<div style="background:#f8fafc;border:1px dashed #94a3b8;border-radius:10px;padding:10px 14px;margin:6px 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+        +'<div style="flex:1;font-size:13px;color:#334155;"><b>Quest\u2019auto \u00e8 in promo vincolata</b> (online a '+promo+'), ma il preventivo \u00e8 <b>a prezzo pieno '+pieno+'</b>, senza pacchetto.</div>'
+        +'<button type="button" onclick="cvPromoRiapplica()" style="'+_btn+'border:1px solid #dc2626;background:#fff;color:#dc2626;">\uD83D\uDD25 Riapplica la promo</button>'
+        +'</div>';
+      box.style.display='block'; return;
+    }
     box.innerHTML='<div style="background:#fef2f2;border:2px solid #dc2626;border-radius:10px;padding:12px 14px;margin:6px 0 12px;">'
       +'<div style="font-size:14px;font-weight:800;color:#991b1b;">\uD83D\uDD25 Auto in PROMO VINCOLATA \u2014 online a '+promo+', prezzo pieno '+pieno+'</div>'
       +'<div style="font-size:13px;color:#7f1d1d;margin-top:6px;line-height:1.55;white-space:pre-line;">'+cvEsc(a.promoCond||'Il prezzo pubblicato vale solo con il pacchetto: senza, il prezzo \u00e8 quello pieno.')+'</div>'
       +(a.promoScad?('<div style="font-size:11px;color:#b91c1c;margin-top:6px;">Valida fino al '+cvEsc(String(a.promoScad).split('-').reverse().join('/'))+'</div>'):'')
       +'<div style="font-size:11px;color:#991b1b;margin-top:8px;font-weight:700;">Prezzo promo gi\u00e0 inserito'+(parseFloat(a.promoPacchetto)>0?(' + riga \u201cPacchetto manutenzione\u201d da \u20ac '+parseFloat(a.promoPacchetto).toLocaleString('it-IT')+' fra i costi extra'):'')+'. Le condizioni del pacchetto vengono stampate sul contratto.</div>'
+      +'<div style="margin-top:10px;"><button type="button" onclick="cvPromoTogli()" style="'+_btn+'border:1px solid #cbd5e1;background:#fff;color:#334155;">Vendi a prezzo pieno (togli il pacchetto)</button></div>'
       +'</div>';
     box.style.display='block';
   }catch(e){}
@@ -24542,7 +24552,28 @@ function cvPromoApplica(a){
   }
   try{ cvLive(); }catch(e){}
 }
-try{ window.cvPromoApplica=cvPromoApplica; window.cvPacchettoRiga=cvPacchettoRiga; }catch(e){}
+/* Rudy puo' venderla a prezzo pieno: via il pacchetto, e il prezzo torna
+   quello vero. Con "Riapplica" si torna alla promo. */
+function cvPromoTogli(){
+  try{
+    var a=(_cv && _cv.autoId && typeof mzById==='function')?mzById(_cv.autoId):null;
+    var pieno=(_cv.promoVincolata && _cv.promoVincolata.prezzoPieno) || (a && a.prezzoVen) || '';
+    _cv.costiExtra=(_cv.costiExtra||[]).filter(function(x){ return !(x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||'')))); });
+    if(pieno!==''){ var pz=document.getElementById('cv_prezzo'); if(pz) pz.value=pieno; _cv.prezzoVendita=pieno; }
+    if(_cv.promoVincolata) _cv.promoVincolata.tolta=true;
+    cvRenderExtra(); cvLive(); cvPromoBox();
+    if(typeof tcToastNew==='function') tcToastNew('Pacchetto tolto \u2014 prezzo pieno'+(pieno!==''?(' \u20ac '+parseFloat(pieno).toLocaleString('it-IT')):''),true);
+  }catch(e){}
+}
+function cvPromoRiapplica(){
+  try{
+    var a=(_cv && _cv.autoId && typeof mzById==='function')?mzById(_cv.autoId):null;
+    if(!a) return;
+    if(_cv.promoVincolata) _cv.promoVincolata.tolta=false;
+    cvPromoApplica(a); cvPromoBox();
+  }catch(e){}
+}
+try{ window.cvPromoApplica=cvPromoApplica; window.cvPacchettoRiga=cvPacchettoRiga; window.cvPromoTogli=cvPromoTogli; window.cvPromoRiapplica=cvPromoRiapplica; }catch(e){}
 function cvAutoNum(c){ var n=(c&&c.autoSnapshot&&c.autoSnapshot.numeroInterno)||''; if(!n && c && c.autoId && typeof mzById==='function'){ var a=mzById(c.autoId); if(a) n=a.numero_interno||''; } return n?String(n):''; }
 function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; if(_cv && _cv.passaggioForzato){ if(typeof cvLive==='function') cvLive(); return; } var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
 /* Sblocco/riblocco del campo passaggio: solo amministratore. */
@@ -24589,7 +24620,7 @@ function cvPassaggioForzaToggle(){
 }
 function cvPassaggioKw(kw, estera){ var p=(typeof parLoad==='function')?parLoad():null; if(!p) return ''; kw=parseFloat(kw)||0; if(kw<=0) return ''; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; var base; if(kw<54) base=n(p.ppMinore54); else if(kw==54) base=n(p.ppUguale54); else base=n(p.ppUguale54)+(kw-54)*n(p.ppOltre54); if(estera) base+=n(p.immatricolazione); return base; }
 function cvAddExtra(){ cvSync(); _cv.costiExtra.push({desc:'',importo:''}); cvRenderExtra(); cvLive(); }
-function cvRenderExtra(){ var c=document.getElementById('cv-extra'); if(!c)return; c.innerHTML=_cv.costiExtra.map(function(x,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px;"><input value="'+cvEsc(x.desc)+'" placeholder="descrizione" oninput="_cv.costiExtra['+i+'].desc=this.value" style="flex:2;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><input value="'+cvEsc(x.importo)+'" placeholder="€" type="number" oninput="_cv.costiExtra['+i+'].importo=this.value;cvLive()" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;"><button onclick="_cv.costiExtra.splice('+i+',1);cvRenderExtra();cvLive()" style="border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;cursor:pointer;">✕</button></div>'; }).join(''); }
+function cvRenderExtra(){ var c=document.getElementById('cv-extra'); if(!c)return; c.innerHTML=_cv.costiExtra.map(function(x,i){ var _pk=!!x.pacchetto; return '<div style="display:flex;gap:8px;margin-bottom:6px;"><input value="'+cvEsc(x.desc)+'" placeholder="descrizione" oninput="_cv.costiExtra['+i+'].desc=this.value" style="flex:2;padding:9px;border:1px solid '+(_pk?'#fecaca':'#cbd5e1')+';border-radius:7px;font-family:inherit;font-size:13px;'+(_pk?'background:#fff5f5;font-weight:700;':'')+'"><input value="'+cvEsc(x.importo)+'" placeholder="€" type="number" oninput="_cv.costiExtra['+i+'].importo=this.value;cvLive()" style="flex:1;padding:9px;border:1px solid '+(_pk?'#fecaca':'#cbd5e1')+';border-radius:7px;font-family:inherit;font-size:13px;"><button title="'+(_pk?'Togli il pacchetto e vendi a prezzo pieno':'Togli')+'" onclick="'+(_pk?'cvPromoTogli()':('_cv.costiExtra.splice('+i+',1);cvRenderExtra();cvLive()'))+'" style="border:none;background:#fef2f2;color:#dc2626;border-radius:7px;width:34px;cursor:pointer;">✕</button></div>'; }).join(''); }
 function cvAddPag(){ cvSync(); _cv.pagamenti.push({tipo:'Saldo',metodo:'Bonifico',importo:'',note:''}); cvRenderPag(); cvLive(); }
 /* I campi PROMO compaiono in due punti: in alto nel form e accanto alla riga del
    pagamento. cvSync legge SOLO quelli in alto, percio' scrivo prima li' e poi ricalcolo:
