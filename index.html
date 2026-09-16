@@ -13256,9 +13256,16 @@ var _tcMeseCorrente  = null;
 var _tcAdminMese     = null;
 var _tcClockInterval = null;
 
-function tcTombstones() { try { return JSON.parse(localStorage.getItem(PRESENZE_DEL_KEY)||'[]'); } catch(e) { return []; } }
-function tcAddTombstone(id) { if(!id) return; var t=tcTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(PRESENZE_DEL_KEY,JSON.stringify(t));}catch(e){} } }
-function tcLoadReg() { try { var t=tcTombstones(); return (JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]')).filter(function(r){ return r && t.indexOf(r.id)<0; }); } catch(e) { return []; } }
+/* ===== LAPIDI CON L'ORARIO =====
+   La lapide locale era un elenco di id per sempre: cancellata la giornata di
+   Rudy dal PC dell'amministratore, quel PC non avrebbe MAI piu' mostrato
+   quel giorno, nemmeno dopo che Rudy ritimbrava. Ora la lapide ha l'orario
+   della cancellazione (id|ts): nasconde solo quello che e' piu' vecchio. */
+function tcTombstones() { try { return (JSON.parse(localStorage.getItem(PRESENZE_DEL_KEY)||'[]')).map(function(x){ return String(x).split('|')[0]; }); } catch(e) { return []; } }
+function tcTombstoneTs(id){ try{ var l=JSON.parse(localStorage.getItem(PRESENZE_DEL_KEY)||'[]'); for(var i=0;i<l.length;i++){ var p=String(l[i]).split('|'); if(p[0]===id) return p[1]?+p[1]:0; } }catch(e){} return null; }
+function tcAddTombstone(id) { if(!id) return; try{ var l=JSON.parse(localStorage.getItem(PRESENZE_DEL_KEY)||'[]').filter(function(x){ return String(x).split('|')[0]!==id; }); l.push(id+'|'+Date.now()); localStorage.setItem(PRESENZE_DEL_KEY,JSON.stringify(l)); }catch(e){} }
+function tcRecTs(r){ return +((r && (r.updatedAt || r._savedAt)) || 0); }
+function tcLoadReg() { try { return (JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]')).filter(function(r){ if(!r || r.deleted) return false; var ts=tcTombstoneTs(r.id); if(ts===null) return true; return ts && tcRecTs(r)>ts; }); } catch(e) { return []; } }
 function tcSaveReg(list, soloRec) {
   try { localStorage.setItem(PRESENZE_KEY, JSON.stringify(list)); } catch(e) {}
   if (GS_URL) {
@@ -13893,11 +13900,15 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
   var reg=tcLoadReg(), idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===oggi;});
   var rec;
   if(idx>=0){rec=reg[idx];}else{rec={id:email+'_'+oggi,dipendente:email,data:oggi,mese:mese,entrata:null,pausa:null,rientro:null,uscita:null};reg.push(rec);idx=reg.length-1;}
-  rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now();
+  rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now(); rec.updatedAt=Date.now(); if(rec.deleted) delete rec.deleted;
   /* la stessa pausa va scritta anche col nome usato dalla vista amministrativa */
   try{ if(typeof presenzeAlias==='function') presenzeAlias(rec); }catch(e){}
   reg[idx]=rec;
   try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(reg)); }catch(e){}
+  /* subito anche sul cloud: cosi' l'amministratore la vede senza aspettare
+     il prossimo giro di sincronizzazione, e la giornata cancellata torna
+     valida appena Rudy ritimbra */
+  try{ if(typeof presenzeSupaUpsert==='function') presenzeSupaUpsert(rec); }catch(e){}
   var nomi={entrata:'Entrata',pausa:'Pausa pranzo',rientro:'Rientro',uscita:'Uscita'};
   var ring=document.getElementById('tc-gps-ring'), lbl=document.getElementById('tc-gps-label'), sub=document.getElementById('tc-gps-sub');
   if(ring){ring.className='tc-gps-ring idle';ring.textContent='⏳';}
@@ -14707,6 +14718,16 @@ function tcForzaElimina(){
   var reg=tcLoadReg().filter(function(r){ return !(r.dipendente===email && r.data===data); });
   try{ localStorage.setItem(PRESENZE_KEY, JSON.stringify(reg)); }catch(e){}
   tcAddTombstone(id);
+  /* ===== LA CANCELLAZIONE DEVE ARRIVARE SUL CLOUD =====
+     Prima si toglieva solo da questo PC (e dal vecchio foglio): la giornata
+     restava su Supabase, il PC di Rudy la ricaricava, i suoi pulsanti
+     restavano spenti e non poteva ritimbrare. Ora sul cloud va una lapide:
+     la giornata risulta cancellata da questo momento, e una timbratura
+     fatta DOPO la sostituisce. */
+  try{
+    if(typeof supaUpsert==='function') supaUpsert('presenze_app', { id:id, dipendente:email, data:data, mese:String(data).substring(0,7),
+      entrata:'', pausa:'', rientro:'', uscita:'', uscita_pranzo:'', rientro_pranzo:'', sede:'', deleted:true, updatedAt:Date.now(), deletedBy:(_currentUserEmail||'') });
+  }catch(e){}
   if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsDelete(PRESENZE_SHEET, id); }catch(e){} }
   ['entrata','pausa','rientro','uscita'].forEach(function(f){ var el=document.getElementById('tc-forza-'+f); if(el) el.value=''; });
   if(msg){ msg.textContent='🗑 Timbratura eliminata per '+tcGetNome(email)+' — '+data; msg.style.color='#dc2626'; }
@@ -14810,7 +14831,7 @@ function calcolaOre(e,u){
 // ══════════════════════════════════════════════════════════════
 // PRESENZE — STORAGE
 // ══════════════════════════════════════════════════════════════
-function presenzeLoadReg(){try{return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]');}catch(e){return[];}}
+function presenzeLoadReg(){try{return JSON.parse(localStorage.getItem(PRESENZE_KEY)||'[]').filter(function(r){ return r && !r.deleted; });}catch(e){return[];}}
 function presenzeSaveReg(l, noPush){
   localStorage.setItem(PRESENZE_KEY,JSON.stringify(l));
   /* le timbrature non restano piu' solo su questo dispositivo */
@@ -31378,9 +31399,23 @@ function presenzeSupaLoad(done){
       var byId = {};
       nR.list.forEach(function(r){ byId[r.id] = r; });
       var daSpingere = [];
+      var _haOre=function(r){ return !!(r && (r.entrata||r.pausa||r.rientro||r.uscita||r.uscita_pranzo||r.rientro_pranzo)); };
       nL.list.forEach(function(r){
         var ex = byId[r.id];
-        if(!ex){ byId[r.id] = r; daSpingere.push(r); return; }
+        if(!ex){ if(!r.deleted){ byId[r.id] = r; daSpingere.push(r); } return; }
+        /* ===== GIORNATA CANCELLATA DALL'AMMINISTRATORE =====
+           La fusione unisce sempre, e non sa rappresentare una cancellazione:
+           la copia locale di Rudy riportava in vita la giornata tolta. Se sul
+           cloud c'e' la lapide, vince lei; l'unica cosa che la supera e' una
+           timbratura fatta DOPO la cancellazione. */
+        if(ex.deleted){
+          if(!r.deleted && _haOre(r) && presenzeTs(r) > presenzeTs(ex)){ byId[r.id] = r; daSpingere.push(r); }
+          return;
+        }
+        if(r.deleted){
+          if(presenzeTs(r) > presenzeTs(ex)){ byId[r.id] = r; daSpingere.push(r); }
+          return;
+        }
         var fuso = presenzeFondi(ex, r);
         byId[r.id] = fuso;
         /* spingo solo se il locale aggiunge qualcosa */
