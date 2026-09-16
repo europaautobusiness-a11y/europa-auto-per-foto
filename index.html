@@ -22581,7 +22581,10 @@ function mzSalva(){
      tutte le pratiche legate a questo veicolo ricevono la nuova. */
   try{
     var _tgNuova=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-    if(_tgNuova && _tgNuova!==_targaPrima && typeof cvLoad==='function' && typeof cvSave==='function'){
+    /* A ogni salvataggio, non solo quando la targa cambia adesso: se era
+       gia' stata corretta prima (quando i contratti non venivano ancora
+       riallineati), basta risalvare la scheda per sistemarli. */
+    if(_tgNuova && typeof cvLoad==='function' && typeof cvSave==='function'){
       var _tutte=cvLoad(), _toccate=0;
       _tutte.forEach(function(c){
         if(!c || c.autoId!==a.id || c.deleted) return;
@@ -26820,7 +26823,17 @@ function cvBuildHTML(c, tipo){
   doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
   if(c.assicOn && cvNum(c.assicImporto)>0) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
-  (c.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
+  /* Il pacchetto manutenzione, di norma, non e' una riga della tabella:
+     il prezzo in tabella e' quello del veicolo, e il pacchetto con il suo
+     costo sta nel riquadro delle condizioni (Parametri). Il totale lo
+     comprende comunque. */
+  var _pmDove=(typeof parLoad==='function')?(parLoad().pacchettoManutDove||'condizioni'):'condizioni';
+  (c.costiExtra||[]).forEach(function(x){
+    if(!cvNum(x.importo)) return;
+    var _isPk=!!(x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||'')));
+    if(_isPk && _pmDove!=='tabella') return;
+    doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo));
+  });
   if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
   doc+=row('Totale vendita',t.totaleVendita,'sub');
   if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row(cvEtichettaTotale(c),t.totaleScontato,'sub'); }
@@ -27081,8 +27094,12 @@ function cvBuildHTML(c, tipo){
     if(_pm && !_cvDetailView){
       var _pmT=(typeof parLoad==='function')?(parLoad().pacchettoManut||''):'';
       if(_pmT){
-        doc+='<div class="cvh" style="margin-top:10px;">Pacchetto manutenzione'+(_pm.anni?(' \u2014 '+_pm.anni+' anni'):'')+(cvNum(_pm.importo)?(' \u2014 \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT')):'')+'</div>'
-          +'<div class="cvbox" style="font-size:9.5px;line-height:1.45;white-space:pre-line;">'+cvEsc(_pmT)+'</div>';
+        var _pmDove2=(typeof parLoad==='function')?(parLoad().pacchettoManutDove||'condizioni'):'condizioni';
+        var _pmIntro=(_pmDove2!=='tabella' && cvNum(_pm.importo))
+          ? ('Il prezzo complessivo indicato comprende il Pacchetto Manutenzione'+(_pm.anni?(' di '+_pm.anni+' anni'):'')+' al costo di \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+', alle condizioni che seguono.\n')
+          : '';
+        doc+='<div class="cvh" style="margin-top:10px;">Pacchetto manutenzione'+(_pm.anni?(' \u2014 '+_pm.anni+' anni'):'')+(_pmDove2==='tabella' && cvNum(_pm.importo)?(' \u2014 \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT')):'')+'</div>'
+          +'<div class="cvbox" style="font-size:9.5px;line-height:1.45;white-space:pre-line;">'+cvEsc(_pmIntro+_pmT)+'</div>';
       }
     }
   }catch(_e){}
@@ -28411,7 +28428,7 @@ var EA_LINK_RECENSIONI='https://g.page/r/CfP6etGmdA-yEBM/review';
 /* Bozza da sistemare con Davide: e' il testo che finisce sul contratto
    quando c'e' il pacchetto manutenzione. Si modifica dai Parametri. */
 var PARAM_PACCHETTO_MANUT_DEF = "Il Pacchetto Manutenzione comprende la manutenzione ORDINARIA del veicolo per la durata indicata, da eseguirsi presso Europa Auto S.r.l. o officina da essa indicata, previa prenotazione:\n\u2022 un tagliando all'anno (cambio olio motore e filtri: olio, aria, abitacolo, carburante, secondo il piano del costruttore);\n\u2022 freni (pastiglie e dischi) una volta ogni 40.000 km;\n\u2022 liquidi (freni, raffreddamento, servosterzo, lavavetri) e cinghie servizi secondo il piano di manutenzione del costruttore;\n\u2022 ogni altro intervento di manutenzione ordinaria previsto dal piano del costruttore nella durata del pacchetto.\nSono ESCLUSI: pneumatici, batteria, guasti meccanici ed elettrici, danni da incidente, uso improprio, negligenza o mancata manutenzione, e ogni intervento non riconducibile alla manutenzione ordinaria.\nIl pacchetto \u00e8 legato al veicolo, non \u00e8 rimborsabile n\u00e9 cedibile, e decade in caso di mancato rispetto delle scadenze di manutenzione previste dal costruttore.";
-var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, pacchettoManut:PARAM_PACCHETTO_MANUT_DEF, validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:EA_LINK_RECENSIONI, iban:'IT88E0344033990000001004900', maxPreparazioni:2,
+var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, pacchettoManut:PARAM_PACCHETTO_MANUT_DEF, pacchettoManutDove:'condizioni', validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:EA_LINK_RECENSIONI, iban:'IT88E0344033990000001004900', maxPreparazioni:2,
   /* I numeri stanno qui e non sparsi nel codice: quando cambiano si
      modificano una volta sola, da Parametri, e vanno a posto ovunque.
      telefono   = quello che il cliente legge e chiama
@@ -28827,6 +28844,12 @@ function parInit(){
   h+=lab('Numero massimo preparazioni al giorno')+inp('par_maxPreparazioni',p.maxPreparazioni,'number');
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Condizioni contrattuali (stampate sul preventivo)</div>';
   h+=lab('Condizioni PROPOSTA D’ACQUISTO (stampate sul proposta d’acquisto)')+'<textarea id="par_condizioni" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioni)+'</textarea>';
+  h+=lab('Pacchetto manutenzione: dove compare sulla stampa')
+    +'<select id="par_pacchettoManutDove" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;background:#fff;">'
+    +'<option value="condizioni"'+(p.pacchettoManutDove!=='tabella'?' selected':'')+'>Solo nelle condizioni (il prezzo in tabella \u00e8 quello del veicolo, il pacchetto e il suo costo sono scritti nel riquadro delle condizioni)</option>'
+    +'<option value="tabella"'+(p.pacchettoManutDove==='tabella'?' selected':'')+'>Come riga nella tabella prezzi</option>'
+    +'</select>'
+    +'<div style="font-size:11px;color:#94a3b8;margin:4px 0 10px;">In entrambi i casi il totale del contratto e la fattura comprendono il pacchetto: cambia solo dove il cliente lo legge.</div>';
   h+=lab('Condizioni PACCHETTO MANUTENZIONE (stampate su preventivo e contratto quando il pacchetto \u00e8 presente)')+'<textarea id="par_pacchettoManut" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:160px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.pacchettoManut)+'</textarea>';
   h+=lab('Condizioni CONTRATTO finale (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
   h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
@@ -28850,7 +28873,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['telefono','telefonoWa','telefonoPrepara','logoUrl','condizioni','condizioniFinali','pacchettoManut','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
+  ['telefono','telefonoWa','telefonoPrepara','logoUrl','condizioni','condizioniFinali','pacchettoManut','pacchettoManutDove','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
   /* Anche se il locale e' pieno i parametri devono partire per il cloud:
      e' li' che li leggono gli altri. Prima si salva su Supabase, poi si
@@ -34514,7 +34537,11 @@ function cvVeicoloLink(cv){
   var estera=(a.estera===true);
   var targa=cv.nuovaTarga||a.targa||'';
   var num=(typeof cvAutoNum==='function'?cvAutoNum(cv):'')||a.numeroInterno||a.numero_interno||'';
-  var marcaMod=cvEsc((((a.marca||'')+' '+(a.modello||cv.autoDesc||'')).trim()))||'Veicolo';
+  /* Se l'allestimento ripete marca e modello ("ALFA ROMEO JUNIOR ALFA ROMEO
+     JUNIOR 1.2 136CV"), la ripetizione si toglie solo in visualizzazione. */
+  var _mmTxt=((a.marca||'')+' '+(a.modello||cv.autoDesc||'')).trim().replace(/\s+/g,' ');
+  try{ var _mmU=_mmTxt.toUpperCase(); var _w=_mmU.split(' '); for(var _k=Math.floor(_w.length/2); _k>=2; _k--){ if(_w.slice(0,_k).join(' ')===_w.slice(_k,2*_k).join(' ')){ _mmTxt=_mmTxt.split(' ').slice(_k).join(' '); break; } } }catch(e){}
+  var marcaMod=cvEsc(_mmTxt)||'Veicolo';
   var autoId=cv.autoId||'';
   if(!autoId && typeof mzLoad==='function'){
     var key=String(a.telaio||targa||num||'').toLowerCase();
@@ -38621,7 +38648,15 @@ function crmOffModBtn(cv, nome, tel){
   var jq=crmQ;
   var ts=cv&&cv.crmOffertaTs;
   if(!tel) return '';
-  if(ts){
+  /* ===== L'OFFERTA DELL'ANNO SCORSO NON CONTA PIU' =====
+     La data dell'ultimo invio restava sulla pratica per sempre: l'anno dopo,
+     al tagliando successivo, la scheda tornava gia' "inviata" col pulsante
+     grigio, e il cliente che non era venuto non riceveva niente. Un invio
+     vale per il suo anniversario: passati sei mesi, il pulsante torna verde
+     e la data vecchia resta scritta in piccolo. */
+  var _vecchia=false;
+  if(ts && (Date.now()-ts) > 183*24*3600000){ _vecchia=true; }
+  if(ts && !_vecchia){
     var d=new Date(ts);
     var q=('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2);
     return '<div style="display:flex;align-items:center;gap:7px;margin-top:8px;">'
@@ -38631,10 +38666,15 @@ function crmOffModBtn(cv, nome, tel){
       +'style="flex:0 0 auto;padding:5px 9px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#64748b;'
       +'font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Rimanda</button></div>';
   }
+  var _notaVecchia='';
+  if(_vecchia){
+    var dv=new Date(ts);
+    _notaVecchia='<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">ultima offerta inviata il '+('0'+dv.getDate()).slice(-2)+'/'+('0'+(dv.getMonth()+1)).slice(-2)+'/'+dv.getFullYear()+' \u00b7 tagliando non segnato</div>';
+  }
   return '<button onclick="crmOffertaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
     +'style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:none;background:#16a34a;color:#fff;'
     +'font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">'
-    +'\uD83D\uDCAC Invia l\u2019offerta su WhatsApp</button>';
+    +'\uD83D\uDCAC Invia l\u2019offerta su WhatsApp</button>'+_notaVecchia;
 }
 
 function crmOffBtn(nome,tel,email,auto){ return '<button onclick="crmOfferta('+crmQ(nome||'')+','+crmQ(tel||'')+','+crmQ(email||'')+','+crmQ(auto||'')+')" style="margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🎁 Offerta manutenzione (WhatsApp)</button>'; }
@@ -39721,6 +39761,33 @@ function crmEscludiCliente(id){
   if(typeof crmRender==='function') crmRender();
   if(typeof tcToastNew==='function') tcToastNew('Tolto dai promemoria', true);
 }
+/* "Non inviare": il cliente resta cliente, ma l'offerta non gli va mandata.
+   Fuori zona, non interessato, o un motivo scritto a mano. Stessa
+   esclusione di "Auto venduta" (recuperabile dal riquadro in fondo), con il
+   motivo salvato accanto al nome. */
+function crmNonInviareMenu(id){
+  try{
+    var el=document.getElementById('crm-ni-'+id); if(!el) return;
+    el.style.display=(el.style.display==='none'||!el.style.display)?'flex':'none';
+  }catch(e){}
+}
+function crmNonInviare(id, motivo){
+  var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
+  var nome=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim();
+  if(motivo==='altro'){
+    motivo=prompt('Perch\u00e9 non inviare l\u2019offerta a '+nome+'?', '');
+    if(motivo===null) return;
+    motivo=String(motivo).trim()||'non inviare';
+  }
+  cv.crmEscluso=true;
+  cv.crmEsclusoTs=Date.now();
+  cv.crmEsclusoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  cv.crmEsclusoMotivo=motivo||'non inviare';
+  crmSalvaCv(cv);
+  if(typeof crmRender==='function') crmRender();
+  if(typeof tcToastNew==='function') tcToastNew('Tolto dai promemoria \u00b7 '+cv.crmEsclusoMotivo, true);
+}
+try{ window.crmNonInviareMenu=crmNonInviareMenu; window.crmNonInviare=crmNonInviare; }catch(e){}
 function crmRimettiCliente(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
   cv.crmEscluso=false;
@@ -39849,6 +39916,15 @@ function crmRenderConsegnate(){
       +'<button onclick="crmEscludiCliente(\''+crmEsc(cv.id)+'\')" '
       +'style="flex:1;padding:6px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">'
       +'Auto venduta</button>'
+      +'<button onclick="crmNonInviareMenu(\''+crmEsc(cv.id)+'\')" title="Non mandare l\u2019offerta a questo cliente" '
+      +'style="flex:1;padding:6px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">'
+      +'Non inviare \u25be</button>'
+      +'</div>'
+      /* i motivi, chiusi finche' non servono */
+      +'<div id="crm-ni-'+crmEsc(cv.id)+'" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap;">'
+      +'<button onclick="crmNonInviare(\''+crmEsc(cv.id)+'\',\'fuori zona\')" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">\uD83D\uDCCD Fuori zona</button>'
+      +'<button onclick="crmNonInviare(\''+crmEsc(cv.id)+'\',\'non interessato\')" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid #e2e8f0;background:#f8fafc;color:#475569;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Non interessato</button>'
+      +'<button onclick="crmNonInviare(\''+crmEsc(cv.id)+'\',\'altro\')" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid #e2e8f0;background:#f8fafc;color:#475569;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Altro motivo\u2026</button>'
       +'</div>';
     return b+'</div>';
   };
