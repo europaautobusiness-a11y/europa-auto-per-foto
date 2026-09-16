@@ -22186,6 +22186,17 @@ function mzForm(id){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Telaio <span id="mz-telaio-req" style="color:#dc2626"></span>','telaio','')+'</div><div style="flex:1;">'+f('Immatricolazione (gg/mm/aaaa)','dataImm','','date')+'</div></div>';
   h+='<div id="mz-numauto-wrap" style="display:none;">'+f('N. auto (numero interno)','numero_interno','es. 120')+'</div>';
   h+='<div style="display:flex;gap:10px;">'+(mzPuoPrezzoAcq()?('<div style="flex:1;">'+f('Prezzo acquisto €','prezzoAcq','','number')+'</div>'):('<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo acquisto €</label><div style="padding:10px;border:1px dashed #cbd5e1;border-radius:8px;color:#94a3b8;font-size:13px;background:#f8fafc;">\ud83d\udd12 riservato</div></div>'))+'<div style="flex:1;">'+f('Prezzo vendita €','prezzoVen','','number')+'</div></div>';
+  /* ===== PASSAGGIO FORZATO SUL VEICOLO (solo amministratore) =====
+     Su certe auto il trapasso costa meno del calcolo a kW. Segnandolo qui,
+     una volta, ogni preventivo e contratto su questo veicolo usa questo
+     importo invece di quello calcolato. Vuoto = calcolo normale. */
+  if(typeof isAdmin==='function' && isAdmin()){
+    h+='<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:9px 12px;">'
+      +'<label style="display:block;font-size:10px;font-weight:700;color:#92400e;margin:0 0 3px;text-transform:uppercase;">\uD83D\uDD12 Passaggio di propriet\u00e0 forzato \u20ac (solo amministratore)</label>'
+      +'<input type="number" id="mz_passaggioForzato" value="'+v('passaggioForzato')+'" placeholder="vuoto = calcolo automatico a kW" style="width:100%;padding:9px;border:1px solid #fde68a;border-radius:7px;font-family:inherit;font-size:14px;font-weight:700;box-sizing:border-box;">'
+      +'<div style="font-size:11px;color:#92400e;margin-top:4px;">Se compilato, preventivi e contratti su quest\u2019auto usano questo importo al posto del calcolo.</div>'
+      +'</div>';
+  }
   h+=f('Prezzo di listino € (compare nel preventivo)','listino','','number');
   h+=sel('Stato','stato',MZ_STATI.map(function(s){return [s[0],s[1]];}));
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Etichetta sito (facoltativa)</label>';
@@ -22543,6 +22554,7 @@ function mzSalva(){
   if(!a.dataCarico) a.dataCarico=new Date(a.createdAt||Date.now()).toISOString().slice(0,10);
   var _canPrAcq=mzPuoPrezzoAcq();
   try{ var _po=document.getElementById('mz_promoOn'); a.promoOn=!!(_po&&_po.checked); }catch(e){}
+  try{ var _pfEl=document.getElementById('mz_passaggioForzato'); if(_pfEl) a.passaggioForzato=_pfEl.value.trim(); }catch(e){}
   ['marca','modello','allestimento','targa','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note','dotazioni','etichetta','promoPrezzo','promoScad','promoCond','promoPacchetto','promoPacchettoAnni'].forEach(function(k){ if(k==='prezzoAcq' && !_canPrAcq) return; a[k]=g(k); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
   a.estera=_mzEstera;
   if(_fidPrivato){ a.fornitoreNome=_fidPrivato; a.provenienzaVenditore='privato'; }
@@ -24578,7 +24590,24 @@ function cvPromoRiapplica(){
 }
 try{ window.cvPromoApplica=cvPromoApplica; window.cvPacchettoRiga=cvPacchettoRiga; window.cvPromoTogli=cvPromoTogli; window.cvPromoRiapplica=cvPromoRiapplica; }catch(e){}
 function cvAutoNum(c){ var n=(c&&c.autoSnapshot&&c.autoSnapshot.numeroInterno)||''; if(!n && c && c.autoId && typeof mzById==='function'){ var a=mzById(c.autoId); if(a) n=a.numero_interno||''; } return n?String(n):''; }
-function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; if(_cv && _cv.passaggioForzato){ if(typeof cvLive==='function') cvLive(); return; } var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
+function cvAggiornaPassaggio(){ var pa=document.getElementById('cv_passaggio'); if(!pa) return; if(_cv && _cv.passaggioForzato){ if(typeof cvLive==='function') cvLive(); return; }
+  /* Passaggio forzato sul veicolo (scheda auto, solo admin): vince sul
+     calcolo a kW e sul Dini. Chi fa il preventivo lo vede in giallo. */
+  try{
+    var _av=(_cv && _cv.autoId && typeof mzById==='function')?mzById(_cv.autoId):null;
+    var _pf=_av?parseFloat(_av.passaggioForzato):NaN;
+    if(_av && !isNaN(_pf) && _pf>0){
+      pa.value=_pf; pa.style.background='#fffbeb'; pa.style.border='1px solid #f59e0b'; pa.title='Importo fissato nella scheda del veicolo';
+      var _pn=document.getElementById('cv_passaggioNota');
+      if(!_pn){ _pn=document.createElement('div'); _pn.id='cv_passaggioNota'; _pn.style.cssText='font-size:10.5px;color:#92400e;margin-top:3px;'; pa.parentNode&&pa.parentNode.appendChild(_pn); }
+      _pn.textContent='\uD83D\uDD12 passaggio fissato nella scheda del veicolo';
+      if(typeof cvLive==='function') cvLive(); return;
+    } else {
+      var _pn2=document.getElementById('cv_passaggioNota'); if(_pn2) _pn2.remove();
+      pa.style.background='#eef2f7'; pa.style.border='1px solid #cbd5e1'; pa.title='';
+    }
+  }catch(e){}
+  var dn=document.getElementById('cv_diniOn'); if(dn && dn.checked){ var d=(typeof parLoad==='function'?parLoad().dini:130); pa.value=(d!=null&&d!==''?d:130); } else { var a=(_cv&&_cv.autoSnapshot)||{}; var pp=cvPassaggioKw(a.potenza, a.estera); if(pp!=='') pa.value=pp; } if(typeof cvLive==='function') cvLive(); }
 /* Sblocco/riblocco del campo passaggio: solo amministratore. */
 /* Sblocco della minivoltura, riservato al titolare. Togliendo la spunta si
    torna al costo fisso dei Parametri, cosi' l'eccezione non resta appiccicata
