@@ -18576,12 +18576,12 @@ function sinPreventivo(id){
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Suppl. doppio/triplo strato %','pv_doppio', p.doppio!=null?p.doppio:15,'number')+'</div><div style="flex:1;">'+fld('Suppl. finitura %','pv_finitura', p.finitura!=null?p.finitura:10,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Max ore finitura','pv_finmax', p.finmax!=null?p.finmax:3,'number')+'</div><div style="flex:1;">'+fld('Tempo agg. vern. (ore)','pv_tagg', p.tagg!=null?p.tagg:0,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Levabolli € (a corpo, manodopera)','pv_levabolli', p.levabolli!=null?p.levabolli:0,'number')+'</div><div style="flex:1;"></div></div>';
-  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Smaltimento rifiuti €','pv_smalt', p.smalt!=null?p.smalt:30,'number')+'</div><div style="flex:1;">'+fld('IVA %','pv_iva', p.iva!=null?p.iva:22,'number')+'</div></div>';
-  /* Materiale di consumo (piccola ferramenta, sigillanti, carte, nastri):
-     una percentuale dell'imponibile con un tetto, come vuole la compagnia.
-     Distinto dal materiale di verniciatura, che si paga a ora di VE. */
-  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Materiale di consumo % imponibile','pv_consumoPct', p.consumoPct!=null?p.consumoPct:5,'number')+'</div><div style="flex:1;">'+fld('Materiale di consumo max €','pv_consumoMax', p.consumoMax!=null?p.consumoMax:65,'number')+'</div></div>';
-  html+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">Il materiale di consumo si calcola da solo: percentuale sull\u2019imponibile (manodopera, materiale verniciatura, ricambi e smaltimento), fino al massimale.</div>';
+  /* Smaltimento rifiuti: non piu' un importo fisso ma una percentuale
+     dell'imponibile (manodopera, materiale di consumo, ricambi) con un
+     tetto, come accettano le compagnie. Si calcola da solo. */
+  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Smaltimento rifiuti % imponibile','pv_smaltPct', p.smaltPct!=null?p.smaltPct:5,'number')+'</div><div style="flex:1;">'+fld('Smaltimento rifiuti max €','pv_smaltMax', p.smaltMax!=null?p.smaltMax:65,'number')+'</div></div>';
+  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('IVA %','pv_iva', p.iva!=null?p.iva:22,'number')+'</div><div style="flex:1;"></div></div>';
+  html+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">Lo smaltimento rifiuti si calcola da solo: percentuale sull\u2019imponibile (manodopera, materiale di consumo e ricambi), fino al massimale.</div>';
   html+='<div style="font-size:11px;color:#64748b;">Normalmente doppio strato 15% e finitura 10%. Per triplo strato metti 30%.</div>';
   html+='</div>';
   html+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;text-transform:uppercase;">Lavorazioni</div>';
@@ -18623,7 +18623,7 @@ function pvConvenzione(applica){
     var vn=document.getElementById('pv_vernice_nota');
     if(vn) vn.textContent='Convenzione '+c.nome+': materiale fissato a \u20ac '+c.materiale+'/h (il tipo di vernice non lo cambia).';
   }
-  if(nota) nota.textContent='Convenzione '+c.nome+': manodopera \u20ac '+c.orario+'/h + IVA, materiale \u20ac '+c.materiale+'/h.';
+  if(nota) nota.textContent='Convenzione '+c.nome+': manodopera \u20ac '+c.orario+'/h + IVA, materiale di consumo \u20ac '+c.materiale+'/h.';
   pvCalc();
 }
 
@@ -18687,7 +18687,8 @@ function pvCompute(){
   _pvRighe.forEach(function(r){ t.sumSR+=pvN(r.sr); t.sumLA+=pvN(r.la); t.sumVE+=pvN(r.ve); t.sumME+=pvN(r.me); t.sumRic+=pvN(r.ric); });
   t.orario=pvN(pvVal('pv_orario')); t.materialeH=pvN(pvVal('pv_materiale'));
   t.pctDoppio=pvN(pvVal('pv_doppio')); t.pctFin=pvN(pvVal('pv_finitura')); t.finMax=pvN(pvVal('pv_finmax'));
-  t.tagg=pvN(pvVal('pv_tagg')); t.smalt=pvN(pvVal('pv_smalt')); t.ivaPct=pvN(pvVal('pv_iva'));
+  t.tagg=pvN(pvVal('pv_tagg')); t.ivaPct=pvN(pvVal('pv_iva'));
+  t.smaltPct=pvN(pvVal('pv_smaltPct')); t.smaltMax=pvN(pvVal('pv_smaltMax'));
   t.levabolli=pvN(pvVal('pv_levabolli'));
   t.supplDoppio=t.sumVE*(t.pctDoppio/100);
   t.supplFin=Math.min(t.sumVE*(t.pctFin/100), t.finMax);
@@ -18696,12 +18697,11 @@ function pvCompute(){
   t.oreMan=t.sumSR+t.sumLA+t.veTot+t.sumME;
   t.manodopera=t.oreMan*t.orario + t.levabolli;
   t.materiale=t.veTot*t.materialeH;
-  /* materiale di consumo: % dell'imponibile (senza se stesso), con tetto */
-  t.consumoPct=pvN(pvVal('pv_consumoPct')); t.consumoMax=pvN(pvVal('pv_consumoMax'));
-  var _baseCons=t.manodopera+t.materiale+t.sumRic+t.smalt;
-  t.consumo=Math.round(_baseCons*(t.consumoPct/100)*100)/100;
-  if(t.consumoMax>0 && t.consumo>t.consumoMax) t.consumo=t.consumoMax;
-  t.imponibile=_baseCons+t.consumo;
+  /* smaltimento rifiuti: % dell'imponibile (senza se stesso), con tetto */
+  var _base=t.manodopera+t.materiale+t.sumRic;
+  t.smalt=Math.round(_base*(t.smaltPct/100)*100)/100;
+  if(t.smaltMax>0 && t.smalt>t.smaltMax) t.smalt=t.smaltMax;
+  t.imponibile=_base+t.smalt;
   t.iva=t.imponibile*(t.ivaPct/100);
   t.totale=t.imponibile+t.iva;
   return t;
@@ -18718,9 +18718,9 @@ function pvCalc(){
     ['<b>Ore manodopera totali</b>', '<b>'+pvOr2(t.oreMan)+' h</b>'],
     ['Manodopera ('+pvOr2(t.oreMan)+' x € '+pvEu(t.orario)+')', '€ '+pvEu(t.oreMan*t.orario)],
     ['Levabolli (manodopera a corpo)', '€ '+pvEu(t.levabolli)],
-    ['Materiale verniciatura ('+pvOr2(t.veTot)+' x € '+pvEu(t.materialeH)+')', '€ '+pvEu(t.materiale)],
-    ['Ricambi', '€ '+pvEu(t.sumRic)],['Smaltimento rifiuti', '€ '+pvEu(t.smalt)],
-    ['Materiale di consumo ('+pvOr2(t.consumoPct)+'% imponibile, max € '+pvEu(t.consumoMax)+')', '€ '+pvEu(t.consumo)],
+    ['Materiale consumo ('+pvOr2(t.veTot)+' x € '+pvEu(t.materialeH)+')', '€ '+pvEu(t.materiale)],
+    ['Ricambi', '€ '+pvEu(t.sumRic)],
+    ['Smaltimento rifiuti ('+pvOr2(t.smaltPct)+'% imponibile, max € '+pvEu(t.smaltMax)+')', '€ '+pvEu(t.smalt)],
     ['<b>Imponibile</b>', '<b>€ '+pvEu(t.imponibile)+'</b>'],['IVA '+pvOr2(t.ivaPct)+'%', '€ '+pvEu(t.iva)]
   ];
   var h=''; rows.forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px dashed #e2e8f0;"><span>'+x[0]+'</span><span style="font-weight:700;">'+x[1]+'</span></div>'; });
@@ -18729,7 +18729,7 @@ function pvCalc(){
 }
 function pvCollect(){
   return { cliente:pvVal('pv_cliente'), indirizzo:pvVal('pv_indirizzo'), veicolo:pvVal('pv_veicolo'), targa:pvVal('pv_targa'), comp:pvVal('pv_comp'), nsin:pvVal('pv_nsin'),
-    params:{ vernice:pvVal('pv_vernice'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), smalt:pvVal('pv_smalt'), iva:pvVal('pv_iva'), consumoPct:pvVal('pv_consumoPct'), consumoMax:pvVal('pv_consumoMax') },
+    params:{ vernice:pvVal('pv_vernice'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), iva:pvVal('pv_iva'), smaltPct:pvVal('pv_smaltPct'), smaltMax:pvVal('pv_smaltMax') },
     righe:_pvRighe.map(function(r){return {cr:r.cr,descr:r.descr,sr:r.sr,la:r.la,ve:r.ve,me:r.me,ric:r.ric};}) };
 }
 function pvSalva(){
@@ -18775,10 +18775,9 @@ function pvDocHtml(){
   +'<tr><td colspan="2"><div class="lab">SUPPL. DOPPIO/TRIPLO STRATO '+pvOr2(t.pctDoppio)+'% = '+pvOr2(t.supplDoppio)+'  -  FINITURA = '+pvOr2(t.supplFin)+'  -  TEMPO AGG. VERN. = '+pvOr2(t.tagg)+'</div></td>'
   +'<td colspan="3" class="c"><div class="lab">TOT. TEMPI SUPPL.</div><b>'+pvOr2(t.supplTot)+'</b></td>'
   +'<td colspan="2" class="c"><div class="lab">TOTALE TEMPI VE</div><b>'+pvOr2(t.veTot)+'</b></td></tr></table>'
-  +'<table><tr><td rowspan="8" style="width:45%;"><div class="lab">NOTE</div>&nbsp;</td><td><div class="lab">RICAMBI</div></td><td class="r">'+pvEu(t.sumRic)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE VERNICIATURA</div>('+pvOr2(t.veTot)+' h x € '+pvEu(t.materialeH)+')</td><td class="r">'+pvEu(t.materiale)+'</td></tr>'
-  +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div></td><td class="r">'+pvEu(t.smalt)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE DI CONSUMO</div>('+pvOr2(t.consumoPct)+'% imponibile, max € '+pvEu(t.consumoMax)+')</td><td class="r">'+pvEu(t.consumo)+'</td></tr>'
+  +'<table><tr><td rowspan="7" style="width:45%;"><div class="lab">NOTE</div>&nbsp;</td><td><div class="lab">RICAMBI</div></td><td class="r">'+pvEu(t.sumRic)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE CONSUMO</div>('+pvOr2(t.veTot)+' h x € '+pvEu(t.materialeH)+')</td><td class="r">'+pvEu(t.materiale)+'</td></tr>'
+  +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div>('+pvOr2(t.smaltPct)+'% imponibile, max € '+pvEu(t.smaltMax)+')</td><td class="r">'+pvEu(t.smalt)+'</td></tr>'
   +'<tr><td><div class="lab">MANODOPERA</div>ore '+pvOr2(t.oreMan)+' x € '+pvEu(t.orario)+'/ora</td><td class="r">'+pvEu(t.oreMan*t.orario)+'</td></tr>'
   +(t.levabolli?('<tr><td><div class="lab">LEVABOLLI</div>(manodopera a corpo)</td><td class="r">'+pvEu(t.levabolli)+'</td></tr>'):'')
   +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+pvEu(t.imponibile)+'</td></tr>'
@@ -31590,14 +31589,14 @@ function fcTotaliDaPreventivo(s){
   });
   t.orario=fcNum(p.orario!=null?p.orario:40);
   t.materialeH=fcNum(p.materiale!=null?p.materiale:0);
-  t.tagg=fcNum(p.tagg); t.smalt=fcNum(p.smalt!=null?p.smalt:30);
+  t.tagg=fcNum(p.tagg);
+  t.smaltPct=fcNum(p.smaltPct!=null?p.smaltPct:5);
+  t.smaltMax=fcNum(p.smaltMax!=null?p.smaltMax:65);
   t.ivaPct=fcNum(p.iva!=null?p.iva:22);
   t.levabolli=fcNum(p.levabolli);
   t.pctDoppio=fcNum(p.doppio!=null?p.doppio:15);
   t.pctFin=fcNum(p.finitura!=null?p.finitura:10);
   t.finMax=fcNum(p.finmax!=null?p.finmax:3);
-  t.consumoPct=fcNum(p.consumoPct!=null?p.consumoPct:5);
-  t.consumoMax=fcNum(p.consumoMax!=null?p.consumoMax:65);
   t.supplDoppio=t.sumVE*(t.pctDoppio/100);
   t.supplFin=Math.min(t.sumVE*(t.pctFin/100), t.finMax);
   t.supplTot=t.supplDoppio+t.supplFin+t.tagg;
@@ -31605,17 +31604,17 @@ function fcTotaliDaPreventivo(s){
   t.oreMan=t.sumSR+t.sumLA+t.veTot+t.sumME;
   t.manodopera=t.oreMan*t.orario + t.levabolli;
   t.materiale=t.veTot*t.materialeH;
-  var _base=t.manodopera+t.materiale+t.sumRic+t.smalt;
-  t.consumo=fcConsumo(t,_base);
-  t.imponibile=_base+t.consumo;
+  var _base=t.manodopera+t.materiale+t.sumRic;
+  t.smalt=fcSmalt(t,_base);
+  t.imponibile=_base+t.smalt;
   t.iva=t.imponibile*(t.ivaPct/100);
   t.totale=t.imponibile+t.iva;
   return t;
 }
-/* materiale di consumo: % della base (tutto il resto dell'imponibile), con tetto */
-function fcConsumo(t, base){
-  var c=Math.round(base*(fcNum(t.consumoPct)/100)*100)/100;
-  if(fcNum(t.consumoMax)>0 && c>fcNum(t.consumoMax)) c=fcNum(t.consumoMax);
+/* smaltimento rifiuti: % della base (manodopera, materiale, ricambi), con tetto */
+function fcSmalt(t, base){
+  var c=Math.round(base*(fcNum(t.smaltPct)/100)*100)/100;
+  if(fcNum(t.smaltMax)>0 && c>fcNum(t.smaltMax)) c=fcNum(t.smaltMax);
   return c;
 }
 
@@ -31639,12 +31638,12 @@ function fcSimula(t, righe, lucidFat, tagli){
   var oreMan = t.sumSR + t.sumLA + veTot + t.sumME;
   var manodopera = oreMan * t.orario + t.levabolli;
   var materiale = veTot * t.materialeH;
-  var base = manodopera + materiale + t.sumRic + t.smalt;
-  var consumo = fcConsumo(t, base);
-  var imponibile = base + consumo;
+  var base = manodopera + materiale + t.sumRic;
+  var smalt = fcSmalt(t, base);
+  var imponibile = base + smalt;
   return { sumVE:sumVE, supplDoppio:supplDoppio, supplFin:supplFin, supplTot:supplTot,
            veTot:veTot, oreMan:oreMan, manodopera:manodopera, materiale:materiale,
-           consumo:consumo, imponibile:imponibile };
+           smalt:smalt, imponibile:imponibile };
 }
 
 /* Cerca x in [lo,hi] tale che f(x)=target. Rileva da sola se f cresce o cala,
@@ -31722,16 +31721,16 @@ function fcRiallinea(t, target, righeIn){
    la seconda dichiarazione cancellava questa e il pulsante non faceva nulla. */
 function fcTotaliFinali(t, esito, target){
   var c = esito.calc;
-  /* il concordato fissa l'imponibile: il consumo e' la sua quota
+  /* il concordato fissa l'imponibile: lo smaltimento e' la sua quota
      (pct della base = pct/(100+pct) del totale), sempre col tetto */
-  var pct=fcNum(t.consumoPct);
-  var consumo = Math.round(target*(pct/(100+pct))*100)/100;
-  if(fcNum(t.consumoMax)>0 && consumo>fcNum(t.consumoMax)) consumo=fcNum(t.consumoMax);
-  var fissi = c.materiale + t.sumRic + t.smalt + t.levabolli + consumo;
+  var pct=fcNum(t.smaltPct);
+  var smalt = Math.round(target*(pct/(100+pct))*100)/100;
+  if(fcNum(t.smaltMax)>0 && smalt>fcNum(t.smaltMax)) smalt=fcNum(t.smaltMax);
+  var fissi = c.materiale + t.sumRic + t.levabolli + smalt;
   var manoTarget = target - fissi;
   var out = {
     righe: esito.righe, tagli: esito.tagli, lucidFat: esito.lucidFat,
-    calc: c, materiale: c.materiale, ricambi: t.sumRic, smalt: t.smalt, consumo: consumo,
+    calc: c, materiale: c.materiale, ricambi: t.sumRic, smalt: smalt,
     levabolli: t.levabolli, sconto: 0, oreMan: c.oreMan
   };
   if(c.oreMan > 0){
@@ -31866,9 +31865,8 @@ function fcRender(){
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
   h+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">'+((s.preventivo.righe||[]).length)+' voci con tempi SR/LA/VE/ME e ricambi, come nel preventivo.</div>';
   h+=riga('Ricambi', '\u20ac '+fcEu(v.ricambi));
-  h+=riga('Materiale verniciatura ('+fcEu(v.calc.veTot)+' h)', '\u20ac '+fcEu(v.materiale));
-  h+=riga('Uso dime / smaltimento rifiuti', '\u20ac '+fcEu(v.smalt));
-  h+=riga('Materiale di consumo ('+fcEu(t.consumoPct)+'%, max \u20ac '+fcEu(t.consumoMax)+')', '\u20ac '+fcEu(v.consumo));
+  h+=riga('Materiale consumo ('+fcEu(v.calc.veTot)+' h)', '\u20ac '+fcEu(v.materiale));
+  h+=riga('Uso dime / smaltimento rifiuti ('+fcEu(t.smaltPct)+'%, max \u20ac '+fcEu(t.smaltMax)+')', '\u20ac '+fcEu(v.smalt));
   h+=riga('<b>Manodopera</b> \u2014 ore '+fcEu(v.oreMan)+' x <b>\u20ac '+fcEu(v.orario)+'/ora</b>', '\u20ac '+fcEu(v.manodopera));
   if(v.levabolli>0) h+=riga('Levabolli (a corpo)', '\u20ac '+fcEu(v.levabolli));
   h+=riga('<b>Imponibile</b>', '<b>\u20ac '+fcEu(v.imponibile)+'</b>', true);
@@ -32044,11 +32042,10 @@ function fcStampa(id){
   +'<tr><td colspan="2"><div class="lab">SUPPL. DOPPIO/TRIPLO STRATO '+OR(t.pctDoppio)+'% = '+OR(c.supplDoppio)+'  -  FINITURA = '+OR(c.supplFin)+'  -  TEMPO AGG. VERNICIATURA = '+OR(t.tagg)+'</div></td>'
   +'<td colspan="3" class="c"><div class="lab">TOT. TEMPI SUPPL.</div><b>'+OR(c.supplTot)+'</b></td>'
   +'<td colspan="2" class="c"><div class="lab">TOTALE TEMPI VE</div><b>'+OR(c.veTot)+'</b></td></tr></table>'
-  +'<table><tr><td rowspan="'+(r.levabolli?9:8)+'" style="width:45%;"><div class="lab">NOTE</div>Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.</td>'
+  +'<table><tr><td rowspan="'+(r.levabolli?8:7)+'" style="width:45%;"><div class="lab">NOTE</div>Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.</td>'
   +'<td><div class="lab">RICAMBI</div></td><td class="r">'+EU(r.ricambi)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE VERNICIATURA</div>('+OR(c.veTot)+' h x \u20ac '+EU(t.materialeH)+')</td><td class="r">'+EU(r.materiale)+'</td></tr>'
-  +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div></td><td class="r">'+EU(r.smalt)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE DI CONSUMO</div>('+OR(t.consumoPct)+'% imponibile, max \u20ac '+EU(t.consumoMax)+')</td><td class="r">'+EU(r.consumo)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE CONSUMO</div>('+OR(c.veTot)+' h x \u20ac '+EU(t.materialeH)+')</td><td class="r">'+EU(r.materiale)+'</td></tr>'
+  +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div>('+OR(t.smaltPct)+'% imponibile, max \u20ac '+EU(t.smaltMax)+')</td><td class="r">'+EU(r.smalt)+'</td></tr>'
   +'<tr><td><div class="lab">MANODOPERA</div>ore '+OR(r.oreMan)+' x \u20ac '+EU(r.orario)+'/ora</td><td class="r">'+EU(r.manodopera)+'</td></tr>'
   +(r.levabolli?('<tr><td><div class="lab">LEVABOLLI</div>(manodopera a corpo)</td><td class="r">'+EU(r.levabolli)+'</td></tr>'):'')
   +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+EU(imponibile)+'</td></tr>'
