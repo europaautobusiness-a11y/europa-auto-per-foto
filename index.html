@@ -33859,6 +33859,15 @@ function cvDeliberaForm(id){
      +(_polMesiFonte?('<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">'+_polMesiFonte+'</div>'):'')
      +'</div></div></div>'
    +'<label style="'+lab+'">Note</label><input id="dl_note" style="'+inp+'" value="'+String(d.note||'').replace(/"/g,'&quot;')+'">'
+   /* Provvigione dell'AZIENDA (non del venditore): la compila il simulatore
+      Deutsche Bank; per le altre finanziarie, o se il simulatore non l'ha
+      calcolata, la scrive l'amministratore. Serve alle statistiche. */
+   +((typeof getCurrentRole==='function' && getCurrentRole()==='admin')
+      ? ('<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:9px;">'
+        +'<label style="'+lab+'color:#6d28d9;">Provvigione azienda \u20ac (solo amministratore)</label>'
+        +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="quanto riconosce la finanziaria all\u2019azienda">'
+        +'<div style="font-size:10.5px;color:#7c3aed;margin-top:3px;">'+(d.provvAzienda!=null?'Dal simulatore o inserita a mano. ':'Non calcolata: scrivila qui. ')+'\u00c8 il numero che entra nelle statistiche di marginalit\u00e0.</div></div>')
+      : '')
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
    +'</div></div>';
@@ -34121,7 +34130,8 @@ function cvDeliberaSalva(id){
     /* provvigione azienda: quella appena calcolata dal simulatore, oppure
        quella gia' salvata se la delibera viene solo ritoccata */
     provvAzienda:((window._delibDaSimProvv!=null)?window._delibDaSimProvv
-                  :((list[i].finDelibera&&list[i].finDelibera.provvAzienda)||null)),
+                  :((n('provvAzienda')!=null && n('provvAzienda')>0) ? n('provvAzienda')
+                  :((list[i].finDelibera&&list[i].finDelibera.provvAzienda)||null))),
     /* Correggendo una delibera vecchia la data non deve spostarsi a oggi:
        resta quella in cui la finanziaria ha deliberato davvero. Si tiene
        invece traccia dell'ultima correzione, che e' un'altra informazione. */
@@ -36868,10 +36878,10 @@ function stMargine(cv){
   if(vend==null||acq==null) return null;          /* senza prezzo d'acquisto niente margine */
   var c=stCat(cv);
   var m=(c===2)?(vend/(1+ST_IVA)-acq):((vend-acq)/(1+ST_IVA));
-  /* Dal margine si tolgono i costi vivi che sosteniamo noi: passaggio di
-     proprieta', minivoltura e lavori extra. Sono partite di giro incassate
-     dal cliente ma pagate a terzi, quindi non sono guadagno. */
-  m -= (stNum(cv.passaggio)||0) + (stNum(cv.minivoltura)||0) + (stNum(cv.costiExtraTot)||0);
+  /* Passaggio, minivoltura e lavori extra NON si tolgono: il cliente li
+     paga a parte, sopra il prezzo dell'auto (sono righe del totale, non
+     dentro prezzoVendita). Toglierli qui li contava due volte e faceva
+     uscire negativo un margine positivo. */
   return Math.round(m*100)/100;
 }
 function stIvaMargine(cv){
@@ -36973,8 +36983,8 @@ function stProvvAziendaDi(cv){
   try{
     var d=cv&&cv.finDelibera;
     if(!d||!d.confermata) return null;
-    var f=(typeof cvFinRiconosci==='function')?(cvFinRiconosci(d.finanziaria)||d.finanziaria):d.finanziaria;
-    if(String(f||'').toLowerCase().indexOf('deutsche')<0) return null;
+    /* qualunque finanziaria: dal simulatore (Deutsche Bank) o scritta a
+       mano nella delibera dall'amministratore */
     var v=parseFloat(d.provvAzienda);
     return (isNaN(v)||!v)?null:v;
   }catch(e){ return null; }
@@ -37013,7 +37023,7 @@ function stDettaglioApri(idsEnc, titolo){
       var d=_ts(cv); var ds=d?new Date(d).toLocaleDateString('it-IT'):'';
       var tot=(mg||0)+(pv||0);
       totV+=vend||0; totA+=acq||0; totM+=mg||0; totP+=pv||0; totI+=ivm||0;
-      var fin=(cv.finDelibera&&cv.finDelibera.confermata)?(pv!=null?stEu(pv):'<span style="color:#94a3b8;">senza calcolo</span>'):'<span style="color:#cbd5e1;">\u2014</span>';
+      var fin=(cv.finDelibera&&cv.finDelibera.confermata)?(pv!=null?stEu(pv):'<span style="color:#dc2626;font-weight:700;" title="Apri la vendita, Delibera, campo Provvigione azienda">da inserire</span>'):'<span style="color:#cbd5e1;">\u2014</span>';
       return '<tr onclick="stFasciaVai(\''+cv.id+'\')" style="cursor:pointer;">'
         +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
           +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
@@ -37042,7 +37052,7 @@ function stDettaglioApri(idsEnc, titolo){
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
       +'<b>estera IVA esposta</b> = vendita / 1,22 \u2212 acquisto, perch\u00e9 l\u2019acquisto \u00e8 gi\u00e0 netto. '
       +'La vendita \u00e8 il prezzo effettivo: listino meno lo sconto finanziamento PROMO. Poi si tolgono passaggio, minivoltura e lavori extra: sono soldi incassati dal cliente ma pagati a terzi. '
-      +'La provvigione della finanziaria \u00e8 quella riconosciuta all\u2019azienda (Deutsche Bank, dal simulatore). Tocca una riga per aprire la vendita.</div>'
+      +'La provvigione della finanziaria \u00e8 quella riconosciuta all\u2019azienda: la calcola il simulatore (Deutsche Bank) oppure la scrivi tu nella delibera, campo \u201cProvvigione azienda\u201d. Dove manca c\u2019\u00e8 scritto \u201cda inserire\u201d. Tocca una riga per aprire la vendita.</div>'
       +'</div></div>';
     m.style.display='block';
   }catch(e){ console.error('stDettaglioApri',e); }
