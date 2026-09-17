@@ -36851,9 +36851,19 @@ function stCat(cv){
   return estera?2:1;
 }
 var ST_CAT=[{nome:'Italiana art. 36',col:'#7c3aed'},{nome:'Italiana IVA esposta',col:'#1a4fa0'},{nome:'Estera IVA esposta',col:'#16a34a'}];
-function stMargine(cv){
+/* Prezzo di vendita EFFETTIVO: il prezzo di listino meno lo sconto
+   finanziamento PROMO (quello che scrive chi vende). Il cliente paga il
+   prezzo scontato, quindi il margine si calcola su quello. */
+function stSconto(cv){ return (cv && cv.scontoOn) ? (stNum(cv.scontoImporto)||0) : 0; }
+function stVendita(cv){
   var a=stAuto(cv)||{};
   var vend=stNum(cv.prezzoVendita); if(vend==null) vend=stNum(a.prezzoVen);
+  if(vend==null) return null;
+  return vend - stSconto(cv);
+}
+function stMargine(cv){
+  var a=stAuto(cv)||{};
+  var vend=stVendita(cv);
   var acq=stNum(a.prezzoAcq);
   if(vend==null||acq==null) return null;          /* senza prezzo d'acquisto niente margine */
   var c=stCat(cv);
@@ -36866,7 +36876,7 @@ function stMargine(cv){
 }
 function stIvaMargine(cv){
   if(stCat(cv)!==0) return 0;
-  var a=stAuto(cv)||{}; var vend=stNum(cv.prezzoVendita)||stNum(a.prezzoVen); var acq=stNum(a.prezzoAcq);
+  var a=stAuto(cv)||{}; var vend=stVendita(cv); var acq=stNum(a.prezzoAcq);
   if(vend==null||acq==null) return 0;
   var l=vend-acq; return Math.round((l-l/(1+ST_IVA))*100)/100;
 }
@@ -36995,7 +37005,7 @@ function stDettaglioApri(idsEnc, titolo){
     var totV=0,totA=0,totM=0,totP=0,totI=0;
     var body=righe.map(function(cv){
       var a=stAuto(cv)||{}; var snap=cv.autoSnapshot||{};
-      var vend=stNum(cv.prezzoVendita); if(vend==null) vend=stNum(a.prezzoVen);
+      var vend=stVendita(cv); var sc=stSconto(cv);
       var acq=stNum(a.prezzoAcq);
       var mg=stMargine(cv); var pv=stProvvAziendaDi(cv); var ivm=stIvaMargine(cv);
       var c=stCat(cv); var cat=ST_CAT[c];
@@ -37008,7 +37018,7 @@ function stDettaglioApri(idsEnc, titolo){
         +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
           +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
         +'<td style="'+td+'text-align:left;"><span style="font-size:10px;font-weight:800;color:#fff;background:'+cat.col+';border-radius:99px;padding:2px 7px;">'+cat.nome.replace('Italiana ','').replace('Estera ','estera ')+'</span></td>'
-        +'<td style="'+td+'">'+(vend!=null?stEu(vend):'\u2014')+'</td>'
+        +'<td style="'+td+'">'+(vend!=null?stEu(vend):'\u2014')+(sc?('<div style="font-size:10px;font-weight:600;color:#b45309;">listino '+stEu(vend+sc)+' \u2212 sconto promo '+stEu(sc)+'</div>'):'')+'</td>'
         +'<td style="'+td+'">'+(acq!=null?stEu(acq):'<span style="color:#dc2626;">manca</span>')+'</td>'
         +'<td style="'+td+'font-weight:800;color:'+(mg==null?'#94a3b8':(mg<0?'#dc2626':'#166534'))+';">'+(mg!=null?stEu(mg):'\u2014')+(ivm?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(ivm)+'</div>'):'')+'</td>'
         +'<td style="'+td+'">'+fin+'</td>'
@@ -37031,7 +37041,7 @@ function stDettaglioApri(idsEnc, titolo){
       +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
       +'<b>estera IVA esposta</b> = vendita / 1,22 \u2212 acquisto, perch\u00e9 l\u2019acquisto \u00e8 gi\u00e0 netto. '
-      +'Poi si tolgono passaggio, minivoltura e lavori extra: sono soldi incassati dal cliente ma pagati a terzi. '
+      +'La vendita \u00e8 il prezzo effettivo: listino meno lo sconto finanziamento PROMO. Poi si tolgono passaggio, minivoltura e lavori extra: sono soldi incassati dal cliente ma pagati a terzi. '
       +'La provvigione della finanziaria \u00e8 quella riconosciuta all\u2019azienda (Deutsche Bank, dal simulatore). Tocca una riga per aprire la vendita.</div>'
       +'</div></div>';
     m.style.display='block';
@@ -37186,7 +37196,7 @@ function statMarginiHTML(){
   /* Gli importi del margine sono riservati all'amministratore: agli altri
      lo stesso dato viene mostrato in percentuale sul venduto. */
   var _isAdmSt=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
-  var _fattTot=somma(V,function(cv){ return stNum(cv.prezzoVendita)||0; });
+  var _fattTot=somma(V,function(cv){ return stVendita(cv)||0; });
   function stM(v, base){
     if(_isAdmSt) return stEu(v);
     var b=(base!=null?base:_fattTot);
@@ -37256,7 +37266,7 @@ function statMarginiHTML(){
   });
   var _fattBy={}, _nBy={};
   [0,1,2].forEach(function(i){ var g=V.filter(function(cv){ return stCat(cv)===i; });
-    _nBy[i]=g.length; _fattBy[i]=somma(g,function(cv){ return stNum(cv.prezzoVendita)||0; }); });
+    _nBy[i]=g.length; _fattBy[i]=somma(g,function(cv){ return stVendita(cv)||0; }); });
   var maxMedia=Math.max.apply(null,agg.map(function(a){return a.media;}).concat([1]));
   var best=agg.slice().sort(function(a,b){return b.media-a.media;})[0];
   var bestFin=agg.slice().sort(function(a,b){return b.tot-a.tot;})[0];
@@ -37330,7 +37340,7 @@ function statMarginiHTML(){
       if(e>=FASCE[i][0] && e<=FASCE[i][1]){
         var k=FASCE[i][2];
         byF[k]=byF[k]||{n:0,marg:0,fatt:0,ids:[]};
-        byF[k].n++; byF[k].marg+=(stMargine(cv)||0); byF[k].fatt=(byF[k].fatt||0)+(stNum(cv.prezzoVendita)||0);
+        byF[k].n++; byF[k].marg+=(stMargine(cv)||0); byF[k].fatt=(byF[k].fatt||0)+(stVendita(cv)||0);
         byF[k].ids.push(cv.id);   /* per poter aprire le pratiche della fascia */
         break;
       }
