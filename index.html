@@ -36959,14 +36959,92 @@ function stProvvMie(P){
 /* Sommare il margine d'azienda alle provvigioni della banca ha senso per
    chi guarda i conti dell'azienda. A Rudy quella somma non dice niente:
    al suo posto quanto rende in media una pratica sua. */
-function stCartaMargProvv(box, marg, provvAzienda, ivaM, P, fmt){
+function stProvvAziendaDi(cv){
+  try{
+    var d=cv&&cv.finDelibera;
+    if(!d||!d.confermata) return null;
+    var f=(typeof cvFinRiconosci==='function')?(cvFinRiconosci(d.finanziaria)||d.finanziaria):d.finanziaria;
+    if(String(f||'').toLowerCase().indexOf('deutsche')<0) return null;
+    var v=parseFloat(d.provvAzienda);
+    return (isNaN(v)||!v)?null:v;
+  }catch(e){ return null; }
+}
+/* ===== DETTAGLIO VENDITA PER VENDITA (solo amministratore) =====
+   La "i" sui riquadri della marginalita' apre una finestra sopra la pagina
+   con ogni singola vendita del periodo: margine dell'auto (netto IVA),
+   provvigione della finanziaria e totale. Si chiude e si torna dov'eri. */
+function stInfoBtn(idsEnc, titolo){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return '';
+  return '<button type="button" onclick="event.stopPropagation();stDettaglioApri(\''+idsEnc+'\',\''+String(titolo||'').replace(/'/g,'')+'\')" title="Vedi ogni singola vendita" '
+    +'style="float:right;width:22px;height:22px;border-radius:50%;border:1.5px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:900;font-size:12px;font-family:Georgia,serif;cursor:pointer;line-height:1;padding:0;">i</button>';
+}
+function stDettaglioApri(idsEnc, titolo){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  try{
+    var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
+    var tutte=(typeof cvLoad==='function')?cvLoad():[];
+    var righe=ids.map(function(id){ return tutte.filter(function(x){ return x&&x.id===id; })[0]; }).filter(Boolean);
+    var _ts=function(cv){ return +(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0); };
+    righe.sort(function(a,b){ return _ts(a)-_ts(b); });
+    var m=document.getElementById('stFasciaModal');
+    if(!m){ m=document.createElement('div'); m.id='stFasciaModal';
+      m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
+      document.body.appendChild(m); }
+    var th='font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;padding:8px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
+    var td='padding:8px 8px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-size:12.5px;';
+    var totV=0,totA=0,totM=0,totP=0,totI=0;
+    var body=righe.map(function(cv){
+      var a=stAuto(cv)||{}; var snap=cv.autoSnapshot||{};
+      var vend=stNum(cv.prezzoVendita); if(vend==null) vend=stNum(a.prezzoVen);
+      var acq=stNum(a.prezzoAcq);
+      var mg=stMargine(cv); var pv=stProvvAziendaDi(cv); var ivm=stIvaMargine(cv);
+      var c=stCat(cv); var cat=ST_CAT[c];
+      var cl=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
+      var d=_ts(cv); var ds=d?new Date(d).toLocaleDateString('it-IT'):'';
+      var tot=(mg||0)+(pv||0);
+      totV+=vend||0; totA+=acq||0; totM+=mg||0; totP+=pv||0; totI+=ivm||0;
+      var fin=(cv.finDelibera&&cv.finDelibera.confermata)?(pv!=null?stEu(pv):'<span style="color:#94a3b8;">senza calcolo</span>'):'<span style="color:#cbd5e1;">\u2014</span>';
+      return '<tr onclick="stFasciaVai(\''+cv.id+'\')" style="cursor:pointer;">'
+        +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
+          +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
+        +'<td style="'+td+'text-align:left;"><span style="font-size:10px;font-weight:800;color:#fff;background:'+cat.col+';border-radius:99px;padding:2px 7px;">'+cat.nome.replace('Italiana ','').replace('Estera ','estera ')+'</span></td>'
+        +'<td style="'+td+'">'+(vend!=null?stEu(vend):'\u2014')+'</td>'
+        +'<td style="'+td+'">'+(acq!=null?stEu(acq):'<span style="color:#dc2626;">manca</span>')+'</td>'
+        +'<td style="'+td+'font-weight:800;color:'+(mg==null?'#94a3b8':(mg<0?'#dc2626':'#166534'))+';">'+(mg!=null?stEu(mg):'\u2014')+(ivm?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(ivm)+'</div>'):'')+'</td>'
+        +'<td style="'+td+'">'+fin+'</td>'
+        +'<td style="'+td+'font-weight:900;">'+stEu(tot)+'</td></tr>';
+    }).join('');
+    m.innerHTML='<div style="max-width:960px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+      +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+      +'<span style="font-weight:800;">Dettaglio vendite \u00b7 '+cvEsc(titolo||'')+'</span>'
+      +'<button onclick="stFasciaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
+      +'<div style="padding:6px 10px 14px;overflow-x:auto;">'
+      +'<table style="width:100%;border-collapse:collapse;"><thead><tr>'
+      +'<th style="'+th+'text-align:left;">Cliente / auto</th><th style="'+th+'text-align:left;">Regime</th><th style="'+th+'">Vendita</th><th style="'+th+'">Acquisto</th><th style="'+th+'">Margine auto</th><th style="'+th+'">Provv. finanz.</th><th style="'+th+'">Totale</th></tr></thead>'
+      +'<tbody>'+(body||'<tr><td colspan="7" style="padding:14px;color:#94a3b8;">Nessuna vendita nel periodo.</td></tr>')+'</tbody>'
+      +'<tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale ('+righe.length+')</td><td style="'+td+'"></td>'
+      +'<td style="'+td+'font-weight:800;">'+stEu(totV)+'</td><td style="'+td+'font-weight:800;">'+stEu(totA)+'</td>'
+      +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(totM)+(totI?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(totI)+'</div>'):'')+'</td>'
+      +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td></tr></tfoot></table>'
+      +'<div style="font-size:11.5px;color:#64748b;margin-top:10px;line-height:1.5;">'
+      +'<b>Come si calcola il margine auto</b> (sempre al netto dell\u2019IVA): '
+      +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
+      +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
+      +'<b>estera IVA esposta</b> = vendita / 1,22 \u2212 acquisto, perch\u00e9 l\u2019acquisto \u00e8 gi\u00e0 netto. '
+      +'Poi si tolgono passaggio, minivoltura e lavori extra: sono soldi incassati dal cliente ma pagati a terzi. '
+      +'La provvigione della finanziaria \u00e8 quella riconosciuta all\u2019azienda (Deutsche Bank, dal simulatore). Tocca una riga per aprire la vendita.</div>'
+      +'</div></div>';
+    m.style.display='block';
+  }catch(e){ console.error('stDettaglioApri',e); }
+}
+function stCartaMargProvv(box, marg, provvAzienda, ivaM, P, fmt, iBtn){
   /* fmt e' la stM del blocco chiamante: euro per l'amministratore,
      percentuale per gli altri. Sta dentro quel blocco e da qui non si
      vede: va passata. */
   fmt = fmt || stEu;
   var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
   if(adm){
-    return '<div style="'+box+'border-left:4px solid #d97706;">'
+    return '<div style="'+box+'border-left:4px solid #d97706;">'+(iBtn||'')
       +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine + provvigioni</div>'
       +'<div style="font-size:22px;font-weight:900;">'+fmt(marg+provvAzienda)+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine pi\u00f9 provvigioni della finanziaria</div></div>';
@@ -36980,10 +37058,10 @@ function stCartaMargProvv(box, marg, provvAzienda, ivaM, P, fmt){
     +((mie&&mie.righe)?'sulle tue provvigioni del periodo':'nessuna pratica nel periodo')+'</div></div>';
 }
 
-function stCartaProvv(box, provvAzienda, provvSenza, P){
+function stCartaProvv(box, provvAzienda, provvSenza, P, iBtn){
   var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
   if(adm){
-    return '<div style="'+box+'border-left:4px solid #7c3aed;">'
+    return '<div style="'+box+'border-left:4px solid #7c3aed;">'+(iBtn||'')
       +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Provvigioni finanz.</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stEu(provvAzienda)+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">Deutsche Bank, dal simulatore'
@@ -37121,16 +37199,7 @@ function statMarginiHTML(){
      la finanziaria riconosce a noi, che il simulatore calcola e che resta
      salvato sulla delibera. Solo Deutsche Bank, perche' per le altre
      finanziarie quel calcolo non esiste. */
-  var stProvvAzienda=function(cv){
-    try{
-      var d=cv&&cv.finDelibera;
-      if(!d||!d.confermata) return null;
-      var f=(typeof cvFinRiconosci==='function')?(cvFinRiconosci(d.finanziaria)||d.finanziaria):d.finanziaria;
-      if(String(f||'').toLowerCase().indexOf('deutsche')<0) return null;
-      var v=parseFloat(d.provvAzienda);
-      return (isNaN(v)||!v)?null:v;
-    }catch(e){ return null; }
-  };
+  var stProvvAzienda=stProvvAziendaDi;
   var provv=0, provvSenza=0;
   V.forEach(function(cv){
     var v=stProvvAzienda(cv);
@@ -37141,6 +37210,10 @@ function statMarginiHTML(){
   var senzaAcq=tutti.filter(function(cv){ return _in(cv,P) && stMargine(cv)==null; }).length;
 
   var box='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;';
+  /* elenco delle vendite del periodo per la finestra di dettaglio (tutte,
+     anche quelle senza prezzo d'acquisto, che li' risultano "manca") */
+  var _idsPer=encodeURIComponent(JSON.stringify(tutti.filter(function(cv){ return _in(cv,P); }).map(function(cv){ return cv.id; })));
+  var _iBtn=function(t){ return stInfoBtn(_idsPer, t+' \u00b7 '+P.lab); };
   var h='<div style="max-width:1100px;margin:26px auto 0;">';
   h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     +'<div style="font-weight:900;font-size:17px;">\ud83d\udcb0 Marginalit\u00e0</div>'
@@ -37153,14 +37226,14 @@ function statMarginiHTML(){
   h+='<div style="font-size:12px;color:#94a3b8;font-weight:600;margin:-4px 0 10px;">Periodo: '+P.lab+'</div>';
 
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">'
-    +'<div style="'+box+'border-left:4px solid #16a34a;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div>'
+    +'<div style="'+box+'border-left:4px solid #16a34a;">'+_iBtn('margine auto')+'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Margine netto</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stM(marg)+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;font-weight:600;">'+V.length+' auto vendute</div>'
       +(delta!=null?('<div style="font-size:11.5px;font-weight:800;color:'+(delta>=0?'#16a34a':'#dc2626')+';">'+(delta>=0?'\u25b2':'\u25bc')+' '+stPct(Math.abs(delta))+' sul periodo precedente</div>'):'')+'</div>'
-    +'<div style="'+box+'border-left:4px solid #1a4fa0;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto'+(_isAdmSt?'':' %')+'</div>'
+    +'<div style="'+box+'border-left:4px solid #1a4fa0;">'+_iBtn('media per auto')+'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">Media per auto'+(_isAdmSt?'':' %')+'</div>'
       +'<div style="font-size:22px;font-weight:900;">'+stM(V.length?marg/V.length:0, V.length?_fattTot/V.length:0)+'</div><div style="font-size:11.5px;color:#94a3b8;font-weight:600;">margine netto medio</div></div>'
-    + stCartaProvv(box, provv, provvSenza, P)
-    + stCartaMargProvv(box, marg, provv, ivaM, P, stM)
+    + stCartaProvv(box, provv, provvSenza, P, _iBtn('provvigioni finanziarie'))
+    + stCartaMargProvv(box, marg, provv, ivaM, P, stM, _iBtn('margine + provvigioni'))
     +'</div>';
   if(senzaAcq) h+='<div style="margin-top:8px;font-size:12px;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 11px;">\u26a0 '+senzaAcq+' vendite del periodo non hanno il prezzo di acquisto in magazzino: escluse dal calcolo.</div>';
 
