@@ -18520,6 +18520,9 @@ function pvVerniceScelta(){
   var v=pvVernice(sel.value);
   var campo=document.getElementById('pv_materiale');
   var nota=document.getElementById('pv_vernice_nota');
+  /* con una convenzione attiva (es. Quixa) il materiale resta quello imposto */
+  var _conv=null; try{ var _cp=String(pvVal('pv_comp')||''); (PV_CONVENZIONI||[]).forEach(function(x){ if(!_conv && x.match.test(_cp)) _conv=x; }); }catch(e){}
+  if(_conv){ if(campo) campo.value=_conv.materiale; if(nota) nota.textContent='Convenzione '+_conv.nome+': materiale fissato a \u20ac '+_conv.materiale+'/h (il tipo di vernice non lo cambia).'; pvCalc(); return; }
   if(v && campo) campo.value=v.eur;
   if(nota){
     nota.innerHTML = v
@@ -18554,7 +18557,7 @@ function sinPreventivo(id){
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Targa','pv_targa', pv.targa!=null?pv.targa:(s.targa||''))+'</div><div style="flex:1;">'+fld('Telaio','pv_telaio', p.telaio||'')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('1a immatric.','pv_imm', p.imm||'')+'</div><div style="flex:1;">'+fld('Tipo smalto','pv_smalto', p.smalto||'')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('N preventivo','pv_num', p.num||'')+'</div><div style="flex:1;">'+fld('Data','pv_data', dataIt)+'</div></div>';
-  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Compagnia','pv_comp', pv.comp!=null?pv.comp:(s.compagnia||''))+'</div><div style="flex:1;">'+fld('N sinistro','pv_nsin', pv.nsin!=null?pv.nsin:(s.numeroSinistro||''))+'</div></div>';
+  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Compagnia','pv_comp', pv.comp!=null?pv.comp:(s.compagnia||'')).replace('oninput="pvCalc()"','oninput="pvConvenzione(true)"')+'<div id="pv_conv_nota" style="font-size:11px;color:#0f766e;margin:-4px 0 8px;"></div>'+'</div><div style="flex:1;">'+fld('N sinistro','pv_nsin', pv.nsin!=null?pv.nsin:(s.numeroSinistro||''))+'</div></div>';
   html+='</div>';
   html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;">';
   html+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:8px;text-transform:uppercase;">Parametri</div>';
@@ -18574,6 +18577,11 @@ function sinPreventivo(id){
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Max ore finitura','pv_finmax', p.finmax!=null?p.finmax:3,'number')+'</div><div style="flex:1;">'+fld('Tempo agg. vern. (ore)','pv_tagg', p.tagg!=null?p.tagg:0,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Levabolli € (a corpo, manodopera)','pv_levabolli', p.levabolli!=null?p.levabolli:0,'number')+'</div><div style="flex:1;"></div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Smaltimento rifiuti €','pv_smalt', p.smalt!=null?p.smalt:30,'number')+'</div><div style="flex:1;">'+fld('IVA %','pv_iva', p.iva!=null?p.iva:22,'number')+'</div></div>';
+  /* Materiale di consumo (piccola ferramenta, sigillanti, carte, nastri):
+     una percentuale dell'imponibile con un tetto, come vuole la compagnia.
+     Distinto dal materiale di verniciatura, che si paga a ora di VE. */
+  html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Materiale di consumo % imponibile','pv_consumoPct', p.consumoPct!=null?p.consumoPct:5,'number')+'</div><div style="flex:1;">'+fld('Materiale di consumo max €','pv_consumoMax', p.consumoMax!=null?p.consumoMax:65,'number')+'</div></div>';
+  html+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">Il materiale di consumo si calcola da solo: percentuale sull\u2019imponibile (manodopera, materiale verniciatura, ricambi e smaltimento), fino al massimale.</div>';
   html+='<div style="font-size:11px;color:#64748b;">Normalmente doppio strato 15% e finitura 10%. Per triplo strato metti 30%.</div>';
   html+='</div>';
   html+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;text-transform:uppercase;">Lavorazioni</div>';
@@ -18590,7 +18598,33 @@ function sinPreventivo(id){
   html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:'+(s.preventivoConfermato?'#16a34a':'#d97706')+';">'+(s.preventivoConfermato?'✅ Preventivo confermato — scaricabile dalla scheda':'⏳ Bozza — confermalo per poterlo scaricare')+'</div>';
   html+='</div>';
   m.innerHTML=html; m.style.display='block';
+  pvConvenzione(p.orario==null && p.materiale==null);
   pvRenderRighe(); pvCalc();
+}
+
+/* ===== CONVENZIONI DELLE COMPAGNIE =====
+   Alcune compagnie impongono i loro valori: appena si scrive il nome nel
+   campo Compagnia, costo orario manodopera e materiale si compilano da soli.
+   Si applica quando cambia la compagnia e all'apertura di un preventivo
+   nuovo; su un preventivo gia' salvato i valori restano quelli salvati
+   (e restano comunque modificabili a mano). */
+var PV_CONVENZIONI = [
+  { match:/quixa/i, nome:'Quixa', orario:70, materiale:42 }
+];
+function pvConvenzione(applica){
+  var comp=String(pvVal('pv_comp')||'');
+  var nota=document.getElementById('pv_conv_nota');
+  var c=null; PV_CONVENZIONI.forEach(function(x){ if(!c && x.match.test(comp)) c=x; });
+  if(!c){ if(nota) nota.textContent=''; if(applica) pvCalc(); return; }
+  if(applica){
+    var o=document.getElementById('pv_orario'), mt=document.getElementById('pv_materiale');
+    if(o) o.value=c.orario;
+    if(mt) mt.value=c.materiale;
+    var vn=document.getElementById('pv_vernice_nota');
+    if(vn) vn.textContent='Convenzione '+c.nome+': materiale fissato a \u20ac '+c.materiale+'/h (il tipo di vernice non lo cambia).';
+  }
+  if(nota) nota.textContent='Convenzione '+c.nome+': manodopera \u20ac '+c.orario+'/h + IVA, materiale \u20ac '+c.materiale+'/h.';
+  pvCalc();
 }
 
 var PV_VOCI=[
@@ -18662,7 +18696,12 @@ function pvCompute(){
   t.oreMan=t.sumSR+t.sumLA+t.veTot+t.sumME;
   t.manodopera=t.oreMan*t.orario + t.levabolli;
   t.materiale=t.veTot*t.materialeH;
-  t.imponibile=t.manodopera+t.materiale+t.sumRic+t.smalt;
+  /* materiale di consumo: % dell'imponibile (senza se stesso), con tetto */
+  t.consumoPct=pvN(pvVal('pv_consumoPct')); t.consumoMax=pvN(pvVal('pv_consumoMax'));
+  var _baseCons=t.manodopera+t.materiale+t.sumRic+t.smalt;
+  t.consumo=Math.round(_baseCons*(t.consumoPct/100)*100)/100;
+  if(t.consumoMax>0 && t.consumo>t.consumoMax) t.consumo=t.consumoMax;
+  t.imponibile=_baseCons+t.consumo;
   t.iva=t.imponibile*(t.ivaPct/100);
   t.totale=t.imponibile+t.iva;
   return t;
@@ -18679,8 +18718,9 @@ function pvCalc(){
     ['<b>Ore manodopera totali</b>', '<b>'+pvOr2(t.oreMan)+' h</b>'],
     ['Manodopera ('+pvOr2(t.oreMan)+' x € '+pvEu(t.orario)+')', '€ '+pvEu(t.oreMan*t.orario)],
     ['Levabolli (manodopera a corpo)', '€ '+pvEu(t.levabolli)],
-    ['Materiale consumo ('+pvOr2(t.veTot)+' x € '+pvEu(t.materialeH)+')', '€ '+pvEu(t.materiale)],
+    ['Materiale verniciatura ('+pvOr2(t.veTot)+' x € '+pvEu(t.materialeH)+')', '€ '+pvEu(t.materiale)],
     ['Ricambi', '€ '+pvEu(t.sumRic)],['Smaltimento rifiuti', '€ '+pvEu(t.smalt)],
+    ['Materiale di consumo ('+pvOr2(t.consumoPct)+'% imponibile, max € '+pvEu(t.consumoMax)+')', '€ '+pvEu(t.consumo)],
     ['<b>Imponibile</b>', '<b>€ '+pvEu(t.imponibile)+'</b>'],['IVA '+pvOr2(t.ivaPct)+'%', '€ '+pvEu(t.iva)]
   ];
   var h=''; rows.forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px dashed #e2e8f0;"><span>'+x[0]+'</span><span style="font-weight:700;">'+x[1]+'</span></div>'; });
@@ -18689,7 +18729,7 @@ function pvCalc(){
 }
 function pvCollect(){
   return { cliente:pvVal('pv_cliente'), indirizzo:pvVal('pv_indirizzo'), veicolo:pvVal('pv_veicolo'), targa:pvVal('pv_targa'), comp:pvVal('pv_comp'), nsin:pvVal('pv_nsin'),
-    params:{ vernice:pvVal('pv_vernice'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), smalt:pvVal('pv_smalt'), iva:pvVal('pv_iva') },
+    params:{ vernice:pvVal('pv_vernice'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), smalt:pvVal('pv_smalt'), iva:pvVal('pv_iva'), consumoPct:pvVal('pv_consumoPct'), consumoMax:pvVal('pv_consumoMax') },
     righe:_pvRighe.map(function(r){return {cr:r.cr,descr:r.descr,sr:r.sr,la:r.la,ve:r.ve,me:r.me,ric:r.ric};}) };
 }
 function pvSalva(){
@@ -18735,9 +18775,10 @@ function pvDocHtml(){
   +'<tr><td colspan="2"><div class="lab">SUPPL. DOPPIO/TRIPLO STRATO '+pvOr2(t.pctDoppio)+'% = '+pvOr2(t.supplDoppio)+'  -  FINITURA = '+pvOr2(t.supplFin)+'  -  TEMPO AGG. VERN. = '+pvOr2(t.tagg)+'</div></td>'
   +'<td colspan="3" class="c"><div class="lab">TOT. TEMPI SUPPL.</div><b>'+pvOr2(t.supplTot)+'</b></td>'
   +'<td colspan="2" class="c"><div class="lab">TOTALE TEMPI VE</div><b>'+pvOr2(t.veTot)+'</b></td></tr></table>'
-  +'<table><tr><td rowspan="7" style="width:45%;"><div class="lab">NOTE</div>&nbsp;</td><td><div class="lab">RICAMBI</div></td><td class="r">'+pvEu(t.sumRic)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE CONSUMO</div>('+pvOr2(t.veTot)+' h x € '+pvEu(t.materialeH)+')</td><td class="r">'+pvEu(t.materiale)+'</td></tr>'
+  +'<table><tr><td rowspan="8" style="width:45%;"><div class="lab">NOTE</div>&nbsp;</td><td><div class="lab">RICAMBI</div></td><td class="r">'+pvEu(t.sumRic)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE VERNICIATURA</div>('+pvOr2(t.veTot)+' h x € '+pvEu(t.materialeH)+')</td><td class="r">'+pvEu(t.materiale)+'</td></tr>'
   +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div></td><td class="r">'+pvEu(t.smalt)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE DI CONSUMO</div>('+pvOr2(t.consumoPct)+'% imponibile, max € '+pvEu(t.consumoMax)+')</td><td class="r">'+pvEu(t.consumo)+'</td></tr>'
   +'<tr><td><div class="lab">MANODOPERA</div>ore '+pvOr2(t.oreMan)+' x € '+pvEu(t.orario)+'/ora</td><td class="r">'+pvEu(t.oreMan*t.orario)+'</td></tr>'
   +(t.levabolli?('<tr><td><div class="lab">LEVABOLLI</div>(manodopera a corpo)</td><td class="r">'+pvEu(t.levabolli)+'</td></tr>'):'')
   +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+pvEu(t.imponibile)+'</td></tr>'
@@ -24191,9 +24232,14 @@ function cvForm(id, fromVend){
     var _val=cvEsc(_cv.passaggio==null?'':_cv.passaggio);
     var _open=(_adm&&_ppF);
     var _st='width:100%;padding:11px;border:1px solid '+(_open?'#f59e0b':'#cbd5e1')+';border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;background:'+(_open?'#fffbeb':'#eef2f7')+';color:#334155;font-weight:'+(_open?'700':'400')+';';
-    var s=lab('Passaggio di proprietà / Immatricolazione € (calcolato dai kW)')
+    var _rad=!!_cv.passaggioRadiazione;
+    var s='<div id="cv_passaggio_lab" style="font-size:13px;font-weight:700;color:#334155;margin:12px 0 4px;">'
+      +(_rad?'Radiazione \u20ac (importo del campo)':'Passaggio di propriet\u00e0 / Immatricolazione \u20ac (calcolato dai kW)')+'</div>'
       +'<input id="cv_passaggio" type="number" step="0.01" value="'+_val+'" '+(_open?'oninput="cvLive()"':'readonly')+' style="'+_st+'">';
     if(_adm){
+      s+='<label style="display:flex;align-items:center;gap:9px;margin:7px 0 2px;font-size:13px;cursor:pointer;color:#7f1d1d;font-weight:700;">'
+        +'<input type="checkbox" id="cv_passaggioRad" '+(_rad?'checked':'')+' onchange="cvPassaggioRadToggle()" style="width:19px;height:19px;">'
+        +'\U0001F6AB Radiazione invece del passaggio (solo amministratore)</label>';
       s+='<label style="display:flex;align-items:center;gap:9px;margin:7px 0 2px;font-size:13px;cursor:pointer;color:#92400e;font-weight:700;">'
         +'<input type="checkbox" id="cv_passaggioForza" '+(_ppF?'checked':'')+' onchange="cvPassaggioForzaToggle()" style="width:19px;height:19px;">'
         +'\uD83D\uDD13 Forza importo (amministratore)</label>'
@@ -24654,6 +24700,26 @@ function cvMinivolturaForzaToggle(){
   if(typeof cvLive==='function') cvLive();
 }
 
+/* ===== RADIAZIONE AL POSTO DEL PASSAGGIO =====
+   In rari casi l'auto viene radiata (es. esportazione) invece di fare
+   trapasso e immatricolazione. L'amministratore lo segna nel preventivo
+   (passaggioRadiazione) e la voce cambia nome ovunque: schermata, stampa,
+   mail, riepiloghi e fattura. L'importo resta quello del campo. */
+function cvPassaggioEtichetta(c, forma){
+  var rad=!!(c && c.passaggioRadiazione);
+  if(forma==='lunga')  return rad ? 'Radiazione' : 'Passaggio di propriet\u00e0 / Immatricolazione';
+  if(forma==='breve')  return rad ? 'Radiazione' : 'Passaggio di propriet\u00e0';
+  if(forma==='incluso')return rad ? 'Radiazione' : 'Passaggio di propriet\u00e0 e messa su strada';
+  return rad ? 'Radiazione' : 'Passaggio di propriet\u00e0 / Imm.';
+}
+function cvPassaggioRadToggle(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  var ck=document.getElementById('cv_passaggioRad');
+  if(typeof _cv!=='undefined' && _cv) _cv.passaggioRadiazione=!!(ck&&ck.checked);
+  var l=document.getElementById('cv_passaggio_lab');
+  if(l) l.textContent=(_cv&&_cv.passaggioRadiazione)?'Radiazione \u20ac (importo del campo)':'Passaggio di propriet\u00e0 / Immatricolazione \u20ac (calcolato dai kW)';
+  try{ cvLive(); }catch(e){}
+}
 function cvPassaggioForzaToggle(){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   var ck=document.getElementById('cv_passaggioForza'), pa=document.getElementById('cv_passaggio');
@@ -24993,6 +25059,7 @@ function cvSync(){
   if(_cv.cliente.piva || _cv.cliente.ragSociale) _cv.cliente.business=true;
   _cv.prezzoVendita=g('cv_prezzo'); _cv.passaggio=g('cv_passaggio');
   var _pf=document.getElementById('cv_passaggioForza'); if(_pf) _cv.passaggioForzato=!!_pf.checked;
+  var _pr=document.getElementById('cv_passaggioRad'); if(_pr) _cv.passaggioRadiazione=!!_pr.checked;
   var _mf=document.getElementById('cv_minivolturaForza'); if(_mf) _cv.minivolturaForzata=!!_mf.checked;
   if(document.getElementById('cv_minivoltura')) _cv.minivoltura=g('cv_minivoltura');
   _cv.scontoOn=ck('cv_scontoOn'); _cv.scontoDesc=g('cv_scontoDesc'); _cv.scontoImporto=g('cv_scontoImporto');
@@ -25124,7 +25191,7 @@ function cvLive(){
        prezzo, e in fondo tutto quello che il cliente ha gia' dato. */
     h+=r('Prezzo vendita',t.prezzo);
     if(_cv.legge104On){ h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); }
-    h+=r('Passaggio di proprietà / Imm.',t.passaggio);
+    h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
     if(!_cv.legge104On && _cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto);
     /* auto + passaggio - sconto: quello che viene fatturato al cliente */
     var _totA=(t.veicolo||0)+(t.passaggio||0)-((_cv.legge104On)?0:(t.sconto||0));
@@ -25170,7 +25237,7 @@ function cvLive(){
     /* Commerciale: la lettura di sempre, invariata. */
     h+=r('Prezzo vendita',t.prezzo);
     if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
-    h+=r('Passaggio di proprietà / Imm.',t.passaggio);
+    h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
     _extra();
     if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
     h+=r('Totale vendita',t.totaleVendita,true);
@@ -25491,7 +25558,7 @@ function cvMailPreventivoHtml(p){
   /* --- cosa e' compreso: dà valore al prezzo --- */
   var incluso=[];
   try{
-    if(t.passaggio>0) incluso.push('Passaggio di propriet\u00e0 e messa su strada');
+    if(t.passaggio>0) incluso.push(cvPassaggioEtichetta(p,'incluso'));
     if(p.garanziaImporto>0 || p.garanziaMesi) incluso.push('Garanzia'+(p.garanziaMesi?(' '+p.garanziaMesi+' mesi'):''));
     incluso.push('Tagliando');
     /* La valutazione della permuta NON va in mail: e' un numero che si tratta
@@ -26870,7 +26937,7 @@ function cvBuildHTML(c, tipo){
   if(c.listinoOn && cvNum(c.listino)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(cvNum(c.listino))+'</div></div>';
   doc+=row('Prezzo vendita',t.prezzo);
   if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104', t.imponibile104)+row('IVA agevolata 4%', t.iva104)+row('Totale (escluso passaggio)', t.veicolo); }
-  doc+=row('Passaggio di propriet\u00e0 / Immatricolazione',t.passaggio);
+  doc+=row(cvPassaggioEtichetta(c,'lunga'),t.passaggio);
   if(c.assicOn && cvNum(c.assicImporto)>0) doc+=row('Assicurazione',t.assic);
   if(t.gar) doc+=row('Garanzia ('+cvEsc(c.garanziaMesi||'12')+' mesi)',t.gar);
   /* Il pacchetto manutenzione, di norma, non e' una riga della tabella:
@@ -27276,15 +27343,16 @@ function cvFatturaHTML(c){
     var _vzM = Math.max(0, N(c.prezzoVendita) - _scOn);
     var totM = _vzM+ps.totale;
     impMargine += totM;
-    righe.push({cod:'/M', desc:(vDesc+' - INCLUSO PASSAGGIO'), imp:totM, civa:'MG36'});
+    righe.push({cod:'/M', desc:(vDesc+(c.passaggioRadiazione?' - INCLUSA RADIAZIONE':' - INCLUSO PASSAGGIO')), imp:totM, civa:'MG36'});
   } else {
     /* prezzo veicolo gia' al netto dello sconto: nessuna riga sconto separata */
     var _vz=Math.max(0, N(c.prezzoVendita) - _scOn);
     var v=scorp(_vz); imp22+=v.imp; iva22+=v.iva;
     righe.push({cod:'/M', desc:vDesc, imp:v.imp, civa:'22'});
     var _iptTot=cvNum(ps.ipt)+cvNum(ps.imm);
-    if(_iptTot>0){ impEsente+=_iptTot; righe.push({cod:'IPT', desc:'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15', imp:_iptTot, civa:'N1'}); }
-    if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:'SERVIZIO PASSAGGIO DI PROPRIETA', imp:ps.servImp, civa:'22'}); }
+    var _radF=!!c.passaggioRadiazione;
+    if(_iptTot>0){ impEsente+=_iptTot; righe.push({cod:'IPT', desc:(_radF?'SPESE RADIAZIONE \u2013 Rif.Amm. Es. art. 15':'IPT PASSAGGIO DI PROPRIETA\u2019 \u2013 Rif.Amm. Es. art. 15'), imp:_iptTot, civa:'N1'}); }
+    if(ps.servLordo>0){ imp22+=ps.servImp; iva22+=ps.servIva; righe.push({cod:'SERVIZIO', desc:(_radF?'SERVIZIO RADIAZIONE':'SERVIZIO PASSAGGIO DI PROPRIETA'), imp:ps.servImp, civa:'22'}); }
     var extra=(c.costiExtra||[]).reduce(function(s,x){return s+N(x.importo);},0);
     var serv=N(c.garanziaImporto)+((c.assicOn)?N(c.assicImporto):0)+extra;
     if(serv>0){ var sv=scorp(serv); imp22+=sv.imp; iva22+=sv.iva; righe.push({cod:'SERVIZIO', desc:'SERVIZI ACCESSORI (garanzia / assicurazione / extra)', imp:sv.imp, civa:'22'}); }
@@ -31528,6 +31596,8 @@ function fcTotaliDaPreventivo(s){
   t.pctDoppio=fcNum(p.doppio!=null?p.doppio:15);
   t.pctFin=fcNum(p.finitura!=null?p.finitura:10);
   t.finMax=fcNum(p.finmax!=null?p.finmax:3);
+  t.consumoPct=fcNum(p.consumoPct!=null?p.consumoPct:5);
+  t.consumoMax=fcNum(p.consumoMax!=null?p.consumoMax:65);
   t.supplDoppio=t.sumVE*(t.pctDoppio/100);
   t.supplFin=Math.min(t.sumVE*(t.pctFin/100), t.finMax);
   t.supplTot=t.supplDoppio+t.supplFin+t.tagg;
@@ -31535,10 +31605,18 @@ function fcTotaliDaPreventivo(s){
   t.oreMan=t.sumSR+t.sumLA+t.veTot+t.sumME;
   t.manodopera=t.oreMan*t.orario + t.levabolli;
   t.materiale=t.veTot*t.materialeH;
-  t.imponibile=t.manodopera+t.materiale+t.sumRic+t.smalt;
+  var _base=t.manodopera+t.materiale+t.sumRic+t.smalt;
+  t.consumo=fcConsumo(t,_base);
+  t.imponibile=_base+t.consumo;
   t.iva=t.imponibile*(t.ivaPct/100);
   t.totale=t.imponibile+t.iva;
   return t;
+}
+/* materiale di consumo: % della base (tutto il resto dell'imponibile), con tetto */
+function fcConsumo(t, base){
+  var c=Math.round(base*(fcNum(t.consumoPct)/100)*100)/100;
+  if(fcNum(t.consumoMax)>0 && c>fcNum(t.consumoMax)) c=fcNum(t.consumoMax);
+  return c;
 }
 
 /* ===== RIALLINEAMENTO AL CONCORDATO — metodo del perito =====
@@ -31561,10 +31639,12 @@ function fcSimula(t, righe, lucidFat, tagli){
   var oreMan = t.sumSR + t.sumLA + veTot + t.sumME;
   var manodopera = oreMan * t.orario + t.levabolli;
   var materiale = veTot * t.materialeH;
-  var imponibile = manodopera + materiale + t.sumRic + t.smalt;
+  var base = manodopera + materiale + t.sumRic + t.smalt;
+  var consumo = fcConsumo(t, base);
+  var imponibile = base + consumo;
   return { sumVE:sumVE, supplDoppio:supplDoppio, supplFin:supplFin, supplTot:supplTot,
            veTot:veTot, oreMan:oreMan, manodopera:manodopera, materiale:materiale,
-           imponibile:imponibile };
+           consumo:consumo, imponibile:imponibile };
 }
 
 /* Cerca x in [lo,hi] tale che f(x)=target. Rileva da sola se f cresce o cala,
@@ -31642,11 +31722,16 @@ function fcRiallinea(t, target, righeIn){
    la seconda dichiarazione cancellava questa e il pulsante non faceva nulla. */
 function fcTotaliFinali(t, esito, target){
   var c = esito.calc;
-  var fissi = c.materiale + t.sumRic + t.smalt + t.levabolli;
+  /* il concordato fissa l'imponibile: il consumo e' la sua quota
+     (pct della base = pct/(100+pct) del totale), sempre col tetto */
+  var pct=fcNum(t.consumoPct);
+  var consumo = Math.round(target*(pct/(100+pct))*100)/100;
+  if(fcNum(t.consumoMax)>0 && consumo>fcNum(t.consumoMax)) consumo=fcNum(t.consumoMax);
+  var fissi = c.materiale + t.sumRic + t.smalt + t.levabolli + consumo;
   var manoTarget = target - fissi;
   var out = {
     righe: esito.righe, tagli: esito.tagli, lucidFat: esito.lucidFat,
-    calc: c, materiale: c.materiale, ricambi: t.sumRic, smalt: t.smalt,
+    calc: c, materiale: c.materiale, ricambi: t.sumRic, smalt: t.smalt, consumo: consumo,
     levabolli: t.levabolli, sconto: 0, oreMan: c.oreMan
   };
   if(c.oreMan > 0){
@@ -31781,8 +31866,9 @@ function fcRender(){
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
   h+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">'+((s.preventivo.righe||[]).length)+' voci con tempi SR/LA/VE/ME e ricambi, come nel preventivo.</div>';
   h+=riga('Ricambi', '\u20ac '+fcEu(v.ricambi));
-  h+=riga('Materiale consumo ('+fcEu(v.calc.veTot)+' h)', '\u20ac '+fcEu(v.materiale));
+  h+=riga('Materiale verniciatura ('+fcEu(v.calc.veTot)+' h)', '\u20ac '+fcEu(v.materiale));
   h+=riga('Uso dime / smaltimento rifiuti', '\u20ac '+fcEu(v.smalt));
+  h+=riga('Materiale di consumo ('+fcEu(t.consumoPct)+'%, max \u20ac '+fcEu(t.consumoMax)+')', '\u20ac '+fcEu(v.consumo));
   h+=riga('<b>Manodopera</b> \u2014 ore '+fcEu(v.oreMan)+' x <b>\u20ac '+fcEu(v.orario)+'/ora</b>', '\u20ac '+fcEu(v.manodopera));
   if(v.levabolli>0) h+=riga('Levabolli (a corpo)', '\u20ac '+fcEu(v.levabolli));
   h+=riga('<b>Imponibile</b>', '<b>\u20ac '+fcEu(v.imponibile)+'</b>', true);
@@ -31958,10 +32044,11 @@ function fcStampa(id){
   +'<tr><td colspan="2"><div class="lab">SUPPL. DOPPIO/TRIPLO STRATO '+OR(t.pctDoppio)+'% = '+OR(c.supplDoppio)+'  -  FINITURA = '+OR(c.supplFin)+'  -  TEMPO AGG. VERNICIATURA = '+OR(t.tagg)+'</div></td>'
   +'<td colspan="3" class="c"><div class="lab">TOT. TEMPI SUPPL.</div><b>'+OR(c.supplTot)+'</b></td>'
   +'<td colspan="2" class="c"><div class="lab">TOTALE TEMPI VE</div><b>'+OR(c.veTot)+'</b></td></tr></table>'
-  +'<table><tr><td rowspan="'+(r.levabolli?8:7)+'" style="width:45%;"><div class="lab">NOTE</div>Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.</td>'
+  +'<table><tr><td rowspan="'+(r.levabolli?9:8)+'" style="width:45%;"><div class="lab">NOTE</div>Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.</td>'
   +'<td><div class="lab">RICAMBI</div></td><td class="r">'+EU(r.ricambi)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE CONSUMO</div>('+OR(c.veTot)+' h x \u20ac '+EU(t.materialeH)+')</td><td class="r">'+EU(r.materiale)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE VERNICIATURA</div>('+OR(c.veTot)+' h x \u20ac '+EU(t.materialeH)+')</td><td class="r">'+EU(r.materiale)+'</td></tr>'
   +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div></td><td class="r">'+EU(r.smalt)+'</td></tr>'
+  +'<tr><td><div class="lab">MATERIALE DI CONSUMO</div>('+OR(t.consumoPct)+'% imponibile, max \u20ac '+EU(t.consumoMax)+')</td><td class="r">'+EU(r.consumo)+'</td></tr>'
   +'<tr><td><div class="lab">MANODOPERA</div>ore '+OR(r.oreMan)+' x \u20ac '+EU(r.orario)+'/ora</td><td class="r">'+EU(r.manodopera)+'</td></tr>'
   +(r.levabolli?('<tr><td><div class="lab">LEVABOLLI</div>(manodopera a corpo)</td><td class="r">'+EU(r.levabolli)+'</td></tr>'):'')
   +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+EU(imponibile)+'</td></tr>'
@@ -36287,7 +36374,7 @@ function cvRiepilogo(id){
   h2+=riga('Km', a.km?cvEsc(a.km)+' km':'');
   h2+='<div style="margin-top:14px;font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em;">Importi</div>';
   h2+=riga('Prezzo di vendita', cvEuro(cvNum(cv.prezzoVendita)));
-  if(cvNum(cv.passaggio)) h2+=riga('Passaggio di propriet\u00e0', cvEuro(cvNum(cv.passaggio)));
+  if(cvNum(cv.passaggio)) h2+=riga(cvPassaggioEtichetta(cv,'breve'), cvEuro(cvNum(cv.passaggio)));
   if(cvNum(cv.garanziaImporto)) h2+=riga('Garanzia'+(cv.garanziaMesi?(' ('+cv.garanziaMesi+' mesi)'):''), cvEuro(cvNum(cv.garanziaImporto)));
   if(cv.assicOn && cvNum(cv.assicImporto)) h2+=riga('Assicurazione', cvEuro(cvNum(cv.assicImporto)));
   if(cv.scontoOn && cvNum(cv.scontoImporto)) h2+=riga('Sconto', '\u2212 '+cvEuro(cvNum(cv.scontoImporto)));
@@ -36439,7 +36526,7 @@ function cvRiepSolaLettura(cv){
     };
     var h='';
     h+=r('Prezzo vendita',t.prezzo);
-    h+=r('Passaggio di propriet\u00e0 / Imm.',t.passaggio);
+    h+=r(cvPassaggioEtichetta(cv),t.passaggio);
     if(t.gar) h+=r('Garanzia',t.gar);
     if(cv.assicOn && cvNum(cv.assicImporto)>0) h+=r('Assicurazione',t.assic);
     (cv.costiExtra||[]).forEach(function(x){ if(cvNum(x.importo)) h+=r(cvEsc(x.desc||'Costo extra'),cvNum(x.importo)); });
