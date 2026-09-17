@@ -22221,7 +22221,9 @@ function mzForm(id){
   h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Marca','marca','es. Fiat')+'</div><div style="flex:1;">'+f('Modello','modello','es. Panda')+'</div></div>';
   h+=f('Allestimento','allestimento','es. 1.2 Lounge');
   var _permIn=!!(a && (a.provenienza==='permuta' || a.origine==='permuta' || a.permutaContrattoId));
-  h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Provenienza / Fornitore'+(_permIn?'':' <span style="color:#dc2626">*</span>')+'</label>';
+  var _permNome=_permIn?mzPermutaNome(a):'';
+  h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Provenienza / Fornitore'+((_permIn&&_permNome)?'':' <span style="color:#dc2626">*</span>')+'</label>';
+  if(_permIn && !_permNome && !(a&&a.fornitoreId)) h+='<div style="font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;padding:7px 10px;margin-bottom:6px;">\u26a0 Auto entrata in permuta senza il nome di chi l\u2019ha ceduta: scegli o crea il fornitore (il privato) prima di salvare.</div>';
 
   h+='<div style="display:flex;gap:8px;"><select id="mz_fornitore" onchange="mzFornChange()" style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'+fnOptions(a?a.fornitoreId:'', (function(){
       /* Se sul veicolo c'e' un nome di fornitore, si mostra quello: sulle
@@ -22230,8 +22232,8 @@ function mzForm(id){
          riconosciuto come permuta da provenienza, origine o collegamento al
          contratto — cose che l'importato non ha — e restava l'etichetta
          generica al posto della persona. */
-      if(a && a.fornitoreNome) return a.fornitoreNome;
-      if(a && (a.provenienza==='permuta'||a.origine==='permuta'||a.permutaContrattoId)) return 'Privato (permuta)';
+      if(_permNome) return _permNome;
+      if(a && a.fornitoreNome && !/^privato\s*\(permuta\)$/i.test(a.fornitoreNome)) return a.fornitoreNome;
       return '';
     })())+'</select><button type="button" onclick="fnForm(null,\'auto\')" style="flex:0 0 auto;padding:9px 12px;border-radius:7px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;">+ nuovo</button></div>';
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:10px 0 3px;text-transform:uppercase;">Provenienza veicolo</label>';
@@ -22607,7 +22609,10 @@ function mzSalva(){
   if(_fid.indexOf('privato:')===0){ _fidPrivato=_fid.slice(8); _fid=''; }
   var _a0=mzById(_mzId)||{};
   var _daPermuta=!!(_a0.provenienza==='permuta' || _a0.origine==='permuta' || _a0.permutaContrattoId);
-  if(!_fid && !_daPermuta){ alert('Seleziona la provenienza / fornitore. Se non esiste, aggiungilo con "+ nuovo".'); return; }
+  if(!_fidPrivato && _daPermuta) _fidPrivato=mzPermutaNome(_a0);
+  if(!_fid && !(_daPermuta && _fidPrivato)){ alert(_daPermuta
+      ? 'Auto entrata in permuta senza il nome di chi l\u2019ha ceduta: scegli o crea il fornitore (il privato) con "+ nuovo".'
+      : 'Seleziona la provenienza / fornitore. Se non esiste, aggiungilo con "+ nuovo".'); return; }
   var _isNewAuto=!mzById(_mzId);
   var a=mzById(_mzId)||{ id:_mzId, createdAt:Date.now() };
   /* La data di carico e' il giorno in cui il veicolo entra in magazzino:
@@ -22621,7 +22626,11 @@ function mzSalva(){
   if(_fidPrivato){ a.fornitoreNome=_fidPrivato; a.provenienzaVenditore='privato'; }
   a.provenienzaVenditore=_mzEstera?'':_mzProvVend;
   a.ivaEsposta = _mzEstera ? true : (function(){ var el=document.getElementById('mz_ivaEsposta'); return !!(el&&el.checked); })();
-  a.fornitoreId=_fid; var _f=fnById(_fid); a.fornitoreNome=_f?_f.ragione:'';
+  a.fornitoreId=_fid; var _f=fnById(_fid);
+  /* prima qui il nome del privato veniva azzerato a ogni salvataggio
+     (restava solo quello dell'anagrafica fornitori): e' cosi' che le
+     permute perdevano il nominativo */
+  if(_f) a.fornitoreNome=_f.ragione; else if(_fidPrivato) a.fornitoreNome=_fidPrivato;
   /* L'anno resta nei dati perche' lo usano elenco, ricerca, vetrina e report:
      ora pero' si ricava dalla data di immatricolazione invece di essere
      digitato a parte. Sui veicoli vecchi senza data si conserva quello gia'
@@ -29247,14 +29256,37 @@ function regDepositanteDa(a){
   return out;
 }
 function regForn(a){ return (a && a.fornitoreId && typeof fnById==='function')?fnById(a.fornitoreId):null; }
+/* ===== CHI HA PERMUTATO L'AUTO =====
+   "Privato (permuta)" senza nome non deve mai comparire: il venditore e'
+   una persona precisa. Se la scheda non ha il nome (permute vecchie o
+   importate, o nome perso in un salvataggio), lo si ricostruisce dal
+   contratto della permuta, dal depositante del registro, o cercando il
+   contratto che ha in permuta questa targa. */
+function mzPermutaNome(a){
+  try{
+    if(!a) return '';
+    if(a.fornitoreNome && !/^privato\s*\(permuta\)$/i.test(String(a.fornitoreNome).trim())) return String(a.fornitoreNome).trim();
+    if(a.depositanteNome) return String(a.depositanteNome).trim();
+    var cvs=(typeof cvLoad==='function')?cvLoad():[];
+    var cv=null;
+    if(a.permutaContrattoId) cv=cvs.filter(function(c){ return c && c.id===a.permutaContrattoId; })[0];
+    if(!cv) cv=cvs.filter(function(c){ return c && c.permuta && c.permuta.magazzinoId===a.id; })[0];
+    if(!cv && a.targa){ var tg=String(a.targa).replace(/\s/g,'').toUpperCase();
+      cv=cvs.filter(function(c){ return c && c.permutaOn && c.permuta && String(c.permuta.targa||'').replace(/\s/g,'').toUpperCase()===tg; })[0]; }
+    if(cv){ var d=(typeof regDatiCliente==='function')?regDatiCliente(cv):null; if(d && d.nome) return d.nome; }
+  }catch(e){}
+  return '';
+}
 /* Nome del venditore per il registro: vale sia per le aziende sia per i privati
    che hanno permutato. Si legge dalla scheda auto, con l'anagrafica come riserva. */
 function regFornNome(a){
   if(!a) return '';
-  if(a.fornitoreNome) return a.fornitoreNome;
   var f=regForn(a);
   if(f && f.ragione) return f.ragione;
-  if(a.provenienza==='permuta' || a.origine==='permuta' || a.permutaContrattoId) return 'Privato (permuta)';
+  var pn=mzPermutaNome(a);
+  if(pn) return pn;
+  if(a.fornitoreNome) return a.fornitoreNome;
+  if(a.provenienza==='permuta' || a.origine==='permuta' || a.permutaContrattoId) return '\u26a0 Privato senza nominativo';
   return '';
 }
 
@@ -32583,7 +32615,18 @@ function simBuild(buf){
       var row = [];
       for(var C=0; C<=r.e.c; C++){
         var c = ws[XLSX.utils.encode_cell({r:R, c:C})];
-        row.push(!c ? null : (c.f ? ('='+c.f) : (c.v===undefined ? null : c.v)));
+        var f = c && c.f;
+        /* ===== IRR SENZA VALORE INIZIALE =====
+           TAN, TAEG e TEG del foglio sono IRR sul piano. Excel converge da
+           solo; HyperFormula, senza un valore di partenza, dai 96 mesi in su
+           (e con TAN diversi dall'8%) restituisce #NUM!, e a cascata si
+           spengono TAN/TAEG/TEG, totale dovuto e provvigione. Si aggiunge il
+           secondo argomento (tasso mensile di partenza 0,8%): il risultato
+           e' identico a Excel, ma il motore trova la strada. */
+        if(f && /IRR\(/i.test(f)){
+          f = f.replace(/IRR\(([^()]*?)\)/gi, function(m, a){ return a.indexOf(',')>=0 ? m : ('IRR('+a+',0.008)'); });
+        }
+        row.push(!c ? null : (f ? ('='+f) : (c.v===undefined ? null : c.v)));
       }
       out.push(row);
     }
