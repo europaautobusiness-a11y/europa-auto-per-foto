@@ -1140,6 +1140,31 @@ html, body{
         <div style="font-size:12px;opacity:.6;margin-top:6px;">Acquisto senza finanziamento</div>
       </div>
 
+      <!-- Provvigione dell'AZIENDA (solo amministratore): finanziamento dal
+           simulatore Deutsche Bank + polizza fuori Deutsche (Zurich, Fit2You)
+           scritta qui. Il totale va nelle statistiche di marginalita'. -->
+      <div id="pAzWrap" style="display:none;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:14px 16px;margin-bottom:14px;">
+        <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6d28d9;font-weight:800;margin-bottom:8px;">Provvigione azienda &middot; solo amministratore</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:150px;">
+            <label style="display:block;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:3px;">Finanziamento + polizze Deutsche</label>
+            <input id="pAzFin" type="number" step="0.01" style="width:100%;padding:8px;border:1px solid #c4b5fd;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;" placeholder="dal simulatore">
+            <div id="pAzFinNota" style="font-size:10.5px;color:#7c3aed;margin-top:2px;"></div>
+          </div>
+          <div style="flex:1;min-width:150px;">
+            <label id="pAzPolLab" style="display:block;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:3px;">Polizza fuori Deutsche</label>
+            <input id="pAzPol" type="number" step="0.01" style="width:100%;padding:8px;border:1px solid #c4b5fd;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;" placeholder="0">
+            <div id="pAzPolNota" style="font-size:10.5px;color:#7c3aed;margin-top:2px;"></div>
+          </div>
+          <div style="flex:1;min-width:130px;">
+            <label style="display:block;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:3px;">Totale azienda</label>
+            <div id="pAzTot" style="font-size:22px;font-weight:800;color:#5b21b6;padding:4px 0;">&euro; &mdash;</div>
+          </div>
+        </div>
+        <button onclick="pAzSalva()" style="margin-top:10px;background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-weight:700;font-family:inherit;cursor:pointer;">Salva provvigione azienda</button>
+        <span id="pAzEsito" style="margin-left:10px;font-size:12px;color:#166534;font-weight:700;"></span>
+      </div>
+
       <!-- Risultato sottocosto -->
       <div id="pRisSottoWrap" style="display:none;background:var(--blue);border-radius:4px;padding:20px;color:white;margin-bottom:14px;">
         <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.7;margin-bottom:6px;">Provvigione</div>
@@ -7614,9 +7639,57 @@ function pMarcaModelloDaCv(cv){
   }catch(e){}
   return out;
 }
+/* ===== PROVVIGIONE AZIENDA NELLA SEZIONE PROVVIGIONI =====
+   Deutsche Bank (finanziamento, CPI, NET, Unipol...) la calcola il
+   simulatore. Zurich e Fit2You non passano da Deutsche: la loro quota si
+   scrive qui, nella pratica del venditore, e il totale finisce sulla
+   delibera (provvAzienda) e quindi nelle statistiche. */
+var _pAzCvId=null;
+function pAzPolNome(){
+  try{ var f=(typeof PS!=='undefined'&&PS)?String(PS.fi||''):''; return f&&f!=='NO'?f:''; }catch(e){ return ''; }
+}
+function pAzMostra(cv){
+  var w=document.getElementById('pAzWrap'); if(!w) return;
+  var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  if(!adm || !cv || !cv.finDelibera || !cv.finDelibera.confermata){ w.style.display='none'; _pAzCvId=null; return; }
+  _pAzCvId=cv.id; var d=cv.finDelibera;
+  var fin=(d.provvAziendaFin!=null)?d.provvAziendaFin:((d.provvAzienda!=null && d.provvAziendaPol==null)?d.provvAzienda:null);
+  var fe=document.getElementById('pAzFin'), pe=document.getElementById('pAzPol');
+  if(fe) fe.value=(fin!=null?fin:'');
+  if(pe) pe.value=(d.provvAziendaPol!=null?d.provvAziendaPol:'');
+  var fn=document.getElementById('pAzFinNota'); if(fn) fn.textContent=(fin!=null?'dal simulatore Deutsche Bank':'non calcolata: usa \u201cricalcola\u201d in Statistiche o scrivila');
+  var pl=document.getElementById('pAzPolLab'); var pn=pAzPolNome();
+  if(pl) pl.textContent='Polizza '+(pn?pn:'fuori Deutsche');
+  var pnn=document.getElementById('pAzPolNota'); if(pnn) pnn.textContent=(/ZURICH|FIT/i.test(pn)?'quota azienda della '+pn+', a mano':(pn?'gi\u00e0 dentro il simulatore: lascia 0':'nessuna polizza'));
+  var es=document.getElementById('pAzEsito'); if(es) es.textContent='';
+  pAzTotale();
+  w.style.display='block';
+  try{ if(fe&&!fe._az){ fe._az=1; fe.addEventListener('input',pAzTotale); } if(pe&&!pe._az){ pe._az=1; pe.addEventListener('input',pAzTotale); } }catch(e){}
+}
+function pAzTotale(){
+  var f=parseFloat((document.getElementById('pAzFin')||{}).value)||0, p=parseFloat((document.getElementById('pAzPol')||{}).value)||0;
+  var t=document.getElementById('pAzTot'); if(t) t.textContent='\u20ac '+Math.round((f+p)*100)/100;
+  return Math.round((f+p)*100)/100;
+}
+function pAzSalva(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  if(!_pAzCvId){ alert('Carica prima una vendita.'); return; }
+  var list=cvLoad(); var cv=null; for(var i=0;i<list.length;i++){ if(list[i]&&list[i].id===_pAzCvId){ cv=list[i]; break; } }
+  if(!cv || !cv.finDelibera){ alert('Delibera non trovata.'); return; }
+  var f=parseFloat((document.getElementById('pAzFin')||{}).value), p=parseFloat((document.getElementById('pAzPol')||{}).value);
+  var d=cv.finDelibera;
+  d.provvAziendaFin=isNaN(f)?null:Math.round(f*100)/100;
+  d.provvAziendaPol=isNaN(p)?0:Math.round(p*100)/100;
+  d.provvAziendaPolTipo=pAzPolNome();
+  d.provvAzienda=Math.round(((d.provvAziendaFin||0)+(d.provvAziendaPol||0))*100)/100 || null;
+  cv.updatedAt=Date.now(); cvSave(list);
+  try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+  var es=document.getElementById('pAzEsito'); if(es) es.textContent='\u2713 salvata: \u20ac '+(d.provvAzienda||0)+' sulla delibera';
+}
 function pCaricaVendita(cvId){
   try{
     var cv=(typeof cvById==='function')?cvById(cvId):null; if(!cv){ alert('Vendita non trovata.'); return; }
+    try{ pAzMostra(cv); }catch(e){}
     /* si continua la bozza gia' creata dalla vendita, non se ne apre una nuova */
     try{ var _b=pProvvDiCv(cv.id); _pEditingId=_b?_b.r.id:null; }catch(e){ _pEditingId=null; }
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
@@ -12817,13 +12890,100 @@ function wfBcApri(k){
 var WF_MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
                'luglio','agosto','settembre','ottobre','novembre','dicembre'];
 
+/* ===== BUONI CARBURANTE: UNA RIGA PER BUONO, CON LAPIDE =====
+   Prima stavano tutti dentro l'unico record del welfare: bastava che un
+   dispositivo con una copia vuota salvasse un fringe benefit e i buoni
+   sparivano per tutti (successo due volte). Ora ogni buono e' una riga
+   della tabella welfare_buoni_app; chi cancella lascia una lapide
+   (deleted:true) che vince sulle copie vecchie; alla fusione fra
+   dispositivo e cloud vince, buono per buono, la data piu' recente.
+   Una copia vuota non puo' piu' cancellare niente. */
+var WF_BUONI_KEY='ea_welfare_buoni_v1';
+function wfBuoniRighe(){
+  try{
+    var raw=localStorage.getItem(WF_BUONI_KEY);
+    if(raw!=null){ var l=JSON.parse(raw); return Array.isArray(l)?l:[]; }
+  }catch(e){}
+  /* prima volta con questo formato: si parte da quello che c'e' nel vecchio blocco */
+  try{
+    var t=wfLoad(); var v=Array.isArray(t.buoni)?t.buoni:[];
+    var l2=v.map(function(b){ var c=JSON.parse(JSON.stringify(b)); if(!c.updatedAt) c.updatedAt=+(c.creato||t.updatedAt||Date.now()); return c; });
+    localStorage.setItem(WF_BUONI_KEY, JSON.stringify(l2));
+    return l2;
+  }catch(e){ return []; }
+}
+function wfBuoniRigheScrivi(l){ try{ localStorage.setItem(WF_BUONI_KEY, JSON.stringify(l||[])); }catch(e){} }
 function wfBuoni(){
-  var t=wfLoad();
-  if(!Array.isArray(t.buoni)) t.buoni=[];
-  return t.buoni;
+  return wfBuoniRighe().filter(function(b){ return b && !b.deleted; });
 }
 function wfBuoniScrivi(arr){
-  var t=wfLoad(); t.buoni=arr||[]; t.updatedAt=Date.now(); wfSave(t);
+  arr=arr||[];
+  var righe=wfBuoniRighe(), byId={}, now=Date.now();
+  righe.forEach(function(b){ if(b&&b.id) byId[String(b.id)]=b; });
+  var nuove=[], daSpingere=[], visti={};
+  arr.forEach(function(b){
+    if(!b||!b.id) return;
+    var k=String(b.id); visti[k]=1;
+    var ex=byId[k];
+    var exCmp=ex?JSON.stringify(Object.assign({},ex,{updatedAt:0})):null;
+    var bCmp=JSON.stringify(Object.assign({},b,{updatedAt:0,deleted:undefined}));
+    if(!ex || ex.deleted || exCmp!==bCmp){ b=Object.assign({},b); delete b.deleted; b.updatedAt=now; daSpingere.push(b); }
+    else b=ex;
+    nuove.push(b);
+  });
+  /* quello che manca e' stato cancellato: resta una lapide */
+  righe.forEach(function(b){
+    if(!b||!b.id) return;
+    var k=String(b.id);
+    if(visti[k]) return;
+    if(b.deleted){ nuove.push(b); return; }
+    var t={ id:b.id, deleted:true, updatedAt:now }; nuove.push(t); daSpingere.push(t);
+  });
+  wfBuoniRigheScrivi(nuove);
+  try{ if(typeof supaUpsert==='function') daSpingere.forEach(function(b){ supaUpsert('welfare_buoni_app', b); }); }catch(e){}
+}
+/* fusione col cloud: per ogni buono vince la data piu' recente; quello che
+   c'e' solo qui viene spinto su (copre anche la prima migrazione) */
+function wfBuoniSupaLoad(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    supaSelectAll(sb,'welfare_buoni_app',function(res){
+      if(!res || res.error) return;
+      /* tabella ancora vuota: prima migrazione, i buoni si prendono dal
+         vecchio record unico sul cloud (li' sono al sicuro, es. i 23) */
+      if(!(res.data||[]).length && !window._wfBuoniMigrati){
+        window._wfBuoniMigrati=true;
+        sb.from('welfare_app').select('id,data').eq('id','welfare').limit(1).then(function(r2){
+          try{
+            var r=(r2&&r2.data||[])[0]; var d=r&&r.data; if(typeof d==='string') d=JSON.parse(d);
+            var g=0; while(d && d.data && typeof d.data==='object' && g++<3) d=d.data;
+            var v=(d && Array.isArray(d.buoni))?d.buoni:[];
+            if(v.length){
+              var loc=wfBuoniRighe(), ids={}; loc.forEach(function(b){ if(b&&b.id) ids[String(b.id)]=1; });
+              v.forEach(function(b){ if(b&&b.id && !ids[String(b.id)]){ var c=JSON.parse(JSON.stringify(b)); c.updatedAt=+(c.creato||d.updatedAt||Date.now()); loc.push(c); } });
+              wfBuoniRigheScrivi(loc);
+            }
+          }catch(e){}
+          window._wfBuoniMigrati=false;
+          wfBuoniSupaLoad();   /* secondo giro: ora spinge le righe sulla tabella */
+        }).catch(function(){ window._wfBuoniMigrati=false; });
+        return;
+      }
+      var byId={}; var loc=wfBuoniRighe();
+      (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id) byId[String(d.id)]=d; });
+      var spingi=[], cambiato=false;
+      loc.forEach(function(b){
+        if(!b||!b.id) return; var k=String(b.id); var ex=byId[k];
+        if(!ex){ byId[k]=b; spingi.push(b); return; }
+        if((+(b.updatedAt||0)) > (+(ex.updatedAt||0))){ byId[k]=b; spingi.push(b); }
+      });
+      var finale=Object.keys(byId).map(function(k){ return byId[k]; });
+      if(JSON.stringify(finale)!==JSON.stringify(loc)) cambiato=true;
+      wfBuoniRigheScrivi(finale);
+      try{ if(typeof supaUpsert==='function') spingi.forEach(function(b){ supaUpsert('welfare_buoni_app', b); }); }catch(e){}
+      if(cambiato){ try{ var v=document.getElementById('view-welfare'); if(v && v.classList.contains('active') && typeof wfBuoniRender==='function') wfBuoniRender(); }catch(e){} }
+    });
+  }catch(e){}
 }
 
 /* Le auto gia' in magazzino alla data indicata. Stessa regola delle
@@ -15601,7 +15761,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
-  if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); }catch(e){} }
+  if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); wfBuoniSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='bmvalue'){ try{ if(typeof bmRender==='function') bmRender(); }catch(e){} }
@@ -16261,7 +16421,10 @@ document.addEventListener('DOMContentLoaded',function(){
   /* Come compare un veicolo nell'elenco: "MARCA MODELLO - TARGA \u00b7 PROPRIETARIO". */
   function ccEtichettaAuto(a, senzaProprietario){
     var lab=((a.marca||'')+' '+(a.modello||'')).trim()
-      +(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):'')));
+      +(a.targa?(' - '+a.targa):(a.numero_interno?(' - N\u00b0'+a.numero_interno):(a.telaio?(' - telaio '+a.telaio):'')))
+      /* il colore: con tre Ypsilon N\u00b0957/958/959 il numero da solo fa
+         sbagliare, "GRIGIO" o "BLU" si riconosce al volo */
+      +(a.colore?(' \u00b7 '+String(a.colore).toUpperCase()):'');
     /* Il nome del proprietario serve sugli interventi \u2014 li' l'auto e' di
        qualcuno e sapere di chi aiuta. Su un appuntamento di vendita no: sono
        auto in magazzino, e il nome che compariva veniva da un preventivo
@@ -17810,8 +17973,8 @@ function sinRender(){
   var all=sinLoad();
   var wrap=document.getElementById('sin-lista'); if(!wrap) return;
   var byCreated=function(a,b){return (b.createdAt||0)-(a.createdAt||0);};
-  var vuoto=function(label){ return '<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun sinistro in «'+label+'».</div>'; };
-  var html='';
+  var vuoto=function(label){ return sinBannerIncassi(all)+'<div style="text-align:center;color:#94a3b8;padding:40px 10px;font-size:14px;">Nessun sinistro in «'+label+'».</div>'; };
+  var html=sinBannerIncassi(all);
   if(_sinTab==='saldo'){
     var gS=all.filter(function(x){return x.stato==='saldo';}).sort(byCreated);
     var gI=all.filter(function(x){return x.stato==='integrazione';}).sort(byCreated);
@@ -18216,6 +18379,35 @@ function sinInviaConcordato(id){
   list[idx].stato='concluso'; list[idx].docInviatiAt=Date.now();
   sinSave(list); sinPush(list[idx]); _sinTab='concluso'; sinSetTab('concluso');
   if(typeof tcToastNew==='function') tcToastNew('📤 Documenti e foto inviati · passato a Concluso / In concordato',true);
+}
+/* ===== QUANTO DEVE ANCORA ENTRARE =====
+   Banner in cima ai sinistri: somma degli importi delle pratiche concluse
+   (in concordato), in attesa di saldo e in attesa di integrazione, cioe'
+   i soldi che le compagnie devono ancora pagare. Le pratiche concluse
+   senza importo concordato sono contate a parte, cosi' si vede che manca
+   il numero. */
+function sinBannerIncassi(all){
+  try{
+    var n=function(v){ var x=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(x)?0:x; };
+    var conc=0,nConc=0,senza=0, saldo=0,nSaldo=0, integ=0,nInteg=0;
+    (all||[]).forEach(function(s){
+      if(!s) return;
+      if(s.stato==='concluso'){ if(n(s.importoConcordato)>0){ conc+=n(s.importoConcordato); nConc++; } else senza++; }
+      else if(s.stato==='saldo'){ saldo+=n(s.importoConcordato); nSaldo++; }
+      else if(s.stato==='integrazione'){ integ+=n(s.importoIntegrazione); nInteg++; }
+    });
+    var tot=conc+saldo+integ;
+    if(!nConc && !senza && !nSaldo && !nInteg) return '';
+    var voce=function(lab,imp,num){ return '<span style="white-space:nowrap;"><span style="color:#64748b;">'+lab+' ('+num+')</span> <b>\u20ac '+sinFmtEuro(imp)+'</b></span>'; };
+    return '<div style="margin:0 2px 12px;padding:12px 14px;background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">'
+      +'<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;letter-spacing:.04em;">\ud83d\udcb6 Da incassare dalle compagnie</span>'
+      +'<span style="font-size:22px;font-weight:900;color:#15803d;">\u20ac '+sinFmtEuro(tot)+'</span></div>'
+      +'<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin-top:6px;">'
+      +voce('Concluso / in concordato',conc,nConc)+voce('In attesa di saldo',saldo,nSaldo)+(nInteg?voce('In attesa di integrazione',integ,nInteg):'')
+      +(senza?('<span style="color:#b45309;font-weight:700;white-space:nowrap;">\u26a0 '+senza+' conclus'+(senza===1?'o':'i')+' senza importo concordato</span>'):'')
+      +'</div><div style="font-size:10.5px;color:#64748b;margin-top:4px;">Importi concordati IVA inclusa, come scritti sulle pratiche.</div></div>';
+  }catch(e){ return ''; }
 }
 function sinFmtEuro(n){ try{ return Number(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return n; } }
 /* Conferma il concordato e apre subito la creazione della fattura. */
@@ -32741,6 +32933,64 @@ function simInit(){
   });
 }
 
+/* ===== MOTORE SENZA INTERFACCIA =====
+   Carica librerie e file del simulatore senza disegnare nulla: serve per
+   rifare i conti di una delibera gia' salvata (es. provvigione mancante). */
+function simMotorePronto(cb){
+  if(_simCaricato) return cb(true);
+  simLoadLibs(function(ok){
+    if(!ok) return cb(false);
+    simFetch(function(buf){
+      if(!buf) return cb(false);
+      try{ simBuild(buf); cb(true); }catch(e){ cb(false); }
+    });
+  });
+}
+/* Provvigione dell'azienda (cella I24) ricalcolata dalla fotografia dei
+   campi salvata nella delibera, senza aprire il simulatore. Restituisce
+   null se non si riesce. */
+function simProvvDaFoto(foto){
+  try{
+    if(!foto || !_simCaricato) return null;
+    var g=function(id){ return (foto[id]==null)?null:String(foto[id]); };
+    var num=function(id){ var v=parseFloat(g(id)); return isNaN(v)?0:v; };
+    var vals=[
+      ['C6',g('sim_C6')],['E7',num('sim_E7')/100],['C10',num('sim_C10')],['C11',num('sim_C11')],
+      ['E10',num('sim_E10')],['C12',num('sim_C12')],['E11',parseInt(g('sim_E11'),10)||30],
+      ['C21',g('sim_C21')],['C24',g('sim_C24')],['D24',parseInt(g('sim_D24'),10)||60],['E24',g('sim_E24')],
+      ['D26',g('sim_D26')],['D27',g('sim_D27')],['D28',g('sim_D28')]
+    ];
+    if(foto.sim_E6!=null){ vals.push(['E6',num('sim_E6')/100]); vals.push(['C16',num('sim_C16')/100]); vals.push(['E16',num('sim_E16')]); }
+    var ds=simDataSeriale(g('sim_D21')); if(ds) vals.push(['D21',ds]);
+    var prima=simFoto();   /* per rimettere a posto il simulatore aperto, se c'e' */
+    simScrivi(function(){ vals.forEach(function(v){ if(v[1]!=null) simSet(v[0],v[1]); }); });
+    var pr=simNum(simGet('I24'));
+    if(prima){ try{ simRimettiFoto(prima); simCalcNow(); }catch(e){} }
+    return (pr!=null && pr>0)?Math.round(pr*100)/100:null;
+  }catch(e){ return null; }
+}
+/* Dal dettaglio vendite: ricalcola e salva la provvigione di una delibera
+   che ne e' rimasta senza (di solito per il vecchio errore dell'IRR). */
+function stProvvRicalcola(cvId, ev){
+  try{ if(ev) ev.stopPropagation(); }catch(e){}
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  var btn=(ev&&ev.target)||null; if(btn){ btn.disabled=true; btn.textContent='calcolo\u2026'; }
+  simMotorePronto(function(ok){
+    if(!ok){ if(btn){ btn.disabled=false; btn.textContent='ricalcola'; } alert('Motore del simulatore non disponibile.'); return; }
+    var list=cvLoad(); var cv=null; for(var i=0;i<list.length;i++){ if(list[i]&&list[i].id===cvId){ cv=list[i]; break; } }
+    var d=cv&&cv.finDelibera; if(!d){ alert('Delibera non trovata.'); return; }
+    var foto=d.simStato || null;
+    if(!foto && cv.pagamenti){ for(var k=0;k<cv.pagamenti.length;k++){ if(cv.pagamenti[k]&&cv.pagamenti[k].simStato){ foto=cv.pagamenti[k].simStato; break; } } }
+    if(!foto){ if(btn){ btn.disabled=false; btn.textContent='ricalcola'; } alert('Questa delibera non ha la fotografia del simulatore: la provvigione va scritta a mano nella delibera.'); return; }
+    var pr=simProvvDaFoto(foto);
+    if(pr==null){ if(btn){ btn.disabled=false; btn.textContent='ricalcola'; } alert('Il simulatore non ha prodotto la provvigione con questi dati: scrivila a mano nella delibera.'); return; }
+    d.provvAziendaFin=pr; d.provvAzienda=Math.round((pr+(d.provvAziendaPol||0))*100)/100; d.provvAziendaFonte='ricalcolo '+new Date().toISOString().slice(0,10);
+    cv.updatedAt=Date.now(); cvSave(list);
+    try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+    if(btn){ btn.textContent=stEu(pr); btn.style.color='#166534'; btn.style.border='none'; btn.style.background='transparent'; btn.style.fontWeight='800'; }
+    try{ if(typeof statRender==='function') statRender(); }catch(e){}
+  });
+}
 function simErrore(msg){
   var w = simBox(); if(!w) return;
   w.innerHTML = '<div style="padding:30px 16px;text-align:center;">'
@@ -33909,7 +34159,11 @@ function cvDeliberaForm(id){
       ? ('<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:9px;">'
         +'<label style="'+lab+'color:#6d28d9;">Provvigione azienda \u20ac (solo amministratore)</label>'
         +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="quanto riconosce la finanziaria all\u2019azienda">'
-        +'<div style="font-size:10.5px;color:#7c3aed;margin-top:3px;">'+(d.provvAzienda!=null?'Dal simulatore o inserita a mano. ':'Non calcolata: scrivila qui. ')+'\u00c8 il numero che entra nelle statistiche di marginalit\u00e0.</div></div>')
+        +'<div style="font-size:10.5px;color:#7c3aed;margin-top:3px;">'
+          +(d.provvAziendaFin!=null||d.provvAziendaPol!=null
+             ? ('Finanziamento '+cvEuro(d.provvAziendaFin||0)+(d.provvAziendaPol?(' + polizza '+(d.provvAziendaPolTipo||'')+' '+cvEuro(d.provvAziendaPol)):'')+'. ')
+             : (d.provvAzienda!=null?'Dal simulatore o inserita a mano. ':'Non calcolata. '))
+          +'Deutsche Bank la calcola il simulatore; Zurich e Fit2You si scrivono in Provvigioni, pannello viola. \u00c8 il numero che entra nelle statistiche.</div></div>')
       : '')
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
@@ -34172,7 +34426,12 @@ function cvDeliberaSalva(id){
     rataManuale:(window._delibRataManuale===true)||undefined,
     /* provvigione azienda: quella appena calcolata dal simulatore, oppure
        quella gia' salvata se la delibera viene solo ritoccata */
-    provvAzienda:((window._delibDaSimProvv!=null)?window._delibDaSimProvv
+    provvAziendaFin:((window._delibDaSimProvv!=null)?window._delibDaSimProvv
+                  :((list[i].finDelibera&&list[i].finDelibera.provvAziendaFin!=null)?list[i].finDelibera.provvAziendaFin:null)),
+    provvAziendaPol:((list[i].finDelibera&&list[i].finDelibera.provvAziendaPol!=null)?list[i].finDelibera.provvAziendaPol:null),
+    provvAziendaPolTipo:((list[i].finDelibera&&list[i].finDelibera.provvAziendaPolTipo)||null),
+    provvAzienda:((window._delibDaSimProvv!=null)
+                  ? Math.round((window._delibDaSimProvv+((list[i].finDelibera&&list[i].finDelibera.provvAziendaPol)||0))*100)/100
                   :((n('provvAzienda')!=null && n('provvAzienda')>0) ? n('provvAzienda')
                   :((list[i].finDelibera&&list[i].finDelibera.provvAzienda)||null))),
     /* Correggendo una delibera vecchia la data non deve spostarsi a oggi:
@@ -37044,11 +37303,18 @@ function stInfoBtn(idsEnc, titolo){
 function stDettaglioApri(idsEnc, titolo){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   try{
+    /* ===== TUTTA LA STORIA, MESE PER MESE =====
+       Non solo il periodo scelto: ogni vendita, divisa per mese, con i
+       subtotali. Il mese e' quello della CONSEGNA (o del contratto se non
+       e' ancora stata consegnata): la stessa regola dei riquadri. Il mese
+       del periodo scelto e' aperto, gli altri si aprono toccando la riga. */
     var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
-    var tutte=(typeof cvLoad==='function')?cvLoad():[];
-    var righe=ids.map(function(id){ return tutte.filter(function(x){ return x&&x.id===id; })[0]; }).filter(Boolean);
+    var idsSet={}; ids.forEach(function(i){ idsSet[i]=1; });
+    var righe=((typeof cvContratti==='function')?cvContratti():[]).slice();
     var _ts=function(cv){ return +(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0); };
-    righe.sort(function(a,b){ return _ts(a)-_ts(b); });
+    righe.sort(function(a,b){ return _ts(b)-_ts(a); });
+    var _dIt=function(t){ return t?new Date(t).toLocaleDateString('it-IT'):''; };
+    var _dIso=function(v){ try{ var p=String(v||'').slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):''; }catch(e){ return ''; } };
     var m=document.getElementById('stFasciaModal');
     if(!m){ m=document.createElement('div'); m.id='stFasciaModal';
       m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
@@ -37056,17 +37322,27 @@ function stDettaglioApri(idsEnc, titolo){
     var th='font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;padding:8px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
     var td='padding:8px 8px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-size:12.5px;';
     var totV=0,totA=0,totM=0,totP=0,totI=0;
-    var body=righe.map(function(cv){
+    var mesi={}, ordine=[];
+    var _riga=function(cv){
       var a=stAuto(cv)||{}; var snap=cv.autoSnapshot||{};
       var vend=stVendita(cv); var sc=stSconto(cv);
       var acq=stNum(a.prezzoAcq);
       var mg=stMargine(cv); var pv=stProvvAziendaDi(cv); var ivm=stIvaMargine(cv);
       var c=stCat(cv); var cat=ST_CAT[c];
       var cl=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
-      var d=_ts(cv); var ds=d?new Date(d).toLocaleDateString('it-IT'):'';
+      var d=_ts(cv);
+      var ds='contratto '+(_dIt(cv.contrattoTs)||'\u2014')+(cv.consegnatoTs?(' \u00b7 consegnata '+_dIt(cv.consegnatoTs)):' \u00b7 non consegnata')+((cv.fattura&&cv.fattura.data)?(' \u00b7 fattura '+_dIso(cv.fattura.data)):'');
       var tot=(mg||0)+(pv||0);
       totV+=vend||0; totA+=acq||0; totM+=mg||0; totP+=pv||0; totI+=ivm||0;
-      var fin=(cv.finDelibera&&cv.finDelibera.confermata)?(pv!=null?stEu(pv):'<span style="color:#dc2626;font-weight:700;" title="Apri la vendita, Delibera, campo Provvigione azienda">da inserire</span>'):'<span style="color:#cbd5e1;">\u2014</span>';
+      var mk=d?(new Date(d).getFullYear()+'-'+('0'+(new Date(d).getMonth()+1)).slice(-2)):'0000-00';
+      if(!mesi[mk]){ mesi[mk]={n:0,v:0,a:0,m:0,p:0,i:0,html:'',nel:false}; ordine.push(mk); }
+      var M=mesi[mk]; M.n++; M.v+=vend||0; M.a+=acq||0; M.m+=mg||0; M.p+=pv||0; M.i+=ivm||0; if(idsSet[cv.id]) M.nel=true;
+      var _haFoto=!!(cv.finDelibera && (cv.finDelibera.simStato || (cv.pagamenti||[]).some(function(p){ return p&&p.simStato; })));
+      var fin=(cv.finDelibera&&cv.finDelibera.confermata)
+        ?(pv!=null?stEu(pv)
+          :('<span style="color:#dc2626;font-weight:700;" title="Apri la vendita, Delibera, campo Provvigione azienda">da inserire</span>'
+            +(_haFoto?('<br><button type="button" onclick="stProvvRicalcola(\''+cv.id+'\',event)" style="margin-top:3px;font-size:11px;font-weight:700;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;cursor:pointer;">ricalcola</button>'):'')))
+        :'<span style="color:#cbd5e1;">\u2014</span>';
       return '<tr onclick="stFasciaVai(\''+cv.id+'\')" style="cursor:pointer;">'
         +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
           +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
@@ -37076,6 +37352,22 @@ function stDettaglioApri(idsEnc, titolo){
         +'<td style="'+td+'font-weight:800;color:'+(mg==null?'#94a3b8':(mg<0?'#dc2626':'#166534'))+';">'+(mg!=null?stEu(mg):'\u2014')+(ivm?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(ivm)+'</div>'):'')+'</td>'
         +'<td style="'+td+'">'+fin+'</td>'
         +'<td style="'+td+'font-weight:900;">'+stEu(tot)+'</td></tr>';
+    };
+    righe.forEach(function(cv){
+      var h=_riga(cv); var d=_ts(cv);
+      var mk=d?(new Date(d).getFullYear()+'-'+('0'+(new Date(d).getMonth()+1)).slice(-2)):'0000-00';
+      mesi[mk].html+=h;
+    });
+    var _MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+    var body=ordine.map(function(mk){
+      var M=mesi[mk]; var p=mk.split('-'); var nome=(p[1]&&p[1]!=='00')?(_MESI[parseInt(p[1],10)-1]+' '+p[0]):'senza data';
+      var aperto=M.nel;
+      return '<tr onclick="var b=document.getElementById(\'stm_'+mk+'\');var ap=b.style.display!==\'none\';b.style.display=ap?\'none\':\'\';this.querySelector(\'.stm-fr\').textContent=ap?\'\u25b8\':\'\u25be\';" style="cursor:pointer;background:'+(aperto?'#eef2ff':'#f8fafc')+';">'
+        +'<td colspan="2" style="'+td+'text-align:left;font-weight:900;color:#1a4fa0;"><span class="stm-fr" style="display:inline-block;width:14px;">'+(aperto?'\u25be':'\u25b8')+'</span>'+nome+' <span style="color:#94a3b8;font-weight:600;">('+M.n+')</span></td>'
+        +'<td style="'+td+'font-weight:800;">'+stEu(M.v)+'</td><td style="'+td+'font-weight:800;">'+stEu(M.a)+'</td>'
+        +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(M.m)+(M.i?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(M.i)+'</div>'):'')+'</td>'
+        +'<td style="'+td+'font-weight:900;">'+stEu(M.p)+'</td><td style="'+td+'font-weight:900;">'+stEu(M.m+M.p)+'</td></tr>'
+        +'</tbody><tbody id="stm_'+mk+'"'+(aperto?'':' style="display:none"')+'>'+M.html+'</tbody><tbody>';
     }).join('');
     m.innerHTML='<div style="max-width:960px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
       +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
@@ -37085,11 +37377,12 @@ function stDettaglioApri(idsEnc, titolo){
       +'<table style="width:100%;border-collapse:collapse;"><thead><tr>'
       +'<th style="'+th+'text-align:left;">Cliente / auto</th><th style="'+th+'text-align:left;">Regime</th><th style="'+th+'">Vendita</th><th style="'+th+'">Acquisto</th><th style="'+th+'">Margine auto</th><th style="'+th+'">Provv. finanz.</th><th style="'+th+'">Totale</th></tr></thead>'
       +'<tbody>'+(body||'<tr><td colspan="7" style="padding:14px;color:#94a3b8;">Nessuna vendita nel periodo.</td></tr>')+'</tbody>'
-      +'<tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale ('+righe.length+')</td><td style="'+td+'"></td>'
+      +'<tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale storico ('+righe.length+')</td><td style="'+td+'"></td>'
       +'<td style="'+td+'font-weight:800;">'+stEu(totV)+'</td><td style="'+td+'font-weight:800;">'+stEu(totA)+'</td>'
       +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(totM)+(totI?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(totI)+'</div>'):'')+'</td>'
       +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td></tr></tfoot></table>'
       +'<div style="font-size:11.5px;color:#64748b;margin-top:10px;line-height:1.5;">'
+      +'<b>A quale mese va una vendita</b>: al mese della consegna; finch\u00e9 non \u00e8 consegnata, al mese del contratto. Le date sono scritte sotto ogni cliente, cos\u00ec si vede perch\u00e9 sta l\u00ec. '
       +'<b>Come si calcola il margine auto</b> (sempre al netto dell\u2019IVA): '
       +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
