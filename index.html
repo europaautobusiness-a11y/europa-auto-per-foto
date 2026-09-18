@@ -18002,16 +18002,29 @@ function sinDocInit(){
   }catch(e){}
 }
 
+/* cosa manca per considerare completa una pratica */
+function sinMancanti(s){
+  var m=[];
+  if(!s) return m;
+  if(!String(s.compagnia||'').trim()) m.push('compagnia');
+  if(!String(s.finanziaria||'').trim()) m.push('finanziaria');
+  if(!String(s.dataEvento||'').trim()) m.push('data evento');
+  if(!String(s.luogoEvento||'').trim()) m.push('luogo evento');
+  return m;
+}
 function sinCard(s){
   var st=s.stato||'attesa_apertura';
+  var _manc=sinMancanti(s);
   /* Scheda e documenti affiancati: la pagina e' larga e mettere gli allegati
      sotto costringeva a scorrere per ogni pratica. Sotto i 900px tornano
      incolonnati da soli, senza bisogno di due versioni del codice. */
   var html='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;margin-bottom:12px;">';
-  html+='<div style="flex:1 1 460px;min-width:300px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
+  html+='<div style="flex:1 1 460px;min-width:300px;background:'+(_manc.length?'#fff5f5':'#fff')+';border:'+(_manc.length?'2px solid #dc2626':'1px solid #e2e8f0')+';border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
+  if(_manc.length) html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;margin:-4px 0 8px;padding:6px 10px;background:#dc2626;color:#fff;border-radius:7px;font-size:12px;font-weight:900;letter-spacing:.03em;">\u26a0 PRATICA INCOMPLETA \u2014 manca: '+sinEsc(_manc.join(', '))+'</div>';
   html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
   html+='<div onclick="sinApri(\''+s.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+eaClienteLink(sinEsc(s.nome||'(senza nome)'), {nome:s.nome}, s.clienteKey)+'</div>';
   html+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+sinEsc(s.targa||'—')+' · '+sinEsc(s.modello||'')+'</div>';
+  if(s.dataEvento||s.luogoEvento) html+='<div style="font-size:12px;color:#64748b;margin-top:2px;">Evento'+(s.dataEvento?(' del '+sinEsc(String(s.dataEvento).split('-').reverse().join('/'))):'')+(s.luogoEvento?(' a '+sinEsc(s.luogoEvento)):'')+'</div>';
   if(s.tipoSinistro) html+='<div style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 10px;">'+sinEsc(s.tipoSinistro)+'</div>';
   var _app=sinAppuntamento(s);
   if(_app){
@@ -18456,8 +18469,12 @@ function sinForm(id){
     +'<option value="">\u2014 seleziona \u2014</option>'
     +TIPI_SIN.map(function(t){ return '<option value="'+sinEsc(t)+'"'+((s.tipoSinistro===t)?' selected':'')+'>'+sinEsc(t)+'</option>'; }).join('')
     +'</select>';
-  html+=f('Compagnia assicurativa','compagnia','text','');
-  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria','finanziaria','text','')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
+  /* Compagnia, finanziaria, data e luogo dell'evento sono richiesti: si
+     salva lo stesso, ma la pratica resta segnata in rosso come INCOMPLETA
+     finche' non ci sono tutti. */
+  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Data dell\u2019evento <span style="color:#dc2626">*</span>','dataEvento','date','')+'</div><div style="flex:1;">'+f('Luogo dell\u2019evento <span style="color:#dc2626">*</span>','luogoEvento','text','es. Via Roma, Milano')+'</div></div>';
+  html+=f('Compagnia assicurativa <span style="color:#dc2626">*</span>','compagnia','text','');
+  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria <span style="color:#dc2626">*</span>','finanziaria','text','scrivi \u201cnessuna\u201d se non c\u2019\u00e8')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
   html+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px;font-size:13px;color:#475569;cursor:pointer;"><input type="checkbox" id="sinf-online" '+(s.peritoOnline?'checked':'')+' onchange="sinToggleOnline()" style="width:18px;height:18px;"> 💻 Perito online (senza appuntamento)</label>';
   html+='<div id="sinf-appwrap" style="'+(s.peritoOnline?'display:none;':'')+'">'+f('Appuntamento perizia (opzionale)','appuntamento','datetime-local','').replace('value="'+sinEsc(s.appuntamento||'')+'"','value="'+sinEsc(appVal)+'"')+'</div>';
   html+=f('Note','note','textarea','');
@@ -18623,6 +18640,7 @@ function sinSalva(id, isNew){
   var _on=document.getElementById('sinf-online'); s.peritoOnline=_on?_on.checked:false;
   s.clienteKey=_ck;
   s.telaio=g('telaio'); s.immatricolazione=g('immatricolazione');
+  s.dataEvento=g('dataEvento'); s.luogoEvento=g('luogoEvento');
   var _ts=document.getElementById('sinf-tipoSinistro'); s.tipoSinistro=_ts?_ts.value:'';
   s.appuntamento=s.peritoOnline?'':g('appuntamento'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
@@ -18630,6 +18648,7 @@ function sinSalva(id, isNew){
   var _nuovo=(idx<0);
   if(idx>=0) list[idx]=s; else list.push(s);
   sinSave(list); sinPush(s);
+  try{ var _mm=sinMancanti(s); if(_mm.length && typeof tcToastNew==='function') tcToastNew('\u26a0 Salvato ma INCOMPLETO: manca '+_mm.join(', '),false); }catch(e){}
   /* I sinistri li apre di norma l'amministrazione: se lo inserisce qualcun altro
      parte una segnalazione, cosi' la pratica non resta ferma. */
   if(_nuovo) try{ sinAvvisaApertura(s); }catch(e){}
@@ -32984,7 +33003,10 @@ function stProvvRicalcola(cvId, ev){
     if(!foto){ if(btn){ btn.disabled=false; btn.textContent='ricalcola'; } alert('Questa delibera non ha la fotografia del simulatore: la provvigione va scritta a mano nella delibera.'); return; }
     var pr=simProvvDaFoto(foto);
     if(pr==null){ if(btn){ btn.disabled=false; btn.textContent='ricalcola'; } alert('Il simulatore non ha prodotto la provvigione con questi dati: scrivila a mano nella delibera.'); return; }
-    d.provvAziendaFin=pr; d.provvAzienda=Math.round((pr+(d.provvAziendaPol||0))*100)/100; d.provvAziendaFonte='ricalcolo '+new Date().toISOString().slice(0,10);
+    var _pa=cvProvvPolizzaAuto(d.polizzaTipo, d.polizze);
+    d.provvAziendaFin=pr; d.provvAziendaPol=_pa.pol; d.provvAziendaPolTipo=(_pa.fuori?_pa.tipo:null);
+    d.provvAzienda=Math.round((pr+_pa.pol)*100)/100; d.provvAziendaFonte='ricalcolo '+new Date().toISOString().slice(0,10);
+    pr=d.provvAzienda;
     cv.updatedAt=Date.now(); cvSave(list);
     try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
     if(btn){ btn.textContent=stEu(pr); btn.style.color='#166534'; btn.style.border='none'; btn.style.background='transparent'; btn.style.fontWeight='800'; }
@@ -34048,7 +34070,7 @@ function cvDeliberaForm(id){
   var _polMan = '<label style="'+lab+'">Tipo polizza *</label>'
    +'<select id="dl_polizzaTipo" onchange="cvDelibPolTipo(this.value)" style="'+inp+'background:#fff;">'+_polOpts+'</select>'
    +'<label style="'+lab+'">Polizze \u20ac * <span style="text-transform:none;font-weight:600;color:#94a3b8;">(0 se non presenti)</span></label>'
-   +'<input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+_esc(_polTipo==='nessuna'?'0':_polVal)+'"'+(_polTipo==='nessuna'?' readonly':'')+'>'
+   +'<input id="dl_polizze" type="number" step="0.01" style="'+inp+'" value="'+_esc(_polTipo==='nessuna'?'0':_polVal)+'"'+(_polTipo==='nessuna'?' readonly':'')+' oninput="cvDelibProvvAggiorna()">'
    +hint(sim.polizze,' \u20ac')
    +'<input type="hidden" id="dl_daSim" value="0">';
 
@@ -34156,19 +34178,20 @@ function cvDeliberaForm(id){
       Deutsche Bank; per le altre finanziarie, o se il simulatore non l'ha
       calcolata, la scrive l'amministratore. Serve alle statistiche. */
    +((typeof getCurrentRole==='function' && getCurrentRole()==='admin')
-      ? ('<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:9px;">'
-        +'<label style="'+lab+'color:#6d28d9;">Provvigione azienda \u20ac (solo amministratore)</label>'
-        +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="quanto riconosce la finanziaria all\u2019azienda">'
-        +'<div style="font-size:10.5px;color:#7c3aed;margin-top:3px;">'
-          +(d.provvAziendaFin!=null||d.provvAziendaPol!=null
-             ? ('Finanziamento '+cvEuro(d.provvAziendaFin||0)+(d.provvAziendaPol?(' + polizza '+(d.provvAziendaPolTipo||'')+' '+cvEuro(d.provvAziendaPol)):'')+'. ')
-             : (d.provvAzienda!=null?'Dal simulatore o inserita a mano. ':'Non calcolata. '))
-          +'Deutsche Bank la calcola il simulatore; Zurich e Fit2You si scrivono in Provvigioni, pannello viola. \u00c8 il numero che entra nelle statistiche.</div></div>')
+      ? (function(){
+          var _fin=cvProvvAziendaFin(d);
+          return '<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:9px;">'
+          +'<label style="'+lab+'color:#6d28d9;">Provvigione azienda \u20ac (solo amministratore)</label>'
+          +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" data-fin="'+(_fin!=null?_fin:'')+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="si calcola da sola" oninput="this._manuale=true">'
+          +'<div id="dl_provvAziendaDett" style="font-size:10.5px;color:#7c3aed;margin-top:3px;line-height:1.5;"></div>'
+          +'<div style="font-size:10.5px;color:#7c3aed;margin-top:2px;">Deutsche Bank dal simulatore + 38% del premio delle polizze fuori Deutsche (Zurich, Fit2You). Se scrivi un numero a mano vale quello. \u00c8 il numero che entra nelle statistiche.</div></div>';
+        })()
       : '')
    +'<button onclick="cvDeliberaSalva(\''+cv.id+'\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:15px;cursor:pointer;">\u2705 Conferma delibera</button>'
    +(d.confermata?'<button onclick="cvDeliberaAnnulla(\''+cv.id+'\')" style="width:100%;margin-top:8px;padding:10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Annulla la conferma</button>':'')
    +'</div></div>';
   m.innerHTML=h2; m.style.display='flex';
+  try{ setTimeout(cvDelibProvvAggiorna,0); }catch(e){}
 }
 /* Sblocco esplicito della rata: serve per le finanziarie che il simulatore
    non copre. Resta segnato sulla delibera, cosi' chi guarda i conti sa che
@@ -34269,10 +34292,48 @@ function cvDelibPolManualeSwitch(){
   box.innerHTML=window._delibPolManHTML;
   var t=document.getElementById('dl_polizzaTipo'); if(t) t.focus();
 }
+/* ===== PROVVIGIONE AZIENDA SULLE POLIZZE FUORI DEUTSCHE =====
+   NET, Unipol e Kasko passano da Deutsche Bank: la loro quota e' gia'
+   dentro il numero del simulatore. Zurich, Fit2You e le altre no: sul
+   premio scritto in delibera l'azienda incassa il 38%. Totale =
+   simulatore + 38% del premio. */
+var PAZ_PCT_POLIZZA=0.38;
+var PAZ_POLIZZE_DEUTSCHE={ net:1, unipol:1, kasko:1, nessuna:1 };
+function cvProvvPolizzaAuto(tipo, premio){
+  tipo=String(tipo||''); premio=parseFloat(premio); if(isNaN(premio)) premio=0;
+  if(!tipo || PAZ_POLIZZE_DEUTSCHE[tipo] || premio<=0) return { pol:0, tipo:tipo, fuori:false };
+  return { pol:Math.round(premio*PAZ_PCT_POLIZZA*100)/100, tipo:tipo, fuori:true };
+}
+function cvProvvAziendaFin(d){
+  if(!d) return null;
+  if(d.provvAziendaFin!=null) return d.provvAziendaFin;
+  if(d.provvAzienda!=null && d.provvAziendaPol==null) return d.provvAzienda;
+  return null;
+}
+/* riquadro viola della delibera: si aggiorna quando cambiano tipo o premio */
+function cvDelibProvvAggiorna(){
+  try{
+    var box=document.getElementById('dl_provvAzienda'); if(!box) return;
+    var fin=parseFloat(box.getAttribute('data-fin')); if(isNaN(fin)) fin=null;
+    var tipo=(document.getElementById('dl_polizzaTipo')||{}).value||'';
+    var premio=parseFloat((document.getElementById('dl_polizze')||{}).value);
+    var a=cvProvvPolizzaAuto(tipo, premio);
+    var tot=Math.round(((fin||0)+a.pol)*100)/100;
+    var nomi={zurich:'Zurich',fit2you:'Fit2You',altra:'altra polizza'};
+    var det=document.getElementById('dl_provvAziendaDett');
+    if(det) det.innerHTML=
+      'Deutsche Bank (simulatore): <b>'+(fin!=null?('\u20ac '+fin):'non calcolata')+'</b>'
+      +(a.fuori?(' \u00b7 Polizza '+(nomi[tipo]||tipo)+' 38% di \u20ac '+(isNaN(premio)?0:premio)+': <b>\u20ac '+a.pol+'</b>'):'')
+      +' \u00b7 Totale: <b>\u20ac '+tot+'</b>'
+      +(fin==null?'<br>Manca la parte Deutsche: usa \u201cricalcola\u201d in Statistiche o scrivi qui il totale a mano.':'');
+    if(!box._manuale) box.value=(tot>0?tot:'');
+  }catch(e){}
+}
 function cvDelibPolTipo(v){
   var e=document.getElementById('dl_polizze'); if(!e) return;
   if(v==='nessuna'){ e.value='0'; e.readOnly=true; e.style.background='#f8fafc'; }
   else { e.readOnly=false; e.style.background='#fff'; if(e.value==='0') e.value=''; }
+  try{ cvDelibProvvAggiorna(); }catch(x){}
 }
 function cvDeliberaSalva(id){
   var cv=(typeof cvById==='function')?cvById(id):null; if(!cv) return;
@@ -34411,6 +34472,14 @@ function cvDeliberaSalva(id){
   }catch(e){}
 
   var list=cvLoad(); var i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
+  /* provvigione azienda: Deutsche (simulatore, appena calcolata o gia'
+     salvata) + 38% del premio se la polizza e' fuori Deutsche; se
+     l'amministratore ha scritto un numero a mano, vale quello */
+  var _pFin=(window._delibDaSimProvv!=null)?window._delibDaSimProvv:cvProvvAziendaFin(list[i].finDelibera);
+  var _pAuto=cvProvvPolizzaAuto(g('polizzaTipo'), n('polizze'));
+  var _pCalc=Math.round(((_pFin||0)+_pAuto.pol)*100)/100;
+  var _pBox=document.getElementById('dl_provvAzienda');
+  var _pTot=(_pBox && _pBox._manuale && n('provvAzienda')!=null && n('provvAzienda')>0) ? n('provvAzienda') : (_pCalc>0?_pCalc:null);
   list[i].finDelibera={ confermata:true, finanziaria:_fin, tan:n('tan'), taeg:n('taeg'),
     importoFinanziato:n('importo'), rata:n('rata'), durata:n('durata'), istruttoria:n('istruttoria'),
     polizze:n('polizze'), polizzaTipo:g('polizzaTipo'), daSimulatore:_daSim,
@@ -34426,14 +34495,10 @@ function cvDeliberaSalva(id){
     rataManuale:(window._delibRataManuale===true)||undefined,
     /* provvigione azienda: quella appena calcolata dal simulatore, oppure
        quella gia' salvata se la delibera viene solo ritoccata */
-    provvAziendaFin:((window._delibDaSimProvv!=null)?window._delibDaSimProvv
-                  :((list[i].finDelibera&&list[i].finDelibera.provvAziendaFin!=null)?list[i].finDelibera.provvAziendaFin:null)),
-    provvAziendaPol:((list[i].finDelibera&&list[i].finDelibera.provvAziendaPol!=null)?list[i].finDelibera.provvAziendaPol:null),
-    provvAziendaPolTipo:((list[i].finDelibera&&list[i].finDelibera.provvAziendaPolTipo)||null),
-    provvAzienda:((window._delibDaSimProvv!=null)
-                  ? Math.round((window._delibDaSimProvv+((list[i].finDelibera&&list[i].finDelibera.provvAziendaPol)||0))*100)/100
-                  :((n('provvAzienda')!=null && n('provvAzienda')>0) ? n('provvAzienda')
-                  :((list[i].finDelibera&&list[i].finDelibera.provvAzienda)||null))),
+    provvAziendaFin:_pFin,
+    provvAziendaPol:_pAuto.pol,
+    provvAziendaPolTipo:(_pAuto.fuori?_pAuto.tipo:null),
+    provvAzienda:_pTot,
     /* Correggendo una delibera vecchia la data non deve spostarsi a oggi:
        resta quella in cui la finanziaria ha deliberato davvero. Si tiene
        invece traccia dell'ultima correzione, che e' un'altra informazione. */
