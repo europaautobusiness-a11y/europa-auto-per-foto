@@ -1500,7 +1500,7 @@ html, body{
         <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">RIENTRO</label><input type="time" id="tc-forza-rientro" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:14px;border-radius:6px;box-sizing:border-box;"></div>
         <div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">USCITA</label><input type="time" id="tc-forza-uscita" style="width:100%;padding:9px;border:1px solid #ddd;font-family:inherit;font-size:14px;border-radius:6px;box-sizing:border-box;"></div>
       </div>
-      <div id="tc-forza-canc" style="display:none;max-width:400px;margin:-6px 0 16px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
+      <div id="tc-forza-canc" style="display:block;max-width:400px;margin:-6px 0 16px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
         <div style="font-size:11px;font-weight:800;color:#991b1b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px;">Cancella una singola timbratura</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button onclick="tcForzaCancellaCampo('entrata')" style="padding:6px 10px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">&#10005; Entrata</button>
@@ -14072,6 +14072,7 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
   var rec;
   if(idx>=0){rec=reg[idx];}else{rec={id:email+'_'+oggi,dipendente:email,data:oggi,mese:mese,entrata:null,pausa:null,rientro:null,uscita:null};reg.push(rec);idx=reg.length-1;}
   rec[tipo]=ora; if(sede) rec.sede=sede; rec._savedAt=Date.now(); rec.updatedAt=Date.now(); if(rec.deleted) delete rec.deleted;
+  if(rec.cancellate && rec.cancellate[tipo]) delete rec.cancellate[tipo];
   /* la stessa pausa va scritta anche col nome usato dalla vista amministrativa */
   try{ if(typeof presenzeAlias==='function') presenzeAlias(rec); }catch(e){}
   reg[idx]=rec;
@@ -14827,7 +14828,7 @@ function tcForzaCarica(){
     if(el) el.value=(rec && rec[f]) ? String(rec[f]).slice(0,5) : '';
   });
   var qualcosa = !!(rec && campi.some(function(f){ return rec[f]; }));
-  if(box) box.style.display = qualcosa ? 'block' : 'none';
+  if(box) box.style.display = 'block';   /* sempre visibile */
   if(msg){
     if(!email || !data){ msg.textContent=''; }
     else if(qualcosa){ msg.textContent='\u270e Giornata gi\u00e0 registrata: correggi gli orari e premi Salva.'; msg.style.color='#64748b'; }
@@ -14847,8 +14848,16 @@ function tcForzaCancellaCampo(campo){
   if(!ora){ if(msg){ msg.textContent=nomi[campo]+' non risulta timbrata.'; msg.style.color='#64748b'; } return; }
   if(!confirm('Cancellare solo la timbratura di '+nomi[campo]+' delle '+String(ora).slice(0,5)+'?\n\n'
     +tcGetNome(email)+' \u2014 '+data+'\n\nGli altri orari della giornata restano come sono.')) return;
-  reg[idx][campo]=null; reg[idx]._savedAt=Date.now();
+  /* ===== LAPIDE SUL SINGOLO ORARIO =====
+     Svuotare il campo non bastava: la fusione col cloud "unisce" e rimetteva
+     l'orario dalla copia vecchia. Si scrive l'ora della cancellazione in
+     cancellate[campo]: alla fusione vince la lapide, salvo una timbratura
+     fatta DOPO. E la giornata va subito su Supabase. */
+  reg[idx][campo]=''; reg[idx]._savedAt=Date.now(); reg[idx].updatedAt=Date.now();
+  var _al={pausa:'uscita_pranzo',rientro:'rientro_pranzo'}[campo]; if(_al) reg[idx][_al]='';   /* anche il nome gemello */
+  reg[idx].cancellate=reg[idx].cancellate||{}; reg[idx].cancellate[campo]=Date.now();
   tcSaveReg(reg, reg[idx]);
+  try{ if(typeof presenzeSupaUpsert==='function') presenzeSupaUpsert(reg[idx]); }catch(e){}
   tcForzaCarica();
   if(msg){ msg.textContent='\ud83d\uddd1 '+nomi[campo]+' cancellata per '+tcGetNome(email)+' \u2014 '+data; msg.style.color='#dc2626'; }
   try{ tcAdminRenderRegistro(); }catch(e){}
@@ -14870,12 +14879,23 @@ function tcForzaSalva() {
   }
   var mese=data.substring(0,7), reg=tcLoadReg();
   var idx=reg.findIndex(function(r){return r.dipendente===email&&r.data===data;});
-  var rec={id:email+'_'+data,dipendente:email,data:data,mese:mese,entrata:entr||null,pausa:paus||null,rientro:rient||null,uscita:usc||null};
-  rec._savedAt=Date.now();
+  var rec={id:email+'_'+data,dipendente:email,data:data,mese:mese,entrata:entr||'',pausa:paus||'',rientro:rient||'',uscita:usc||''};
+  rec._savedAt=Date.now(); rec.updatedAt=Date.now();
+  /* un orario lasciato vuoto dall'amministratore e' una cancellazione:
+     lapide sul campo, cosi' la fusione col cloud non lo rimette */
+  var prec=(idx>=0)?reg[idx]:null; var canc=(prec&&prec.cancellate)?JSON.parse(JSON.stringify(prec.cancellate)):{};
+  ['entrata','pausa','rientro','uscita'].forEach(function(k){
+    if(rec[k]) delete canc[k];
+    else if(prec && prec[k]) canc[k]=Date.now();
+  });
+  if(Object.keys(canc).length) rec.cancellate=canc;
+  rec.uscita_pranzo=rec.pausa; rec.rientro_pranzo=rec.rientro;   /* nomi gemelli allineati */
+  if(prec && prec.sede) rec.sede=prec.sede;
   if(idx>=0)reg[idx]=rec;else reg.push(rec);
   tcSaveReg(reg, rec);
+  try{ if(typeof presenzeSupaUpsert==='function') presenzeSupaUpsert(rec); }catch(e){}
   if(msg){msg.textContent='✅ Salvato per '+tcGetNome(email)+' — '+data;msg.style.color='#16a34a';}
-  try{ var _b=document.getElementById('tc-forza-canc'); if(_b) _b.style.display=(entr||paus||rient||usc)?'block':'none'; }catch(e){}
+  /* il riquadro "cancella una singola timbratura" resta sempre visibile */
   tcAdminRenderRegistro();
 }
 
@@ -31663,6 +31683,16 @@ function presenzeFondi(a, b){
     if(a[k] && b[k]) out[k] = (b[k] > a[k]) ? b[k] : a[k];   // l'ULTIMA
     else out[k] = a[k] || b[k] || out[k] || '';
   });
+  /* lapidi dei singoli orari: un orario cancellato dall'amministratore non
+     torna dalla copia vecchia; torna solo se ritimbrato DOPO la cancellazione */
+  var canc={}; [a,b].forEach(function(x){ var c=(x&&x.cancellate)||{}; Object.keys(c).forEach(function(k){ canc[k]=Math.max(canc[k]||0, +c[k]||0); }); });
+  var alias={pausa:'uscita_pranzo',rientro:'rientro_pranzo',uscita_pranzo:'pausa',rientro_pranzo:'rientro'};
+  Object.keys(canc).forEach(function(k){
+    var tsC=canc[k];
+    var vive=[a,b].some(function(x){ return x && x[k] && !(x.cancellate&&x.cancellate[k]) && presenzeTs(x)>tsC; });
+    if(!vive){ out[k]=''; if(alias[k]) out[alias[k]]=''; }
+  });
+  if(Object.keys(canc).length) out.cancellate=canc;
   out.updatedAt = Math.max(presenzeTs(a), presenzeTs(b)) || Date.now();
   return presenzeAlias(out);
 }
@@ -37366,10 +37396,14 @@ function stProvvMie(P){
 /* Sommare il margine d'azienda alle provvigioni della banca ha senso per
    chi guarda i conti dell'azienda. A Rudy quella somma non dice niente:
    al suo posto quanto rende in media una pratica sua. */
+/* Le provvigioni delle finanziarie contano solo dal 1\u00b0 gennaio 2025:
+   prima erano molto piu' basse e i numeri non sarebbero confrontabili. */
+var ST_PROVV_DA = new Date(2025,0,1).getTime();
 function stProvvAziendaDi(cv){
   try{
     var d=cv&&cv.finDelibera;
     if(!d||!d.confermata) return null;
+    if((+(cv.contrattoTs||cv.createdAt||0)) < ST_PROVV_DA) return null;
     /* qualunque finanziaria: dal simulatore (Deutsche Bank) o scritta a
        mano nella delibera dall'amministratore */
     var v=parseFloat(d.provvAzienda);
@@ -37395,8 +37429,8 @@ function stDettaglioApri(idsEnc, titolo){
        del periodo scelto e' aperto, gli altri si aprono toccando la riga. */
     var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
     var idsSet={}; ids.forEach(function(i){ idsSet[i]=1; });
-    var righe=((typeof cvContratti==='function')?cvContratti():[]).slice();
     var _ts=function(cv){ return +(cv.contrattoTs||cv.createdAt||0); };  /* mese del CONTRATTO, non della consegna */
+    var righe=((typeof cvContratti==='function')?cvContratti():[]).filter(function(cv){ return _ts(cv)>=ST_PROVV_DA; });
     righe.sort(function(a,b){ return _ts(b)-_ts(a); });
     var _dIt=function(t){ return t?new Date(t).toLocaleDateString('it-IT'):''; };
     var _dIso=function(v){ try{ var p=String(v||'').slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):''; }catch(e){ return ''; } };
@@ -37423,6 +37457,7 @@ function stDettaglioApri(idsEnc, titolo){
       if(!mesi[mk]){ mesi[mk]={n:0,v:0,a:0,m:0,p:0,i:0,html:'',nel:false}; ordine.push(mk); }
       var M=mesi[mk]; M.n++; M.v+=vend||0; M.a+=acq||0; M.m+=mg||0; M.p+=pv||0; M.i+=ivm||0; if(idsSet[cv.id]) M.nel=true;
       var _haFoto=!!(cv.finDelibera && (cv.finDelibera.simStato || (cv.pagamenti||[]).some(function(p){ return p&&p.simStato; })));
+      if(_ts(cv) < ST_PROVV_DA) _haFoto=false;
       var fin=(cv.finDelibera&&cv.finDelibera.confermata)
         ?(pv!=null?stEu(pv)
           :('<span style="color:#dc2626;font-weight:700;" title="Apri la vendita, Delibera, campo Provvigione azienda">da inserire</span>'
@@ -37467,7 +37502,7 @@ function stDettaglioApri(idsEnc, titolo){
       +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(totM)+(totI?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(totI)+'</div>'):'')+'</td>'
       +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td></tr></tfoot></table>'
       +'<div style="font-size:11.5px;color:#64748b;margin-top:10px;line-height:1.5;">'
-      +'<b>A quale mese va una vendita</b>: al mese del contratto (la data della proposta firmata), non della consegna. Le date sono scritte sotto ogni cliente. '
+      +'<b>A quale mese va una vendita</b>: al mese del contratto (la data della proposta firmata), non della consegna. Le date sono scritte sotto ogni cliente. La storia parte da gennaio 2025 e le provvigioni delle finanziarie contano da quella data. '
       +'<b>Come si calcola il margine auto</b> (sempre al netto dell\u2019IVA): '
       +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
