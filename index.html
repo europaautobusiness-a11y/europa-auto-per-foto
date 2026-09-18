@@ -12964,9 +12964,10 @@ function wfBuoniSupaLoad(){
               wfBuoniRigheScrivi(loc);
             }
           }catch(e){}
-          window._wfBuoniMigrati=false;
-          wfBuoniSupaLoad();   /* secondo giro: ora spinge le righe sulla tabella */
-        }).catch(function(){ window._wfBuoniMigrati=false; });
+          /* secondo giro: la tabella e' ancora vuota, ma la migrazione non si
+             ripete (il segnale resta alzato) e le righe vengono spinte su */
+          wfBuoniSupaLoad();
+        }).catch(function(){ try{ wfBuoniSupaLoad(); }catch(e){} });
         return;
       }
       var byId={}; var loc=wfBuoniRighe();
@@ -13852,7 +13853,10 @@ function tcAggiornaPulsanti() {
   btnE.disabled=!!(rec&&rec.entrata);
   btnP.disabled=!(rec&&rec.entrata)||!!(rec&&rec.pausa)||!!(rec&&rec.uscita);
   btnR.disabled=!(rec&&rec.pausa)||!!(rec&&rec.rientro)||!!(rec&&rec.uscita);
-  btnU.disabled=!(rec&&rec.entrata)||!!(rec&&rec.uscita)||(!!(rec&&rec.pausa)&&!(rec&&rec.rientro));
+  /* ===== QUATTRO TIMBRATURE, SEMPRE IN ORDINE =====
+     L'uscita si accende solo dopo il rientro: entrata -> pausa -> rientro
+     -> uscita. Cosi' non si puo' premere Uscita al posto di Pausa. */
+  btnU.disabled=!(rec&&rec.rientro)||!!(rec&&rec.uscita);
 }
 
 function tcRenderLog() {
@@ -14026,6 +14030,13 @@ function eaRimuoviIP(ip){
 
 function tcTimbra(tipo) {
   var oggiTb = (typeof tcGetOggi==='function') ? tcGetOggi() : null;
+  /* ordine obbligato, anche se qualcuno riesce a premere un pulsante spento */
+  try{
+    var _recOrd=tcLoadReg().find(function(r){ return r.dipendente===_currentUserEmail && r.data===oggiTb; })||{};
+    var _prima={ pausa:['entrata','l\u2019entrata'], rientro:['pausa','la pausa'], uscita:['rientro','il rientro dalla pausa'] }[tipo];
+    if(_prima && !_recOrd[_prima[0]]){ tcToastNew('\u26a0 Prima devi timbrare '+_prima[1], false); return; }
+    if(_recOrd[tipo]){ tcToastNew('\u26a0 '+timbraLabel(tipo)+' gi\u00e0 timbrata oggi', false); return; }
+  }catch(e){}
   if(oggiTb && typeof riGiornoBloccaTimbra==='function' && riGiornoBloccaTimbra(_currentUserEmail, oggiTb)){
     tcToastNew('🌴 Oggi risulti in ferie/permesso: timbratura non consentita', false);
     var lbl0=document.getElementById('tc-gps-label'); if(lbl0) lbl0.textContent='In ferie/permesso oggi';
@@ -18008,8 +18019,12 @@ function sinMancanti(s){
   if(!s) return m;
   if(!String(s.compagnia||'').trim()) m.push('compagnia');
   if(!String(s.finanziaria||'').trim()) m.push('finanziaria');
-  if(!String(s.dataEvento||'').trim()) m.push('data evento');
-  if(!String(s.luogoEvento||'').trim()) m.push('luogo evento');
+  /* data e luogo dell'evento servono solo per la grandine (la compagnia
+     verifica che li' quel giorno abbia grandinato); per gli altri no */
+  if(/grandine/i.test(String(s.tipoSinistro||''))){
+    if(!String(s.dataEvento||'').trim()) m.push('data evento');
+    if(!String(s.luogoEvento||'').trim()) m.push('luogo evento');
+  }
   return m;
 }
 function sinCard(s){
@@ -18402,24 +18417,29 @@ function sinInviaConcordato(id){
 function sinBannerIncassi(all){
   try{
     var n=function(v){ var x=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(x)?0:x; };
-    var conc=0,nConc=0,senza=0, saldo=0,nSaldo=0, integ=0,nInteg=0;
+    if(_sinTab==='attesa_apertura') return '';   /* qui non serve */
+    /* Aperto, in lavorazione e concluso (in concordato, non ancora
+       concordato): vale il totale del PREVENTIVO. In attesa di saldo: il
+       concordato. Integrazione: l'importo dell'integrazione. */
+    var prev=0,nPrev=0,senza=0, saldo=0,nSaldo=0, integ=0,nInteg=0;
     (all||[]).forEach(function(s){
       if(!s) return;
-      if(s.stato==='concluso'){ if(n(s.importoConcordato)>0){ conc+=n(s.importoConcordato); nConc++; } else senza++; }
-      else if(s.stato==='saldo'){ saldo+=n(s.importoConcordato); nSaldo++; }
-      else if(s.stato==='integrazione'){ integ+=n(s.importoIntegrazione); nInteg++; }
+      var st=s.stato||'attesa_apertura';
+      if(st==='aperto'||st==='lavorazione'||st==='concluso'){ if(n(s.preventivoTotale)>0){ prev+=n(s.preventivoTotale); nPrev++; } else senza++; }
+      else if(st==='saldo'){ saldo+=n(s.importoConcordato); nSaldo++; }
+      else if(st==='integrazione'){ integ+=n(s.importoIntegrazione); nInteg++; }
     });
-    var tot=conc+saldo+integ;
-    if(!nConc && !senza && !nSaldo && !nInteg) return '';
+    var tot=prev+saldo+integ;
+    if(!nPrev && !senza && !nSaldo && !nInteg) return '';
     var voce=function(lab,imp,num){ return '<span style="white-space:nowrap;"><span style="color:#64748b;">'+lab+' ('+num+')</span> <b>\u20ac '+sinFmtEuro(imp)+'</b></span>'; };
     return '<div style="margin:0 2px 12px;padding:12px 14px;background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">'
       +'<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;letter-spacing:.04em;">\ud83d\udcb6 Da incassare dalle compagnie</span>'
       +'<span style="font-size:22px;font-weight:900;color:#15803d;">\u20ac '+sinFmtEuro(tot)+'</span></div>'
       +'<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin-top:6px;">'
-      +voce('Concluso / in concordato',conc,nConc)+voce('In attesa di saldo',saldo,nSaldo)+(nInteg?voce('In attesa di integrazione',integ,nInteg):'')
-      +(senza?('<span style="color:#b45309;font-weight:700;white-space:nowrap;">\u26a0 '+senza+' conclus'+(senza===1?'o':'i')+' senza importo concordato</span>'):'')
-      +'</div><div style="font-size:10.5px;color:#64748b;margin-top:4px;">Importi concordati IVA inclusa, come scritti sulle pratiche.</div></div>';
+      +voce('Aperte / in lavorazione / concluse (preventivi)',prev,nPrev)+voce('In attesa di saldo (concordato)',saldo,nSaldo)+(nInteg?voce('In attesa di integrazione',integ,nInteg):'')
+      +(senza?('<span style="color:#b45309;font-weight:700;white-space:nowrap;">\u26a0 '+senza+' pratic'+(senza===1?'a':'he')+' senza preventivo</span>'):'')
+      +'</div><div style="font-size:10.5px;color:#64748b;margin-top:4px;">Totali dei preventivi finch\u00e9 non c\u2019\u00e8 il concordato, poi il concordato; IVA inclusa.</div></div>';
   }catch(e){ return ''; }
 }
 function sinFmtEuro(n){ try{ return Number(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return n; } }
@@ -18472,7 +18492,7 @@ function sinForm(id){
   /* Compagnia, finanziaria, data e luogo dell'evento sono richiesti: si
      salva lo stesso, ma la pratica resta segnata in rosso come INCOMPLETA
      finche' non ci sono tutti. */
-  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Data dell\u2019evento <span style="color:#dc2626">*</span>','dataEvento','date','')+'</div><div style="flex:1;">'+f('Luogo dell\u2019evento <span style="color:#dc2626">*</span>','luogoEvento','text','es. Via Roma, Milano')+'</div></div>';
+  html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Data dell\u2019evento <span style="color:#dc2626" title="obbligatoria per la grandine">* grandine</span>','dataEvento','date','')+'</div><div style="flex:1;">'+f('Luogo dell\u2019evento <span style="color:#dc2626" title="obbligatorio per la grandine">* grandine</span>','luogoEvento','text','es. Via Roma, Milano')+'</div></div>';
   html+=f('Compagnia assicurativa <span style="color:#dc2626">*</span>','compagnia','text','');
   html+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+f('Finanziaria <span style="color:#dc2626">*</span>','finanziaria','text','scrivi \u201cnessuna\u201d se non c\u2019\u00e8')+'</div><div style="flex:1;">'+f('Perito incaricato','perito','text','')+'</div></div>';
   html+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px;font-size:13px;color:#475569;cursor:pointer;"><input type="checkbox" id="sinf-online" '+(s.peritoOnline?'checked':'')+' onchange="sinToggleOnline()" style="width:18px;height:18px;"> 💻 Perito online (senza appuntamento)</label>';
@@ -37370,13 +37390,13 @@ function stDettaglioApri(idsEnc, titolo){
   try{
     /* ===== TUTTA LA STORIA, MESE PER MESE =====
        Non solo il periodo scelto: ogni vendita, divisa per mese, con i
-       subtotali. Il mese e' quello della CONSEGNA (o del contratto se non
-       e' ancora stata consegnata): la stessa regola dei riquadri. Il mese
+       subtotali. Il mese e' quello del CONTRATTO (la proposta firmata),
+       non della consegna: la stessa regola dei riquadri. Il mese
        del periodo scelto e' aperto, gli altri si aprono toccando la riga. */
     var ids=[]; try{ ids=JSON.parse(decodeURIComponent(idsEnc))||[]; }catch(e){}
     var idsSet={}; ids.forEach(function(i){ idsSet[i]=1; });
     var righe=((typeof cvContratti==='function')?cvContratti():[]).slice();
-    var _ts=function(cv){ return +(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0); };
+    var _ts=function(cv){ return +(cv.contrattoTs||cv.createdAt||0); };  /* mese del CONTRATTO, non della consegna */
     righe.sort(function(a,b){ return _ts(b)-_ts(a); });
     var _dIt=function(t){ return t?new Date(t).toLocaleDateString('it-IT'):''; };
     var _dIso=function(v){ try{ var p=String(v||'').slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):''; }catch(e){ return ''; } };
@@ -37447,7 +37467,7 @@ function stDettaglioApri(idsEnc, titolo){
       +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(totM)+(totI?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(totI)+'</div>'):'')+'</td>'
       +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td></tr></tfoot></table>'
       +'<div style="font-size:11.5px;color:#64748b;margin-top:10px;line-height:1.5;">'
-      +'<b>A quale mese va una vendita</b>: al mese della consegna; finch\u00e9 non \u00e8 consegnata, al mese del contratto. Le date sono scritte sotto ogni cliente, cos\u00ec si vede perch\u00e9 sta l\u00ec. '
+      +'<b>A quale mese va una vendita</b>: al mese del contratto (la data della proposta firmata), non della consegna. Le date sono scritte sotto ogni cliente. '
       +'<b>Come si calcola il margine auto</b> (sempre al netto dell\u2019IVA): '
       +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
@@ -37596,7 +37616,7 @@ function statMarginiHTML(){
   }
   var P=periodo(per), Pp=periodoPrec(per);
   var tutti=(typeof cvContratti==='function')?cvContratti():[];
-  var _ts=function(cv){ return +(cv.consegnatoTs||cv.contrattoTs||cv.createdAt||0); };
+  var _ts=function(cv){ return +(cv.contrattoTs||cv.createdAt||0); };  /* mese del CONTRATTO, non della consegna */
   var _in=function(cv,R){ var t=_ts(cv); return R && t>=R.da && t<R.a; };
   var V=tutti.filter(function(cv){ return _in(cv,P) && stMargine(cv)!=null; });
   var Vprec=Pp?tutti.filter(function(cv){ return _in(cv,Pp) && stMargine(cv)!=null; }):[];
