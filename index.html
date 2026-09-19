@@ -6905,13 +6905,21 @@ function pSottoPrezzo(cv){
     if(cv.scontoOn) lordo -= (typeof cvNum==='function'?cvNum(cv.scontoImporto):0);
     if(lordo<=0) return null;
 
-    var netto=pNettoVendita(a, lordo);
-    var margine=Math.round((netto-acq)*100)/100;
+    /* ===== STESSA REGOLA DELLE STATISTICHE =====
+       - estera (acquisto gia' netto): vendita/1,22 - acquisto
+       - IVA esposta italiana (acquisto ivato) e art. 36: (vendita - acquisto)/1,22
+       Prima si scorporava la sola vendita anche sulle italiane con IVA esposta,
+       confrontando un netto con un lordo: margini finti di -2.000 euro. */
+    var estera=(a.estera===true);
+    var netto, margine, come;
+    if(estera){ netto=Math.round(lordo/(1+EA_IVA)*100)/100; margine=Math.round((netto-acq)*100)/100; come='estera'; }
+    else { netto=Math.round(lordo*100)/100; margine=Math.round((lordo-acq)/(1+EA_IVA)*100)/100; come=(a.ivaEsposta===true)?'iva_esposta':'art36'; }
     return {
       acquisto: acq,
       lordo: Math.round(lordo*100)/100,
       netto: netto,
       esposta: pIvaEsposta(a),
+      come: come,
       margine: margine,
       sotto: (margine < EA_MARGINE_MINIMO),
       inPerdita: (margine < 0),          /* sotto il prezzo pagato davvero */
@@ -6994,9 +7002,11 @@ function pAggiornaSottocosto(cv){
         : '<span style="color:#16a34a;font-weight:700;">In stock da '+gg+' giorni: sotto i 180.</span>');
     }
     if(pz){
-      var _sc = pz.esposta
-        ? ('contratto '+pEuro(pz.lordo)+' ivato \u2192 '+pEuro(pz.netto)+' netti')
-        : ('contratto '+pEuro(pz.lordo)+' (regime del margine, nessuno scorporo)');
+      var _sc = pz.come==='estera'
+        ? ('contratto '+pEuro(pz.lordo)+' ivato \u2192 '+pEuro(pz.netto)+' netti, acquisto netto')
+        : (pz.come==='iva_esposta'
+            ? ('contratto '+pEuro(pz.lordo)+' e acquisto entrambi ivati: differenza al netto dell\u2019IVA')
+            : ('contratto '+pEuro(pz.lordo)+' (art. 36: IVA solo sul margine)'));
       /* Sotto i 500 di margine si scrive "in perdita" anche quando il numero
          e' positivo: con i costi di trasporto quella vendita perde davvero, e
          chiamarla "margine basso" la fa sembrare accettabile. */
@@ -24282,15 +24292,19 @@ function cvCalcola(c){
      quello che il saldo deve coprire. E' il numero da mostrare accanto alla
      voce "Saldo dovuto": prima li' compariva saldoDovuto, che a conti fatti
      era sempre zero e non diceva niente. */
-  var saldoDovuto=totaleScontato-pagTot;
+  /* pacchetto manutenzione "nella rata": non e' nel totale del veicolo ma
+     va coperto dai pagamenti (dal finanziamento) */
+  var pacchettoRata=(typeof cvPacchettoRata==='function')?cvPacchettoRata(c):0;
+  var totIncasso=totaleScontato+pacchettoRata;
+  var saldoDovuto=totIncasso-pagTot;
   var pagSenzaSaldo=cvPagIncasso(c.pagamenti).reduce(function(s,x){
     return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? 0 : cvNum(x.importo));
   },0);
-  var daSaldare=Math.round((totaleScontato-pagSenzaSaldo)*100)/100;
+  var daSaldare=Math.round((totIncasso-pagSenzaSaldo)*100)/100;
   var saldoInserito=cvPagIncasso(c.pagamenti).reduce(function(s,x){
     return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? cvNum(x.importo) : 0);
   },0);
-  return { daSaldare:daSaldare, saldoInserito:saldoInserito, prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, permVal:permVal, minivolt:minivolt, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
+  return { daSaldare:daSaldare, saldoInserito:saldoInserito, pacchettoRata:pacchettoRata, totIncasso:totIncasso, prezzo:prezzo, passaggio:passaggio, gar:gar, assic:assic, extra:extra, sconto:sconto, permVal:permVal, minivolt:minivolt, legge104:!!c.legge104On, imponibile104:imponibile104, iva104:iva104, veicolo:veicolo, totaleVendita:totaleVendita, totaleScontato:totaleScontato, pagTot:pagTot, saldoDovuto:saldoDovuto };
 }
 
 /* ===== APERTURA IN SOLA LETTURA =====
@@ -24932,7 +24946,8 @@ function cvPromoBox(){
     var pieno=a.prezzoVen?('\u20ac '+parseFloat(a.prezzoVen).toLocaleString('it-IT')):'\u2014';
     var promo='\u20ac '+parseFloat(a.promoPrezzo).toLocaleString('it-IT');
     var _btn='padding:8px 12px;border-radius:8px;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;';
-    if(!cvPacchettoRiga()){
+    var _attiva=!!(_cv.promoVincolata && !_cv.promoVincolata.tolta && (cvPacchettoRata(_cv)>0 || (_cv.scontoOn && /promo/i.test(String(_cv.scontoDesc||'')))));
+    if(!_attiva && !cvPacchettoRiga()){
       /* pacchetto tolto: si vende a prezzo pieno */
       box.innerHTML='<div style="background:#f8fafc;border:1px dashed #94a3b8;border-radius:10px;padding:10px 14px;margin:6px 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
         +'<div style="flex:1;font-size:13px;color:#334155;"><b>Quest\u2019auto \u00e8 in promo vincolata</b> (online a '+promo+'), ma il preventivo \u00e8 <b>a prezzo pieno '+pieno+'</b>, senza pacchetto.</div>'
@@ -24944,7 +24959,7 @@ function cvPromoBox(){
       +'<div style="font-size:14px;font-weight:800;color:#991b1b;">\uD83D\uDD25 Auto in PROMO VINCOLATA \u2014 online a '+promo+', prezzo pieno '+pieno+'</div>'
       +'<div style="font-size:13px;color:#7f1d1d;margin-top:6px;line-height:1.55;white-space:pre-line;">'+cvEsc(a.promoCond||'Il prezzo pubblicato vale solo con il pacchetto: senza, il prezzo \u00e8 quello pieno.')+'</div>'
       +(a.promoScad?('<div style="font-size:11px;color:#b91c1c;margin-top:6px;">Valida fino al '+cvEsc(String(a.promoScad).split('-').reverse().join('/'))+'</div>'):'')
-      +'<div style="font-size:11px;color:#991b1b;margin-top:8px;font-weight:700;">Prezzo promo gi\u00e0 inserito'+(parseFloat(a.promoPacchetto)>0?(' + riga \u201cPacchetto manutenzione\u201d da \u20ac '+parseFloat(a.promoPacchetto).toLocaleString('it-IT')+' fra i costi extra'):'')+'. Le condizioni del pacchetto vengono stampate sul contratto.</div>'
+      +'<div style="font-size:11px;color:#991b1b;margin-top:8px;font-weight:700;">Preventivo a prezzo pieno '+pieno+' con \u201cSconto finanziamento PROMO\u201d di \u20ac '+(Math.max(0,cvNum(a.prezzoVen)-cvNum(a.promoPrezzo))).toLocaleString('it-IT')+(parseFloat(a.promoPacchetto)>0?('; il Pacchetto manutenzione '+(parseInt(a.promoPacchettoAnni,10)||3)+' anni da \u20ac '+parseFloat(a.promoPacchetto).toLocaleString('it-IT')+' entra solo nell\u2019importo finanziato (nella rata)'):'')+'. Le condizioni del pacchetto vengono stampate sul contratto.</div>'
       +'<div style="margin-top:10px;"><button type="button" onclick="cvPromoTogli()" style="'+_btn+'border:1px solid #cbd5e1;background:#fff;color:#334155;">Vendi a prezzo pieno (togli il pacchetto)</button></div>'
       +'</div>';
     box.style.display='block';
@@ -24959,25 +24974,45 @@ function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof 
    torna al prezzo pieno, ma ripartito come nell'annuncio. La riga si puo'
    togliere con la X come ogni extra; se c'e', sul contratto vengono
    stampate le condizioni del pacchetto (Parametri). */
+/* pacchetto "nella rata": importo del pacchetto quando la promo e' attiva
+   e il pacchetto non e' una riga dei costi ma va nel finanziamento */
+function cvPacchettoRata(c){
+  try{
+    var pv=c&&c.promoVincolata; if(!pv || pv.tolta) return 0;
+    var v=cvNum(pv.pacchettoRata); return v>0?v:0;
+  }catch(e){ return 0; }
+}
 function cvPacchettoRiga(){
   return (_cv && _cv.costiExtra || []).filter(function(x){ return x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||''))); })[0] || null;
 }
+/* ===== PROMO VINCOLATA: PREZZO PIENO, SCONTO, PACCHETTO NELLA RATA =====
+   Il preventivo parte dal prezzo PIENO, poi mostra lo "Sconto
+   finanziamento PROMO" (pieno - promo) e il totale valido solo con
+   finanziamento. Il pacchetto manutenzione NON e' una riga dei costi:
+   entra solo nell'importo da finanziare (la rata). Il cliente vede da
+   dove si parte e quanto sconto ha. */
 function cvPromoApplica(a){
   if(!a || typeof mzPromoAttiva!=='function' || !mzPromoAttiva(a)) return;
+  var pieno=cvNum(a.prezzoVen), promo=cvNum(a.promoPrezzo);
   var pz=document.getElementById('cv_prezzo');
-  if(pz){ pz.value=a.promoPrezzo; }
-  _cv.prezzoVendita=a.promoPrezzo;
-  _cv.promoVincolata={ autoId:a.id, prezzoPromo:a.promoPrezzo, prezzoPieno:a.prezzoVen||'', condizioni:a.promoCond||'' };
-  var imp=parseFloat(a.promoPacchetto);
-  if(!isNaN(imp) && imp>0){
-    var anni=parseInt(a.promoPacchettoAnni,10)||3;
-    var riga=cvPacchettoRiga();
-    if(!_cv.costiExtra) _cv.costiExtra=[];
-    if(riga){ riga.importo=imp; riga.desc='Pacchetto manutenzione '+anni+' anni'; riga.pacchetto=true; riga.anni=anni; }
-    else _cv.costiExtra.push({ desc:'Pacchetto manutenzione '+anni+' anni', importo:imp, pacchetto:true, anni:anni });
-    try{ cvRenderExtra(); }catch(e){}
+  if(pieno>0){ if(pz) pz.value=pieno; _cv.prezzoVendita=pieno; }
+  var imp=parseFloat(a.promoPacchetto); if(isNaN(imp)||imp<0) imp=0;
+  var anni=parseInt(a.promoPacchettoAnni,10)||3;
+  _cv.promoVincolata={ autoId:a.id, prezzoPromo:a.promoPrezzo, prezzoPieno:a.prezzoVen||'', condizioni:a.promoCond||'',
+                       pacchettoRata:imp, pacchettoAnni:anni };
+  /* via l'eventuale riga pacchetto fra i costi extra (vecchio modo) */
+  _cv.costiExtra=(_cv.costiExtra||[]).filter(function(x){ return !(x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||'')))); });
+  try{ cvRenderExtra(); }catch(e){}
+  /* sconto promo = pieno - promo, in evidenza */
+  if(pieno>0 && promo>0 && pieno>promo){
+    _cv.scontoOn=true; _cv.scontoImporto=Math.round((pieno-promo)*100)/100; _cv.scontoDesc='Sconto finanziamento PROMO';
+    var sc=document.getElementById('cv_scontoOn'); if(sc) sc.checked=true;
+    var sbox=document.getElementById('cv-sconto-box'); if(sbox) sbox.style.display='block';
+    var si=document.getElementById('cv_scontoImporto'); if(si) si.value=_cv.scontoImporto;
+    var sd=document.getElementById('cv_scontoDesc'); if(sd) sd.value=_cv.scontoDesc;
   }
   try{ cvLive(); }catch(e){}
+  try{ if(typeof cvAutoSaldo==='function') cvAutoSaldo(); }catch(e){}
 }
 /* Rudy puo' venderla a prezzo pieno: via il pacchetto, e il prezzo torna
    quello vero. Con "Riapplica" si torna alla promo. */
@@ -24988,7 +25023,15 @@ function cvPromoTogli(){
     _cv.costiExtra=(_cv.costiExtra||[]).filter(function(x){ return !(x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||'')))); });
     if(pieno!==''){ var pz=document.getElementById('cv_prezzo'); if(pz) pz.value=pieno; _cv.prezzoVendita=pieno; }
     if(_cv.promoVincolata) _cv.promoVincolata.tolta=true;
+    /* via anche lo sconto promo */
+    if(_cv.scontoOn && /promo/i.test(String(_cv.scontoDesc||''))){
+      _cv.scontoOn=false; _cv.scontoImporto=0;
+      var sc=document.getElementById('cv_scontoOn'); if(sc) sc.checked=false;
+      var sbox=document.getElementById('cv-sconto-box'); if(sbox) sbox.style.display='none';
+      var si=document.getElementById('cv_scontoImporto'); if(si) si.value='';
+    }
     cvRenderExtra(); cvLive(); cvPromoBox();
+    try{ if(typeof cvAutoSaldo==='function') cvAutoSaldo(); }catch(e){}
     if(typeof tcToastNew==='function') tcToastNew('Pacchetto tolto \u2014 prezzo pieno'+(pieno!==''?(' \u20ac '+parseFloat(pieno).toLocaleString('it-IT')):''),true);
   }catch(e){}
 }
@@ -25132,7 +25175,7 @@ function cvAutoSaldo(){
   try{
     if(!_cv || !_cv.pagamenti || !_cv.pagamenti.length) return;
     var pe=document.getElementById('cv_prezzo'); if(pe) _cv.prezzoVendita=pe.value;
-    var t=cvCalcola(_cv); var tot=t.totaleScontato;
+    var t=cvCalcola(_cv); var tot=t.totaleScontato+(t.pacchettoRata||0);
     var idx=-1; for(var i=_cv.pagamenti.length-1;i>=0;i--){ if(_cv.pagamenti[i].tipo==='Saldo'){ idx=i; break; } }
     if(idx<0) idx=_cv.pagamenti.length-1;
     var altri=0; _cv.pagamenti.forEach(function(p,i){ if(i!==idx) altri+=cvNum(p.importo); });
@@ -25587,6 +25630,7 @@ function cvLive(){
     if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
     h+=r('Totale vendita',t.totaleVendita,true);
     if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r(cvEtichettaTotale(_cv),t.totaleScontato,true); }
+    if(t.pacchettoRata){ h+=r('Pacchetto manutenzione '+((_cv.promoVincolata&&_cv.promoVincolata.pacchettoAnni)||'')+' anni \u2014 nella rata',t.pacchettoRata); h+=r('Da coprire con i pagamenti',t.totIncasso,true); }
     _pagamenti();
     h+=r('Saldo dovuto',t.daSaldare,true);
     /* Se il saldo scritto nei pagamenti non copre quel residuo, va detto:
@@ -25630,10 +25674,11 @@ function cvLive(){
           +'La provvigione su questa vendita \u00e8 dimezzata.</div>';
         if(_vedeTutto && _sotto){
           h+='<div style="font-size:11.5px;color:#9a3412;margin-top:4px;">'
-            + (_sotto.esposta
-                ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' ivato \u2192 '+cvEuro(_sotto.netto)+' netti')
-                : ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' (regime del margine)'))
-            + ', acquistata '+cvEuro(_sotto.acquisto)
+            + (_sotto.come==='estera'
+                ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' ivato \u2192 '+cvEuro(_sotto.netto)+' netti, acquistata '+cvEuro(_sotto.acquisto)+' (netta)')
+                : (_sotto.come==='iva_esposta'
+                    ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+', acquistata '+cvEuro(_sotto.acquisto)+', entrambi ivati: differenza al netto dell\u2019IVA')
+                    : ('Prezzo a contratto '+cvEuro(_sotto.lordo)+', acquistata '+cvEuro(_sotto.acquisto)+' (art. 36, IVA solo sul margine)')))
             + ': margine '+cvEuro(_sotto.margine)
             +'.</div>';
         }
@@ -27299,6 +27344,7 @@ function cvBuildHTML(c, tipo){
   if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
   doc+=row('Totale vendita',t.totaleVendita,'sub');
   if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row(cvEtichettaTotale(c),t.totaleScontato,'sub'); }
+  if(t.pacchettoRata){ doc+=row('Pacchetto manutenzione '+((c.promoVincolata&&c.promoVincolata.pacchettoAnni)||'')+' anni (compreso nel finanziamento)',t.pacchettoRata)+row('Totale da coprire con i pagamenti',t.totIncasso,'sub'); }
   var _pagAll=cvPagIncasso(c.pagamenti).filter(function(x){return cvNum(x.importo);});
   var _pagShow=(tipo==='finale')?_pagAll:_pagAll.filter(function(x){ return !/saldo/i.test(x.tipo||''); });
   _pagShow.forEach(function(x){ doc+=row(cvEsc(x.tipo||'Pagamento')+(x.metodo?(' <span class="cvsmall">('+cvEsc(x.metodo)+')</span>'):''),cvNum(x.importo),'',true); });
@@ -27553,11 +27599,14 @@ function cvBuildHTML(c, tipo){
      legge cosa comprende e cosa no. Vale sul preventivo e sul contratto. */
   try{
     var _pm=(c.costiExtra||[]).filter(function(x){ return x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||''))); })[0];
+    if(!_pm && t.pacchettoRata) _pm={ importo:t.pacchettoRata, anni:(c.promoVincolata&&c.promoVincolata.pacchettoAnni)||'', rata:true };
     if(_pm && !_cvDetailView){
       var _pmT=(typeof parLoad==='function')?(parLoad().pacchettoManut||''):'';
       if(_pmT){
         var _pmDove2=(typeof parLoad==='function')?(parLoad().pacchettoManutDove||'condizioni'):'condizioni';
-        var _pmIntro=(_pmDove2!=='tabella' && cvNum(_pm.importo))
+        var _pmIntro=_pm.rata
+          ? ('Il finanziamento comprende il Pacchetto Manutenzione'+(_pm.anni?(' di '+_pm.anni+' anni'):'')+' al costo di \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+', alle condizioni che seguono. ')
+          : (_pmDove2!=='tabella' && cvNum(_pm.importo))
           ? ('Il prezzo complessivo indicato comprende il Pacchetto Manutenzione'+(_pm.anni?(' di '+_pm.anni+' anni'):'')+' al costo di \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+', alle condizioni che seguono.\n')
           : '';
         doc+='<div class="cvh" style="margin-top:10px;">Pacchetto manutenzione'+(_pm.anni?(' \u2014 '+_pm.anni+' anni'):'')+(_pmDove2==='tabella' && cvNum(_pm.importo)?(' \u2014 \u20ac '+cvNum(_pm.importo).toLocaleString('it-IT')):'')+'</div>'
@@ -27702,9 +27751,15 @@ function cvFatturaHTML(c){
     var serv=N(c.garanziaImporto)+((c.assicOn)?N(c.assicImporto):0)+extra;
     if(serv>0){ var sv=scorp(serv); imp22+=sv.imp; iva22+=sv.iva; righe.push({cod:'SERVIZIO', desc:'SERVIZI ACCESSORI (garanzia / assicurazione / extra)', imp:sv.imp, civa:'22'}); }
   }
+  /* pacchetto manutenzione nella rata: e' una prestazione al 22%, in
+     fattura a parte, anche nelle vendite art. 36 (non puo' stare nel
+     margine) */
+  var _pkR=(typeof cvPacchettoRata==='function')?cvPacchettoRata(c):0;
+  if(_pkR>0){ var _pk=scorp(_pkR); imp22+=_pk.imp; iva22+=_pk.iva; righe.push({cod:'SERVIZIO', desc:'PACCHETTO MANUTENZIONE'+((c.promoVincolata&&c.promoVincolata.pacchettoAnni)?(' '+c.promoVincolata.pacchettoAnni+' ANNI'):''), imp:_pk.imp, civa:'22'}); }
 
-  var totImponibile = margine ? impMargine : (impEsente+imp22);
-  var totIva = margine ? 0 : iva22;
+  /* nell'art. 36 le righe al 22% (il pacchetto manutenzione) si sommano al margine */
+  var totImponibile = margine ? (impMargine+imp22) : (impEsente+imp22);
+  var totIva = margine ? iva22 : iva22;
   var totDoc = totImponibile + totIva;
 
   var righeHTML = righe.map(function(r){
@@ -32633,7 +32688,7 @@ function simDaDelibera(cvId){
     var pag=(typeof cvFinPag==='function')?cvFinPag(cv):null;
     var imp=pag?((typeof cvNum==='function')?cvNum(pag.importo):parseFloat(pag.importo||0)):0;
     var _tt=(typeof cvCalcola==='function')?cvCalcola(cv):null;
-    var _tot=_tt?((_tt.totaleScontato!=null?_tt.totaleScontato:_tt.totaleVendita)||0):imp;
+    var _tot=_tt?(((_tt.totaleScontato!=null?_tt.totaleScontato:_tt.totaleVendita)||0)+(_tt.pacchettoRata||0)):imp;
     if(!imp||imp<=0) imp=_tot;
     if(_tot<imp) _tot=imp;
     _simDelibId=cvId; _simPagIdx=null;
@@ -37045,6 +37100,7 @@ function cvRiepSolaLettura(cv){
     if(!cv.legge104On && cv.scontoOn && t.sconto){
       h+=neg(cvEsc(cv.scontoDesc||'Sconto'),t.sconto);
       h+=r(cvEtichettaTotale(cv),t.totaleScontato,true);
+      if(t.pacchettoRata){ h+=r('Pacchetto manutenzione \u2014 nella rata',t.pacchettoRata); h+=r('Da coprire con i pagamenti',t.totIncasso,true); }
     }
     cvPagIncasso(cv.pagamenti).forEach(function(x){ if(cvNum(x.importo)) h+=neg(cvEsc(x.tipo||'Pagamento'),x.importo); });
     h+=r('Saldo dovuto',t.saldoDovuto,true);
