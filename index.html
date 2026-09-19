@@ -9040,7 +9040,14 @@ function pRenderReg() {
       h += '<tr><td colspan="11" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
     }
     var isFin = r.tipo !== 'noFin';
+    /* ===== SOTTOCOSTO IN ARANCIONE =====
+       Vale sia quando lo ha deciso la giacenza sia quando e' stato forzato
+       a mano (sottoForzato / sottoManuale): la riga si colora e l'etichetta
+       dice da dove viene. */
+    var _sotto = (r.sotto==='SI') || (r.sottoManuale==='SI') || !!(r.sottoForzato && r.sottoForzato.scelto==='SI');
+    var _sottoCome = _sotto ? ((r.sottoForzato && r.sottoForzato.scelto==='SI') || r.sottoManuale==='SI' ? 'forzato a mano' : 'giacenza > 180 gg') : '';
     var tipoLabel = r.tipo==='attesa'?'In attesa delibera':(r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato'));
+    if(_sotto) tipoLabel = '<span style="color:#9a3412;font-weight:800;">\u26a0 Sottocosto</span><br><span style="font-size:10px;color:#b45309;">'+_sottoCome+'</span>';
     var tanC  = isFin?(r.tan ?r.tan +'%':'—'):'—';
     var rateC = isFin?(r.rate?r.rate+'m':'—'):'—';
     var finL  = r.finanziaria||'—';
@@ -9056,7 +9063,7 @@ function pRenderReg() {
     var durataC = r.fiMesi ? r.fiMesi + ' mesi' : '—';
     var cpiC = r.cpi && r.cpi !== 'NO' ? '<span style="color:#27ae60;font-weight:700;">✓ ' + r.cpi + '</span>' : '—';
     var commFinC = r.comm ? '<strong style="color:#1a4fa0;">€ ' + parseFloat(r.comm).toFixed(0) + '</strong>' : '—';
-    h += '<tr>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(cpiC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
+    h += '<tr'+(_sotto?' style="background:#ffedd5;box-shadow:inset 4px 0 0 #f97316;"':'')+'>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(cpiC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
   });
   h += '</tbody></table></div>';
   el.innerHTML = h;
@@ -12187,6 +12194,9 @@ function wfPersone(){
      scheda spariva con dentro i dati. */
   var _cDav = out.some(function(x){ return /basso\s*davide|davide\s*basso/i.test(x.nome||''); });
   if(!_cDav) out.push({ nome:'Davide Basso', chiave:'collab_davidebasso', collab:false, fisso:true });
+  /* Michele Basso (co.co.co.) guida le auto e fa trasferte: sempre in elenco */
+  var _cMic = out.some(function(x){ return /basso\s*michele|michele\s*basso/i.test(x.nome||''); });
+  if(!_cMic) out.push({ nome:'Michele Basso', chiave:'collab_michelebasso', collab:true, fisso:true });
   return out;
 }
 function wfAggiungiCollab(){
@@ -12830,16 +12840,29 @@ function wfCausale(id){
 }
 /* Scelta la causale si riempie il resto, ma solo i campi ancora vuoti:
    chi ha gia' scritto qualcosa a mano non se lo vede sovrascrivere. */
+/* consumo medio per stimare i litri dai km (km per litro) */
+var WF_KM_PER_LITRO={ benzina:13, gasolio:16, gpl:10, metano:14 };
 function wfCausaleScelta(){
   var c=wfCausale(((document.getElementById('bc-causale')||{}).value)||'');
   if(!c) return;
+  /* si riempie, e si RIEMPIE DI NUOVO cambiando causale, tutto quello che
+     non e' stato scritto a mano (dataset.manuale) */
   var set=function(id, val){
     var el=document.getElementById(id);
-    if(el && !String(el.value||'').trim() && val) el.value=val;
+    if(el && !el.dataset.manuale && val) el.value=val;
   };
   set('bc-da', c.da); set('bc-a', c.a);
   if(c.km) set('bc-km', c.km);
-  if(c.litri) set('bc-litri', c.litri);
+  var lEl=document.getElementById('bc-litri');
+  if(lEl && !lEl.dataset.manuale){
+    if(c.litri) lEl.value=c.litri;
+    else if(c.km){
+      var carb=((document.getElementById('bc-carb')||{}).value)||'';
+      var kml=WF_KM_PER_LITRO[carb]||13;
+      lEl.value=String(Math.max(0.5, Math.round(c.km/kml*10)/10));
+    }
+  }
+  try{ wfBuonoRicalcola('litri'); }catch(e){}
 }
 
 function wfTab(t){ _wfTab = (t==='buoni') ? 'buoni' : 'benefit'; wfRender(); }
@@ -13020,10 +13043,19 @@ function wfBuonoAuto(){
   var gg=((document.getElementById('bc-data')||{}).value||'').trim();
   var scelto='', lista=[];
   try{ lista=(typeof mzLoad==='function')?(mzLoad()||[]):[]; }catch(e){ lista=[]; }
+  /* Solo le auto che servono: quelle in magazzino e quelle vendute negli
+     ultimi 31 giorni (si fa ancora benzina per consegnarle). Tutto lo
+     storico rendeva l'elenco illeggibile. */
+  var _rif=gg?Date.parse(gg):Date.now(); if(isNaN(_rif)) _rif=Date.now();
+  var _lim=_rif-31*86400000;
   var buone=lista.filter(function(a){
     if(!a) return false;
     if(!a.targa && !a.modello) return false;
     if(gg && a.dataCarico && String(a.dataCarico)>gg) return false;
+    if(a.stato==='venduta'){
+      var tv=+(a.vendutaTs||(a.dataScarico&&Date.parse(a.dataScarico))||(a.scarico&&a.scarico.dataScarico&&Date.parse(a.scarico.dataScarico))||0);
+      if(!tv || tv<_lim) return false;
+    }
     return true;
   });
   buone.sort(function(a,b){ return String(b.dataCarico||'').localeCompare(String(a.dataCarico||'')); });
@@ -13070,15 +13102,42 @@ function wfBuoniAggiungi(){
   }catch(e){}
 
   var arr=wfBuoni();
-  arr.push({ id:'bc'+Date.now(), data:data, importo:imp, km:km, litri:litri,
+  var _bid='bc'+Date.now();
+  arr.push({ id:_bid, data:data, importo:imp, km:km, litri:litri,
              carburante:carb, prezzoLitro:prezzo,
              causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
              creato:Date.now() });
   wfBuoniScrivi(arr);
+  /* ===== TRASFERTA AUTOMATICA =====
+     Un buono con partenza e destinazione diverse (navetta Paderno-Bovisio,
+     carrozzeria fuori sede...) e' uno spostamento fuori sede di chi ha
+     guidato: la trasferta di quel giorno si registra da sola nella sua
+     scheda Fringe benefit e trasferte, una sola per persona e per giorno. */
+  try{ wfTrasfertaDaBuono({ id:_bid, data:data, partenza:da, destinazione:a, chi:chi, auto:auto, causale:caus, km:km }); }catch(e){ console.error('trasferta da buono', e); }
   wfBuoniRender();
   return true;
 }
 
+function wfTrasfertaDaBuono(b){
+  if(!b || !b.chi || !b.data) return;
+  var da=String(b.partenza||'').trim(), a=String(b.destinazione||'').trim();
+  if(!da || !a || da.toLowerCase()===a.toLowerCase()) return;   /* non e' uno spostamento */
+  var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
+  if(!p) return;
+  var k=p.chiave, rec=wfDati(k); rec.trasferte=rec.trasferte||[];
+  /* una sola trasferta per persona e per giorno */
+  if(rec.trasferte.some(function(t){ return t.giorno===b.data; })) return;
+  /* indennita': l'ultima usata da questa persona, altrimenti 0 da completare */
+  var ind=0; rec.trasferte.slice().sort(function(x,y){ return (y.ts||0)-(x.ts||0); }).some(function(t){ if(t.indennita>0){ ind=t.indennita; return true; } return false; });
+  rec.trasferte.push({
+    data: wfDataIt(b.data)+' \u00b7 '+da+' \u2192 '+a, giorno:b.data, uscita:'', rientro:'', auto:b.auto||null,
+    mese: parseInt(b.data.slice(5,7),10)-1,
+    giorni:1, indennita:Math.round(ind*100)/100, estero:false, coperto:'',
+    note:'da buono carburante'+(b.km?(' \u00b7 '+b.km+' km'):''), buonoId:b.id, ts:Date.now()
+  });
+  wfScrivi(k, rec);
+  if(typeof tcToastNew==='function') tcToastNew('Trasferta del '+wfDataIt(b.data)+' registrata per '+p.nome+(ind>0?'':' (indennit\u00e0 da compilare)'), true);
+}
 function wfBuoniElimina(id){
   if(!confirm('Cancellare questo buono?')) return;
   wfBuoniScrivi(wfBuoni().filter(function(x){ return String(x.id)!==String(id); }));
@@ -13120,16 +13179,16 @@ function wfBuoniRender(){
     +'<option value="">\u2014 carburante \u2014</option><option value="benzina">Benzina</option><option value="gasolio">Diesel</option><option value="gpl">GPL</option><option value="metano">Metano</option></select>'
     +'</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
-    +'<input id="bc-litri" type="number" step="0.1" min="0" placeholder="litri" oninput="wfBuonoRicalcola(\'litri\')" style="flex:0 1 90px;'+inp+'">'
+    +'<input id="bc-litri" type="number" step="0.1" min="0" placeholder="litri" oninput="wfBuonoManuale(\'bc-litri\');wfBuonoRicalcola(\'litri\')" style="flex:0 1 90px;'+inp+'">'
     +'<input id="bc-prezzo" type="text" inputmode="decimal" placeholder="\u20ac/litro" oninput="wfBuonoManuale(\'bc-prezzo\');wfBuonoRicalcola(\'prezzo\')" style="flex:0 1 95px;'+inp+'">'
     +'<span id="bc-prezzo-nota" style="flex:1 1 180px;font-size:11px;color:#64748b;"></span>'
     +'<input id="bc-imp" type="number" step="0.01" min="0" placeholder="importo \u20ac" oninput="wfBuonoManuale(\'bc-imp\')" style="flex:0 1 110px;'+inp+'">'
-    +'<input id="bc-km" type="number" step="1" min="0" placeholder="km" style="flex:0 1 80px;'+inp+'">'
+    +'<input id="bc-km" type="number" step="1" min="0" placeholder="km" oninput="wfBuonoManuale(\'bc-km\')" style="flex:0 1 80px;'+inp+'">'
     +'</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
     +'<select id="bc-causale" onchange="wfCausaleScelta()" style="flex:1 1 220px;'+inp+'">'+opzCaus+'</select>'
-    +'<input id="bc-da" type="text" placeholder="partenza" style="flex:1 1 160px;'+inp+'">'
-    +'<input id="bc-a" type="text" placeholder="destinazione" style="flex:1 1 160px;'+inp+'">'
+    +'<input id="bc-da" type="text" placeholder="partenza" oninput="wfBuonoManuale(\'bc-da\')" style="flex:1 1 160px;'+inp+'">'
+    +'<input id="bc-a" type="text" placeholder="destinazione" oninput="wfBuonoManuale(\'bc-a\')" style="flex:1 1 160px;'+inp+'">'
     +'<select id="bc-chi" style="flex:1 1 150px;'+inp+'">'+opzChi+'</select>'
     +'<input id="bc-note" type="text" placeholder="note (es. carrozzeria)" style="flex:1 1 150px;'+inp+'">'
     +'<button onclick="wfBuoniAggiungi()" style="flex:0 0 auto;padding:9px 16px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Aggiungi</button>'
@@ -18037,6 +18096,9 @@ function sinDocInit(){
 function sinMancanti(s){
   var m=[];
   if(!s) return m;
+  /* riguarda solo le pratiche nuove, ancora in attesa di apertura: quelle
+     gia' avviate sono vecchie e non vanno segnate */
+  if((s.stato||'attesa_apertura')!=='attesa_apertura') return m;
   if(!String(s.compagnia||'').trim()) m.push('compagnia');
   if(!String(s.finanziaria||'').trim()) m.push('finanziaria');
   /* data e luogo dell'evento servono solo per la grandine (la compagnia
@@ -18437,29 +18499,23 @@ function sinInviaConcordato(id){
 function sinBannerIncassi(all){
   try{
     var n=function(v){ var x=parseFloat(String(v==null?'':v).replace(',','.')); return isNaN(x)?0:x; };
-    if(_sinTab==='attesa_apertura') return '';   /* qui non serve */
-    /* Aperto, in lavorazione e concluso (in concordato, non ancora
-       concordato): vale il totale del PREVENTIVO. In attesa di saldo: il
-       concordato. Integrazione: l'importo dell'integrazione. */
-    var prev=0,nPrev=0,senza=0, saldo=0,nSaldo=0, integ=0,nInteg=0;
-    (all||[]).forEach(function(s){
-      if(!s) return;
-      var st=s.stato||'attesa_apertura';
-      if(st==='aperto'||st==='lavorazione'||st==='concluso'){ if(n(s.preventivoTotale)>0){ prev+=n(s.preventivoTotale); nPrev++; } else senza++; }
-      else if(st==='saldo'){ saldo+=n(s.importoConcordato); nSaldo++; }
-      else if(st==='integrazione'){ integ+=n(s.importoIntegrazione); nInteg++; }
-    });
-    var tot=prev+saldo+integ;
-    if(!nPrev && !senza && !nSaldo && !nInteg) return '';
-    var voce=function(lab,imp,num){ return '<span style="white-space:nowrap;"><span style="color:#64748b;">'+lab+' ('+num+')</span> <b>\u20ac '+sinFmtEuro(imp)+'</b></span>'; };
-    return '<div style="margin:0 2px 12px;padding:12px 14px;background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">'
-      +'<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;letter-spacing:.04em;">\ud83d\udcb6 Da incassare dalle compagnie</span>'
-      +'<span style="font-size:22px;font-weight:900;color:#15803d;">\u20ac '+sinFmtEuro(tot)+'</span></div>'
-      +'<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin-top:6px;">'
-      +voce('Aperte / in lavorazione / concluse (preventivi)',prev,nPrev)+voce('In attesa di saldo (concordato)',saldo,nSaldo)+(nInteg?voce('In attesa di integrazione',integ,nInteg):'')
-      +(senza?('<span style="color:#b45309;font-weight:700;white-space:nowrap;">\u26a0 '+senza+' pratic'+(senza===1?'a':'he')+' senza preventivo</span>'):'')
-      +'</div><div style="font-size:10.5px;color:#64748b;margin-top:4px;">Totali dei preventivi finch\u00e9 non c\u2019\u00e8 il concordato, poi il concordato; IVA inclusa.</div></div>';
+    /* Solo in due schede, ognuna col SUO totale:
+       - Concluso / in concordato: la somma dei preventivi (il concordato
+         non c'e' ancora);
+       - In attesa di saldo: la somma dei concordati. */
+    var lab, tot=0, num=0;
+    if(_sinTab==='concluso'){
+      lab='Concluse / in concordato \u00b7 totale dei preventivi';
+      (all||[]).forEach(function(s){ if(s && s.stato==='concluso' && n(s.preventivoTotale)>0){ tot+=n(s.preventivoTotale); num++; } });
+    } else if(_sinTab==='saldo'){
+      lab='In attesa di saldo \u00b7 totale dei concordati';
+      (all||[]).forEach(function(s){ if(s && s.stato==='saldo' && n(s.importoConcordato)>0){ tot+=n(s.importoConcordato); num++; } });
+    } else return '';
+    if(!num) return '';
+    return '<div style="margin:0 2px 12px;padding:12px 14px;background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border:1px solid #bbf7d0;border-radius:10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">'
+      +'<span><span style="font-size:11px;font-weight:800;text-transform:uppercase;color:#166534;letter-spacing:.04em;">\ud83d\udcb6 Da incassare dalle compagnie</span>'
+      +'<div style="font-size:12px;color:#64748b;margin-top:2px;">'+lab+' ('+num+') \u00b7 IVA inclusa</div></span>'
+      +'<span style="font-size:22px;font-weight:900;color:#15803d;">\u20ac '+sinFmtEuro(tot)+'</span></div>';
   }catch(e){ return ''; }
 }
 function sinFmtEuro(n){ try{ return Number(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return n; } }
