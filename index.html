@@ -6899,7 +6899,9 @@ function pSottoPrezzo(cv){
        vettura venduta in perdita risulterebbe in guadagno.
        Si usa quindi il prezzo scritto sul contratto, meno lo sconto concesso:
        e' quello che incassiamo davvero. */
-    var lordo=(typeof cvNum==='function'?cvNum(cv.prezzo):0);
+    /* il campo sul contratto e' prezzoVendita (cv.prezzo non esiste: per
+       questo la regola dei 500 euro non scattava mai) */
+    var lordo=(typeof cvNum==='function'?cvNum(cv.prezzoVendita!=null?cv.prezzoVendita:cv.prezzo):0);
     if(cv.scontoOn) lordo -= (typeof cvNum==='function'?cvNum(cv.scontoImporto):0);
     if(lordo<=0) return null;
 
@@ -7404,7 +7406,10 @@ function pProvvAuto(cv){
           var _rif=cv.contrattoTs||cv.consegnatoTs||Date.now();
           var _gg=Math.floor((_rif-_dd.getTime())/(1000*60*60*24));
           e.giacenzaGg=_gg;
-          if(_gg>180){ e.sotto='SI'; e.sottoAuto=true; }
+          /* seconda strada: margine sotto i 500 euro sul prezzo di contratto */
+          var _pz=(typeof pSottoPrezzo==='function')?pSottoPrezzo(cv):null;
+          if(_gg>180){ e.sotto='SI'; e.sottoAuto=true; e.sottoPerche='giacenza '+_gg+' gg'; }
+          else if(_pz && _pz.sotto){ e.sotto='SI'; e.sottoAuto=true; e.sottoPerche='margine '+Math.round(_pz.margine)+' \u20ac'; }
           else e.sotto=e.sotto||'NO';
         }catch(_x){ e.sotto=e.sotto||'NO'; }
       })();
@@ -9045,7 +9050,18 @@ function pRenderReg() {
        a mano (sottoForzato / sottoManuale): la riga si colora e l'etichetta
        dice da dove viene. */
     var _sotto = (r.sotto==='SI') || (r.sottoManuale==='SI') || !!(r.sottoForzato && r.sottoForzato.scelto==='SI');
-    var _sottoCome = _sotto ? ((r.sottoForzato && r.sottoForzato.scelto==='SI') || r.sottoManuale==='SI' ? 'forzato a mano' : 'giacenza > 180 gg') : '';
+    var _sottoCome = _sotto ? ((r.sottoForzato && r.sottoForzato.scelto==='SI') || r.sottoManuale==='SI' ? 'forzato a mano' : (r.sottoPerche||'giacenza > 180 gg')) : '';
+    /* rivalutato dal contratto (giacenza > 180 gg o margine < 500 euro),
+       salvo che il titolare l'abbia forzato a provvigione piena */
+    var _forzatoNo = !!(r.sottoForzato && r.sottoForzato.scelto==='NO');
+    if(!_sotto && !_forzatoNo && r.cvId && typeof cvById==='function'){
+      try{
+        var _cvS=cvById(r.cvId);
+        var _ggS=_cvS?pGiacenzaVeicolo(_cvS):null, _pzS=_cvS?pSottoPrezzo(_cvS):null;
+        if(_ggS!==null && _ggS>180){ _sotto=true; _sottoCome='giacenza '+_ggS+' gg'; }
+        else if(_pzS && _pzS.sotto){ _sotto=true; _sottoCome='margine '+Math.round(_pzS.margine)+' \u20ac (< 500)'; }
+      }catch(e){}
+    }
     var tipoLabel = r.tipo==='attesa'?'In attesa delibera':(r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato'));
     if(_sotto) tipoLabel = '<span style="color:#9a3412;font-weight:800;">\u26a0 Sottocosto</span><br><span style="font-size:10px;color:#b45309;">'+_sottoCome+'</span>';
     var tanC  = isFin?(r.tan ?r.tan +'%':'—'):'—';
