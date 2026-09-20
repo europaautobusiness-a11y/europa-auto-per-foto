@@ -24985,6 +24985,21 @@ function cvAutoSel(){ var sel=document.getElementById('cv_auto'); var a=(typeof 
    stampate le condizioni del pacchetto (Parametri). */
 /* pacchetto "nella rata": importo del pacchetto quando la promo e' attiva
    e il pacchetto non e' una riga dei costi ma va nel finanziamento */
+/* listino sbarrato: quello del preventivo o della scheda auto, solo se
+   piu' alto del prezzo di vendita */
+function cvListinoDaMostrare(c, prezzo){
+  try{
+    var l=(c.listinoOn && cvNum(c.listino))?cvNum(c.listino):0;
+    if(!l){ var am=(c.autoId&&typeof mzById==='function')?mzById(c.autoId):null; l=cvNum((am&&am.listino)||(c.autoSnapshot&&c.autoSnapshot.listino)||0); }
+    return (l>0 && l>cvNum(prezzo))?l:0;
+  }catch(e){ return 0; }
+}
+/* con la promo il prezzo di partenza si chiama cosi', per non confonderlo
+   con quello scontato */
+function cvEtichettaPrezzo(c){
+  var promo=!!(c && ((c.promoVincolata && !c.promoVincolata.tolta) || (c.scontoOn && /promo/i.test(String(c.scontoDesc||'')))));
+  return promo ? 'Prezzo di vendita' : 'Prezzo vendita';
+}
 function cvPacchettoRata(c){
   try{
     var pv=c&&c.promoVincolata; if(!pv || pv.tolta) return 0;
@@ -25591,7 +25606,8 @@ function cvLive(){
   if(_vista==='A'){
     /* Contabile: prima si forma l'imponibile, poi cio' che si aggiunge al
        prezzo, e in fondo tutto quello che il cliente ha gia' dato. */
-    h+=r('Prezzo vendita',t.prezzo);
+    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
+    h+=r(cvEtichettaPrezzo(_cv),t.prezzo);
     if(_cv.legge104On){ h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); }
     h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
     if(!_cv.legge104On && _cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto);
@@ -25637,13 +25653,14 @@ function cvLive(){
     h+=r('Saldo dovuto',t.saldoDovuto,true);
   } else {
     /* Commerciale: la lettura di sempre, invariata. */
-    h+=r('Prezzo vendita',t.prezzo);
+    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
+    h+=r(cvEtichettaPrezzo(_cv),t.prezzo);
     if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
     h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
     _extra();
     if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
     h+=r('Totale vendita',t.totaleVendita,true);
-    if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r(cvEtichettaTotale(_cv),t.totaleScontato,true); }
+    if(!_cv.legge104On && _cv.scontoOn && t.sconto){ h+=(/promo/i.test(String(_cv.scontoDesc||''))?'<div style="font-weight:800;">':'')+neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto)+(/promo/i.test(String(_cv.scontoDesc||''))?'</div>':''); h+=r(cvEtichettaTotale(_cv),t.totaleScontato,true); }
     if(t.pacchettoRata){ h+=r('Pacchetto manutenzione '+((_cv.promoVincolata&&_cv.promoVincolata.pacchettoAnni)||'')+' anni \u2014 nella rata',t.pacchettoRata); h+=r('Da coprire con i pagamenti',t.totIncasso,true); }
     _pagamenti();
     h+=r('Saldo dovuto',t.daSaldare,true);
@@ -27341,10 +27358,9 @@ function cvBuildHTML(c, tipo){
   /* prezzo di listino sbarrato come prima voce: quello scritto nel
      preventivo oppure, se manca, quello della scheda dell'auto; si stampa
      solo se e' piu' alto del prezzo di vendita */
-  var _lst=(c.listinoOn && cvNum(c.listino))?cvNum(c.listino):0;
-  if(!_lst){ try{ var _am=(c.autoId&&typeof mzById==='function')?mzById(c.autoId):null; _lst=cvNum((_am&&_am.listino)||(c.autoSnapshot&&c.autoSnapshot.listino)||0); }catch(e){} }
-  if(_lst>0 && _lst>cvNum(t.prezzo)) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(_lst)+'</div></div>';
-  doc+=row('Prezzo vendita',t.prezzo);
+  var _lst=cvListinoDaMostrare(c,t.prezzo);
+  if(_lst>0) doc+='<div class="cvrow" style="text-decoration:line-through;color:#94a3b8;"><div>Prezzo di listino</div><div class="amt" style="text-decoration:line-through;color:#94a3b8;">'+cvEuro(_lst)+'</div></div>';
+  doc+=row(cvEtichettaPrezzo(c),t.prezzo);
   if(c.legge104On){ if(c.scontoOn && t.sconto) doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true); doc+=row('Imponibile Legge 104', t.imponibile104)+row('IVA agevolata 4%', t.iva104)+row('Totale (escluso passaggio)', t.veicolo); }
   doc+=row(cvPassaggioEtichetta(c,'lunga'),t.passaggio);
   if(c.assicOn && cvNum(c.assicImporto)>0) doc+=row('Assicurazione',t.assic);
@@ -27362,7 +27378,7 @@ function cvBuildHTML(c, tipo){
   });
   if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
   doc+=row('Totale vendita',t.totaleVendita,'sub');
-  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,'',true)+row(cvEtichettaTotale(c),t.totaleScontato,'sub'); }
+  if(!c.legge104On && c.scontoOn && t.sconto){ doc+=row(cvEsc(c.scontoDesc||'Sconto'),t.sconto,(/promo/i.test(String(c.scontoDesc||''))?'sub':''),true)+row(cvEtichettaTotale(c),t.totaleScontato,'sub'); }
   /* pacchetto nella rata: NESSUNA riga fra i costi; se ne parla solo nella
      clausola in fondo (vedi riquadro pacchetto) */
   var _pagAll=cvPagIncasso(c.pagamenti).filter(function(x){return cvNum(x.importo);});
@@ -37115,7 +37131,8 @@ function cvRiepSolaLettura(cv){
       return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>';
     };
     var h='';
-    h+=r('Prezzo vendita',t.prezzo);
+    (function(){ var _l=cvListinoDaMostrare(cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
+    h+=r(cvEtichettaPrezzo(cv),t.prezzo);
     h+=r(cvPassaggioEtichetta(cv),t.passaggio);
     if(t.gar) h+=r('Garanzia',t.gar);
     if(cv.assicOn && cvNum(cv.assicImporto)>0) h+=r('Assicurazione',t.assic);
