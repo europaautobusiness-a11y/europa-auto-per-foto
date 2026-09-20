@@ -13159,14 +13159,23 @@ function wfBuoniAggiungi(){
 }
 
 function wfTrasfertaDaBuono(b){
-  if(!b || !b.chi || !b.data) return;
+  var avv=function(m){ try{ if(typeof tcToastNew==='function') tcToastNew(m,false); }catch(e){} };
+  if(!b || !b.data) return;
+  if(!b.chi){ avv('Trasferta non registrata: manca chi ha guidato'); return; }
   var da=String(b.partenza||'').trim(), a=String(b.destinazione||'').trim();
-  if(!da || !a || da.toLowerCase()===a.toLowerCase()) return;   /* non e' uno spostamento */
+  var navetta=/^nav_/.test(String(b.causale||''));
+  /* e' uno spostamento se c'e' una destinazione diversa dalla partenza,
+     oppure se la causale e' una navetta fra sedi */
+  var sposta = navetta || (a && a.toLowerCase()!==da.toLowerCase());
+  if(!sposta){ avv('Trasferta non registrata: nessuna destinazione fuori sede'); return; }
+  if(!a){ var _c=(typeof wfCausale==='function')?wfCausale(b.causale):null; if(_c){ da=da||_c.da||''; a=_c.a||''; } }
   var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
-  if(!p) return;
+  if(!p){ avv('Trasferta non registrata: '+b.chi+' non \u00e8 fra le persone del welfare'); return; }
+  /* la scheda welfare e' per anno: la trasferta va nell'anno del buono */
+  if(String(b.data).slice(0,4)!==String(wfAnno())){ avv('Trasferta non registrata: il buono \u00e8 di un altro anno'); return; }
   var k=p.chiave, rec=wfDati(k); rec.trasferte=rec.trasferte||[];
   /* una sola trasferta per persona e per giorno */
-  if(rec.trasferte.some(function(t){ return t.giorno===b.data; })) return;
+  if(rec.trasferte.some(function(t){ return t.giorno===b.data; })){ avv('Trasferta del '+wfDataIt(b.data)+' gi\u00e0 registrata per '+p.nome); return; }
   /* indennita': l'ultima usata da questa persona, altrimenti 0 da completare */
   var ind=0; rec.trasferte.slice().sort(function(x,y){ return (y.ts||0)-(x.ts||0); }).some(function(t){ if(t.indennita>0){ ind=t.indennita; return true; } return false; });
   rec.trasferte.push({
@@ -25166,6 +25175,11 @@ function cvPagMetodo(i, val){
     var sc=document.getElementById('cv_scontoOn'); if(sc) sc.checked=true;
     var sbox=document.getElementById('cv-sconto-box'); if(sbox) sbox.style.display='block';
     var sd=document.getElementById('cv_scontoDesc'); if(sd && !sd.value.trim()) sd.value=_cv.scontoDesc;
+    /* con la promo il confronto delle soluzioni in stampa e' acceso di
+       default (si puo' sempre spegnere a mano) */
+    _cv.confrontoOn=true;
+    var cf=document.getElementById('cv_confrontoOn'); if(cf) cf.checked=true;
+    var cbox=document.getElementById('cv-confronto-box'); if(cbox) cbox.style.display='block';
   }
   if(typeof cvRenderPag==='function') cvRenderPag();
   cvLive();
