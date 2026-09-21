@@ -16138,6 +16138,11 @@ document.addEventListener('DOMContentLoaded',function(){
   +         '<textarea id="cc-nota" list="cc-interventi-list" placeholder="Es. tagliando, pastiglie freni, spia motore accesa…"></textarea>'
   +         '<div style="font-size:10px;color:#94a3b8;margin-top:3px;">Obbligatorio: \u00e8 quello che finisce sulla fattura e nello storico del veicolo.</div>'
   +         '<div id="cc-nota-sugg" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;"></div>'
+  /* buono sconto 20%: si segna sull'appuntamento cosi' chi apre il
+     calendario sa gia' che sulla fattura va applicato */
+  +         '<label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:700;margin-top:8px;color:#9a3412;">'
+  +           '<input type="checkbox" id="cc-buono20" style="width:17px;height:17px;">'
+  +           '<span>\ud83c\udf9f Il cliente ha il buono sconto 20% sul tagliando</span></label>'
   +       '</div>'
   +       '<div class="cc-inserito" id="cc-inserito"></div>'
   +       '<button class="cc-btn cc-btn-primary" id="cc-salva" style="width:100%">Salva appuntamento</button>'
@@ -16341,6 +16346,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if(interv.length>42) interv=interv.slice(0,40)+'\u2026';
       var titolo=(isTask?'\u2705 ':(ti[0]+' '))+(c.titolo||(isTask?'Task':'Appuntamento'))
         +(interv?(' \u00b7 '+interv):'')
+        +(c.buono20?' \u00b7 \ud83c\udf9f BUONO 20%':'')
         +((function(){ var _dn=ccNomeDip(c); return _dn?(' \u00b7 '+_dn):''; })());
       var ev={ id:c.id, title:titolo, backgroundColor:col, borderColor:col, textColor:'#fff', extendedProps:{ds:c.data} };
       var ora=(c.ora||'').trim();
@@ -16827,6 +16833,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var tipoLbl = c.categoria==='task' ? '\u2705 Task' : (c.tipo==='intervento'?'\ud83d\udd27 Intervento su auto':(c.tipo==='vendita'?('\ud83e\udd1d Appuntamento vendita'+(c.bovisio?' \u00b7 \ud83d\ude97 veicolo da Bovisio':'')):(false?'':'\ud83d\udcc5 Appuntamento')));
     var rows='<div style="font-size:13px;color:#475569;margin-bottom:8px;">'+tipoLbl+' \u00b7 '+ccEsc(quando)+'</div>';
     if(c.veicolo) rows+='<div style="font-size:13px;margin:5px 0;"><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</div>';
+    if(c.buono20) rows+='<div style="font-size:13px;margin:6px 0;padding:7px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#9a3412;font-weight:800;">\ud83c\udf9f Buono sconto 20% sul tagliando: da applicare in fattura</div>';
     /* Fattura tagliando: solo sugli interventi su auto */
     if((c.tipo||'')==='intervento'){
       var _ft=c.fatturaTag||{};
@@ -16905,6 +16912,7 @@ document.addEventListener('DOMContentLoaded',function(){
         if(g('cc-data')) g('cc-data').value=c.data||'';
         if(g('cc-veicolo')) g('cc-veicolo').value=c.veicolo||'';
         if(g('cc-bovisio')) g('cc-bovisio').checked=!!c.bovisio;
+        if(g('cc-buono20')) g('cc-buono20').checked=!!c.buono20;
         if(g('cc-testdrive')) g('cc-testdrive').checked=!!c.testDrive;
         if(g('cc-nota')) g('cc-nota').value=c.nota||'';
         if(g('cc-tipo')) g('cc-tipo').value=c.tipo||'intervento';
@@ -16990,6 +16998,7 @@ document.addEventListener('DOMContentLoaded',function(){
       veicolo: ((document.getElementById('cc-veicolo')||{}).value||'').trim(), durata: parseInt(((document.getElementById('cc-durata')||{}).value)||'0',10)||0,
       ricorda: ricorda,
       nota: document.getElementById('cc-nota').value.trim(),
+      buono20: !!((tipo!=='vendita') && (document.getElementById('cc-buono20')||{}).checked),
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
     };
     /* ===== IL PROMEMORIA AL CLIENTE NON E' QUI, E' SU SUPABASE =====
@@ -17053,6 +17062,7 @@ document.addEventListener('DOMContentLoaded',function(){
       eaInviaMessaggio({ to:email, subject:'Conferma appuntamento \u2014 Europa Auto', html:(typeof eaMailWrap==='function'?eaMailWrap(_acHtml):_acHtml), text:_acText });
     }catch(e){} }
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
+    try{ var _b20=document.getElementById('cc-buono20'); if(_b20) _b20.checked=false; }catch(e){}
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
     try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo+(c.dipNome?(' \u2014 '+c.dipNome):''), '\u2705', (c.dipEmail?{tipo:'task_new', refId:c.id, per:c.dipEmail}:null));
@@ -27594,7 +27604,6 @@ function cvBuildHTML(c, tipo){
         'Tagliando annuale: cambio olio motore e filtri (olio, aria, abitacolo, carburante) secondo il piano del costruttore',
         'Freni: verifica, manutenzione e sostituzione secondo il piano del costruttore',
         'Liquidi: olio freni, paraflu (liquido di raffreddamento), servosterzo e lavavetri, con sostituzione alle scadenze del costruttore',
-        'Filtro antiparticolato / AdBlue: controllo e rabbocco (dove presenti)',
         'Cinghie servizi e candele secondo il piano del costruttore',
         'Spazzole tergicristallo',
         'Controllo e rabbocco livelli, pressione e usura pneumatici, luci e climatizzatore a ogni tagliando',
@@ -27607,7 +27616,7 @@ function cvBuildHTML(c, tipo){
         +'<div style="flex:1;min-width:0;"><div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div><div class="cvbox" style="height:calc(100% - 26px);box-sizing:border-box;">'+_assHtml+'</div></div>'
         +'<div style="flex:1;min-width:0;"><div class="cvh">Pacchetto manutenzione &mdash; '+(_pkAnni*12)+' mesi</div><div class="cvbox" style="height:calc(100% - 26px);box-sizing:border-box;">'
           +'<ul style="margin:0;padding-left:18px;">'+_pkVoci.map(function(v){ return '<li style="margin:2px 0;">'+cvEsc(v)+'</li>'; }).join('')+'</ul>'
-          +'<div style="margin-top:6px;font-size:9px;color:#64748b;">'+cvEsc(_pkEscl)+'</div></div></div>'
+          +'</div></div>'
         +'</div>';
     } else {
       doc+='<div class="cvh">Assicurazione'+(c.assicMesi?(' &mdash; '+cvEsc(c.assicMesi)+' mesi'):'')+'</div>';
@@ -27677,7 +27686,9 @@ function cvBuildHTML(c, tipo){
   try{
     var _pm=(c.costiExtra||[]).filter(function(x){ return x && (x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||''))); })[0];
     if(!_pm && t.pacchettoRata) _pm={ importo:t.pacchettoRata, anni:(c.promoVincolata&&c.promoVincolata.pacchettoAnni)||'', rata:true };
-    if(_pm && !_cvDetailView){
+    /* nel preventivo le clausole del pacchetto non si stampano: solo in
+       proposta d'acquisto e contratto */
+    if(_pm && !_cvDetailView && tipo!=='preventivo'){
       var _pmT=(typeof parLoad==='function')?(parLoad().pacchettoManut||''):'';
       if(_pmT){
         var _pmDove2=(typeof parLoad==='function')?(parLoad().pacchettoManutDove||'condizioni'):'condizioni';
@@ -39320,7 +39331,10 @@ function crmPaccBtn(chiave, nome, tel){
    solo chi guarda la scheda. */
 var WA_MOD_KEY='ea_wa_modelli_v1';
 var WA_MOD_DEF={
-  consegnate: { nome:'crm_man_sconto20', lingua:'it', conNome:true, conScadenza:true, urlDinamico:true, giorni:7 }
+  consegnate: { nome:'crm_man_sconto20', lingua:'it', conNome:true, conScadenza:true, urlDinamico:true, giorni:7 },
+  /* promemoria due giorni prima della scadenza del buono: stessa data e
+     stesso link dell'offerta gia' mandata */
+  promemoria: { nome:'crm_man_promemoria', lingua:'it', conNome:true, conScadenza:true, urlDinamico:true, giorni:2 }
 };
 /* Il numero non appartiene al singolo modello ma a tutto l'invio: sta a
    parte, cosi' vale anche per i messaggi che aggiungeremo dopo. */
@@ -39411,6 +39425,19 @@ function waModBox(){
     +'<div style="flex-basis:100%;font-size:11px;color:#94a3b8;">'
     +'Il nome tecnico come sta su Meta, non il titolo. Se il testo del modello non ha nessuna variabile, '
     +'lascia la casella vuota: mandare un nome a un modello che non lo aspetta lo fa rifiutare.</div>'
+    /* modello del promemoria di scadenza */
+    +(function(){ var p=waMod('promemoria'); return ''
+      +'<div style="flex-basis:100%;margin-top:8px;padding-top:8px;border-top:1px dashed #e2e8f0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+      +'<div style="font-size:12px;color:#64748b;flex:0 0 auto;">\u23f0 Modello del promemoria di scadenza</div>'
+      +'<input id="wamod-promemoria" value="'+crmEsc(p.nome)+'" placeholder="crm_man_promemoria" onchange="waModSalvaProm()" onblur="waModSalvaProm()" '
+      +'style="flex:1;min-width:170px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;">'
+      +'<input id="wamod-promemoria-lng" value="'+crmEsc(p.lingua)+'" onchange="waModSalvaProm()" onblur="waModSalvaProm()" '
+      +'style="width:56px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;text-align:center;">'
+      +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;"><input type="checkbox" id="wamod-promemoria-nome"'+(p.conNome?' checked':'')+' onchange="waModSalvaProm()" style="width:16px;height:16px;">Contiene <b style="font-family:monospace;">{{1}}</b> nome</label>'
+      +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;"><input type="checkbox" id="wamod-promemoria-scad"'+(p.conScadenza?' checked':'')+' onchange="waModSalvaProm()" style="width:16px;height:16px;">\u2026e <b style="font-family:monospace;">{{2}}</b> data di scadenza</label>'
+      +'<label style="flex-basis:100%;display:flex;align-items:center;gap:7px;font-size:12px;color:#475569;cursor:pointer;"><input type="checkbox" id="wamod-promemoria-dyn"'+(p.urlDinamico?' checked':'')+' onchange="waModSalvaProm()" style="width:16px;height:16px;">Pulsante con URL dinamico (stesso link dell\u2019offerta)</label>'
+      +'<div style="flex-basis:100%;font-size:11px;color:#94a3b8;">Il pulsante \u201cPromemoria scadenza\u201d nella scheda del cliente diventa arancione nei due giorni prima della scadenza del buono.</div>'
+      +'</div>'; })()
     /* ===== DA QUALE NUMERO SI SCRIVE =====
        Deve stare in vista mentre si manda, non sepolto in un'impostazione:
        mandare un'offerta vera dal numero di prova non arriva a nessuno, e
@@ -39428,6 +39455,13 @@ function waModBox(){
         : 'Arrivano solo ai destinatari abilitati in Meta. Agli altri non arriva niente.')
     +'</div></div>'
     +'</div>';
+}
+function waModSalvaProm(){
+  var n=document.getElementById('wamod-promemoria'); if(!n) return;
+  var l=document.getElementById('wamod-promemoria-lng'), v=document.getElementById('wamod-promemoria-nome'),
+      sc=document.getElementById('wamod-promemoria-scad'), dy=document.getElementById('wamod-promemoria-dyn');
+  waModSet('promemoria', n.value, (l?l.value:'it'), (v?v.checked:false), (sc?sc.checked:false), (dy?dy.checked:false), 2);
+  if(typeof tcToastNew==='function') tcToastNew('\u2713 Modello promemoria salvato', true);
 }
 function waModSalva(annuncia){
   var n=document.getElementById('wamod-consegnate'),
@@ -39506,7 +39540,7 @@ function crmOffertaModello(cvId, nome, tel){
         +'destinatari abilitati.');
     }
     if(r && r.ok){
-      crmSegnaInviato(cvId, m.nome);
+      crmSegnaInviato(cvId, m.nome, _sc);
       if(typeof tcToastNew==='function') tcToastNew('\u2713 Messaggio inviato a '+primo, true);
     } else {
       var msg=String((r&&r.errore)||'non inviato');
@@ -39543,9 +39577,56 @@ function crmOffertaModello(cvId, nome, tel){
     alert('Server non raggiungibile: il messaggio non \u00e8 partito.');
   });
 }
+/* ===== PROMEMORIA DUE GIORNI PRIMA DELLA SCADENZA =====
+   Al cliente che ha ricevuto l'offerta ma non ha prenotato si rimanda un
+   messaggio breve, con la stessa data di scadenza e lo stesso link. */
+function crmOffertaScadenza(cv){
+  if(!cv || !cv.crmOffertaTs) return null;
+  var ts=cv.crmOffertaScadTs;
+  if(!ts){ var g=waMod('consegnate').giorni||7; var d=new Date(cv.crmOffertaTs); d.setDate(d.getDate()+g); d.setHours(23,59,59,999); ts=d.getTime(); }
+  var z=function(n){ return String(n).padStart(2,'0'); }; var dd=new Date(ts);
+  return { ts:ts, data:dd, codice:cv.crmOffertaCodice||('wa'+dd.getFullYear()+z(dd.getMonth()+1)+z(dd.getDate())) };
+}
+function crmPromemoriaModello(cvId, nome, tel){
+  var m=waMod('promemoria');
+  if(!m.nome){ alert('Non \u00e8 indicato il modello del promemoria: scrivilo nel riquadro in cima alle auto consegnate.'); return; }
+  var cv=(typeof cvById==='function')?cvById(cvId):null;
+  var sc=crmOffertaScadenza(cv);
+  if(!sc){ alert('A questo cliente l\u2019offerta non risulta ancora inviata.'); return; }
+  var t=crmWa(tel);
+  if(!t){ alert('Questo cliente non ha un numero di telefono.'); return; }
+  if(!/^39\d{9,10}$/.test(t)){ alert('Il numero di questo cliente non sembra un cellulare italiano valido: '+String(tel||'')+'\n\nCorreggilo nella scheda cliente e riprova.'); return; }
+  var primo=String(nome||'').trim().split(/\s+/)[0]||'Cliente';
+  if(!confirm('Mandare il promemoria \u201c'+m.nome+'\u201d a '+primo+'?\n\n'
+    +'Numero: +'+t+'\n'
+    +'Si scrive dal: '+(waNumVero()?'numero di Europa Auto':'numero di PROVA')+'\n'
+    +'Il buono scade il '+prnDataEstesa(sc.data)+'\n'
+    +'\nParte subito da WhatsApp Business e non si pu\u00f2 richiamare indietro.')) return;
+  if(typeof waApiInvia!=='function'){ alert('Modulo WhatsApp non disponibile.'); return; }
+  if(typeof tcToastNew==='function') tcToastNew('Invio in corso a '+primo+'\u2026', true);
+  var _dati={ to:t, template:m.nome, lingua:m.lingua, vero:waNumVero() };
+  var _vars=[];
+  if(m.conNome)     _vars.push(primo);
+  if(m.conScadenza) _vars.push(prnDataBreve(sc.data));
+  if(_vars.length)  _dati.variabili=_vars;
+  if(m.urlDinamico){ _dati.suffisso=sc.codice; _dati.indicePulsante='0'; }
+  waApiInvia(_dati).then(function(r){
+    if(r && r.ok){
+      try{ cv.crmPromemoriaTs=Date.now(); cv.crmPromemoriaDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||''); crmSalvaCv(cv); if(typeof crmRender==='function') crmRender(); }catch(e){}
+      if(typeof tcToastNew==='function') tcToastNew('\u2713 Promemoria inviato a '+primo, true);
+    } else {
+      var msg=String((r&&r.errore)||'non inviato');
+      var spiega='';
+      if(/132001|does not exist|not found/i.test(msg)) spiega='\n\nIl modello \u201c'+m.nome+'\u201d non risulta a Meta con questo nome o lingua: controlla il nome tecnico su WhatsApp Manager.';
+      else if(/not.*approved|pending|in review/i.test(msg)) spiega='\n\nIl modello non \u00e8 ancora approvato da Meta.';
+      else if(/132000|number of parameters/i.test(msg)) spiega='\n\nIl modello su Meta non ha lo stesso numero di variabili che gli mandiamo: controlla le spunte {{1}} / {{2}} / URL dinamico del promemoria.';
+      alert('Il promemoria non \u00e8 partito.\n\n'+msg+spiega);
+    }
+  }, function(){ alert('Server non raggiungibile: il promemoria non \u00e8 partito.'); });
+}
 /* Ottanta clienti da contattare a mano: senza un segno si perde il conto e
    qualcuno lo si scrive due volte. */
-function crmSegnaInviato(cvId, modello){
+function crmSegnaInviato(cvId, modello, sc){
   try{
     var cv=(typeof cvById==='function')?cvById(cvId):null;
     if(!cv){ cv=cvLoad().filter(function(x){ return x.id===cvId; })[0]; }
@@ -39553,6 +39634,9 @@ function crmSegnaInviato(cvId, modello){
     cv.crmOffertaTs=Date.now();
     cv.crmOffertaModello=modello||'';
     cv.crmOffertaDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||'');
+    /* scadenza del buono e coda del link: il promemoria li riusa uguali */
+    if(sc){ cv.crmOffertaScadTs=sc.ts; cv.crmOffertaCodice=sc.codice; }
+    cv.crmPromemoriaTs=null;
     crmSalvaCv(cv);
     if(typeof crmRender==='function') crmRender();
   }catch(e){}
@@ -39588,12 +39672,31 @@ function crmOffModBtn(cv, nome, tel){
   if(ts && !_vecchia){
     var d=new Date(ts);
     var q=('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2);
+    /* promemoria: arancione nei due giorni prima della scadenza, grigio
+       prima, spento dopo la scadenza o se gia' mandato */
+    var _sc=crmOffertaScadenza(cv), _prom='';
+    if(_sc){
+      var _gg=Math.ceil((_sc.ts-Date.now())/86400000);
+      var _qs=('0'+_sc.data.getDate()).slice(-2)+'/'+('0'+(_sc.data.getMonth()+1)).slice(-2);
+      if(cv.crmPromemoriaTs){
+        var dp=new Date(cv.crmPromemoriaTs);
+        _prom='<div style="font-size:11px;color:#16a34a;font-weight:700;margin-top:5px;">\u2713 Promemoria inviato il '+('0'+dp.getDate()).slice(-2)+'/'+('0'+(dp.getMonth()+1)).slice(-2)+'</div>';
+      } else if(_gg<0){
+        _prom='<div style="font-size:11px;color:#94a3b8;margin-top:5px;">buono scaduto il '+_qs+'</div>';
+      } else {
+        var _caldo=(_gg<=2);
+        _prom='<button onclick="crmPromemoriaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
+          +'style="width:100%;margin-top:6px;padding:7px;border-radius:7px;border:1px solid '+(_caldo?'#f97316':'#cbd5e1')+';'
+          +'background:'+(_caldo?'#fff7ed':'#fff')+';color:'+(_caldo?'#9a3412':'#64748b')+';font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;">'
+          +'\u23f0 Promemoria scadenza \u2014 scade il '+_qs+(_caldo?' ('+(_gg<=0?'oggi':(_gg+' gg'))+')':'')+'</button>';
+      }
+    }
     return '<div style="display:flex;align-items:center;gap:7px;margin-top:8px;">'
       +'<div style="flex:1;font-size:11.5px;color:#16a34a;font-weight:700;">\u2713 Offerta inviata il '+q
       +(cv.crmOffertaDa?(' da '+crmEsc(cv.crmOffertaDa)):'')+'</div>'
       +'<button onclick="crmOffertaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
       +'style="flex:0 0 auto;padding:5px 9px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#64748b;'
-      +'font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Rimanda</button></div>';
+      +'font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Rimanda</button></div>'+_prom;
   }
   var _notaVecchia='';
   if(_vecchia){
