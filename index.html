@@ -24194,11 +24194,17 @@ function waMsgSupaLoad(){
    ottenevano 21 cifre incollate e non partiva nulla. Si prende il PRIMO
    cellulare valido (10 cifre che iniziano con 3, o con +39 davanti). */
 function waPrimoNumero(tel){
-  var s=String(tel||'');
-  var m=s.match(/(?:\+?\s*39\s*)?3\d(?:[\s.\-]?\d){8}/g);
-  if(m && m.length) return m[0];
-  var parti=s.split(/[\/,;|]|\s+(?:e|o|oppure)\s+|\s{2,}/i).map(function(x){ return x.trim(); }).filter(Boolean);
-  return parti[0]||s;
+  var raw=String(tel||'');
+  /* prefisso internazionale scritto esplicitamente (+39, 0039) */
+  var conPref=/^\s*(?:\+|00)\s*39/.test(raw);
+  var d=raw.replace(/\D/g,'');            /* via spazi, punti, trattini, parentesi */
+  if(conPref) d=d.replace(/^0*39/,'');
+  /* primo cellulare: 10 cifre che iniziano con 3 (o fisso: 0 + 8-10 cifre) */
+  var m=d.match(/3\d{9}/);
+  if(m) return m[0];
+  var f=d.match(/0\d{8,10}/);
+  if(f) return f[0];
+  return d;
 }
 function waNumero(tel){ tel=waPrimoNumero(tel); var d=String(tel||'').replace(/\D/g,''); if(!d) return ''; if(d.slice(0,4)==='0039') d=d.slice(2); if(d.slice(0,2)==='39' && d.length>=12) return d; if(d.charAt(0)==='3') return '39'+d; return d; }
 function waFill(tmpl,d){ return String(tmpl||'').replace(/\{nome\}/g,d.nome||'').replace(/\{data\}/g,d.data||'').replace(/\{ora\}/g,d.ora||'').replace(/\{auto\}/g,d.auto||'').replace(/\{scadenza\}/g,d.scadenza||''); }
@@ -39025,7 +39031,7 @@ function crmInit(){ crmSupaLoad();
 function crmMesiDa(ts){ if(!ts) return 0; return Math.floor((Date.now()-ts)/(1000*60*60*24*30.44)); }
 function crmDMY(ts){ if(!ts) return '—'; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
 function crmAddMesi(ts, m){ var d=new Date(ts); d.setMonth(d.getMonth()+(parseInt(m,10)||0)); return d.getTime(); }
-function crmWa(tel){ var t=((typeof waPrimoNumero==='function')?waPrimoNumero(tel):(tel||'')).replace(/[^0-9]/g,''); if(!t) return ''; if(t.slice(0,4)==='0039') t=t.slice(2); if(t.indexOf('39')!==0 && t.length<=10) t='39'+t; return t; }
+function crmWa(tel){ var t=((typeof waPrimoNumero==='function')?waPrimoNumero(tel):(tel||'')).replace(/[^0-9]/g,''); if(!t) return ''; if(t.slice(0,4)==='0039') t=t.slice(2); /* un cellulare italiano ha 10 cifre: il prefisso 39 si aggiunge sempre (anche a chi inizia per 39x, come 392) */ if(t.length<=11) t='39'+t; return t; }
 function crmOfferta(nome, tel, email, auto){
   var scad=new Date(Date.now()+48*3600*1000);
   var scadStr=('0'+scad.getDate()).slice(-2)+'/'+('0'+(scad.getMonth()+1)).slice(-2)+' ore '+('0'+scad.getHours()).slice(-2)+':'+('0'+scad.getMinutes()).slice(-2);
@@ -39588,6 +39594,14 @@ function crmOffertaScadenza(cv){
   var z=function(n){ return String(n).padStart(2,'0'); }; var dd=new Date(ts);
   return { ts:ts, data:dd, codice:cv.crmOffertaCodice||('wa'+dd.getFullYear()+z(dd.getMonth()+1)+z(dd.getDate())) };
 }
+/* giorni di CALENDARIO fra oggi e la scadenza: il buono che scade il 23
+   visto il 21 vale 2, e il promemoria va mandato il 21 */
+function crmGgScadenza(sc){
+  if(!sc) return null;
+  var oggi=new Date(); oggi.setHours(0,0,0,0);
+  var fine=new Date(sc.ts); fine.setHours(0,0,0,0);
+  return Math.round((fine.getTime()-oggi.getTime())/86400000);
+}
 function crmPromemoriaModello(cvId, nome, tel){
   var m=waMod('promemoria');
   if(!m.nome){ alert('Non \u00e8 indicato il modello del promemoria: scrivilo nel riquadro in cima alle auto consegnate.'); return; }
@@ -39677,7 +39691,7 @@ function crmOffModBtn(cv, nome, tel){
        prima, spento dopo la scadenza o se gia' mandato */
     var _sc=crmOffertaScadenza(cv), _prom='';
     if(_sc){
-      var _gg=Math.ceil((_sc.ts-Date.now())/86400000);
+      var _gg=crmGgScadenza(_sc);
       var _qs=('0'+_sc.data.getDate()).slice(-2)+'/'+('0'+(_sc.data.getMonth()+1)).slice(-2);
       if(cv.crmPromemoriaTs){
         var dp=new Date(cv.crmPromemoriaTs);
@@ -39686,10 +39700,10 @@ function crmOffModBtn(cv, nome, tel){
         _prom='<div style="font-size:11px;color:#94a3b8;margin-top:5px;">buono scaduto il '+_qs+'</div>';
       } else {
         var _caldo=(_gg<=2);
-        _prom='<button onclick="crmPromemoriaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" '
-          +'style="width:100%;margin-top:6px;padding:'+(_caldo?'9px':'7px')+';border-radius:7px;border:'+(_caldo?'none':'1px solid #cbd5e1')+';'
-          +'background:'+(_caldo?'#f97316':'#fff')+';color:'+(_caldo?'#fff':'#64748b')+';font-family:inherit;font-weight:800;font-size:'+(_caldo?'12.5px':'11.5px')+';cursor:pointer;'+(_caldo?'box-shadow:0 2px 6px rgba(249,115,22,.4);':'')+'">'
-          +(_caldo?('\u23f0 SCADE '+(_gg<=0?'OGGI':(_gg===1?'DOMANI':'FRA 2 GIORNI'))+' \u2014 manda il promemoria'):('\u23f0 Promemoria scadenza \u2014 scade il '+_qs))+'</button>';
+        _prom='<button onclick="crmPromemoriaModello('+jq(cv.id)+','+jq(nome)+','+jq(tel)+')" class="'+(_caldo?'crm-pulsa':'')+'" '
+          +'style="width:100%;margin-top:6px;padding:'+(_caldo?'10px':'7px')+';border-radius:7px;border:'+(_caldo?'none':'1px solid #cbd5e1')+';'
+          +'background:'+(_caldo?'#dc2626':'#fff')+';color:'+(_caldo?'#fff':'#64748b')+';font-family:inherit;font-weight:900;font-size:'+(_caldo?'13px':'11.5px')+';cursor:pointer;">'
+          +(_caldo?('\ud83d\udd34 SCADE '+(_gg<=0?'OGGI':(_gg===1?'DOMANI':'IL '+_qs))+' \u2014 MANDA IL PROMEMORIA ORA'):('\u23f0 Promemoria scadenza \u2014 scade il '+_qs))+'</button>';
       }
     }
     return '<div style="display:flex;align-items:center;gap:7px;margin-top:8px;">'
@@ -40877,12 +40891,13 @@ function crmRenderConsegnate(){
 
   var totale=perFascia.reduce(function(n,arr){ return n+arr.length; },0);
   var _inScadTot=0;
-  perFascia.forEach(function(arr){ arr.forEach(function(cv){ var sc=crmOffertaScadenza(cv); if(sc && !cv.crmPromemoriaTs){ var d=sc.ts-Date.now(); if(d>=0 && d<=2*86400000) _inScadTot++; } }); });
+  perFascia.forEach(function(arr){ arr.forEach(function(cv){ var sc=crmOffertaScadenza(cv); if(sc && !cv.crmPromemoriaTs){ var g=crmGgScadenza(sc); if(g!==null && g>=0 && g<=2) _inScadTot++; } }); });
 
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:'+(fuoriTot?'6px':'12px')+';">'
     +'<b>'+totale+'</b> da contattare adesso \u00b7 divise per anniversario di consegna \u00b7 archivio totale '+tutte.length+' consegne</div>';
   h+=waModBox();
-  if(_inScadTot) h+='<div style="margin:0 0 12px;padding:10px 14px;background:#f97316;color:#fff;border-radius:10px;font-weight:800;font-size:13.5px;">\u23f0 '+_inScadTot+' buon'+(_inScadTot===1?'o':'i')+' in scadenza entro 48 ore senza promemoria: le schede sono evidenziate in arancione.</div>';
+  if(_inScadTot) h+='<div class="crm-pulsa" style="margin:0 0 12px;padding:10px 14px;background:#dc2626;color:#fff;border-radius:10px;font-weight:900;font-size:13.5px;">\ud83d\udd34 '+_inScadTot+' buon'+(_inScadTot===1?'o':'i')+' in scadenza entro 2 giorni: il promemoria va mandato OGGI. Le schede lampeggiano in rosso.</div>';
+  if(!document.getElementById('crm-pulsa-css')){ var _st=document.createElement('style'); _st.id='crm-pulsa-css'; _st.textContent='@keyframes crmPulsa{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}50%{box-shadow:0 0 0 8px rgba(220,38,38,0);}} .crm-pulsa{animation:crmPulsa 1.4s ease-in-out infinite;} .crm-pulsa-bordo{animation:crmPulsa 1.4s ease-in-out infinite;}'; document.head.appendChild(_st); }
   if(fuoriTot){
     var _zb=function(val, testo){
       var on=(_crmConsZona===val);
@@ -40923,8 +40938,9 @@ function crmRenderConsegnate(){
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var d=cv.consegnatoTs?new Date(cv.consegnatoTs):null;
     var _scad=(typeof crmOffertaScadenza==='function')?crmOffertaScadenza(cv):null;
-    var _inScad=!!(_scad && !cv.crmPromemoriaTs && (_scad.ts-Date.now())<=2*86400000 && (_scad.ts-Date.now())>=0);
-    var b='<div style="background:'+(_inScad?'#fff7ed':'#fff')+';border:'+(_inScad?'2px solid #f97316':'1px solid #e2e8f0')+';border-left:4px solid '+(_inScad?'#f97316':colore)+';border-radius:12px;padding:12px;margin-bottom:9px;">'
+    var _ggS=_scad?crmGgScadenza(_scad):null;
+    var _inScad=!!(_scad && !cv.crmPromemoriaTs && _ggS!==null && _ggS>=0 && _ggS<=2);
+    var b='<div class="'+(_inScad?'crm-pulsa-bordo':'')+'" style="background:'+(_inScad?'#fef2f2':'#fff')+';border:'+(_inScad?'2px solid #dc2626':'1px solid #e2e8f0')+';border-left:4px solid '+(_inScad?'#dc2626':colore)+';border-radius:12px;padding:12px;margin-bottom:9px;">'
       +'<div style="font-weight:800;font-size:14px;">'+crmEsc(((cl.cognome||'')+' '+(cl.nome||'')).trim())+'</div>'
       +'<div style="font-size:12px;color:#64748b;margin-top:2px;">\ud83d\ude97 '+crmEsc((a.modello||cv.autoDesc||''))
       + (a.targa?(' \u00b7 '+crmEsc(a.targa)):'')+'</div>'
