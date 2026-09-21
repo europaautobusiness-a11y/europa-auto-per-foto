@@ -12445,6 +12445,18 @@ function wfScrivi(k, rec){
   tutto[a]=tutto[a]||{}; tutto[a][k]=rec; tutto.updatedAt=Date.now();
   wfSave(tutto);
 }
+/* stesse funzioni ma per un anno qualsiasi (per riallineare i mesi passati) */
+function wfDatiAnno(k, anno){
+  var tutto=wfLoad(); var a=String(anno||wfAnno());
+  tutto[a]=tutto[a]||{};
+  tutto[a][k]=tutto[a][k]||{ figli:false, figliData:'', figliNote:'', voci:[] };
+  return tutto[a][k];
+}
+function wfScriviAnno(k, rec, anno){
+  var tutto=wfLoad(); var a=String(anno||wfAnno());
+  tutto[a]=tutto[a]||{}; tutto[a][k]=rec; tutto.updatedAt=Date.now();
+  wfSave(tutto);
+}
 function wfSoglia(rec){ return rec && rec.figli ? WF_SOGLIA_FIGLI : WF_SOGLIA_BASE; }
 function wfErogato(rec){
   return ((rec&&rec.voci)||[]).reduce(function(s,v){ return s + (Number(v.importo)||0); }, 0);
@@ -13142,11 +13154,24 @@ function wfBuoniAggiungi(){
   }catch(e){}
 
   var arr=wfBuoni();
-  var _bid='bc'+Date.now();
-  arr.push({ id:_bid, data:data, importo:imp, km:km, litri:litri,
-             carburante:carb, prezzoLitro:prezzo,
-             causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
-             creato:Date.now() });
+  var _bid=null;
+  if(window._wfBuonoEdit){
+    /* modifica di un buono esistente: si riscrive la stessa riga */
+    for(var i=0;i<arr.length;i++){ if(arr[i] && arr[i].id===window._wfBuonoEdit){
+      _bid=arr[i].id;
+      arr[i]={ id:_bid, data:data, importo:imp, km:km, litri:litri, carburante:carb, prezzoLitro:prezzo,
+               causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
+               creato:arr[i].creato||Date.now(), modificato:Date.now() };
+      break; } }
+    window._wfBuonoEdit=null;
+  }
+  if(!_bid){
+    _bid='bc'+Date.now();
+    arr.push({ id:_bid, data:data, importo:imp, km:km, litri:litri,
+               carburante:carb, prezzoLitro:prezzo,
+               causale:caus, partenza:da, destinazione:a, chi:chi, note:note, auto:auto,
+               creato:Date.now() });
+  }
   wfBuoniScrivi(arr);
   /* ===== TRASFERTA AUTOMATICA =====
      Un buono con partenza e destinazione diverse (navetta Paderno-Bovisio,
@@ -13172,8 +13197,8 @@ function wfTrasfertaDaBuono(b){
   var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
   if(!p){ avv('Trasferta non registrata: '+b.chi+' non \u00e8 fra le persone del welfare'); return; }
   /* la scheda welfare e' per anno: la trasferta va nell'anno del buono */
-  if(String(b.data).slice(0,4)!==String(wfAnno())){ avv('Trasferta non registrata: il buono \u00e8 di un altro anno'); return; }
-  var k=p.chiave, rec=wfDati(k); rec.trasferte=rec.trasferte||[];
+  var annoB=String(b.data).slice(0,4);
+  var k=p.chiave, rec=wfDatiAnno(k, annoB); rec.trasferte=rec.trasferte||[];
   /* una sola trasferta per persona e per giorno */
   if(rec.trasferte.some(function(t){ return t.giorno===b.data; })){ avv('Trasferta del '+wfDataIt(b.data)+' gi\u00e0 registrata per '+p.nome); return; }
   /* indennita': l'ultima usata da questa persona, altrimenti 0 da completare */
@@ -13184,9 +13209,52 @@ function wfTrasfertaDaBuono(b){
     giorni:1, indennita:Math.round(ind*100)/100, estero:false, coperto:'',
     note:'da buono carburante'+(b.km?(' \u00b7 '+b.km+' km'):''), buonoId:b.id, ts:Date.now()
   });
-  wfScrivi(k, rec);
-  if(typeof tcToastNew==='function') tcToastNew('Trasferta del '+wfDataIt(b.data)+' registrata per '+p.nome+(ind>0?'':' (indennit\u00e0 da compilare)'), true);
+  wfScriviAnno(k, rec, annoB);
+  if(!b._silenzioso && typeof tcToastNew==='function') tcToastNew('Trasferta del '+wfDataIt(b.data)+' registrata per '+p.nome+(ind>0?'':' (indennit\u00e0 da compilare)'), true);
+  return true;
 }
+/* ===== RIALLINEA LE TRASFERTE DAI BUONI GIA' REGISTRATI =====
+   Per i buoni inseriti prima che la trasferta nascesse da sola: si passa
+   tutto lo storico e si crea quello che manca, una trasferta per persona
+   e per giorno. Si puo' lanciare quante volte si vuole: non duplica. */
+function wfTrasferteRiallinea(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  var buoni=wfBuoni(); var fatte=0, saltati=[];
+  buoni.slice().sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); }).forEach(function(b){
+    if(!b || !b.chi || !b.data) return;
+    var da=String(b.partenza||'').trim(), a=String(b.destinazione||'').trim();
+    var navetta=/^nav_/.test(String(b.causale||''));
+    if(!(navetta || (a && a.toLowerCase()!==da.toLowerCase()))) return;
+    var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
+    if(!p){ if(saltati.indexOf(b.chi)<0) saltati.push(b.chi); return; }
+    var rec=wfDatiAnno(p.chiave, String(b.data).slice(0,4));
+    if((rec.trasferte||[]).some(function(t){ return t.giorno===b.data; })) return;
+    var ok=wfTrasfertaDaBuono({ id:b.id, data:b.data, partenza:da, destinazione:a, chi:b.chi, auto:b.auto, causale:b.causale, km:b.km, _silenzioso:true });
+    if(ok) fatte++;
+  });
+  alert('Trasferte create dai buoni: '+fatte+(saltati.length?('\n\nNon riconosciuti come persone del welfare: '+saltati.join(', ')):'')+'\n\nLe trovi nelle schede Fringe benefit e trasferte, anno per anno. L\u2019indennit\u00e0 delle nuove righe \u00e8 quella gi\u00e0 usata da ciascuno: dove manca, va scritta a mano.');
+  try{ wfRender(); }catch(e){}
+}
+/* ===== MODIFICA DI UN BUONO =====
+   "modifica" sulla riga porta il buono nel modulo in alto; Salva riscrive
+   la stessa riga (stesso id, cosi' su Supabase si aggiorna e non si
+   duplica). */
+function wfBuonoModifica(id){
+  var b=wfBuoni().filter(function(x){ return x && x.id===id; })[0]; if(!b) return;
+  window._wfBuonoEdit=id;
+  var set=function(k,v){ var e=document.getElementById(k); if(e){ e.value=(v==null?'':v); e.dataset.manuale='1'; } };
+  set('bc-data', b.data); set('bc-carb', b.carburante||''); set('bc-prezzo', b.prezzoLitro||'');
+  set('bc-litri', b.litri||''); set('bc-imp', b.importo||''); set('bc-km', b.km||'');
+  set('bc-causale', b.causale||''); set('bc-da', b.partenza||''); set('bc-a', b.destinazione||'');
+  set('bc-chi', b.chi||''); set('bc-note', b.note||'');
+  var hid=document.getElementById('bc-auto'), txt=document.getElementById('bc-auto-txt');
+  if(hid) hid.value=(b.auto&&b.auto.id)||'';
+  if(txt) txt.value=b.auto?(((b.auto.targa||'')+' \u00b7 '+((b.auto.marca||'')+' '+(b.auto.modello||'')).trim()).replace(/^ \u00b7 /,'')):'';
+  var btn=document.getElementById('bc-salva'); if(btn){ btn.textContent='Salva modifiche'; btn.style.background='#b45309'; }
+  var ann=document.getElementById('bc-annulla'); if(ann) ann.style.display='';
+  try{ document.getElementById('bc-data').scrollIntoView({behavior:'smooth',block:'center'}); }catch(e){}
+}
+function wfBuonoAnnullaModifica(){ window._wfBuonoEdit=null; wfBuoniRender(); }
 function wfBuoniElimina(id){
   if(!confirm('Cancellare questo buono?')) return;
   wfBuoniScrivi(wfBuoni().filter(function(x){ return String(x.id)!==String(id); }));
@@ -13218,7 +13286,9 @@ function wfBuoniRender(){
     + wfSchede()
 
     +'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:14px;">'
-    +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:10px;">NUOVO BUONO</div>'
+    +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><span>NUOVO BUONO</span>'
+    +((typeof getCurrentRole==='function' && getCurrentRole()==='admin')?'<button type="button" onclick="wfTrasferteRiallinea()" style="font-size:11px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;cursor:pointer;">\u2708\ufe0f Crea le trasferte mancanti dai buoni</button>':'')
+    +'</div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
     +'<input id="bc-data" type="date" title="giorno del rifornimento" onchange="wfBuonoAuto();wfBuonoRicalcola(\'data\')" style="flex:1 1 140px;'+inp+'">'
     +'<input id="bc-auto-txt" list="bc-auto-list" autocomplete="off" placeholder="targa o modello, bastano 3 lettere" title="veicolo rifornito" onfocus="wfBuonoAuto()" oninput="wfBuonoAutoScelta()" onchange="wfBuonoAutoScelta()" style="flex:2 1 220px;'+inp+'">'
@@ -13240,7 +13310,8 @@ function wfBuoniRender(){
     +'<input id="bc-a" type="text" placeholder="destinazione" oninput="wfBuonoManuale(\'bc-a\')" style="flex:1 1 160px;'+inp+'">'
     +'<select id="bc-chi" style="flex:1 1 150px;'+inp+'">'+opzChi+'</select>'
     +'<input id="bc-note" type="text" placeholder="note (es. carrozzeria)" style="flex:1 1 150px;'+inp+'">'
-    +'<button onclick="wfBuoniAggiungi()" style="flex:0 0 auto;padding:9px 16px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Aggiungi</button>'
+    +'<button id="bc-salva" onclick="wfBuoniAggiungi()" style="flex:0 0 auto;padding:9px 16px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">Aggiungi</button>'
+    +'<button id="bc-annulla" onclick="wfBuonoAnnullaModifica()" style="display:none;flex:0 0 auto;padding:9px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">Annulla modifica</button>'
     +'</div></div>';
 
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">'
@@ -13307,6 +13378,7 @@ function wfBuoniRender(){
         + (x.note?(' \u00b7 '+wfEsc(x.note)):'')+'</div></div>'
         +'<div style="flex:0 0 auto;text-align:right;">'
         +'<div style="font-size:14px;font-weight:800;color:#0f172a;">'+wfEuro(x.importo)+'</div>'
+        +'<button onclick="wfBuonoModifica(\''+wfEsc(x.id)+'\')" style="margin-top:3px;margin-right:10px;background:none;border:none;color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;">\u270e modifica</button>'
         +'<button onclick="wfBuoniElimina(\''+wfEsc(x.id)+'\')" style="margin-top:3px;background:none;border:none;color:#dc2626;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;">\u2715 elimina</button>'
         +'</div></div>';
         });
