@@ -13183,6 +13183,17 @@ function wfBuoniAggiungi(){
   return true;
 }
 
+function wfPersonaDaNome(nome){
+  var n=String(nome||'').trim().toLowerCase(); if(!n) return null;
+  var lista=wfPersone()||[];
+  var esatto=null; lista.forEach(function(x){ if(!esatto && String(x.nome||'').trim().toLowerCase()===n) esatto=x; });
+  if(esatto) return esatto;
+  var parole=n.split(/\s+/).sort().join(' ');
+  var stesso=null; lista.forEach(function(x){ if(!stesso && String(x.nome||'').trim().toLowerCase().split(/\s+/).sort().join(' ')===parole) stesso=x; });
+  if(stesso) return stesso;
+  var parz=lista.filter(function(x){ var xn=String(x.nome||'').toLowerCase(); return xn.indexOf(n)>=0 || n.indexOf(xn)>=0; });
+  return parz.length===1?parz[0]:null;
+}
 function wfTrasfertaDaBuono(b){
   var avv=function(m){ try{ if(typeof tcToastNew==='function') tcToastNew(m,false); }catch(e){} };
   if(!b || !b.data) return;
@@ -13194,7 +13205,7 @@ function wfTrasfertaDaBuono(b){
   var sposta = navetta || (a && a.toLowerCase()!==da.toLowerCase());
   if(!sposta){ avv('Trasferta non registrata: nessuna destinazione fuori sede'); return; }
   if(!a){ var _c=(typeof wfCausale==='function')?wfCausale(b.causale):null; if(_c){ da=da||_c.da||''; a=_c.a||''; } }
-  var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
+  var p=wfPersonaDaNome(b.chi);
   if(!p){ avv('Trasferta non registrata: '+b.chi+' non \u00e8 fra le persone del welfare'); return; }
   /* la scheda welfare e' per anno: la trasferta va nell'anno del buono */
   var annoB=String(b.data).slice(0,4);
@@ -13219,20 +13230,30 @@ function wfTrasfertaDaBuono(b){
    e per giorno. Si puo' lanciare quante volte si vuole: non duplica. */
 function wfTrasferteRiallinea(){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
-  var buoni=wfBuoni(); var fatte=0, saltati=[];
+  var buoni=wfBuoni(); var fatte=0, saltati=[], senzaChi=0, senzaMeta=0, giaPresenti=0, errori=0;
   buoni.slice().sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); }).forEach(function(b){
-    if(!b || !b.chi || !b.data) return;
+    if(!b || !b.data) return;
+    if(!b.chi){ senzaChi++; return; }
     var da=String(b.partenza||'').trim(), a=String(b.destinazione||'').trim();
     var navetta=/^nav_/.test(String(b.causale||''));
-    if(!(navetta || (a && a.toLowerCase()!==da.toLowerCase()))) return;
-    var p=null; (wfPersone()||[]).forEach(function(x){ if(!p && x.nome===b.chi) p=x; });
+    if(!(navetta || (a && a.toLowerCase()!==da.toLowerCase()))){ senzaMeta++; return; }
+    var p=wfPersonaDaNome(b.chi);
     if(!p){ if(saltati.indexOf(b.chi)<0) saltati.push(b.chi); return; }
     var rec=wfDatiAnno(p.chiave, String(b.data).slice(0,4));
-    if((rec.trasferte||[]).some(function(t){ return t.giorno===b.data; })) return;
-    var ok=wfTrasfertaDaBuono({ id:b.id, data:b.data, partenza:da, destinazione:a, chi:b.chi, auto:b.auto, causale:b.causale, km:b.km, _silenzioso:true });
+    if((rec.trasferte||[]).some(function(t){ return t.giorno===b.data; })){ giaPresenti++; return; }
+    var ok=false;
+    try{ ok=wfTrasfertaDaBuono({ id:b.id, data:b.data, partenza:da, destinazione:a, chi:b.chi, auto:b.auto, causale:b.causale, km:b.km, _silenzioso:true }); }
+    catch(e){ errori++; try{ console.error('riallinea trasferte', b, e); }catch(x){} }
     if(ok) fatte++;
   });
-  alert('Trasferte create dai buoni: '+fatte+(saltati.length?('\n\nNon riconosciuti come persone del welfare: '+saltati.join(', ')):'')+'\n\nLe trovi nelle schede Fringe benefit e trasferte, anno per anno. L\u2019indennit\u00e0 delle nuove righe \u00e8 quella gi\u00e0 usata da ciascuno: dove manca, va scritta a mano.');
+  alert('Buoni esaminati: '+buoni.length
+    +'\nTrasferte create: '+fatte
+    +'\nGi\u00e0 presenti (saltate): '+giaPresenti
+    +'\nSenza \u201cchi ha guidato\u201d: '+senzaChi
+    +'\nSenza spostamento fuori sede: '+senzaMeta
+    +(saltati.length?('\nNomi non riconosciuti: '+saltati.join(', ')):'')
+    +(errori?('\nErrori: '+errori+' (vedi console)'):'')
+    +'\n\nLe trasferte sono nelle schede Fringe benefit e trasferte, anno per anno, e sono salvate anche sul cloud.');
   try{ wfRender(); }catch(e){}
 }
 /* ===== MODIFICA DI UN BUONO =====
