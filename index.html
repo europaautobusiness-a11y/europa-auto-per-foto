@@ -22764,9 +22764,20 @@ function mzForm(id){
     +'<input type="checkbox" id="mz_promoOn" '+(_pOn?'checked':'')+' onchange="mzPromoCambio()" style="width:17px;height:17px;cursor:pointer;">'
     +'<span style="font-size:13px;font-weight:800;color:#991b1b;">\uD83D\uDD25 Promo vincolata (prezzo online pi\u00f9 basso, valido solo con pacchetto)</span></label>'
     +'<div id="mz-promo-campi" style="display:'+(_pOn?'block':'none')+';margin-top:8px;">'
+    /* i tre prezzi della promo, collegati fra loro: listino e prezzo di
+       vendita sono quelli della scheda (qui si possono correggere), lo
+       sconto e il prezzo promo si calcolano a vicenda */
+    +'<div style="display:flex;gap:10px;margin-bottom:8px;">'
+    +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo di listino \u20ac (sbarrato)</label>'
+    +'<input type="number" id="mz_promoListino" value="'+v('listino')+'" oninput="mzPromoSync(\'listino\')" placeholder="es. 41900" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
+    +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo di vendita \u20ac (pieno)</label>'
+    +'<input type="number" id="mz_promoVendita" value="'+v('prezzoVen')+'" oninput="mzPromoSync(\'vendita\')" placeholder="es. 33990" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;font-weight:700;box-sizing:border-box;"></div>'
+    +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#991b1b;margin:0 0 3px;text-transform:uppercase;">Sconto finanziamento PROMO \u20ac</label>'
+    +'<input type="number" id="mz_promoSconto" value="'+(function(){ var pv=parseFloat(v('prezzoVen')), pp=parseFloat(v('promoPrezzo')); return (!isNaN(pv)&&!isNaN(pp)&&pv>pp)?Math.round((pv-pp)*100)/100:''; })()+'" oninput="mzPromoSync(\'sconto\')" placeholder="es. 5000" style="width:100%;padding:9px;border:1px solid #fecaca;border-radius:7px;font-family:inherit;font-size:14px;font-weight:800;color:#991b1b;box-sizing:border-box;"></div>'
+    +'</div>'
     +'<div style="display:flex;gap:10px;">'
-    +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo promo \u20ac (quello pubblicato)</label>'
-    +'<input type="number" id="mz_promoPrezzo" value="'+v('promoPrezzo')+'" placeholder="es. 29000" style="width:100%;padding:9px;border:1px solid #fecaca;border-radius:7px;font-family:inherit;font-size:14px;font-weight:800;color:#991b1b;box-sizing:border-box;"></div>'
+    +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Prezzo promo \u20ac (quello pubblicato = vendita \u2212 sconto)</label>'
+    +'<input type="number" id="mz_promoPrezzo" value="'+v('promoPrezzo')+'" oninput="mzPromoSync(\'promo\')" placeholder="es. 29000" style="width:100%;padding:9px;border:1px solid #fecaca;border-radius:7px;font-family:inherit;font-size:14px;font-weight:800;color:#991b1b;box-sizing:border-box;"></div>'
     +'<div style="flex:1;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:0 0 3px;text-transform:uppercase;">Valida fino al (facoltativo)</label>'
     +'<input type="date" id="mz_promoScad" value="'+v('promoScad')+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
     +'</div>'
@@ -22941,15 +22952,35 @@ function mzPromoBadge(a, piccolo){
   var p='\u20ac '+parseFloat(a.promoPrezzo).toLocaleString('it-IT');
   return '<span title="'+mzEsc(a.promoCond||'Promo vincolata a pacchetto')+'" style="display:inline-block;font-size:'+(piccolo?'10px':'11px')+';font-weight:800;background:#dc2626;color:#fff;padding:'+(piccolo?'1px 7px':'2px 9px')+';border-radius:9px;white-space:nowrap;">\uD83D\uDD25 PROMO '+p+' \u00b7 vincolata</span>';
 }
+/* listino e prezzo di vendita nel riquadro promo sono gli stessi campi
+   della scheda; sconto e prezzo promo si ricavano l'uno dall'altro */
+function mzPromoSync(da){
+  try{
+    var g=function(id){ return document.getElementById(id); };
+    var n=function(el){ var x=parseFloat(el&&el.value); return isNaN(x)?null:x; };
+    var li=g('mz_promoListino'), ve=g('mz_promoVendita'), sc=g('mz_promoSconto'), pr=g('mz_promoPrezzo');
+    var liS=g('mz_listino'), veS=g('mz_prezzoVen');
+    if(da==='listino' && liS && li) liS.value=li.value;
+    if(da==='vendita' && veS && ve) veS.value=ve.value;
+    var V=n(ve);
+    if(da==='sconto' || da==='vendita' || da==='listino'){
+      if(V!=null && n(sc)!=null && pr) pr.value=Math.round((V-n(sc))*100)/100;
+    } else if(da==='promo'){
+      if(V!=null && n(pr)!=null && sc) sc.value=Math.round((V-n(pr))*100)/100;
+    }
+  }catch(e){}
+}
 function mzPromoCambio(){
   try{
     var on=!!document.getElementById('mz_promoOn').checked;
+    /* all'accensione i campi prezzo prendono i valori della scheda */
+    if(on){ var a=document.getElementById('mz_listino'), b=document.getElementById('mz_prezzoVen'), c1=document.getElementById('mz_promoListino'), c2=document.getElementById('mz_promoVendita'); if(a&&c1&&!c1.value) c1.value=a.value; if(b&&c2&&!c2.value) c2.value=b.value; mzPromoSync('sconto'); }
     var w=document.getElementById('mz-promo-wrap'), c=document.getElementById('mz-promo-campi');
     if(c) c.style.display=on?'block':'none';
     if(w){ w.style.background=on?'#fef2f2':'#f8fafc'; w.style.borderColor=on?'#fecaca':'#e2e8f0'; }
   }catch(e){}
 }
-try{ window.mzPromoAttiva=mzPromoAttiva; window.mzPromoBadge=mzPromoBadge; window.mzPromoCambio=mzPromoCambio; }catch(e){}
+try{ window.mzPromoAttiva=mzPromoAttiva; window.mzPromoBadge=mzPromoBadge; window.mzPromoCambio=mzPromoCambio; window.mzPromoSync=mzPromoSync; }catch(e){}
 function mzChiudi(){ try{ eaPostoPulisci('mz'); }catch(e){} var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
   try{ var c=document.getElementById('cv-modal'); if(!c || c.style.display!=='block') _eaLivello=10050; }catch(e){} }
 /* "Disponibile" e "impegnata" sono due cose distinte, e il filtro dei
@@ -23105,7 +23136,10 @@ function mzSalva(){
      si scrive una volta, alla creazione, e non si tocca mai piu'. */
   if(!a.dataCarico) a.dataCarico=new Date(a.createdAt||Date.now()).toISOString().slice(0,10);
   var _canPrAcq=mzPuoPrezzoAcq();
-  try{ var _po=document.getElementById('mz_promoOn'); a.promoOn=!!(_po&&_po.checked); }catch(e){}
+  try{ var _po=document.getElementById('mz_promoOn'); a.promoOn=!!(_po&&_po.checked);
+    if(a.promoOn){ var _pl=document.getElementById('mz_promoListino'), _pv=document.getElementById('mz_promoVendita'), _lS=document.getElementById('mz_listino'), _vS=document.getElementById('mz_prezzoVen');
+      if(_pl && _pl.value.trim() && _lS) _lS.value=_pl.value.trim();
+      if(_pv && _pv.value.trim() && _vS) _vS.value=_pv.value.trim(); } }catch(e){}
   try{ var _pfEl=document.getElementById('mz_passaggioForzato'); if(_pfEl) a.passaggioForzato=_pfEl.value.trim(); }catch(e){}
   ['marca','modello','allestimento','targa','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note','dotazioni','etichetta','promoPrezzo','promoScad','promoCond','promoPacchetto','promoPacchettoAnni'].forEach(function(k){ if(k==='prezzoAcq' && !_canPrAcq) return; a[k]=g(k); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
   a.estera=_mzEstera;
