@@ -19101,7 +19101,30 @@ var PV_VOCI=[
   {c:'Meccanica e raffreddamento', v:['Radiatore','Condensatore A/C','Calandra/mascherina','Stemma/logo']},
   {c:'Verniciatura', v:['Verniciatura paraurti','Verniciatura porta','Verniciatura parafango','Verniciatura cofano','Preparazione e fondo','Lucidatura']}
 ];
-function pvVociSet(){ if(pvVociSet._s) return pvVociSet._s; var s={}; PV_VOCI.forEach(function(g){ g.v.forEach(function(x){ s[x]=1; }); }); pvVociSet._s=s; return s; }
+/* ===== GRANDINE =====
+   Sui sinistri da grandine i pannelli non si sostituiscono: si ripara il
+   pannello (levabolli). Le voci di quei ricambi diventano "Costo rip.
+   Parafango ant. Dx grandine" e le voci normali degli stessi pannelli
+   spariscono dalla tendina. Le altre categorie restano. */
+var PV_GRANDINE_GRUPPI={ 'Cofano e parafanghi':1, 'Porte':1, 'Fiancata e montanti':1, 'Portellone e bagagliaio':1, 'Tetto':1 };
+var PV_GRANDINE_ESCLUDI={ 'Lunotto posteriore':1, 'Barre portatutto':1, 'Pannello interno porta':1, 'Passaruota anteriore':1, 'Passaruota posteriore':1 };
+function pvNomeGrandine(x){
+  var n=String(x).replace(/anteriore/gi,'ant.').replace(/posteriore/gi,'post.').replace(/\bSX\b/g,'Sx').replace(/\bDX\b/g,'Dx');
+  return 'Costo rip. '+n+' grandine';
+}
+function pvGrandine(){
+  try{ var s=(_pvId&&typeof sinById==='function')?sinById(_pvId):null; return !!(s && /grandine/i.test(String(s.tipoSinistro||''))); }catch(e){ return false; }
+}
+/* elenco delle voci (gruppi) secondo il tipo di sinistro */
+function pvVociAttive(){
+  if(!pvGrandine()) return PV_VOCI;
+  return PV_VOCI.map(function(g){
+    if(!PV_GRANDINE_GRUPPI[g.c]) return g;
+    return { c:g.c+' (grandine)', v:g.v.filter(function(x){ return !PV_GRANDINE_ESCLUDI[x]; }).map(pvNomeGrandine)
+             .concat(g.v.filter(function(x){ return PV_GRANDINE_ESCLUDI[x]; })) };
+  });
+}
+function pvVociSet(){ if(pvVociSet._s) return pvVociSet._s; var s={}; PV_VOCI.forEach(function(g){ g.v.forEach(function(x){ s[x]=1; s[pvNomeGrandine(x)]=1; }); }); pvVociSet._s=s; return s; }
 function pvIsCustom(r){ return !!(r._cust || (r.descr && !pvVociSet()[r.descr])); }
 function pvVoceSel(i,v){ if(!_pvRighe[i]) return; if(v==='__altro__'){ _pvRighe[i]._cust=true; _pvRighe[i].descr=''; pvRenderRighe(); pvCalc(); return; } _pvRighe[i].descr=v; _pvRighe[i]._cust=false; pvCalc(); }
 function pvVoceLista(i){ if(!_pvRighe[i]) return; _pvRighe[i]._cust=false; _pvRighe[i].descr=''; pvRenderRighe(); pvCalc(); }
@@ -19109,7 +19132,11 @@ function pvVoceSelect(i,r){
   var s='<select onchange="pvVoceSel('+i+',this.value)" style="width:100%;padding:7px 4px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;">';
   s+='<option value="">— scegli voce —</option>';
   s+='<option value="__altro__">✏️ Altro (scrivi a mano)</option>';
-  PV_VOCI.forEach(function(g){ s+='<optgroup label="'+sinEsc(g.c)+'">'; g.v.forEach(function(x){ s+='<option value="'+sinEsc(x)+'"'+(r.descr===x?' selected':'')+'>'+sinEsc(x)+'</option>'; }); s+='</optgroup>'; });
+  var trovata=false;
+  pvVociAttive().forEach(function(g){ s+='<optgroup label="'+sinEsc(g.c)+'">'; g.v.forEach(function(x){ if(r.descr===x) trovata=true; s+='<option value="'+sinEsc(x)+'"'+(r.descr===x?' selected':'')+'>'+sinEsc(x)+'</option>'; }); s+='</optgroup>'; });
+  /* una voce gia' scelta che non e' piu' in elenco (es. preventivo fatto
+     prima di segnare la grandine) resta visibile e selezionata */
+  if(r.descr && !trovata) s+='<optgroup label="Gi\u00e0 nel preventivo"><option value="'+sinEsc(r.descr)+'" selected>'+sinEsc(r.descr)+'</option></optgroup>';
   s+='</select>';
   return s;
 }
@@ -24424,13 +24451,16 @@ function cvCalcola(c){
      era sempre zero e non diceva niente. */
   /* pacchetto manutenzione "nella rata": non e' nel totale del veicolo ma
      va coperto dai pagamenti (dal finanziamento) */
+  /* Il pacchetto "nella rata" NON entra nei pagamenti scritti sul
+     documento: il cliente vede finanziamento 15.000, la finanziaria eroga
+     18.000. Il pacchetto si somma solo nel simulatore e nella delibera. */
   var pacchettoRata=(typeof cvPacchettoRata==='function')?cvPacchettoRata(c):0;
-  var totIncasso=totaleScontato+pacchettoRata;
-  var saldoDovuto=totIncasso-pagTot;
+  var totIncasso=totaleScontato;
+  var saldoDovuto=totaleScontato-pagTot;
   var pagSenzaSaldo=cvPagIncasso(c.pagamenti).reduce(function(s,x){
     return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? 0 : cvNum(x.importo));
   },0);
-  var daSaldare=Math.round((totIncasso-pagSenzaSaldo)*100)/100;
+  var daSaldare=Math.round((totaleScontato-pagSenzaSaldo)*100)/100;
   var saldoInserito=cvPagIncasso(c.pagamenti).reduce(function(s,x){
     return s + (/^saldo$/i.test(String(x.tipo||'').trim()) ? cvNum(x.importo) : 0);
   },0);
@@ -25325,7 +25355,7 @@ function cvAutoSaldo(){
   try{
     if(!_cv || !_cv.pagamenti || !_cv.pagamenti.length) return;
     var pe=document.getElementById('cv_prezzo'); if(pe) _cv.prezzoVendita=pe.value;
-    var t=cvCalcola(_cv); var tot=t.totaleScontato+(t.pacchettoRata||0);
+    var t=cvCalcola(_cv); var tot=t.totaleScontato;
     var idx=-1; for(var i=_cv.pagamenti.length-1;i>=0;i--){ if(_cv.pagamenti[i].tipo==='Saldo'){ idx=i; break; } }
     if(idx<0) idx=_cv.pagamenti.length-1;
     var altri=0; _cv.pagamenti.forEach(function(p,i){ if(i!==idx) altri+=cvNum(p.importo); });
@@ -25644,7 +25674,7 @@ function cvAggiornaSaldo(t){
       if(si<0) return;
       var altri=0;
       _cv.pagamenti.forEach(function(p,i){ if(i!==si) altri+=cvNum(p.importo); });
-      var tot=((t.totaleScontato!=null?t.totaleScontato:t.totaleVendita)||0)+(t.pacchettoRata||0);   /* il pacchetto nella rata si finanzia */
+      var tot=(t.totaleScontato!=null?t.totaleScontato:t.totaleVendita)||0;   /* senza pacchetto: quello va solo nel simulatore */
       var saldo=Math.round((tot-altri)*100)/100;
       if(saldo<0) saldo=0;
       _cv.pagamenti[si].importo=saldo;
@@ -27525,7 +27555,14 @@ function cvBuildHTML(c, tipo){
       /* i dati migliori sono quelli della delibera; in mancanza uso il
          pagamento e, come ultima risorsa, i valori del simulatore. */
       var dl=c.finDelibera||{};
+      /* Importo finanziato SUL DOCUMENTO: senza il pacchetto manutenzione.
+         La delibera (e la finanziaria) hanno 18.000, il cliente legge 15.000. */
+      var _pkFin=(typeof cvPacchettoRata==='function')?cvPacchettoRata(c):0;
       var impFin=cvNum(dl.importoFinanziato)||cvNum(fp.importo)||0;
+      if(_pkFin>0 && cvNum(dl.importoFinanziato)>0){
+        var _fpImp=cvNum(fp.importo);
+        impFin=(_fpImp>0)?_fpImp:Math.max(0,Math.round((impFin-_pkFin)*100)/100);
+      }
       var rata=cvNum(dl.rata)||cvNum(fp.importoRata)||((fp.finDati&&cvNum(fp.finDati.rata))||0);
       var mesi=parseInt(dl.durata,10)||parseInt(fp.rate,10)||((fp.finDati&&parseInt(fp.finDati.durata,10))||0);
       var tan=cvNum(dl.tan)||((fp.finDati&&cvNum(fp.finDati.tan))||0);
