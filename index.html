@@ -911,12 +911,13 @@ html, body{
 <!-- ══ SEZIONE PROVVIGIONI ══ -->
 <style>
 #sin-print{display:none;}
-.pvdoc{font-family:Arial,Helvetica,sans-serif;color:#000;font-size:9px;}
-.pvdoc table{border-collapse:collapse;width:100%;margin-bottom:2px;}
-.pvdoc td,.pvdoc th{border:1px solid #000;padding:2px 4px;vertical-align:top;}
-.pvdoc .tit{text-align:center;font-weight:bold;font-size:11px;padding:4px;}
-.pvdoc .lab{font-size:7px;font-weight:bold;}
-.pvdoc .big{font-weight:bold;font-size:11px;}
+/* stampa a pagina intera, caratteri leggibili (come i preventivi delle carrozzerie) */
+.pvdoc{font-family:Arial,Helvetica,sans-serif;color:#000;font-size:12.5px;}
+.pvdoc table{border-collapse:collapse;width:100%;margin-bottom:3px;}
+.pvdoc td,.pvdoc th{border:1px solid #000;padding:4px 6px;vertical-align:top;}
+.pvdoc .tit{text-align:center;font-weight:bold;font-size:15px;padding:6px;}
+.pvdoc .lab{font-size:9px;font-weight:bold;text-transform:uppercase;}
+.pvdoc .big{font-weight:bold;font-size:14px;}
 .pvdoc .r{text-align:right;} .pvdoc .c{text-align:center;}
 @media print{
   body.sin-printing > *{ display:none !important; }
@@ -12244,6 +12245,19 @@ function wfPersone(){
   if(!_cMic) out.push({ nome:'Michele Basso', chiave:'collab_michelebasso', collab:true, fisso:true });
   return out;
 }
+function wfSpostaOrfane(){
+  try{
+    var sel=document.getElementById('wf-orf-a'); var k=sel&&sel.value; if(!k) return;
+    var tutto=wfLoad(); var a=String(wfAnno()); tutto[a]=tutto[a]||{};
+    var orf=tutto[a]['']; if(!orf) return;
+    var dest=tutto[a][k]||{ figli:false, figliData:'', figliNote:'', voci:[] };
+    dest.voci=(dest.voci||[]).concat(orf.voci||[]);
+    dest.trasferte=(dest.trasferte||[]).concat((orf.trasferte||[]).filter(function(t){ return !(dest.trasferte||[]).some(function(x){ return x.giorno && x.giorno===t.giorno; }); }));
+    if(orf.figli) dest.figli=true;
+    tutto[a][k]=dest; delete tutto[a][''];
+    tutto.updatedAt=Date.now(); wfSave(tutto); wfRender();
+  }catch(e){ alert('Non sono riuscito a spostare: '+(e&&e.message||e)); }
+}
 function wfAggiungiCollab(){
   var nome=prompt('Nome e cognome del collaboratore:');
   if(!nome || !nome.trim()) return;
@@ -12495,9 +12509,29 @@ function wfRender(){
       +'Nessun dipendente in anagrafica. Aggiungili da <b>Presenze</b>.</div></div>';
     wrap.innerHTML=h; return;
   }
+  /* dati registrati in passato senza persona (chiave vuota): si mostrano a
+     parte con un pulsante per assegnarli a chi appartengono */
+  try{
+    var _orf=(wfLoad()[String(wfAnno())]||{})[''];
+    if(_orf && ((_orf.voci||[]).length || (_orf.trasferte||[]).length)){
+      h+='<div style="background:#fff7ed;border:2px solid #f97316;border-radius:12px;padding:14px 16px;margin-bottom:12px;">'
+        +'<div style="font-weight:800;color:#9a3412;">\u26a0 Voci registrate senza persona: '+(_orf.voci||[]).length+' erogazioni, '+(_orf.trasferte||[]).length+' trasferte</div>'
+        +'<div style="font-size:12px;color:#7c2d12;margin:4px 0 8px;">Per un errore le schede salvavano tutto sotto la stessa chiave vuota. Scegli a chi appartengono e spostale.</div>'
+        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><select id="wf-orf-a" style="padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;">'
+        +dip.map(function(d){ return '<option value="'+wfEsc(d.chiave||wfChiave(d))+'">'+wfEsc(d.nome)+'</option>'; }).join('')
+        +'</select><button onclick="wfSpostaOrfane()" style="padding:8px 12px;border-radius:7px;border:none;background:#f97316;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Sposta tutto a questa persona</button></div>'
+        +(_orf.trasferte||[]).slice(0,8).map(function(t){ return '<div style="font-size:12px;color:#7c2d12;margin-top:3px;">\u2708\ufe0f '+wfEsc(t.data||'')+'</div>'; }).join('')
+        +'</div>';
+    }
+  }catch(e){}
 
   dip.forEach(function(d){
-    var k=wfChiave(d), rec=wfDati(k);
+    /* ===== CHIAVE GIUSTA =====
+       wfChiave(d) legge l'email, ma le persone del welfare hanno solo
+       "chiave": veniva '' per tutti, e ogni scheda leggeva lo stesso record
+       vuoto. Le trasferte create dai buoni (salvate sotto la chiave vera)
+       risultavano invisibili. */
+    var k=d.chiave||wfChiave(d), rec=wfDati(k);
     var soglia=wfSoglia(rec), erog=wfErogato(rec), res=soglia-erog;
     var perc=Math.min(100, soglia>0 ? Math.round(erog/soglia*100) : 0);
     var col = res<0 ? '#dc2626' : (perc>=85 ? '#d97706' : '#16a34a');
@@ -13588,10 +13622,10 @@ function wfTogliVoce(k, idx){
 /* Riepilogo da girare allo studio paghe: i fringe benefit devono comparire in
    busta, quindi chi le elabora deve saperlo. */
 function wfRiepilogo(){
-  var dip=(typeof tcLoadDip==='function')?tcLoadDip():[];
+  var dip=wfPersone();
   var righe=[], tot=0;
   dip.forEach(function(d){
-    var k=wfChiave(d); if(!k) return;
+    var k=d.chiave||wfChiave(d); if(!k) return;
     var rec=wfDati(k), e=wfErogato(rec);
     if(!(e>0)) return;
     righe.push(d.nome+' \u2014 soglia '+wfEuro(wfSoglia(rec))+', erogato '+wfEuro(e));
@@ -19243,7 +19277,9 @@ function pvConferma(){
 function pvDocHtml(){
   var t=pvCompute(); var rh='';
   _pvRighe.forEach(function(r){ rh+='<tr><td class="c">'+sinEsc(r.cr)+'</td><td>'+sinEsc(r.descr)+'</td><td class="c">'+(r.sr?sinEsc(r.sr):'')+'</td><td class="c">'+(r.la?sinEsc(r.la):'')+'</td><td class="c">'+(r.ve?sinEsc(r.ve):'')+'</td><td class="c">'+(r.me?sinEsc(r.me):'')+'</td><td class="r">'+(r.ric?pvEu(pvN(r.ric)):'')+'</td></tr>'; });
-  for(var k=_pvRighe.length;k<18;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
+  /* righe vuote di riempimento: bastano per arrivare a 16, col carattere
+     piu' grande la pagina e' gia' piena */
+  for(var k=_pvRighe.length;k<16;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
   var doc='<div class="pvdoc"><table><tr><td colspan="7" class="tit">DESCRIZIONE DELL\'INTERVENTO RIPARATIVO</td></tr></table>'
   +'<table><tr><td colspan="3"><div class="lab">RAGIONE SOCIALE CARROZZERIA</div><div class="big">EUROPA AUTO SRL</div>Via Nigra 4 - 20037 Paderno Dugnano (MI)</td>'
   +'<td colspan="2"><div class="lab">Cod. Fisc.</div>06440210968<br><div class="lab">Tel.</div>3337107403</td>'
@@ -24295,9 +24331,16 @@ function clDocPratiche(c){
     if(!ids.length){ el.innerHTML=''; return; }
     var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ el.innerHTML=''; return; }
     el.innerHTML='<div style="font-size:12px;color:#94a3b8;">Caricamento documenti delle vendite\u2026</div>';
-    sb.from('documenti').select('*').eq('entita_tipo','pratica').in('entita_id', ids)
-      .order('created_at',{ascending:false}).then(function(r){
-      if(r.error || !r.data || !r.data.length){ el.innerHTML=''; return; }
+    /* i documenti "ponte" (libretto nuovo intestato, minivoltura) vengono
+       caricati sulla scheda del VEICOLO: qui si raccolgono anche quelli,
+       per i veicoli delle pratiche del cliente */
+    var autoIds=[], autoCv={};
+    ids.forEach(function(id){ var cv=byId[id]; if(cv && cv.autoId){ var a=String(cv.autoId); if(autoIds.indexOf(a)<0) autoIds.push(a); autoCv[a]=cv; } });
+    var q1=sb.from('documenti').select('*').eq('entita_tipo','pratica').in('entita_id', ids).order('created_at',{ascending:false});
+    var q2=autoIds.length ? sb.from('documenti').select('*').eq('entita_tipo','veicolo').in('entita_id', autoIds).in('categoria', DOC_CAT_PONTE).order('created_at',{ascending:false}) : Promise.resolve({data:[]});
+    Promise.all([q1,q2]).then(function(rr){
+      var r={ data:[].concat((rr[0]&&rr[0].data)||[], ((rr[1]&&rr[1].data)||[]).map(function(d){ d._daVeicolo=true; return d; })) };
+      if(!r.data.length){ el.innerHTML=''; return; }
       var etich=function(cv){
         var a=(cv&&cv.autoSnapshot)||{};
         var tg=(cv&&cv.nuovaTarga)||a.targa;
@@ -24308,10 +24351,10 @@ function clDocPratiche(c){
         +'<div style="font-weight:800;color:#1a4fa0;margin-bottom:2px;">Documenti delle vendite ('+r.data.length+')</div>'
         +'<div style="font-size:11.5px;color:#94a3b8;margin-bottom:8px;">Caricati dalla pratica: fatture, F24, libretti.</div>';
       r.data.forEach(function(d){
-        var cv=byId[String(d.entita_id)];
+        var cv=d._daVeicolo ? autoCv[String(d.entita_id)] : byId[String(d.entita_id)];
         h2+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;background:#fff;">'
           +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div>'
-          +'<div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(docCatLabel?docCatLabel('pratica',d.categoria):(d.categoria||''))+(cv?(' \u00b7 '+docEsc(etich(cv))):'')+'</div></div>'
+          +'<div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(docCatLabel?docCatLabel(d._daVeicolo?'veicolo':'pratica',d.categoria):(d.categoria||''))+(cv?(' \u00b7 '+docEsc(etich(cv))):'')+(d._daVeicolo?' \u00b7 dalla scheda veicolo':'')+'</div></div>'
           +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
           +'</div>';
       });
@@ -30832,10 +30875,29 @@ function ccSupaLoad(done){
       var locali = window.ccLoad().filter(function(c){ return c && c.id && tomb.indexOf(c.id)<0; });
       var byId = {}, daSpingere = [];
       remoti.forEach(function(r){ byId[r.id] = r; });
+      /* ===== LA FATTURA TAGLIANDO NON SI PERDE =====
+         Vince la copia piu' recente dell'appuntamento, ma una fattura
+         generata (o la bozza, o la conferma d'ordine) non puo' sparire solo
+         perche' un altro dispositivo, con una copia senza fattura, ha
+         segnato "fatto" o "avvisato" dopo. La si riporta sulla copia che
+         vince, e la copia viene rispinta sul cloud. */
+      var _tieni=function(vinc, perd){
+        if(!vinc || !perd) return false;
+        var cambiato=false;
+        ['fatturaTag','ordineCliente','buono20'].forEach(function(k){
+          var pv=perd[k], vv=vinc[k];
+          if(k==='fatturaTag'){
+            var pNum=!!(pv&&pv.numero), vNum=!!(vv&&vv.numero);
+            if(pv && (!vv || (pNum && !vNum))){ vinc[k]=pv; cambiato=true; }
+          } else if(pv && !vv){ vinc[k]=pv; cambiato=true; }
+        });
+        return cambiato;
+      };
       locali.forEach(function(l){
         var ex = byId[l.id];
         if(!ex){ byId[l.id] = l; daSpingere.push(l); return; }
-        if(ccTs(l) > ccTs(ex)){ byId[l.id] = l; daSpingere.push(l); }
+        if(ccTs(l) > ccTs(ex)){ _tieni(l, ex); byId[l.id] = l; daSpingere.push(l); return; }
+        if(_tieni(ex, l)){ ex.updatedAt=Date.now(); byId[l.id]=ex; daSpingere.push(ex); }
       });
 
       var finale = Object.keys(byId).map(function(k){ return byId[k]; });
@@ -31123,7 +31185,12 @@ function ivSupaLoad(){
       res.data.forEach(function(r){
         var d=r&&r.data; if(!d||!d.id) return;
         var e=mappa[d.id];
-        if(!e || (d.updatedAt||0)>(e.updatedAt||0)) mappa[d.id]=d;
+        /* la fattura tagliando resta sulla copia che vince, da qualunque
+           parte arrivi (stessa regola del calendario) */
+        var _tieniF=function(v,p){ if(p&&p.fatturaTag && (!v.fatturaTag || (p.fatturaTag.numero && !v.fatturaTag.numero))){ v.fatturaTag=p.fatturaTag; return true; } if(p&&p.ordineCliente&&!v.ordineCliente){ v.ordineCliente=p.ordineCliente; return true; } return false; };
+        if(!e){ mappa[d.id]=d; return; }
+        if((d.updatedAt||0)>(e.updatedAt||0)){ _tieniF(d,e); mappa[d.id]=d; }
+        else if(_tieniF(e,d)){ e.updatedAt=Date.now(); try{ if(typeof ivSupaUpsert==='function') ivSupaUpsert(e); }catch(x){} }
       });
       ivSave(Object.keys(mappa).map(function(k){ return mappa[k]; }));
       try{ if(typeof clRender==='function' && document.getElementById('cl-dettaglio')) clRender(); }catch(e){}
@@ -32715,7 +32782,7 @@ function fcStampa(id){
       + '<td class="c">'+(x.ve?E(x.ve):'')+'</td><td class="c">'+(x.me?E(x.me):'')+'</td>'
       + '<td class="r">'+(x.ric?EU(x.ric):'')+'</td></tr>';
   });
-  for(var k=righe.length;k<18;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
+  for(var k=righe.length;k<16;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
 
   var g=function(campo, fallback){ return E((pv[campo]!=null && pv[campo]!=='')?pv[campo]:(fallback||'')); };
   var gp=function(campo, fallback){ return E((p[campo]!=null && p[campo]!=='')?p[campo]:(fallback||'')); };
