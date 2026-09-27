@@ -1563,6 +1563,135 @@ html, body{
 </div><!-- /app-layout -->
 
 <script>// ══════════════════════════════════════════════════════════════
+/* ===== COMPRESSIONE TRASPARENTE DELLE LISTE GRANDI =====
+   localStorage ha un tetto di circa 5 MB per sito e il gestionale lo stava
+   riempiendo (clienti e preventivi da soli 3 MB). Le liste principali
+   vengono salvate compresse (algoritmo LZ, variante UTF-16 sicura per
+   localStorage, derivata da lz-string di pieroxy, licenza MIT): il JSON
+   occupa circa un terzo. E' invisibile al resto del codice: getItem e
+   setItem restano gli stessi, decomprimono e comprimono da soli. I valori
+   vecchi non compressi si leggono ancora, e diventano compressi al primo
+   salvataggio. */
+(function(){
+  var f=String.fromCharCode;
+  function _compress(uncompressed, bitsPerChar, getCharFromInt){
+    if(uncompressed==null) return "";
+    var i, value, context_dictionary={}, context_dictionaryToCreate={}, context_c="", context_wc="", context_w="",
+        context_enlargeIn=2, context_dictSize=3, context_numBits=2, context_data=[], context_data_val=0, context_data_position=0, ii;
+    for(ii=0; ii<uncompressed.length; ii+=1){
+      context_c=uncompressed.charAt(ii);
+      if(!Object.prototype.hasOwnProperty.call(context_dictionary,context_c)){ context_dictionary[context_c]=context_dictSize++; context_dictionaryToCreate[context_c]=true; }
+      context_wc=context_w+context_c;
+      if(Object.prototype.hasOwnProperty.call(context_dictionary,context_wc)){ context_w=context_wc; }
+      else{
+        if(Object.prototype.hasOwnProperty.call(context_dictionaryToCreate,context_w)){
+          if(context_w.charCodeAt(0)<256){
+            for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } }
+            value=context_w.charCodeAt(0);
+            for(i=0;i<8;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+          } else {
+            value=1;
+            for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1)|value; if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=0; }
+            value=context_w.charCodeAt(0);
+            for(i=0;i<16;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+          }
+          context_enlargeIn--; if(context_enlargeIn==0){ context_enlargeIn=Math.pow(2,context_numBits); context_numBits++; }
+          delete context_dictionaryToCreate[context_w];
+        } else {
+          value=context_dictionary[context_w];
+          for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+        }
+        context_enlargeIn--; if(context_enlargeIn==0){ context_enlargeIn=Math.pow(2,context_numBits); context_numBits++; }
+        context_dictionary[context_wc]=context_dictSize++;
+        context_w=String(context_c);
+      }
+    }
+    if(context_w!==""){
+      if(Object.prototype.hasOwnProperty.call(context_dictionaryToCreate,context_w)){
+        if(context_w.charCodeAt(0)<256){
+          for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } }
+          value=context_w.charCodeAt(0);
+          for(i=0;i<8;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+        } else {
+          value=1;
+          for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1)|value; if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=0; }
+          value=context_w.charCodeAt(0);
+          for(i=0;i<16;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+        }
+        context_enlargeIn--; if(context_enlargeIn==0){ context_enlargeIn=Math.pow(2,context_numBits); context_numBits++; }
+        delete context_dictionaryToCreate[context_w];
+      } else {
+        value=context_dictionary[context_w];
+        for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+      }
+      context_enlargeIn--; if(context_enlargeIn==0){ context_enlargeIn=Math.pow(2,context_numBits); context_numBits++; }
+    }
+    value=2;
+    for(i=0;i<context_numBits;i++){ context_data_val=(context_data_val<<1)|(value&1); if(context_data_position==bitsPerChar-1){ context_data_position=0; context_data.push(getCharFromInt(context_data_val)); context_data_val=0; } else { context_data_position++; } value=value>>1; }
+    while(true){ context_data_val=(context_data_val<<1); if(context_data_position==bitsPerChar-1){ context_data.push(getCharFromInt(context_data_val)); break; } else context_data_position++; }
+    return context_data.join('');
+  }
+  function _decompress(length, resetValue, getNextValue){
+    var dictionary=[], enlargeIn=4, dictSize=4, numBits=3, entry="", result=[], i, w, bits, resb, maxpower, power, c,
+        data={val:getNextValue(0), position:resetValue, index:1};
+    for(i=0;i<3;i+=1) dictionary[i]=i;
+    bits=0; maxpower=Math.pow(2,2); power=1;
+    while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; }
+    switch(bits){
+      case 0: bits=0; maxpower=Math.pow(2,8); power=1; while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; } c=f(bits); break;
+      case 1: bits=0; maxpower=Math.pow(2,16); power=1; while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; } c=f(bits); break;
+      case 2: return "";
+    }
+    dictionary[3]=c; w=c; result.push(c);
+    while(true){
+      if(data.index>length) return "";
+      bits=0; maxpower=Math.pow(2,numBits); power=1;
+      while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; }
+      switch(c=bits){
+        case 0: bits=0; maxpower=Math.pow(2,8); power=1; while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; } dictionary[dictSize++]=f(bits); c=dictSize-1; enlargeIn--; break;
+        case 1: bits=0; maxpower=Math.pow(2,16); power=1; while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); } bits|=(resb>0?1:0)*power; power<<=1; } dictionary[dictSize++]=f(bits); c=dictSize-1; enlargeIn--; break;
+        case 2: return result.join('');
+      }
+      if(enlargeIn==0){ enlargeIn=Math.pow(2,numBits); numBits++; }
+      if(dictionary[c]){ entry=dictionary[c]; }
+      else { if(c===dictSize){ entry=w+w.charAt(0); } else { return null; } }
+      result.push(entry);
+      dictionary[dictSize++]=w+entry.charAt(0);
+      enlargeIn--;
+      w=entry;
+      if(enlargeIn==0){ enlargeIn=Math.pow(2,numBits); numBits++; }
+    }
+  }
+  var EA_LZ={
+    compressToUTF16:function(input){ if(input==null) return ""; return _compress(input,15,function(a){ return f(a+32); })+" "; },
+    decompressFromUTF16:function(compressed){ if(compressed==null) return ""; if(compressed==="") return null; return _decompress(compressed.length,16384,function(index){ return compressed.charCodeAt(index)-32; }); }
+  };
+  window.EA_LZ=EA_LZ;
+
+  /* chiavi da comprimere: le liste che pesano */
+  var EA_LZ_KEYS={ 'ea_clienti_v1':1, 'ea_preventivi_v1':1, 'ea_magazzino_v1':1, 'ea_notifiche_v1':1, 'ea_sinistri_v1':1,
+                   'ea_fornitori_v1':1, 'ea_compiti_v1':1, 'ea_evlog_v1':1, 'ea_presenze_v2':1, 'ea_permute_v1':1,
+                   'ea_interventi_v1':1, 'ea_welfare_v1':1, 'ea_welfare_buoni_v1':1, 'ea_noleggi_v1':1, 'ea_provvigioni_v1':1 };
+  var MARK='\u0001LZ16\u0001';
+  try{
+    var _get=Storage.prototype.getItem, _set=Storage.prototype.setItem;
+    Storage.prototype.getItem=function(k){
+      var v=_get.call(this,k);
+      if(typeof v==='string' && v.indexOf(MARK)===0){
+        try{ var d=EA_LZ.decompressFromUTF16(v.slice(MARK.length)); if(d!==null && d!==undefined) return d; }catch(e){}
+      }
+      return v;
+    };
+    Storage.prototype.setItem=function(k,v){
+      if(this===window.localStorage && EA_LZ_KEYS[k] && typeof v==='string' && v.length>2000){
+        try{ var c=EA_LZ.compressToUTF16(v); if(c && c.length<v.length) return _set.call(this,k,MARK+c); }catch(e){}
+      }
+      return _set.call(this,k,v);
+    };
+    window.eaLzRaw=function(k){ return _get.call(window.localStorage,k); };   /* per misurare lo spazio reale */
+  }catch(e){}
+})();
+
 // EDITOR UI — costruisce i gauge e le valutazioni
 // ══════════════════════════════════════════════════════════════
 function scoreColor(s){
@@ -6875,6 +7004,9 @@ var EA_IVA = 0.22;
    Sotto i 500 euro di margine la vendita non paga nemmeno quelli, quindi
    conta come sottocosto anche se il numero e' positivo. */
 var EA_MARGINE_MINIMO = 500;
+/* spese vive che ogni auto si porta dietro (preparazione, documenti,
+   trasporto): si tolgono dal margine prima di decidere il sottocosto */
+var EA_SPESE_FISSE = 600;
 
 function pIvaEsposta(a){
   if(!a) return false;
@@ -6918,7 +7050,11 @@ function pSottoPrezzo(cv){
     var netto, margine, come;
     if(estera){ netto=Math.round(lordo/(1+EA_IVA)*100)/100; margine=Math.round((netto-acq)*100)/100; come='estera'; }
     else { netto=Math.round(lordo*100)/100; margine=Math.round((lordo-acq)/(1+EA_IVA)*100)/100; come=(a.ivaEsposta===true)?'iva_esposta':'art36'; }
+    var margineLordo=margine;
+    margine=Math.round((margine-EA_SPESE_FISSE)*100)/100;   /* meno le spese fisse */
     return {
+      margineLordo: margineLordo,
+      spese: EA_SPESE_FISSE,
       acquisto: acq,
       lordo: Math.round(lordo*100)/100,
       netto: netto,
@@ -7017,8 +7153,11 @@ function pAggiornaSottocosto(cv){
       var _esito = pz.sotto
         ? ('in perdita \u00b7 margine '+pEuro(pz.margine)+' sotto i '+pEuro(EA_MARGINE_MINIMO))
         : ('margine '+pEuro(pz.margine));
+      /* prezzo d'acquisto e margine: solo per l'amministratore; chi vende
+         legge solo l'esito */
+      var _admP=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
       righe.push('<span style="color:'+(perPrezzo?'#b45309':'#16a34a')+';font-weight:700;">'
-        +_sc+', acquistata '+pEuro(pz.acquisto)+': '+_esito+'.</span>');
+        +(_admP ? (_sc+', acquistata '+pEuro(pz.acquisto)+': '+_esito+(pz.spese?(' (dopo '+pEuro(pz.spese)+' di spese fisse)'):'')) : (perPrezzo?'Vendita sottocosto per prezzo':'Prezzo in regola'))+'.</span>');
     }
     righe.push(sotto
       ? '<span style="color:#b45309;font-weight:700;">Sottocosto: provvigione dimezzata.</span>'
@@ -8464,6 +8603,16 @@ function pModifica(id){
   // Aspetta che i toggle siano stati aggiornati prima di calcolare
   setTimeout(function(){
     pCalcola();
+    /* ===== SOTTOCOSTO DELLA RIGA APERTA =====
+       Prima la nota del sottocosto (stock, margine) si aggiornava solo
+       premendo "Da delibera": aprendo un'altra provvigione restava quella
+       del cliente precedente. Ora si rifa' sul contratto di QUESTA riga. */
+    try{
+      _pSottoAuto=null; _pSottoForzato=false; _pSottoBloccato=false;
+      var _cvR=(r.cvId&&typeof cvById==='function')?cvById(r.cvId):null;
+      if(!_cvR && typeof pTrovaDelibera==='function') _cvR=pTrovaDelibera(r.cliente||'', r.modello||'');
+      pAggiornaSottocosto(_cvR);
+    }catch(e){}
     const f=document.getElementById('pCliente');
     if(f)f.scrollIntoView({behavior:'smooth',block:'start'});
   }, 300);
@@ -9078,9 +9227,11 @@ function pRenderReg() {
         /* sotto l'auto si scrive quello che il calcolo vede: giorni di stock
            e margine. Se manca la data di carico o il prezzo d'acquisto lo
            dice, perche' senza quei dati il sottocosto non puo' scattare. */
-        /* solo i giorni di stock: il margine qui non si scrive, lo vedrebbe
-           anche chi vende */
-        _infoS=(_ggS!==null?('stock '+_ggS+' gg'):'data di carico mancante');
+        /* i giorni di stock li vedono tutti; il margine (gia' al netto delle
+           spese fisse) solo l'amministratore */
+        var _admS=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+        _infoS=(_ggS!==null?('stock '+_ggS+' gg'):'data di carico mancante')
+              +(_admS?(' \u00b7 '+(_pzS?('margine '+Math.round(_pzS.margine).toLocaleString('it-IT')+' \u20ac'+(_pzS.spese?(' (dopo '+_pzS.spese+' \u20ac di spese)'):'')):'prezzo d\u2019acquisto mancante')):'');
         /* si evidenzia SEMPRE quando il calcolo dice sottocosto, anche se
            la provvigione e' stata forzata a piena: l'arancione segnala
            l'auto, non come e' stata pagata */
@@ -10613,7 +10764,8 @@ function eaSpazioDettaglio(){
   try{
     for(var i=0;i<localStorage.length;i++){
       var k=localStorage.key(i); if(!k) continue;
-      var b=eaLsByte(localStorage.getItem(k))+k.length*2;
+      /* spazio REALE: la copia compressa, non quella decompressa */
+      var b=eaLsByte((typeof eaLzRaw==='function')?eaLzRaw(k):localStorage.getItem(k))+k.length*2;
       tot+=b; voci.push({k:k, b:b});
       var f=eaLsFamiglia(k);
       if(!fam[f]) fam[f]={b:0,n:0};
@@ -25958,7 +26110,7 @@ function cvLive(){
                 : (_sotto.come==='iva_esposta'
                     ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+', acquistata '+cvEuro(_sotto.acquisto)+', entrambi ivati: differenza al netto dell\u2019IVA')
                     : ('Prezzo a contratto '+cvEuro(_sotto.lordo)+', acquistata '+cvEuro(_sotto.acquisto)+' (art. 36, IVA solo sul margine)')))
-            + ': margine '+cvEuro(_sotto.margine)
+            + ': margine '+cvEuro(_sotto.margine)+(_sotto.spese?(' dopo '+cvEuro(_sotto.spese)+' di spese fisse'):'')
             +'.</div>';
         }
         h+='</div>';
@@ -33143,6 +33295,7 @@ function simUsaNellaDelibera(){
     })();
 
     window._delibDaSim={
+      cvId:(typeof _simDelibId!=='undefined'?_simDelibId:null),   /* per quale vendita e' stata calcolata */
       /* Provvigione dell'AZIENDA, cella I24 del modello della finanziaria:
          e' quella che il simulatore mostra in viola. Fin qui restava solo a
          schermo e si perdeva chiudendo la finestra, mentre e' il dato che
@@ -34471,7 +34624,14 @@ function cvDeliberaForm(id){
   /* Una forzatura vale per il salvataggio in cui e' stata decisa: riaprendo
      il pannello si riparte dai controlli, non da un permesso rimasto acceso. */
   window._delibForzata=null;
-  try{ if(window._delibDaSim && window._delibDaSim.provvAzienda!=null) window._delibDaSimProvv=window._delibDaSim.provvAzienda; }catch(e){}
+  /* ===== LA PROVVIGIONE DEL SIMULATORE VALE PER QUESTA PRATICA =====
+     _delibDaSimProvv restava in memoria dopo il salvataggio: aprendo la
+     delibera di un'altra vendita, senza passare dal simulatore, veniva
+     salvata la provvigione della pratica precedente. Si azzera a ogni
+     apertura e la si tiene solo se il simulatore l'ha appena calcolata
+     per questa stessa vendita. */
+  window._delibDaSimProvv=null;
+  try{ if(window._delibDaSim && window._delibDaSim.provvAzienda!=null && (!window._delibDaSim.cvId || window._delibDaSim.cvId===id)) window._delibDaSimProvv=window._delibDaSim.provvAzienda; }catch(e){}
   setTimeout(function(){ try{ cvDeliberaFinCambia(); }catch(e){} }, 60);
   var sim=cvDatiSimulati(cv);
   var d=cv.finDelibera||{};
@@ -35023,6 +35183,7 @@ function cvDeliberaSalva(id){
      salvata) + 38% del premio se la polizza e' fuori Deutsche; se
      l'amministratore ha scritto un numero a mano, vale quello */
   var _pFin=(window._delibDaSimProvv!=null)?window._delibDaSimProvv:cvProvvAziendaFin(list[i].finDelibera);
+  window._delibDaSimProvv=null;   /* usata una volta sola, per questa pratica */
   var _pAuto=cvProvvPolizzaAuto(g('polizzaTipo'), n('polizze'));
   var _pCalc=Math.round(((_pFin||0)+_pAuto.pol)*100)/100;
   var _pBox=document.getElementById('dl_provvAzienda');
@@ -37800,6 +37961,19 @@ function stMargine(cv){
      uscire negativo un margine positivo. */
   return Math.round(m*100)/100;
 }
+/* ===== IVA DA VERSARE SULLA SINGOLA VENDITA =====
+   - art. 36: IVA solo sul margine = (vendita - acquisto) - (vendita - acquisto)/1,22
+   - IVA esposta italiana: IVA della vendita meno quella detratta all'acquisto
+     = (vendita - acquisto) x 22/122, cioe' il 22% del margine netto
+   - estera: acquisto senza IVA, quindi tutta l'IVA della vendita = vendita x 22/122 */
+function stIvaDaVersare(cv){
+  var a=stAuto(cv)||{}; var vend=stVendita(cv); var acq=stNum(a.prezzoAcq);
+  if(vend==null) return null;
+  var c=stCat(cv);
+  if(c===2) return Math.round((vend-vend/(1+ST_IVA))*100)/100;
+  if(acq==null) return null;
+  var l=vend-acq; return Math.round((l-l/(1+ST_IVA))*100)/100;
+}
 function stIvaMargine(cv){
   if(stCat(cv)!==0) return 0;
   var a=stAuto(cv)||{}; var vend=stVendita(cv); var acq=stNum(a.prezzoAcq);
@@ -37939,29 +38113,34 @@ function stDettaglioApri(idsEnc, titolo){
       document.body.appendChild(m); }
     var th='font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;padding:8px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
     var td='padding:8px 8px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-size:12.5px;';
-    var totV=0,totA=0,totM=0,totP=0,totI=0;
+    var totV=0,totA=0,totM=0,totP=0,totI=0,totIV=0;
     var mesi={}, ordine=[];
     var _riga=function(cv){
       var a=stAuto(cv)||{}; var snap=cv.autoSnapshot||{};
       var vend=stVendita(cv); var sc=stSconto(cv);
       var acq=stNum(a.prezzoAcq);
-      var mg=stMargine(cv); var pv=stProvvAziendaDi(cv); var ivm=stIvaMargine(cv);
+      var mg=stMargine(cv); var pv=stProvvAziendaDi(cv); var ivm=stIvaMargine(cv); var ivv=stIvaDaVersare(cv);
       var c=stCat(cv); var cat=ST_CAT[c];
       var cl=(((cv.cliente&&cv.cliente.cognome)||'')+' '+((cv.cliente&&cv.cliente.nome)||'')).trim()||'(cliente)';
       var d=_ts(cv);
       var ds='contratto '+(_dIt(cv.contrattoTs)||'\u2014')+(cv.consegnatoTs?(' \u00b7 consegnata '+_dIt(cv.consegnatoTs)):' \u00b7 non consegnata')+((cv.fattura&&cv.fattura.data)?(' \u00b7 fattura '+_dIso(cv.fattura.data)):'');
       var tot=(mg||0)+(pv||0);
-      totV+=vend||0; totA+=acq||0; totM+=mg||0; totP+=pv||0; totI+=ivm||0;
+      totV+=vend||0; totA+=acq||0; totM+=mg||0; totP+=pv||0; totI+=ivm||0; totIV+=ivv||0;
       var mk=d?(new Date(d).getFullYear()+'-'+('0'+(new Date(d).getMonth()+1)).slice(-2)):'0000-00';
-      if(!mesi[mk]){ mesi[mk]={n:0,v:0,a:0,m:0,p:0,i:0,html:'',nel:false}; ordine.push(mk); }
-      var M=mesi[mk]; M.n++; M.v+=vend||0; M.a+=acq||0; M.m+=mg||0; M.p+=pv||0; M.i+=ivm||0; if(idsSet[cv.id]) M.nel=true;
+      if(!mesi[mk]){ mesi[mk]={n:0,v:0,a:0,m:0,p:0,i:0,iv:0,html:'',nel:false}; ordine.push(mk); }
+      var M=mesi[mk]; M.n++; M.v+=vend||0; M.a+=acq||0; M.m+=mg||0; M.p+=pv||0; M.i+=ivm||0; M.iv+=ivv||0; if(idsSet[cv.id]) M.nel=true;
       var _haFoto=!!(cv.finDelibera && (cv.finDelibera.simStato || (cv.pagamenti||[]).some(function(p){ return p&&p.simStato; })));
       if(_ts(cv) < ST_PROVV_DA) _haFoto=false;
+      /* NO = vendita senza finanziamento; trattino = finanziamento presente
+         ma delibera ancora da confermare */
+      var _haFin=false; try{ _haFin=!!((typeof cvFinPag==='function')?cvFinPag(cv):null) || !!(cv.finDelibera&&cv.finDelibera.confermata); }catch(e){}
       var fin=(cv.finDelibera&&cv.finDelibera.confermata)
         ?(pv!=null?stEu(pv)
           :('<span style="color:#dc2626;font-weight:700;" title="Apri la vendita, Delibera, campo Provvigione azienda">da inserire</span>'
             +(_haFoto?('<br><button type="button" onclick="stProvvRicalcola(\''+cv.id+'\',event)" style="margin-top:3px;font-size:11px;font-weight:700;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;cursor:pointer;">ricalcola</button>'):'')))
-        :'<span style="color:#cbd5e1;">\u2014</span>';
+        :(_haFin
+          ?'<span style="color:#94a3b8;" title="finanziamento presente, delibera da confermare">\u2014</span>'
+          :'<span style="color:#94a3b8;font-weight:700;">NO</span>');
       return '<tr onclick="stFasciaVai(\''+cv.id+'\')" style="cursor:pointer;">'
         +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
           +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
@@ -37970,7 +38149,8 @@ function stDettaglioApri(idsEnc, titolo){
         +'<td style="'+td+'">'+(acq!=null?stEu(acq):'<span style="color:#dc2626;">manca</span>')+'</td>'
         +'<td style="'+td+'font-weight:800;color:'+(mg==null?'#94a3b8':(mg<0?'#dc2626':'#166534'))+';">'+(mg!=null?stEu(mg):'\u2014')+(ivm?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(ivm)+'</div>'):'')+'</td>'
         +'<td style="'+td+'">'+fin+'</td>'
-        +'<td style="'+td+'font-weight:900;">'+stEu(tot)+'</td></tr>';
+        +'<td style="'+td+'font-weight:900;">'+stEu(tot)+'</td>'
+        +'<td style="'+td+'color:#b45309;">'+(ivv!=null?stEu(ivv):'\u2014')+'</td></tr>';
     };
     righe.forEach(function(cv){
       var h=_riga(cv); var d=_ts(cv);
@@ -37985,7 +38165,8 @@ function stDettaglioApri(idsEnc, titolo){
         +'<td colspan="2" style="'+td+'text-align:left;font-weight:900;color:#1a4fa0;"><span class="stm-fr" style="display:inline-block;width:14px;">'+(aperto?'\u25be':'\u25b8')+'</span>'+nome+' <span style="color:#94a3b8;font-weight:600;">('+M.n+')</span></td>'
         +'<td style="'+td+'font-weight:800;">'+stEu(M.v)+'</td><td style="'+td+'font-weight:800;">'+stEu(M.a)+'</td>'
         +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(M.m)+(M.i?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(M.i)+'</div>'):'')+'</td>'
-        +'<td style="'+td+'font-weight:900;">'+stEu(M.p)+'</td><td style="'+td+'font-weight:900;">'+stEu(M.m+M.p)+'</td></tr>'
+        +'<td style="'+td+'font-weight:900;">'+stEu(M.p)+'</td><td style="'+td+'font-weight:900;">'+stEu(M.m+M.p)+'</td>'
+        +'<td style="'+td+'font-weight:900;color:#b45309;">'+stEu(M.iv)+'</td></tr>'
         +'</tbody><tbody id="stm_'+mk+'"'+(aperto?'':' style="display:none"')+'>'+M.html+'</tbody><tbody>';
     }).join('');
     m.innerHTML='<div style="max-width:960px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
@@ -37994,14 +38175,16 @@ function stDettaglioApri(idsEnc, titolo){
       +'<button onclick="stFasciaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
       +'<div style="padding:6px 10px 14px;overflow-x:auto;">'
       +'<table style="width:100%;border-collapse:collapse;"><thead><tr>'
-      +'<th style="'+th+'text-align:left;">Cliente / auto</th><th style="'+th+'text-align:left;">Regime</th><th style="'+th+'">Vendita</th><th style="'+th+'">Acquisto</th><th style="'+th+'">Margine auto</th><th style="'+th+'">Provv. finanz.</th><th style="'+th+'">Totale</th></tr></thead>'
-      +'<tbody>'+(body||'<tr><td colspan="7" style="padding:14px;color:#94a3b8;">Nessuna vendita nel periodo.</td></tr>')+'</tbody>'
+      +'<th style="'+th+'text-align:left;">Cliente / auto</th><th style="'+th+'text-align:left;">Regime</th><th style="'+th+'">Vendita</th><th style="'+th+'">Acquisto</th><th style="'+th+'">Margine auto</th><th style="'+th+'">Provv. finanz.</th><th style="'+th+'">Totale</th><th style="'+th+'color:#b45309;">IVA da versare</th></tr></thead>'
+      +'<tbody>'+(body||'<tr><td colspan="8" style="padding:14px;color:#94a3b8;">Nessuna vendita nel periodo.</td></tr>')+'</tbody>'
       +'<tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale storico ('+righe.length+')</td><td style="'+td+'"></td>'
       +'<td style="'+td+'font-weight:800;">'+stEu(totV)+'</td><td style="'+td+'font-weight:800;">'+stEu(totA)+'</td>'
       +'<td style="'+td+'font-weight:900;color:#166534;">'+stEu(totM)+(totI?('<div style="font-size:10px;font-weight:600;color:#94a3b8;">IVA sul margine '+stEu(totI)+'</div>'):'')+'</td>'
-      +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td></tr></tfoot></table>'
+      +'<td style="'+td+'font-weight:900;">'+stEu(totP)+'</td><td style="'+td+'font-weight:900;">'+stEu(totM+totP)+'</td>'
+      +'<td style="'+td+'font-weight:900;color:#b45309;">'+stEu(totIV)+'</td></tr></tfoot></table>'
       +'<div style="font-size:11.5px;color:#64748b;margin-top:10px;line-height:1.5;">'
       +'<b>A quale mese va una vendita</b>: al mese del contratto (la data della proposta firmata), non della consegna. Le date sono scritte sotto ogni cliente. La storia parte da gennaio 2025 e le provvigioni delle finanziarie contano da quella data. '
+      +'<b>IVA da versare</b>: art. 36 solo sul margine; IVA esposta italiana la differenza fra l\u2019IVA incassata e quella detratta all\u2019acquisto (22% del margine netto); estera tutta l\u2019IVA della vendita, perch\u00e9 all\u2019acquisto non c\u2019era. Vale sul solo prezzo del veicolo: passaggio e servizi accessori hanno la loro IVA a parte. '
       +'<b>Come si calcola il margine auto</b> (sempre al netto dell\u2019IVA): '
       +'<b>IVA esposta italiana</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 entrambi i prezzi sono ivati e l\u2019IVA sulla differenza non \u00e8 nostra; '
       +'<b>art. 36 (margine)</b> = (vendita \u2212 acquisto) / 1,22, perch\u00e9 l\u2019IVA si paga solo sul margine (qui indicata sotto la cifra); '
