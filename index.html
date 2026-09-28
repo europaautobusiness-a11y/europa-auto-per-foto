@@ -7003,10 +7003,10 @@ var EA_IVA = 0.22;
    sono costi che non compaiono da nessuna parte, il trasporto per primo.
    Sotto i 500 euro di margine la vendita non paga nemmeno quelli, quindi
    conta come sottocosto anche se il numero e' positivo. */
-var EA_MARGINE_MINIMO = 500;
-/* spese vive che ogni auto si porta dietro (preparazione, documenti,
-   trasporto): si tolgono dal margine prima di decidere il sottocosto */
-var EA_SPESE_FISSE = 600;
+/* sottocosto: margine netto (dopo l'IVA) sotto i 600 euro. I 600 sono la
+   soglia unica, non si sommano ad altre spese. */
+var EA_MARGINE_MINIMO = 600;
+var EA_SPESE_FISSE = 0;
 
 function pIvaEsposta(a){
   if(!a) return false;
@@ -13454,11 +13454,12 @@ function wfTrasferteRiallinea(){
 function wfBuonoModifica(id){
   var b=wfBuoni().filter(function(x){ return x && x.id===id; })[0]; if(!b) return;
   window._wfBuonoEdit=id;
-  var set=function(k,v){ var e=document.getElementById(k); if(e){ e.value=(v==null?'':v); e.dataset.manuale='1'; } };
-  set('bc-data', b.data); set('bc-carb', b.carburante||''); set('bc-prezzo', b.prezzoLitro||'');
-  set('bc-litri', b.litri||''); set('bc-imp', b.importo||''); set('bc-km', b.km||'');
-  set('bc-causale', b.causale||''); set('bc-da', b.partenza||''); set('bc-a', b.destinazione||'');
-  set('bc-chi', b.chi||''); set('bc-note', b.note||'');
+  var set=function(k,v,man){ var e=document.getElementById(k); if(e){ e.value=(v==null?'':v); if(man) e.dataset.manuale='1'; else delete e.dataset.manuale; } };
+  set('bc-data', b.data, true); set('bc-carb', b.carburante||'', true); set('bc-prezzo', b.prezzoLitro||'', true);
+  /* litri e importo restano "automatici": cambiando i litri l'importo si ricalcola */
+  set('bc-litri', b.litri||'', false); set('bc-imp', b.importo||'', false); set('bc-km', b.km||'', true);
+  set('bc-causale', b.causale||'', true); set('bc-da', b.partenza||'', true); set('bc-a', b.destinazione||'', true);
+  set('bc-chi', b.chi||'', true); set('bc-note', b.note||'', true);
   var hid=document.getElementById('bc-auto'), txt=document.getElementById('bc-auto-txt');
   if(hid) hid.value=(b.auto&&b.auto.id)||'';
   if(txt) txt.value=b.auto?(((b.auto.targa||'')+' \u00b7 '+((b.auto.marca||'')+' '+(b.auto.modello||'')).trim()).replace(/^ \u00b7 /,'')):'';
@@ -16392,6 +16393,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +     '<select id="cc-filtro"><option value="">Tutti i dipendenti</option></select>'
   +     '<button class="cc-btn" id="cc-refresh" title="Aggiorna dal cloud">🔄</button>'
   +   '</div>'
+  +   '<div id="cc-chiusi-wrap"></div>'
   +   '<div id="cc-cat-titolo" style="font-weight:800;font-size:16px;color:#1a4fa0;margin-bottom:10px;">\uD83D\uDCC5 Appuntamenti \u2014 clienti e interventi</div>'
   +   '<div id="prn-richieste"></div>'
   +   '<div id="cc-catfiltro" style="display:none;gap:8px;margin-bottom:14px;"><button class="cc-btn" id="cc-cf-app" style="flex:1;font-weight:800;padding:12px;font-size:14px;border-radius:9px;">📅 Appuntamenti</button><button class="cc-btn" id="cc-cf-task" style="flex:1;padding:12px;font-size:14px;border-radius:9px;">✅ Task</button></div>'
@@ -16632,9 +16634,63 @@ document.addEventListener('DOMContentLoaded',function(){
     if(t==='vendita') return ['\ud83e\udd1d','Vendita','#2563eb'];
     return ['\ud83d\udd27','Intervento','#ea580c'];
   }
+  /* ===== GIORNI NON PRENOTABILI =====
+     L'amministratore blocca un intervallo (chiusura, ferie, fiera): i
+     giorni si colorano di rosso nel calendario e non si possono fissare
+     appuntamenti. Salvato in config (cloud) come 'cc_chiusi'. */
+  var CC_CHIUSI_KEY='ea_cc_chiusi_v1';
+  function ccChiusiLoad(){ try{ return JSON.parse(localStorage.getItem(CC_CHIUSI_KEY)||'[]')||[]; }catch(e){ return []; } }
+  function ccChiusiSave(l){ try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(l||[])); }catch(e){} try{ if(typeof cfgSupaSave==='function') cfgSupaSave('cc_chiusi', l||[]); }catch(e){} }
+  function ccGiornoChiuso(ds){
+    ds=String(ds||'').slice(0,10); if(!ds) return null;
+    var l=ccChiusiLoad(); for(var i=0;i<l.length;i++){ var b=l[i]; if(b && ds>=b.da && ds<=b.a) return b; }
+    return null;
+  }
+  window.ccGiornoChiuso=ccGiornoChiuso;
+  window.ccChiusiAggiungi=function(){
+    var da=(document.getElementById('cc-ch-da')||{}).value, a=(document.getElementById('cc-ch-a')||{}).value, m=((document.getElementById('cc-ch-m')||{}).value||'').trim();
+    if(!da){ ccToast('Scegli il primo giorno'); return; }
+    if(!a) a=da; if(a<da){ var t=da; da=a; a=t; }
+    var l=ccChiusiLoad(); l.push({ id:'ch'+Date.now(), da:da, a:a, motivo:m });
+    ccChiusiSave(l); ccChiusiRender(); ccRenderCal();
+  };
+  window.ccChiusiTogli=function(id){ var l=ccChiusiLoad().filter(function(b){ return b && b.id!==id; }); ccChiusiSave(l); ccChiusiRender(); ccRenderCal(); };
+  function ccChiusiRender(){
+    var w=document.getElementById('cc-chiusi-wrap'); if(!w) return;
+    var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+    var l=ccChiusiLoad().slice().sort(function(x,y){ return String(x.da).localeCompare(String(y.da)); });
+    var oggi=new Date().toISOString().slice(0,10);
+    var it=function(d){ var q=String(d).split('-'); return q.length===3?(q[2]+'/'+q[1]+'/'+q[0]):d; };
+    var h='';
+    if(adm){
+      h+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 6px;font-size:12px;">'
+        +'<span style="font-weight:800;color:#b91c1c;">\ud83d\udeab Blocca giorni:</span>'
+        +'<input type="date" id="cc-ch-da" style="padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;">'
+        +'<span>al</span><input type="date" id="cc-ch-a" style="padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;">'
+        +'<input id="cc-ch-m" placeholder="motivo (es. chiusura)" style="padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;width:160px;">'
+        +'<button onclick="ccChiusiAggiungi()" style="padding:6px 10px;border-radius:6px;border:none;background:#dc2626;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Blocca</button></div>';
+    }
+    var att=l.filter(function(b){ return b.a>=oggi; });
+    if(att.length){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'+att.map(function(b){
+        return '<span style="font-size:11.5px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:99px;padding:3px 9px;font-weight:700;">'
+          +(b.da===b.a?it(b.da):(it(b.da)+' \u2192 '+it(b.a)))+(b.motivo?(' \u00b7 '+ccEsc(b.motivo)):'')
+          +(adm?(' <span onclick="ccChiusiTogli(\''+b.id+'\')" style="cursor:pointer;margin-left:4px;" title="sblocca">\u2715</span>'):'')+'</span>';
+      }).join('')+'</div>';
+    }
+    w.innerHTML=h;
+  }
+  window.ccChiusiRender=ccChiusiRender;
+  try{ cfgSupaLoad('cc_chiusi', function(body){ try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(body||[])); }catch(e){} try{ ccChiusiRender(); ccRenderCal(); }catch(e){} }, ccChiusiLoad); }catch(e){}
+  setTimeout(function(){ try{ ccChiusiRender(); }catch(e){} }, 50);
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
-    return ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
+    /* sfondo rosso sui giorni bloccati */
+    var chiusi=ccChiusiLoad().map(function(b){
+      var fine=new Date(b.a+'T00:00:00'); fine.setDate(fine.getDate()+1);
+      return { id:'chiuso_'+b.id, start:b.da, end:fine.toISOString().slice(0,10), display:'background', backgroundColor:'#fca5a5', extendedProps:{chiuso:true} };
+    });
+    return chiusi.concat(ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
       var isTask=(c.categoria==='task');
       var ti=ccTipoInfo(c.tipo, c.bovisio, c.testDrive);
       var col=c.fatto?'#94a3b8':(isTask?'#0d9488':ti[2]);
@@ -16652,7 +16708,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if(mm){ var hh=('0'+mm[1]).slice(-2); ev.start=c.data+'T'+hh+':'+mm[2]+':00'; ev.allDay=false; if(c.durata){ var _tot=parseInt(hh,10)*60+parseInt(mm[2],10)+parseInt(c.durata,10); if(_tot<1440){ var _eh=('0'+Math.floor(_tot/60)).slice(-2); var _em=('0'+(_tot%60)).slice(-2); ev.end=c.data+'T'+_eh+':'+_em+':00'; } } }
       else { ev.start=c.data; ev.allDay=true; }
       return ev;
-    });
+    }));
   }
   function ccRenderCal(){
     var mount=document.getElementById('cc-fc'); if(!mount) return;
@@ -17270,6 +17326,8 @@ document.addEventListener('DOMContentLoaded',function(){
        senza chiudere e riaprire sul giorno giusto. */
     var _ccDataScelta=((document.getElementById('cc-data')||{}).value||'').trim() || ccGiornoSel;
     if(!_ccDataScelta){ ccToast('Scegli la data'); return; }
+    /* giorno bloccato dall'amministratore: niente appuntamenti */
+    try{ var _bl=ccGiornoChiuso(_ccDataScelta); if(_bl){ alert('Il '+_ccDataScelta.split('-').reverse().join('/')+' non \u00e8 prenotabile'+(_bl.motivo?(': '+_bl.motivo):'')+'.\n\nScegli un altro giorno.'); return; } }catch(e){}
     var tipo=(document.getElementById('cc-tipo')||{}).value||'intervento';
     var ricorda='';
     /* il promemoria segue la data scelta, non il giorno cliccato */
@@ -38111,8 +38169,8 @@ function stDettaglioApri(idsEnc, titolo){
     if(!m){ m=document.createElement('div'); m.id='stFasciaModal';
       m.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);padding:16px;overflow:auto;z-index:11000;display:none;';
       document.body.appendChild(m); }
-    var th='font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;padding:8px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
-    var td='padding:8px 8px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-size:12.5px;';
+    var th='font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;padding:7px 6px;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
+    var td='padding:7px 6px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-size:12.5px;';
     var totV=0,totA=0,totM=0,totP=0,totI=0,totIV=0;
     var mesi={}, ordine=[];
     var _riga=function(cv){
@@ -38142,7 +38200,7 @@ function stDettaglioApri(idsEnc, titolo){
           ?'<span style="color:#94a3b8;" title="finanziamento presente, delibera da confermare">\u2014</span>'
           :'<span style="color:#94a3b8;font-weight:700;">NO</span>');
       return '<tr onclick="stFasciaVai(\''+cv.id+'\')" style="cursor:pointer;">'
-        +'<td style="'+td+'text-align:left;white-space:normal;min-width:150px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
+        +'<td style="'+td+'text-align:left;white-space:normal;min-width:170px;max-width:260px;"><div style="font-weight:700;">'+cvEsc(cl)+'</div>'
           +'<div style="font-size:11px;color:#94a3b8;">'+cvEsc(((snap.marca||'')+' '+(snap.modello||'')).trim()||'\u2014')+(snap.targa?(' \u00b7 '+cvEsc(snap.targa)):'')+(ds?(' \u00b7 '+ds):'')+'</div></td>'
         +'<td style="'+td+'text-align:left;"><span style="font-size:10px;font-weight:800;color:#fff;background:'+cat.col+';border-radius:99px;padding:2px 7px;">'+cat.nome.replace('Italiana ','').replace('Estera ','estera ')+'</span></td>'
         +'<td style="'+td+'">'+(vend!=null?stEu(vend):'\u2014')+(sc?('<div style="font-size:10px;font-weight:600;color:#b45309;">listino '+stEu(vend+sc)+' \u2212 sconto promo '+stEu(sc)+'</div>'):'')+'</td>'
@@ -38169,7 +38227,9 @@ function stDettaglioApri(idsEnc, titolo){
         +'<td style="'+td+'font-weight:900;color:#b45309;">'+stEu(M.iv)+'</td></tr>'
         +'</tbody><tbody id="stm_'+mk+'"'+(aperto?'':' style="display:none"')+'>'+M.html+'</tbody><tbody>';
     }).join('');
-    m.innerHTML='<div style="max-width:960px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
+    /* larga quanto lo schermo (meno un bordo): le otto colonne entrano
+       senza scorrere di lato */
+    m.innerHTML='<div style="max-width:1600px;width:calc(100vw - 32px);margin:2vh auto 0;background:#fff;border-radius:14px;overflow:hidden;font-family:inherit;">'
       +'<div style="background:#1a4fa0;color:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
       +'<span style="font-weight:800;">Dettaglio vendite \u00b7 '+cvEsc(titolo||'')+'</span>'
       +'<button onclick="stFasciaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">\u00d7</button></div>'
@@ -40105,6 +40165,55 @@ function crmQ(x){
     .replace(/"/g,'&quot;')
     .replace(/\r?\n/g,' ')+"'";
 }
+/* ===== REPORT DELLE OFFERTE TAGLIANDO =====
+   Quante offerte 20% sono partite, quanti promemoria, quanti hanno preso
+   l'appuntamento col buono e quanti tagliandi sono stati fatti dopo
+   l'offerta: da qui la percentuale di chiusura. Due finestre: ultimi 90
+   giorni e anno in corso. */
+function crmReportOfferte(){
+  try{
+    var tutti=(typeof cvContratti==='function')?cvContratti():[];
+    var eventi=(typeof ccLoad==='function')?ccLoad():[];
+    var oggi=new Date(); var t90=Date.now()-90*86400000; var tAnno=new Date(oggi.getFullYear(),0,1).getTime();
+    var _targa=function(cv){ return String((cv.autoSnapshot&&cv.autoSnapshot.targa)||'').replace(/\s/g,'').toUpperCase(); };
+    var _cogn=function(cv){ return String((cv.cliente&&cv.cliente.cognome)||'').trim().toLowerCase(); };
+    var _appDopo=function(cv, ts){
+      var tg=_targa(cv), cg=_cogn(cv);
+      return eventi.some(function(e){
+        if(!e || !e.buono20 || !e.data) return false;
+        var td=Date.parse(e.data); if(isNaN(td) || td<ts-86400000) return false;
+        var v=String(e.veicolo||'').replace(/\s/g,'').toUpperCase(), tit=String(e.titolo||'').toLowerCase();
+        return (tg && v.indexOf(tg)>=0) || (cg && cg.length>3 && tit.indexOf(cg)>=0);
+      });
+    };
+    var conta=function(da){
+      var inv=0, prom=0, app=0, fatti=0;
+      tutti.forEach(function(cv){
+        if(!cv.crmOffertaTs || cv.crmOffertaTs<da) return;
+        inv++;
+        if(cv.crmPromemoriaTs) prom++;
+        var preso=_appDopo(cv, cv.crmOffertaTs);
+        var fatto=false; var ts=cv.crmTagliandiTs||{};
+        Object.keys(ts).forEach(function(k){ if(ts[k]>=cv.crmOffertaTs) fatto=true; });
+        if(fatto) fatti++; else if(preso) app++;
+      });
+      return { inv:inv, prom:prom, app:app, fatti:fatti, pct:inv?Math.round((fatti+app)/inv*100):0, pctF:inv?Math.round(fatti/inv*100):0 };
+    };
+    var a=conta(t90), b=conta(tAnno);
+    if(!a.inv && !b.inv) return '';
+    var col=function(tit,r){ return '<div style="flex:1;min-width:230px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">'
+      +'<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:6px;">'+tit+'</div>'
+      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0;"><span>Offerte inviate</span><b>'+r.inv+'</b></div>'
+      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0;"><span>Promemoria inviati</span><b>'+r.prom+'</b></div>'
+      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0;"><span>Appuntamento preso col buono</span><b>'+r.app+'</b></div>'
+      +'<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0;"><span>Tagliandi fatti dopo l\u2019offerta</span><b style="color:#16a34a;">'+r.fatti+'</b></div>'
+      +'<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e2e8f0;display:flex;justify-content:space-between;font-size:13px;"><span>Chiusura</span><b style="color:#1a4fa0;font-size:16px;">'+r.pctF+'%</b></div>'
+      +'<div style="font-size:10.5px;color:#94a3b8;">'+r.fatti+' fatti su '+r.inv+' offerte'+(r.app?(' \u00b7 '+r.pct+'% contando anche gli appuntamenti presi'):'')+'</div></div>'; };
+    return '<div style="margin:0 0 12px;"><div style="font-size:12px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:6px;">\ud83d\udcca Resa delle offerte tagliando 20%</div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap;">'+col('Ultimi 90 giorni',a)+col('Anno '+oggi.getFullYear(),b)+'</div>'
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Un tagliando conta come chiuso quando lo segni \u201cfatto\u201d dopo l\u2019offerta; l\u2019appuntamento col buono 20% nel calendario conta come preso se ha la targa o il cognome del cliente.</div></div>';
+  }catch(e){ return ''; }
+}
 function crmOffModBtn(cv, nome, tel){
   var jq=crmQ;
   var ts=cv&&cv.crmOffertaTs;
@@ -41224,6 +41333,8 @@ function crmSegnaTagliando(id, anno){
   var arr=crmTagliandiFatti(cv);
   if(arr.indexOf(anno)<0) arr.push(anno);
   cv.crmTagliandi=arr;
+  /* quando e' stato segnato: serve al report delle offerte (recuperati) */
+  cv.crmTagliandiTs=cv.crmTagliandiTs||{}; cv.crmTagliandiTs[String(anno)]=Date.now();
   crmSalvaCv(cv);
   if(typeof crmRender==='function') crmRender();
   if(typeof tcToastNew==='function') tcToastNew('Tagliando segnato \u00b7 ricompare l\u2019anno prossimo', true);
@@ -41329,6 +41440,7 @@ function crmRenderConsegnate(){
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:'+(fuoriTot?'6px':'12px')+';">'
     +'<b>'+totale+'</b> da contattare adesso \u00b7 divise per anniversario di consegna \u00b7 archivio totale '+tutte.length+' consegne</div>';
   h+=waModBox();
+  h+=crmReportOfferte();
   if(_inScadTot) h+='<div class="crm-pulsa" style="margin:0 0 12px;padding:10px 14px;background:#dc2626;color:#fff;border-radius:10px;font-weight:900;font-size:13.5px;">\ud83d\udd34 '+_inScadTot+' buon'+(_inScadTot===1?'o':'i')+' in scadenza entro 2 giorni: il promemoria va mandato OGGI. Le schede lampeggiano in rosso.</div>';
   if(!document.getElementById('crm-pulsa-css')){ var _st=document.createElement('style'); _st.id='crm-pulsa-css'; _st.textContent='@keyframes crmPulsa{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}50%{box-shadow:0 0 0 8px rgba(220,38,38,0);}} .crm-pulsa{animation:crmPulsa 1.4s ease-in-out infinite;} .crm-pulsa-bordo{animation:crmPulsa 1.4s ease-in-out infinite;}'; document.head.appendChild(_st); }
   if(fuoriTot){
