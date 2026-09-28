@@ -12397,6 +12397,76 @@ function wfPersone(){
   if(!_cMic) out.push({ nome:'Michele Basso', chiave:'collab_michelebasso', collab:true, fisso:true });
   return out;
 }
+/* ===== RIEPILOGO TRASFERTE =====
+   Per lo studio paghe: quante trasferte, quanti giorni e quanta indennita'
+   nel mese scelto per ogni persona (busta mensile), e il totale dell'anno,
+   che per i collaboratori con busta annua (co.co.co.) e' quello che conta. */
+var _wfTrMese=null;
+function wfTrasferteRiepilogo(){
+  try{
+    var anno=wfAnno(); var oggi=new Date();
+    if(!_wfTrMese) _wfTrMese=anno+'-'+('0'+(oggi.getMonth()+1)).slice(-2);
+    var MESI=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+    var opz=''; for(var m=0;m<12;m++){ var k=anno+'-'+('0'+(m+1)).slice(-2); opz+='<option value="'+k+'"'+(k===_wfTrMese?' selected':'')+'>'+MESI[m]+' '+anno+'</option>'; }
+    var righe=[], totMese={n:0,g:0,i:0}, totAnno={n:0,g:0,i:0};
+    (wfPersone()||[]).forEach(function(p){
+      var rec=wfDati(p.chiave||wfChiave(p)); var tr=(rec.trasferte||[]);
+      var mM={n:0,g:0,i:0}, mA={n:0,g:0,i:0};
+      tr.forEach(function(t){
+        var g=Number(t.giorni)||1, ind=(Number(t.indennita)||0)*g;
+        mA.n++; mA.g+=g; mA.i+=ind;
+        if(String(t.giorno||'').slice(0,7)===_wfTrMese){ mM.n++; mM.g+=g; mM.i+=ind; }
+      });
+      if(!mA.n) return;
+      totMese.n+=mM.n; totMese.g+=mM.g; totMese.i+=mM.i; totAnno.n+=mA.n; totAnno.g+=mA.g; totAnno.i+=mA.i;
+      righe.push({ nome:p.nome, collab:!!p.collab, m:mM, a:mA, senzaInd:tr.filter(function(t){ return !(Number(t.indennita)>0); }).length });
+    });
+    if(!righe.length) return '';
+    var td='padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12.5px;white-space:nowrap;';
+    var th='padding:7px 8px;border-bottom:1px solid #e2e8f0;font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;white-space:nowrap;';
+    var h='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">'
+      +'<div style="font-weight:800;color:#1a4fa0;">\u2708\ufe0f Riepilogo trasferte</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;"><select onchange="_wfTrMese=this.value;wfRender();" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12.5px;">'+opz+'</select>'
+      +'<button onclick="wfTrasferteCopia()" style="padding:6px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Copia per lo studio</button></div></div>'
+      +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>'
+      +'<th style="'+th+'text-align:left;">Persona</th><th style="'+th+'">Trasferte mese</th><th style="'+th+'">Giorni mese</th><th style="'+th+'">Indennit\u00e0 mese</th>'
+      +'<th style="'+th+'border-left:2px solid #e2e8f0;">Trasferte anno</th><th style="'+th+'">Giorni anno</th><th style="'+th+'">Indennit\u00e0 anno</th></tr></thead><tbody>';
+    righe.forEach(function(r){
+      var ann=r.collab;   /* busta annua: la colonna dell'anno e' quella che conta */
+      h+='<tr><td style="'+td+'text-align:left;"><b>'+wfEsc(r.nome)+'</b>'+(ann?' <span style="font-size:10px;background:#f5f3ff;color:#6d28d9;border-radius:99px;padding:1px 7px;font-weight:700;">busta annua</span>':' <span style="font-size:10px;color:#94a3b8;">busta mensile</span>')
+        +(r.senzaInd?('<div style="font-size:10.5px;color:#b45309;">'+r.senzaInd+' senza indennit\u00e0</div>'):'')+'</td>'
+        +'<td style="'+td+(ann?'color:#94a3b8;':'')+'">'+r.m.n+'</td><td style="'+td+(ann?'color:#94a3b8;':'')+'">'+r.m.g+'</td><td style="'+td+(ann?'color:#94a3b8;':'font-weight:800;')+'">'+wfEuro(r.m.i)+'</td>'
+        +'<td style="'+td+'border-left:2px solid #e2e8f0;'+(ann?'':'color:#94a3b8;')+'">'+r.a.n+'</td><td style="'+td+(ann?'':'color:#94a3b8;')+'">'+r.a.g+'</td><td style="'+td+(ann?'font-weight:800;color:#6d28d9;':'color:#94a3b8;')+'">'+wfEuro(r.a.i)+'</td></tr>';
+    });
+    h+='</tbody><tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale</td><td style="'+td+'font-weight:800;">'+totMese.n+'</td><td style="'+td+'font-weight:800;">'+totMese.g+'</td><td style="'+td+'font-weight:900;">'+wfEuro(totMese.i)+'</td>'
+      +'<td style="'+td+'border-left:2px solid #e2e8f0;font-weight:800;">'+totAnno.n+'</td><td style="'+td+'font-weight:800;">'+totAnno.g+'</td><td style="'+td+'font-weight:900;">'+wfEuro(totAnno.i)+'</td></tr></tfoot></table></div>'
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Indennit\u00e0 = indennit\u00e0 giornaliera \u00d7 giorni. Chi ha la busta annua (co.co.co.) va letto sulle colonne dell\u2019anno.</div></div>';
+    return h;
+  }catch(e){ return ''; }
+}
+function wfTrasferteCopia(){
+  try{
+    var MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+    var mm=parseInt(String(_wfTrMese||'').slice(5,7),10)||1, anno=wfAnno();
+    var out=['Trasferte '+MESI[mm-1]+' '+anno+' \u2014 Europa Auto S.r.l.',''];
+    (wfPersone()||[]).forEach(function(p){
+      var rec=wfDati(p.chiave||wfChiave(p)); var tr=(rec.trasferte||[]);
+      var nelMese=tr.filter(function(t){ return String(t.giorno||'').slice(0,7)===_wfTrMese; });
+      var annoT=tr.reduce(function(s,t){ return s+(Number(t.indennita)||0)*(Number(t.giorni)||1); },0);
+      if(!nelMese.length && !(p.collab && tr.length)) return;
+      out.push(p.nome+(p.collab?' (busta annua)':''));
+      nelMese.sort(function(a,b){ return String(a.giorno).localeCompare(String(b.giorno)); }).forEach(function(t){
+        out.push('  '+wfDataIt(t.giorno)+' \u2014 '+String(t.data||'').replace(/^[^\u00b7]*\u00b7\s*/,'')+' \u2014 '+(Number(t.giorni)||1)+' gg \u00d7 '+wfEuro(Number(t.indennita)||0)+' = '+wfEuro((Number(t.indennita)||0)*(Number(t.giorni)||1)));
+      });
+      out.push('  Totale mese: '+wfEuro(nelMese.reduce(function(s,t){ return s+(Number(t.indennita)||0)*(Number(t.giorni)||1); },0))+(p.collab?('  \u00b7  Totale anno: '+wfEuro(annoT)):''));
+      out.push('');
+    });
+    var txt=out.join('\n');
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(function(){ if(typeof tcToastNew==='function') tcToastNew('Riepilogo copiato: incollalo nella mail allo studio', true); }); }
+    else prompt('Copia il testo:', txt);
+  }catch(e){ alert('Non sono riuscito a preparare il riepilogo: '+(e&&e.message||e)); }
+}
 function wfSpostaOrfane(){
   try{
     var sel=document.getElementById('wf-orf-a'); var k=sel&&sel.value; if(!k) return;
@@ -12654,6 +12724,7 @@ function wfRender(){
     +'Soglia annua <b>'+wfEuro(WF_SOGLIA_BASE)+'</b>, <b>'+wfEuro(WF_SOGLIA_FIGLI)+'</b> con figli fiscalmente a carico. '
     +'Superandola anche di un euro diventa imponibile <b>l\u2019intero importo</b> dell\u2019anno, non l\u2019eccedenza. '
     +'La busta paga resta quella dello studio: qui si decide prima di erogare.</div>'
+    + wfTrasferteRiepilogo()
     + wfSchede();
 
   if(!dip.length){
@@ -13249,6 +13320,8 @@ function wfBuoniSupaLoad(){
       wfBuoniRigheScrivi(finale);
       try{ if(typeof supaUpsert==='function') spingi.forEach(function(b){ supaUpsert('welfare_buoni_app', b); }); }catch(e){}
       if(cambiato){ try{ var v=document.getElementById('view-welfare'); if(v && v.classList.contains('active') && typeof wfBuoniRender==='function') wfBuoniRender(); }catch(e){} }
+      /* trasferte mancanti: si creano da sole, senza premere niente */
+      try{ setTimeout(function(){ wfTrasferteRiallinea(true); }, 800); }catch(e){}
     });
   }catch(e){}
 }
@@ -13331,6 +13404,9 @@ function wfBuoniAggiungi(){
   }catch(e){}
   if(!data){ alert('Metti la data del rifornimento.'); return false; }
   if(!(imp>0)){ alert('Metti l\u2019importo del buono.'); return false; }
+  /* chi ha guidato e' obbligatorio: senza, la trasferta non si puo' creare
+     e in caso di controllo il buono non ha un responsabile */
+  if(!chi){ alert('Indica chi ha guidato: serve per la trasferta e per il registro.'); try{ document.getElementById('bc-chi').focus(); }catch(e){} return false; }
 
   /* Il veicolo si copia, non si collega: fra due anni l'auto sara' venduta
      e sparita dal magazzino, ma sul buono deve restare scritto su quale
@@ -13419,7 +13495,7 @@ function wfTrasfertaDaBuono(b){
    Per i buoni inseriti prima che la trasferta nascesse da sola: si passa
    tutto lo storico e si crea quello che manca, una trasferta per persona
    e per giorno. Si puo' lanciare quante volte si vuole: non duplica. */
-function wfTrasferteRiallinea(){
+function wfTrasferteRiallinea(silenzioso){
   if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
   var buoni=wfBuoni(); var fatte=0, saltati=[], senzaChi=0, senzaMeta=0, giaPresenti=0, errori=0;
   buoni.slice().sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); }).forEach(function(b){
@@ -13437,6 +13513,7 @@ function wfTrasferteRiallinea(){
     catch(e){ errori++; try{ console.error('riallinea trasferte', b, e); }catch(x){} }
     if(ok) fatte++;
   });
+  if(silenzioso){ if(fatte){ try{ if(typeof tcToastNew==='function') tcToastNew('\u2708\ufe0f '+fatte+' trasfert'+(fatte===1?'a creata':'e create')+' dai buoni', true); }catch(e){} try{ wfRender(); }catch(e){} } return; }
   alert('Buoni esaminati: '+buoni.length
     +'\nTrasferte create: '+fatte
     +'\nGi\u00e0 presenti (saltate): '+giaPresenti
@@ -14859,7 +14936,9 @@ function tcScaricaRiepilogoCSV(){
     });
     extra.forEach(function(nome){
       var pce=(dow===0?'/':'');
-      var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+      /* permesso o ferie segnati in griglia: quel giorno non ha ore fisse */
+      try{ var _emv=(TC_EXTRA_VIRTUALI||{})[nome]; if(_emv && typeof riPerGiorno==='function'){ var _pv=riPerGiorno(_emv, dataStr); if(_pv){ pce=tcPermCodice(_pv)||_pv; } } }catch(e){}
+      var mine=(pce && pce!=='/')?0:tcMinutiRiepilogo('', nome, dow, 0, pce);
       if(mine) totExtra[nome]=(totExtra[nome]||0)+mine;
       riga.push(tcCsvCell(mine?tcOreDecimali(mine):''));
       riga.push(tcCsvCell(pce));
@@ -14938,7 +15017,9 @@ function tcScaricaRiepilogoXLS(){
     });
     extra.forEach(function(nome){
       var pce=(dow===0?'/':'');
-      var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+      /* permesso o ferie segnati in griglia: quel giorno non ha ore fisse */
+      try{ var _emv=(TC_EXTRA_VIRTUALI||{})[nome]; if(_emv && typeof riPerGiorno==='function'){ var _pv=riPerGiorno(_emv, dataStr); if(_pv){ pce=tcPermCodice(_pv)||_pv; } } }catch(e){}
+      var mine=(pce && pce!=='/')?0:tcMinutiRiepilogo('', nome, dow, 0, pce);
       if(mine) totExtra[nome]=(totExtra[nome]||0)+mine;
       H+=cellaOre(mine)+'<td>'+pce+'</td>';
     });
@@ -15057,7 +15138,8 @@ function tcScaricaRiepilogoXLS(){
         extra.forEach(function(nome,i){
           var c=2+(cols.length+i)*2;
           var pce=(dow===0?'/':'');
-          var mine=tcMinutiRiepilogo('', nome, dow, 0, pce);
+          try{ var _emv=(TC_EXTRA_VIRTUALI||{})[nome]; if(_emv && typeof riPerGiorno==='function'){ var _pv=riPerGiorno(_emv, dataStr); if(_pv){ pce=tcPermCodice(_pv)||_pv; } } }catch(e){}
+          var mine=(pce && pce!=='/')?0:tcMinutiRiepilogo('', nome, dow, 0, pce);
           if(mine) totExtra2[nome]=(totExtra2[nome]||0)+mine;
           if(mine) put(R,c,Math.round(mine/60*100)/100, stBase({ alignment:{horizontal:'center'} }), 'n','0.00');
           else     put(R,c,'', stBase());
