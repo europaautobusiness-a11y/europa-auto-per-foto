@@ -32746,8 +32746,10 @@ function fcApri(id){
     alert('Questo sinistro non ha un preventivo carrozzeria compilato: non posso fatturare il dettaglio delle lavorazioni.');
     return;
   }
+  /* senza concordato si fattura il totale del preventivo (IVA inclusa),
+     senza riallineamento */
   var conc=fcNum(s.importoConcordato);
-  if(conc<=0){ alert('Manca l\u2019importo concordato.'); return; }
+  if(conc<=0){ var _tt0=fcTotaliDaPreventivo(s); if(!(_tt0.totale>0)){ alert('Il preventivo non ha un totale: controlla le voci.'); return; } if(!confirm('Non c\u2019\u00e8 un importo concordato: la fattura verr\u00e0 emessa sul totale del preventivo, '+fcEu(_tt0.totale)+' \u20ac IVA inclusa.\n\nContinuare?')) return; }
   _fcId=id; _fcT=fcTotaliDaPreventivo(s);
   var m=document.getElementById('fc-modal');
   if(!m){ m=document.createElement('div'); m.id='fc-modal';
@@ -32763,7 +32765,7 @@ function fcRender(){
   var s=sinById(_fcId); if(!s) return;
   var pv=s.preventivo||{}, t=_fcT;
   var f=(s.fatturaCarr)||{};
-  var conc=fcNum(s.importoConcordato);
+  var conc=fcNum(s.importoConcordato); if(!(conc>0)) conc=Math.round(t.totale*100)/100;   /* senza concordato: il preventivo */
   var ivaPct=t.ivaPct||22;
   /* concordato SEMPRE IVA inclusa */
   var target=Math.round((conc/(1+ivaPct/100))*100)/100;
@@ -32984,6 +32986,7 @@ function fcStampa(id){
   var s=sinById(id); if(!s || !s.fatturaCarr) return;
   var f=s.fatturaCarr, pv=s.preventivo||{}, p=pv.params||{}, t=fcTotaliDaPreventivo(s);
   var conc=fcNum(s.importoConcordato), ivaPct=t.ivaPct||22;
+  var senzaConc=!(conc>0); if(senzaConc) conc=Math.round(t.totale*100)/100;   /* senza concordato: il preventivo */
   /* il concordato col perito e' sempre IVA inclusa: si scorpora */
   var target=Math.round((conc/(1+ivaPct/100))*100)/100;
   var e=fcRiallinea(t, target, (pv.righe)||[]);
@@ -33011,40 +33014,69 @@ function fcStampa(id){
   var g=function(campo, fallback){ return E((pv[campo]!=null && pv[campo]!=='')?pv[campo]:(fallback||'')); };
   var gp=function(campo, fallback){ return E((p[campo]!=null && p[campo]!=='')?p[campo]:(fallback||'')); };
 
-  var doc='<div class="pvdoc"><table><tr><td colspan="7" class="tit">FATTURA \u2014 DESCRIZIONE DELL\'INTERVENTO RIPARATIVO</td></tr></table>'
-  +'<table><tr><td colspan="3"><div class="lab">RAGIONE SOCIALE CARROZZERIA</div><div class="big">EUROPA AUTO SRL</div>Via Nigra 4 - 20037 Paderno Dugnano (MI)</td>'
-  +'<td colspan="2"><div class="lab">Cod. Fisc.</div>06440210968<br><div class="lab">Tel.</div>3337107403</td>'
-  +'<td colspan="2"><div class="lab">P. IVA</div>06440210968<br><div class="lab">Mail</div>amministrazione@europaautosrl.it</td></tr>'
-  +'<tr><td><div class="lab">CODICE RIPARATORE</div>031</td><td><div class="lab">FASCIA</div>&nbsp;</td>'
-  +'<td><div class="lab">DATA FATTURA</div>'+E(f.data?f.data.split('-').reverse().join('/'):'')+'</td>'
-  +'<td colspan="2"><div class="lab">FATTURA N.</div><div class="big">'+E(f.numero)+' / '+E(f.anno)+'</div></td>'
-  +'<td colspan="2"><div class="lab">PAGINA N.</div>1</td></tr>'
-  +'<tr><td colspan="4"><div class="lab">COMPAGNIA ASSICURATRICE</div>'+g('comp', s.compagnia)+'</td>'
-  +'<td colspan="3"><div class="lab">NUMERO SINISTRO</div>'+gp('nsin', s.numeroSinistro)+'</td></tr>'
-  +'<tr><td colspan="4"><div class="lab">CLIENTE</div><div class="big">'+E(f.nome||pv.cliente||s.nome||'')+'</div></td>'
-  +'<td colspan="3"><div class="lab">PREVENTIVO N.</div>'+gp('num','')+'</td></tr>'
-  +'<tr><td colspan="5"><div class="lab">INTESTATARIO - INDIRIZZO</div>'+E(f.indirizzo||pv.indirizzo||s.residenza||'')+'</td>'
-  +'<td colspan="2"><div class="lab">COD. FISCALE / P.IVA</div>'+E(f.cf||f.piva||'')+'</td></tr>'
-  +'<tr><td colspan="4"><div class="lab">VEICOLO (MARCA - MODELLO - VERSIONE)</div>'+g('veicolo', s.modello)+'</td>'
-  +'<td><div class="lab">TARGA</div>'+g('targa', s.targa)+'</td><td><div class="lab">TELAIO</div>'+gp('telaio','')+'</td>'
-  +'<td><div class="lab">1a IMMATRIC.</div>'+gp('imm','')+'</td></tr>'
-  +'<tr><td colspan="5"><div class="lab">TIPO SMALTO</div>'+gp('smalto','')+'</td><td colspan="2"><div class="lab">STRATO</div>&nbsp;</td></tr></table>'
-  +'<table><tr><th class="lab">C.R.</th><th class="lab">VOCI DELL\'INTERVENTO RIPARATIVO</th><th class="lab c">SR</th><th class="lab c">LA</th><th class="lab c">VE</th><th class="lab c">ME</th><th class="lab r">RICAMBI \u20ac</th></tr>'
-  +rh
-  +'<tr><td class="big" colspan="2" style="text-align:right;">TOTALE TEMPI</td><td class="c big">'+OR(t.sumSR)+'</td><td class="c big">'+OR(t.sumLA)+'</td><td class="c big">'+OR(c.sumVE)+'</td><td class="c big">'+OR(t.sumME)+'</td><td class="r big">'+EU(t.sumRic)+'</td></tr>'
-  +'<tr><td colspan="2"><div class="lab">SUPPL. DOPPIO/TRIPLO STRATO '+OR(t.pctDoppio)+'% = '+OR(c.supplDoppio)+'  -  FINITURA = '+OR(c.supplFin)+'  -  TEMPO AGG. VERNICIATURA = '+OR(t.tagg)+'</div></td>'
-  +'<td colspan="3" class="c"><div class="lab">TOT. TEMPI SUPPL.</div><b>'+OR(c.supplTot)+'</b></td>'
-  +'<td colspan="2" class="c"><div class="lab">TOTALE TEMPI VE</div><b>'+OR(c.veTot)+'</b></td></tr></table>'
-  +'<table><tr><td rowspan="'+(r.levabolli?8:7)+'" style="width:45%;"><div class="lab">NOTE</div>Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.</td>'
-  +'<td><div class="lab">RICAMBI</div></td><td class="r">'+EU(r.ricambi)+'</td></tr>'
-  +'<tr><td><div class="lab">MATERIALE CONSUMO</div>('+OR(c.veTot)+' h x \u20ac '+EU(t.materialeH)+')</td><td class="r">'+EU(r.materiale)+'</td></tr>'
-  +'<tr><td><div class="lab">USO DIME / SMALTIMENTO RIFIUTI</div>('+OR(t.smaltPct)+'% imponibile, max \u20ac '+EU(t.smaltMax)+')</td><td class="r">'+EU(r.smalt)+'</td></tr>'
-  +'<tr><td><div class="lab">MANODOPERA</div>ore '+OR(r.oreMan)+' x \u20ac '+EU(r.orario)+'/ora</td><td class="r">'+EU(r.manodopera)+'</td></tr>'
-  +(r.levabolli?('<tr><td><div class="lab">LEVABOLLI</div>(manodopera a corpo)</td><td class="r">'+EU(r.levabolli)+'</td></tr>'):'')
-  +'<tr><td class="big">IMPONIBILE</td><td class="r big">'+EU(imponibile)+'</td></tr>'
-  +'<tr><td><div class="lab">IVA '+OR(ivaPct)+'%</div></td><td class="r">'+EU(iva)+'</td></tr>'
-  +'<tr><td class="big">TOTALE DOCUMENTO</td><td class="r big">'+EU(totale)+'</td></tr></table>'
-  +'<div style="font-size:7px;margin-top:3px;">Documento generato dal gestionale \u2014 non \u00e8 la fattura elettronica trasmessa allo SdI.</div>'
+  /* ===== FATTURA SUL MODELLO DEL GESTIONALE PRECEDENTE =====
+     Stessa griglia delle fatture di vendita: intestazione con logo a
+     sinistra e destinatario nel riquadro a destra, riga "Fattura emessa",
+     condizioni di pagamento, tabella COD.ART / DESCRIZIONE / U.M /
+     QUANTITA' / PREZZO / IMPORTO / C.IVA, riquadri dei totali, informativa. */
+  var dataIt=E(f.data?f.data.split('-').reverse().join('/'):'');
+  var cl=E(f.nome||pv.cliente||s.nome||''), ind=E(f.indirizzo||pv.indirizzo||s.residenza||''), cf=E(f.cf||f.piva||'');
+  var righeF=[];
+  righe.forEach(function(x){ if(fcNum(x.ric)>0) righeF.push({ cod:E(x.cr||'RIC'), d:(x.descr||''), um:'NR', q:'1', pu:fcNum(x.ric), imp:fcNum(x.ric) }); });
+  righeF.push({ cod:'MANOD', d:'MANODOPERA CARROZZERIA E VERNICIATURA', um:'ORE', q:OR(r.oreMan), pu:fcNum(r.orario), imp:fcNum(r.manodopera) });
+  righeF.push({ cod:'MATER', d:'MATERIALE DI CONSUMO VERNICIATURA', um:'ORE', q:OR(c.veTot), pu:fcNum(t.materialeH), imp:fcNum(r.materiale) });
+  if(fcNum(r.levabolli)>0) righeF.push({ cod:'LEVAB', d:'RIPARAZIONE LEVABOLLI', um:'NR', q:'1', pu:fcNum(r.levabolli), imp:fcNum(r.levabolli) });
+  if(fcNum(r.smalt)>0) righeF.push({ cod:'SMALT', d:'SMALTIMENTO RIFIUTI E USO DIME', um:'NR', q:'1', pu:fcNum(r.smalt), imp:fcNum(r.smalt) });
+  var mono='font-family:\'Courier New\',Courier,monospace;';
+  var lab='font-family:Arial,Helvetica,sans-serif;font-size:8.5px;font-weight:bold;color:#333;';
+  var cel='border:1px solid #000;padding:3px 6px;vertical-align:top;';
+  var rowsH=righeF.map(function(x){
+    return '<tr><td style="padding:3px 6px;">'+E(x.cod)+'</td><td style="padding:3px 6px;">'+E(String(x.d).toUpperCase())+'</td><td style="padding:3px 6px;text-align:center;">'+x.um+'</td><td style="padding:3px 6px;text-align:right;">'+E(x.q)+'</td><td style="padding:3px 6px;text-align:right;">'+EU(x.pu)+'</td><td style="padding:3px 6px;text-align:right;">'+EU(x.imp)+'</td><td style="padding:3px 6px;text-align:center;">'+OR(ivaPct)+'</td></tr>';
+  }).join('');
+  for(var kk=righeF.length;kk<14;kk++) rowsH+='<tr><td style="padding:3px 6px;">&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+  var scad=E(f.data?f.data.split('-').reverse().join('/'):'');
+  var doc='<div class="fatdoc" style="'+mono+'font-size:12px;color:#000;">'
+  /* intestazione */
+  +'<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>'
+  +'<td style="width:52%;vertical-align:top;font-family:Georgia,\'Times New Roman\',serif;">'
+  +'<div style="font-size:26px;font-weight:bold;color:#1a3d8f;letter-spacing:.01em;">europaautosrl.it</div>'
+  +'<div style="font-size:11px;color:#1a3d8f;margin-bottom:8px;">Via Nigra 4, Paderno Dugnano</div>'
+  +'<div style="font-size:11px;font-weight:bold;color:#1a5c2a;line-height:1.35;">EUROPA AUTO SRL<br>Via Nigra, 4<br>20037 PADERNO DUGNANO (MI)<br>Tel./Fax: 029181820<br>Cod. Fiscale / P. iva 06440210968<br>R.E.A.: 1892676 - CCIA: MI<br>E-Mail amministrazione@europaautosrl.it - www.europaautosrl.it</div></td>'
+  +'<td style="vertical-align:top;"><div style="border:1.5px solid #000;border-radius:8px;padding:14px 12px;min-height:120px;">'
+  +'<div style="font-size:13px;">'+cl+'</div><div style="margin-top:14px;font-size:13px;">'+ind+'</div>'+(cf?('<div style="margin-top:6px;font-size:12px;">C.F. / P.IVA '+cf+'</div>'):'')+'</div></td></tr></table>'
+  /* riga documento */
+  +'<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;"><tr>'
+  +'<td style="'+cel+'width:26%;"><div style="'+lab+'">&nbsp;</div><div style="margin-top:8px;">Fattura emessa</div></td>'
+  +'<td style="'+cel+'width:13%;"><div style="'+lab+'">COD. CLIENTE</div><div style="margin-top:8px;text-align:right;">'+E(f.codCliente||'')+'</div></td>'
+  +'<td style="'+cel+'width:21%;"><div style="'+lab+'">PARTITA I.V.A.</div><div style="margin-top:8px;">'+E(f.piva||'')+'</div></td>'
+  +'<td style="'+cel+'width:15%;"><div style="'+lab+'">DATA FATTURA</div><div style="margin-top:8px;">'+dataIt+'</div></td>'
+  +'<td style="'+cel+'width:15%;"><div style="'+lab+'">NUMERO FATTURA</div><div style="margin-top:8px;text-align:right;">'+E(f.numero)+'</div></td>'
+  +'<td style="'+cel+'"><div style="'+lab+'">PAG</div><div style="margin-top:8px;">1</div></td></tr>'
+  +'<tr><td colspan="3" style="'+cel+'"><div style="'+lab+'">CONDIZIONI DI PAGAMENTO</div><div style="margin-top:6px;">BONIFICO BANCARIO</div></td>'
+  +'<td colspan="3" style="'+cel+'"><div style="'+lab+'">BANCA D\'APPOGGIO</div><div style="margin-top:6px;">IBAN IT88E0344033990000001004900</div></td></tr></table>'
+  /* riferimenti sinistro */
+  +'<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;border-top:none;"><tr>'
+  +'<td style="'+cel+'border-top:none;"><div style="'+lab+'">RIFERIMENTI</div><div style="margin-top:4px;font-size:11.5px;">Sinistro n. '+gp('nsin', s.numeroSinistro)+' \u00b7 Compagnia '+g('comp', s.compagnia)+(s.perito?(' \u00b7 Perito '+E(s.perito)):'')+(s.dataEvento?(' \u00b7 Evento del '+E(String(s.dataEvento).split('-').reverse().join('/'))):'')
+  +'<br>Veicolo '+g('veicolo', s.modello)+' \u00b7 Targa '+g('targa', s.targa)+(gp('telaio','')?(' \u00b7 Telaio '+gp('telaio','')):'')+'</div></td></tr></table>'
+  /* tabella righe */
+  +'<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;border-top:none;">'
+  +'<thead><tr style="background:#f2f2f2;">'
+  +'<th style="'+cel+lab+'text-align:center;width:11%;">COD.ART.</th><th style="'+cel+lab+'text-align:center;">DESCRIZIONE ARTICOLO</th><th style="'+cel+lab+'text-align:center;width:6%;">U.M</th><th style="'+cel+lab+'text-align:center;width:9%;">QUANTITA\'</th><th style="'+cel+lab+'text-align:center;width:13%;">PREZZO</th><th style="'+cel+lab+'text-align:center;width:14%;">IMPORTO</th><th style="'+cel+lab+'text-align:center;width:6%;">C.IVA</th></tr></thead>'
+  +'<tbody style="vertical-align:top;">'+rowsH+'</tbody>'
+  +'<tr><td colspan="7" style="padding:4px 6px;font-size:9px;font-family:Arial,Helvetica,sans-serif;text-align:center;">'+(senzaConc?'Importo non concordato: fattura emessa sul preventivo.':'Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.')+'</td></tr></table>'
+  /* totali */
+  +'<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;border-top:none;"><tr>'
+  +'<td style="'+cel+'border-top:none;width:45%;"><div style="'+lab+'">TOTALE MERCE</div><div style="margin-top:6px;text-align:right;">'+EU(imponibile)+'</div></td>'
+  +'<td style="'+cel+'border-top:none;width:25%;"><div style="'+lab+'">SPESE RIC BANCARIE</div><div style="margin-top:6px;">&nbsp;</div></td>'
+  +'<td style="'+cel+'border-top:none;"><div style="'+lab+'">BOLLI</div><div style="margin-top:6px;">&nbsp;</div></td></tr>'
+  +'<tr><td style="'+cel+'"><table style="width:100%;border-collapse:collapse;"><tr><td style="width:38%;"><div style="'+lab+'">IMPONIBILE</div></td><td style="width:24%;"><div style="'+lab+'">IMPORTO IVA</div></td><td><div style="'+lab+'">DESCR.IVA</div></td></tr>'
+  +'<tr><td style="text-align:right;padding-right:10px;">'+EU(imponibile)+'</td><td style="text-align:right;padding-right:10px;">'+EU(iva)+'</td><td>ALIQ. IVA '+OR(ivaPct)+'%</td></tr></table></td>'
+  +'<td colspan="2" style="'+cel+'"><div style="'+lab+'">DATA E IMPORTO SCADENZA:</div><div style="margin-top:6px;">'+scad+'&nbsp;&nbsp;&nbsp;&nbsp;'+EU(totale)+'</div></td></tr>'
+  +'<tr><td style="'+cel+'"><table style="width:100%;border-collapse:collapse;"><tr><td style="width:38%;"><div style="'+lab+'">TOTALE IMPONIBILE</div></td><td style="width:24%;"><div style="'+lab+'">TOTALE IVA</div></td><td></td></tr>'
+  +'<tr><td style="text-align:right;padding-right:10px;font-size:13px;">'+EU(imponibile)+'</td><td style="text-align:right;padding-right:10px;font-size:13px;">'+EU(iva)+'</td><td></td></tr></table></td>'
+  +'<td colspan="2" style="'+cel+'"><div style="'+lab+'font-size:10px;">TOTALE DOCUMENTO EURO</div><div style="margin-top:6px;display:flex;justify-content:space-between;font-size:14px;font-weight:bold;"><span>EUR</span><span>'+EU(totale)+'</span></div></td></tr></table>'
+  +'<div style="font-family:Arial,Helvetica,sans-serif;font-size:8px;color:#333;margin-top:6px;line-height:1.3;">Informativa ai sensi della L.675/96. I dati anagrafici sono inseriti nella ns.banca dati e sono usati ai fini amministrativi commerciali e di legge.<br>I Vs.dati anagrafici sono da noi considerati esatti sotto la Vs.responsabilit\u00e0, salvo diversa comunicazione come previsto dall\'art.41 DPR 26-10-72 n.633.</div>'
+  +'<div style="font-family:Arial,Helvetica,sans-serif;font-size:7.5px;color:#777;margin-top:4px;">Documento generato dal gestionale \u2014 non \u00e8 la fattura elettronica trasmessa allo SdI.</div>'
   +'</div>';
 
   var pa=document.getElementById('sin-print');
