@@ -16478,6 +16478,8 @@ document.addEventListener('DOMContentLoaded',function(){
   + '#cc-app .cc-mic.cc-rec{background:#fee2e2;border-color:#dc2626;animation:ccpulse 1.1s infinite}'
   + '@keyframes ccpulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}'
   + '#cc-app .cc-hint{font-size:11px;color:#64748b;margin-top:4px}'
+  + '#cc-app .fc .fc-bg-event.cc-chiuso{opacity:.55 !important;cursor:not-allowed;}'
+  + '#cc-app .fc .fc-bg-event.cc-chiuso .fc-event-title{color:#fff;font-weight:900;font-style:normal;font-size:12px;padding:4px 6px;}'
   + '#cc-app .cc-hint.cc-live{color:#dc2626;font-weight:600}'
   + '#cc-app .cc-inserito{font-size:12px;color:#64748b;margin-bottom:10px;padding:7px 10px;background:#e8f0fc;border-radius:8px;font-weight:600}'
   + '.cc-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:#1f2733;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:.3s;z-index:99999}'
@@ -16816,7 +16818,7 @@ document.addEventListener('DOMContentLoaded',function(){
     /* sfondo rosso sui giorni bloccati */
     var chiusi=ccChiusiLoad().map(function(b){
       var fine=new Date(b.a+'T00:00:00'); fine.setDate(fine.getDate()+1);
-      return { id:'chiuso_'+b.id, start:b.da, end:fine.toISOString().slice(0,10), display:'background', backgroundColor:'#fca5a5', extendedProps:{chiuso:true} };
+      return { id:'chiuso_'+b.id, start:b.da, end:fine.toISOString().slice(0,10), display:'background', backgroundColor:'#dc2626', classNames:['cc-chiuso'], title:('\ud83d\udeab '+(b.motivo||'CHIUSO')), extendedProps:{chiuso:true} };
     });
     return chiusi.concat(ccLoad().filter(function(c){ return c && c.data && (!f || c.dipEmail===f) && ccCatOk(c); }).map(function(c){
       var isTask=(c.categoria==='task');
@@ -16866,7 +16868,9 @@ document.addEventListener('DOMContentLoaded',function(){
           slotLabelFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           eventTimeFormat:{ hour:'2-digit', minute:'2-digit', hour12:false },
           events:function(info,success){ try{ success(ccBuildEvents()); }catch(e){ success([]); } },
-          dateClick:function(info){ var ds=String(info.dateStr); var d=ds.slice(0,10); var tm=ds.match(/T(\d{2}:\d{2})/); ccApri(d); setTimeout(function(){ try{ if(typeof ccDurataDefault==='function') ccDurataDefault(); if(tm){ var oe=document.getElementById('cc-ora'); if(oe) oe.value=tm[1]; } var te=document.getElementById('cc-titolo'); if(te) te.focus(); }catch(e){} }, 150); },
+          dateClick:function(info){ var ds=String(info.dateStr); var d=ds.slice(0,10);
+            /* giorno bloccato: non si apre il modulo per un nuovo appuntamento */
+            try{ var _blk=ccGiornoChiuso(d); if(_blk){ ccToast('\ud83d\udeab '+d.split('-').reverse().join('/')+' non prenotabile'+(_blk.motivo?(' \u2014 '+_blk.motivo):'')); return; } }catch(e){} var tm=ds.match(/T(\d{2}:\d{2})/); ccApri(d); setTimeout(function(){ try{ if(typeof ccDurataDefault==='function') ccDurataDefault(); if(tm){ var oe=document.getElementById('cc-ora'); if(oe) oe.value=tm[1]; } var te=document.getElementById('cc-titolo'); if(te) te.focus(); }catch(e){} }, 150); },
           eventDrop:function(info){ ccSpostaEvento(info); },
           eventResize:function(info){ ccSpostaEvento(info); },
           eventClick:function(info){ var _id=info.event.id||(info.event.extendedProps&&info.event.extendedProps.id); if(_id && typeof ccApriEvento==='function'){ ccApriEvento(_id); } else { var ds=(info.event.extendedProps&&info.event.extendedProps.ds)||String(info.event.startStr||'').slice(0,10); if(ds) ccApri(ds); } }
@@ -20951,12 +20955,26 @@ function prnPrimoGiorno(){
   var z=function(n){ return String(n).padStart(2,'0'); };
   return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());
 }
+var _prnChiusi=[];
+function prnChiusoIl(v){ v=String(v||'').slice(0,10); for(var i=0;i<_prnChiusi.length;i++){ var b=_prnChiusi[i]; if(b && v>=b.da && v<=b.a) return b; } return null; }
+function prnCaricaChiusi(){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('config').select('id,data').eq('id','cc_chiusi').then(function(r){
+      var row=(r&&r.data||[])[0]; var d=row&&row.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+      if(d && Array.isArray(d.body)) _prnChiusi=d.body;
+      try{ prnDataCambia(); }catch(e){}
+    });
+  }catch(e){}
+}
 function prnGiornoValido(v){
   try{
     var q=String(v||'').split('-');
     if(q.length!==3) return false;
     var g=new Date(parseInt(q[0],10), parseInt(q[1],10)-1, parseInt(q[2],10)).getDay();
-    return (g!==0 && g!==6);
+    if(g===0 || g===6) return false;
+    if(prnChiusoIl(v)) return false;   /* giorno bloccato dall'officina */
+    return true;
   }catch(e){ return false; }
 }
 /* La pagina la si legge sul telefono, subito dopo un messaggio WhatsApp:
@@ -20965,6 +20983,7 @@ function prnGiornoValido(v){
    l'indirizzo in fondo \u2014 serve dopo, non mentre si compila. */
 function prnClientOpen(cod){
   _prnCod=String(cod||'');
+  try{ prnCaricaChiusi(); }catch(e){}
   /* Il titolo della scheda del browser lo legge il cliente: deve dire dove
      si trova, non come si chiama il gestionale. */
   try{ document.title='Prenota il tagliando \u2014 Europa Auto'; }catch(e){}
@@ -21080,7 +21099,7 @@ function prnDataCambia(){
   var el=document.getElementById('prn_data'), n=document.getElementById('prn_datanota');
   if(!el||!n) return;
   if(el.value && !prnGiornoValido(el.value)){
-    n.textContent='Il sabato e la domenica siamo chiusi: scelga un giorno feriale.';
+    n.textContent=prnChiusoIl(el.value)?'Quel giorno l\u2019officina \u00e8 chiusa: scelga un altro giorno.':'Il sabato e la domenica siamo chiusi: scelga un giorno feriale.';
     n.style.color='#b45309';
     el.style.borderColor='#f59e0b';
   } else {
@@ -21134,7 +21153,7 @@ function prnInvia(){
   /* Sabato e domenica l'officina e' chiusa: meglio dirlo adesso che
      richiamare il cliente per spostarlo. */
   if(!prnGiornoValido(g('prn_data'))){
-    if(err) err.textContent='Il sabato e la domenica siamo chiusi: scelga un giorno dal luned\u00ec al venerd\u00ec.';
+    if(err) err.textContent=prnChiusoIl(g('prn_data'))?'Quel giorno l\u2019officina \u00e8 chiusa: scelga un altro giorno.':'Il sabato e la domenica siamo chiusi: scelga un giorno dal luned\u00ec al venerd\u00ec.';
     try{ prnDataCambia(); var _d=document.getElementById('prn_data'); if(_d) _d.focus(); }catch(e){}
     return;
   }
@@ -32932,18 +32951,31 @@ function fcRender(){
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">INTESTATARIO (cliente)</div>';
   h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
   /* codice fiscale e indirizzo dall'anagrafica clienti, se il cliente c'e' */
+  var _cfFonte='';
   if(!f.cf && !f.piva){ try{
-    var _nm=String(f.nome||pv.cliente||s.nome||'').toLowerCase().replace(/\s+/g,' ').trim();
+    var _nm=String(f.nome||pv.cliente||s.nome||'').toLowerCase().replace(/[^a-z\u00e0-\u00fc' ]/g,' ').replace(/\s+/g,' ').trim();
+    var _tg=String(s.targa||pv.targa||'').replace(/\s/g,'').toUpperCase();
+    var _cl=null;
+    /* 1) anagrafica clienti: stesso nome (in qualsiasi ordine), oppure
+       cognome e nome entrambi contenuti */
     if(_nm && typeof clAggrega==='function'){
-      var _pw=_nm.split(' ').sort().join(' ');
-      var _cl=(clAggrega()||[]).filter(function(c){ var n=String(((c.cognome||'')+' '+(c.nome||'')).trim()||c.ragSociale||'').toLowerCase().replace(/\s+/g,' ').trim(); return n===_nm || n.split(' ').sort().join(' ')===_pw; })[0];
-      if(_cl){ if(_cl.cf) f.cf=_cl.cf; if(_cl.piva) f.piva=_cl.piva; if(!f.indirizzo){ var _v=[_cl.via,_cl.civico].filter(Boolean).join(' '); f.indirizzo=[_v,_cl.cap,_cl.citta,(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ').trim(); } }
+      var _pw=_nm.split(' ').sort().join(' '), _parole=_nm.split(' ');
+      var _tutti=clAggrega()||[];
+      _cl=_tutti.filter(function(c){ var n=String(((c.cognome||'')+' '+(c.nome||'')).trim()||c.ragSociale||'').toLowerCase().replace(/\s+/g,' ').trim(); return n && (n===_nm || n.split(' ').sort().join(' ')===_pw); })[0];
+      if(!_cl) _cl=_tutti.filter(function(c){ var cg=String(c.cognome||'').toLowerCase().trim(), no=String(c.nome||'').toLowerCase().trim(); return cg && no && _parole.indexOf(cg)>=0 && _parole.indexOf(no)>=0; })[0];
+      if(_cl && (_cl.cf||_cl.piva)) _cfFonte='anagrafica clienti';
     }
+    /* 2) vendita con la stessa targa: il cliente della pratica */
+    if(!(_cl&&(_cl.cf||_cl.piva)) && _tg && typeof cvLoad==='function'){
+      var _cv=cvLoad().filter(function(x){ return x && x.cliente && String((x.autoSnapshot&&x.autoSnapshot.targa)||'').replace(/\s/g,'').toUpperCase()===_tg && (x.cliente.cf||x.cliente.piva); })[0];
+      if(_cv){ _cl=_cv.cliente; _cfFonte='vendita della targa '+_tg; }
+    }
+    if(_cl){ if(_cl.cf) f.cf=_cl.cf; if(_cl.piva) f.piva=_cl.piva; if(!f.indirizzo){ var _v=[_cl.via,_cl.civico].filter(Boolean).join(' '); f.indirizzo=[_v,_cl.cap,_cl.citta,(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ').trim(); } }
   }catch(e){} }
   h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Nome e cognome</label><input id="fc_nome" style="'+inp+'" value="'+fcEsc(f.nome||pv.cliente||s.nome||'')+'"></div>';
   h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Indirizzo</label><input id="fc_ind" style="'+inp+'" value="'+fcEsc(f.indirizzo||pv.indirizzo||s.residenza||'')+'"></div>';
   h+='<div style="display:flex;gap:8px;">';
-  h+='<div style="flex:1;"><label style="'+lbl+'">Codice fiscale <span style="color:#dc2626;">*</span></label><input id="fc_cf" style="'+inp+'" value="'+fcEsc(f.cf||'')+'" placeholder="obbligatorio"></div>';
+  h+='<div style="flex:1;"><label style="'+lbl+'">Codice fiscale <span style="color:#dc2626;">*</span>'+(_cfFonte?(' <span style="font-weight:400;color:#16a34a;text-transform:none;">preso da '+fcEsc(_cfFonte)+'</span>'):((!f.cf&&!f.piva)?' <span style="font-weight:400;color:#b45309;text-transform:none;">non trovato in anagrafica per questo nome</span>':''))+'</label><input id="fc_cf" style="'+inp+'" value="'+fcEsc(f.cf||'')+'" placeholder="obbligatorio"></div>';
   h+='<div style="flex:1;"><label style="'+lbl+'">P.IVA (se azienda)</label><input id="fc_piva" style="'+inp+'" value="'+fcEsc(f.piva||'')+'"></div>';
   h+='</div></div>';
 
