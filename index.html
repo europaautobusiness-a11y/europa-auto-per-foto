@@ -1469,11 +1469,11 @@ html, body{
           <option value="">Tutti i dipendenti</option>
         </select>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
-          <button id="btn-apri-sheet-presenze" onclick="tcApriSheet()" style="padding:7px 14px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">📊 Apri foglio Google</button>
+          <!-- pulsante del foglio Google tolto: Apps Script spento, i dati stanno su Supabase -->
           <button onclick="tcScaricaRiepilogoXLS()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Riepilogo mese (Excel)</button>
           <button onclick="tcScaricaTimbratureCSV()" style="padding:7px 14px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">⬇️ Timbrature (CSV)</button>
           <button onclick="tcAzzeraMese()" style="padding:7px 14px;border:1px solid #ef4444;background:#fff;color:#ef4444;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🗑️ Azzera mese</button>
-          <button onclick="eaSyncSuFoglio(false)" style="padding:7px 14px;border:1px solid #1a4fa0;background:#1a4fa0;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;">🔄 Sincronizza con foglio</button>
+          <!-- pulsante del foglio Google tolto: Apps Script spento, i dati stanno su Supabase -->
         </div>
       </div>
       <div id="tc-admin-registro-wrap" style="overflow-x:auto;"></div>
@@ -13936,6 +13936,7 @@ function eaNomeDaMail(email) {
   var e = (''+email).toLowerCase().trim();
   if (e === 'europaautobusiness@gmail.com') return 'Davide';
   if (e === 'no.reply.europaauto@gmail.com') return 'Rudy';
+  try{ var _nv=Object.keys(TC_EXTRA_VIRTUALI||{}).filter(function(n){ return TC_EXTRA_VIRTUALI[n]===e; })[0]; if(_nv) return _nv; }catch(_){}
   var d = tcLoadDip().find(function(x){ return (x.email||'').toLowerCase() === e; });
   if (d && d.nome) return d.nome;
   try { var u = (typeof UTENTI_APP !== 'undefined') ? UTENTI_APP.find(function(x){ return (x.email||'').toLowerCase() === e; }) : null; if (u && u.nome) return u.nome; } catch(_){}
@@ -14746,7 +14747,7 @@ function tcAdminRenderRegistro() {
   var wrap=document.getElementById('tc-admin-registro-wrap'); if(!wrap) return;
   var mese=_tcAdminMese||tcGetMese();
   var filter=document.getElementById('tc-admin-dip-filter'), filterVal=filter?filter.value:'';
-  var dips=tcLoadDip();
+  var dips=tcDipConExtra();   /* anche chi non timbra (Renato), per i permessi */
   if(filter){
     var existing=new Set(Array.from(filter.options).map(function(o){return o.value;}));
     dips.forEach(function(d){if(!existing.has(d.email)){var opt=document.createElement('option');opt.value=d.email;opt.textContent=d.nome;filter.appendChild(opt);}});
@@ -14844,6 +14845,22 @@ function tcPermCodice(cat){
    non timbrano, ma allo studio paghe servono. Le loro ore stanno in
    TC_ORE_RIEPILOGO. */
 var DIPENDENTI_EXTRA = ['Renato','Davide'];
+/* ===== CHI NON TIMBRA MA HA PERMESSI E FERIE =====
+   Renato non timbra (ore fisse nel riepilogo per lo studio), ma i suoi
+   permessi e le ferie vanno segnati mese per mese come per gli altri.
+   Ha una colonna nella griglia con un identificativo interno al posto
+   dell'email: non puo' timbrare, non riceve avvisi, ma la colonna
+   Perm/Ferie funziona e il riepilogo esportato tiene conto dei permessi. */
+var TC_EXTRA_VIRTUALI = { 'Renato':'renato@extra' };
+function tcDipConExtra(){
+  var dips=tcLoadDip().slice();
+  Object.keys(TC_EXTRA_VIRTUALI).forEach(function(nome){
+    var em=TC_EXTRA_VIRTUALI[nome];
+    if(!dips.some(function(d){ return d && (d.email===em || String(d.nome||'').toLowerCase()===nome.toLowerCase()); }))
+      dips.push({ nome:nome, email:em, ruolo:'dipendente', sede:'sede_a', virtuale:true });
+  });
+  return dips;
+}
 
 /* ===== Ore da mettere nel riepilogo per il commercialista =====
    Valgono SOLO nel file scaricato: dentro l'app le timbrature restano quelle
@@ -16721,8 +16738,36 @@ document.addEventListener('DOMContentLoaded',function(){
      giorni si colorano di rosso nel calendario e non si possono fissare
      appuntamenti. Salvato in config (cloud) come 'cc_chiusi'. */
   var CC_CHIUSI_KEY='ea_cc_chiusi_v1';
-  function ccChiusiLoad(){ try{ return JSON.parse(localStorage.getItem(CC_CHIUSI_KEY)||'[]')||[]; }catch(e){ return []; } }
-  function ccChiusiSave(l){ try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(l||[])); }catch(e){} try{ if(typeof cfgSupaSave==='function') cfgSupaSave('cc_chiusi', l||[]); }catch(e){} }
+  /* copia in memoria: se localStorage e' pieno e rifiuta la scrittura, i
+     giorni bloccati restano comunque validi in questa sessione e sul cloud */
+  var _ccChiusiMem=null;
+  function ccChiusiLoad(){
+    if(_ccChiusiMem) return _ccChiusiMem;
+    try{ _ccChiusiMem=JSON.parse(localStorage.getItem(CC_CHIUSI_KEY)||'[]')||[]; }catch(e){ _ccChiusiMem=[]; }
+    return _ccChiusiMem;
+  }
+  function ccChiusiSave(l){
+    _ccChiusiMem=(l||[]).slice();
+    try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(_ccChiusiMem)); }catch(e){ try{ if(typeof tcToastNew==='function') tcToastNew('Memoria del browser piena: i giorni bloccati sono salvati solo sul cloud', false); }catch(x){} }
+    try{ if(typeof cfgSupaSave==='function') cfgSupaSave('cc_chiusi', _ccChiusiMem); }catch(e){}
+  }
+  /* dal cloud: sempre, anche se il locale non e' piu' vecchio (il locale
+     puo' essere vuoto perche' il browser non ha potuto scriverlo) */
+  function ccChiusiDalCloud(){
+    try{
+      var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+      sb.from('config').select('id,data').eq('id','cc_chiusi').then(function(res){
+        var row=(res&&res.data||[])[0]; var d=row&&row.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        var body=d&&d.body; if(!Array.isArray(body)) return;
+        var loc=ccChiusiLoad(); var ids={}; loc.forEach(function(b){ if(b&&b.id) ids[b.id]=1; });
+        var uniti=loc.slice(); body.forEach(function(b){ if(b&&b.id && !ids[b.id]) uniti.push(b); });
+        /* i tolti in locale restano tolti solo se il locale e' piu' recente: qui
+           vince l'unione, che nel dubbio mostra il blocco */
+        if(uniti.length!==loc.length){ _ccChiusiMem=uniti; try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(uniti)); }catch(e){} }
+        try{ ccChiusiRender(); ccRenderCal(); }catch(e){}
+      });
+    }catch(e){}
+  }
   function ccGiornoChiuso(ds){
     ds=String(ds||'').slice(0,10); if(!ds) return null;
     var l=ccChiusiLoad(); for(var i=0;i<l.length;i++){ var b=l[i]; if(b && ds>=b.da && ds<=b.a) return b; }
@@ -16737,6 +16782,7 @@ document.addEventListener('DOMContentLoaded',function(){
     ccChiusiSave(l); ccChiusiRender(); ccRenderCal();
   };
   window.ccChiusiTogli=function(id){ var l=ccChiusiLoad().filter(function(b){ return b && b.id!==id; }); ccChiusiSave(l); ccChiusiRender(); ccRenderCal(); };
+  window.ccChiusiDalCloud=ccChiusiDalCloud;
   function ccChiusiRender(){
     var w=document.getElementById('cc-chiusi-wrap'); if(!w) return;
     var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
@@ -16763,8 +16809,8 @@ document.addEventListener('DOMContentLoaded',function(){
     w.innerHTML=h;
   }
   window.ccChiusiRender=ccChiusiRender;
-  try{ cfgSupaLoad('cc_chiusi', function(body){ try{ localStorage.setItem(CC_CHIUSI_KEY, JSON.stringify(body||[])); }catch(e){} try{ ccChiusiRender(); ccRenderCal(); }catch(e){} }, ccChiusiLoad); }catch(e){}
-  setTimeout(function(){ try{ ccChiusiRender(); }catch(e){} }, 50);
+  setTimeout(function(){ try{ ccChiusiRender(); ccChiusiDalCloud(); }catch(e){} }, 50);
+  setTimeout(function(){ try{ ccChiusiDalCloud(); }catch(e){} }, 4000);   /* secondo giro: il client Supabase potrebbe non essere pronto al primo */
   function ccBuildEvents(){
     var f=(document.getElementById('cc-filtro')||{}).value||'';
     /* sfondo rosso sui giorni bloccati */
@@ -32885,6 +32931,15 @@ function fcRender(){
   /* anagrafica */
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">INTESTATARIO (cliente)</div>';
   h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
+  /* codice fiscale e indirizzo dall'anagrafica clienti, se il cliente c'e' */
+  if(!f.cf && !f.piva){ try{
+    var _nm=String(f.nome||pv.cliente||s.nome||'').toLowerCase().replace(/\s+/g,' ').trim();
+    if(_nm && typeof clAggrega==='function'){
+      var _pw=_nm.split(' ').sort().join(' ');
+      var _cl=(clAggrega()||[]).filter(function(c){ var n=String(((c.cognome||'')+' '+(c.nome||'')).trim()||c.ragSociale||'').toLowerCase().replace(/\s+/g,' ').trim(); return n===_nm || n.split(' ').sort().join(' ')===_pw; })[0];
+      if(_cl){ if(_cl.cf) f.cf=_cl.cf; if(_cl.piva) f.piva=_cl.piva; if(!f.indirizzo){ var _v=[_cl.via,_cl.civico].filter(Boolean).join(' '); f.indirizzo=[_v,_cl.cap,_cl.citta,(_cl.prov?('('+_cl.prov+')'):'')].filter(Boolean).join(' ').trim(); } }
+    }
+  }catch(e){} }
   h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Nome e cognome</label><input id="fc_nome" style="'+inp+'" value="'+fcEsc(f.nome||pv.cliente||s.nome||'')+'"></div>';
   h+='<div style="margin-bottom:6px;"><label style="'+lbl+'">Indirizzo</label><input id="fc_ind" style="'+inp+'" value="'+fcEsc(f.indirizzo||pv.indirizzo||s.residenza||'')+'"></div>';
   h+='<div style="display:flex;gap:8px;">';
