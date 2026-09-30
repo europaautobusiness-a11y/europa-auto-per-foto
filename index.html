@@ -1273,6 +1273,7 @@ html, body{
 </div>
 <div class="view" id="view-preventivi" style="padding:22px 16px;">
   <button onclick="cvForm()" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:14px;">➕ Nuovo preventivo</button>
+  <div id="cv-stat"></div>
   <div id="cv-lista"></div>
   <div id="cv-modal" style="display:none;position:fixed;inset:0;background:#eef2f7;z-index:9999;padding:0;overflow:auto;"></div>
 </div>
@@ -24852,7 +24853,93 @@ function waRender(){
   wrap.innerHTML=h; waRenderLista();
 }
 
+/* ===== STATISTICHE DEI PREVENTIVI =====
+   In cima alla lista: quanti preventivi nel periodo, quanti diventano
+   contratto, le auto piu' richieste, la fascia di prezzo in cui cade il
+   cliente tipo, quanti chiedono il finanziamento. Sotto, la ricerca di
+   un'auto del magazzino: quanti preventivi ha avuto, a chi, a che prezzo. */
+var _cvStPer=90, _cvStQ='';
+function cvStatPrezzo(c){ var p=cvNum(c.prezzoVendita); if(c.scontoOn) p-=cvNum(c.scontoImporto); return p>0?p:0; }
+function cvStatTs(c){ var t=+(c.createdAt||0); if(!t && c.data){ var d=Date.parse(c.data); if(!isNaN(d)) t=d; } return t; }
+function cvStatFin(c){ return (c.pagamenti||[]).some(function(p){ return /finanz/i.test(String(p.metodo||'')); }); }
+function cvStatModello(c){ var a=c.autoSnapshot||{}; var m=((a.marca||'')+' '+(a.modello||'')).trim().toUpperCase(); return m||String(c.autoDesc||'').toUpperCase().trim()||'(senza auto)'; }
+function cvStatRender(){
+  var w=document.getElementById('cv-stat'); if(!w) return;
+  try{
+    var tutti=cvLoad().filter(function(c){ var o=c&&c.origine; return c && !(o==='sicom' || o==='sicom_ap'); });
+    var lim=_cvStPer>0?(Date.now()-_cvStPer*86400000):0;
+    var L=tutti.filter(function(c){ return cvStatTs(c)>=lim; });
+    var n=L.length, conv=L.filter(function(c){ return c.isContratto; }).length, fin=L.filter(cvStatFin).length;
+    var prezzi=L.map(cvStatPrezzo).filter(function(x){ return x>0; }).sort(function(a,b){ return a-b; });
+    var media=prezzi.length?Math.round(prezzi.reduce(function(s,x){ return s+x; },0)/prezzi.length):0;
+    var mediana=prezzi.length?prezzi[Math.floor(prezzi.length/2)]:0;
+    /* fasce di prezzo */
+    var FASCE=[[0,10000,'fino a 10.000'],[10000,15000,'10\u201315.000'],[15000,20000,'15\u201320.000'],[20000,25000,'20\u201325.000'],[25000,30000,'25\u201330.000'],[30000,1e9,'oltre 30.000']];
+    var fc=FASCE.map(function(f){ return { lab:f[2], n:prezzi.filter(function(x){ return x>=f[0] && x<f[1]; }).length }; });
+    var maxF=Math.max.apply(null, fc.map(function(f){ return f.n; }).concat([1]));
+    var topF=fc.slice().sort(function(a,b){ return b.n-a.n; })[0];
+    /* modelli */
+    var mod={}; L.forEach(function(c){ var k=cvStatModello(c); if(!mod[k]) mod[k]={n:0,c:0,p:[]}; mod[k].n++; if(c.isContratto) mod[k].c++; var p=cvStatPrezzo(c); if(p) mod[k].p.push(p); });
+    var top=Object.keys(mod).map(function(k){ return {k:k, n:mod[k].n, c:mod[k].c, pm:mod[k].p.length?Math.round(mod[k].p.reduce(function(s,x){return s+x;},0)/mod[k].p.length):0}; }).sort(function(a,b){ return b.n-a.n; }).slice(0,6);
+    var eu=function(v){ return (typeof cvEuro==='function')?cvEuro(v):(v+' \u20ac'); };
+    var card='background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px;';
+    var kl='font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;';
+    var per=[[30,'30 giorni'],[90,'90 giorni'],[365,'12 mesi'],[0,'tutto']].map(function(p){ return '<button onclick="_cvStPer='+p[0]+';cvStatRender();" style="padding:5px 10px;border-radius:99px;border:1px solid '+(_cvStPer===p[0]?'#1a4fa0':'#cbd5e1')+';background:'+(_cvStPer===p[0]?'#1a4fa0':'#fff')+';color:'+(_cvStPer===p[0]?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+p[1]+'</button>'; }).join('');
+    var h='<details open style="margin-bottom:14px;"><summary style="cursor:pointer;font-weight:800;color:#1a4fa0;font-size:14px;margin-bottom:8px;">\ud83d\udcca Statistiche dei preventivi</summary>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'+per+'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:8px;">'
+      +'<div style="'+card+'"><div style="'+kl+'">Preventivi</div><div style="font-size:22px;font-weight:900;">'+n+'</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'">Diventati contratto</div><div style="font-size:22px;font-weight:900;color:#16a34a;">'+(n?Math.round(conv/n*100):0)+'%</div><div style="font-size:11px;color:#94a3b8;">'+conv+' su '+n+'</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'">Prezzo medio</div><div style="font-size:20px;font-weight:900;">'+eu(media)+'</div><div style="font-size:11px;color:#94a3b8;">mediana '+eu(mediana)+'</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'">Cliente tipo</div><div style="font-size:17px;font-weight:900;color:#1a4fa0;">'+(topF&&topF.n?topF.lab:'\u2014')+'</div><div style="font-size:11px;color:#94a3b8;">fascia pi\u00f9 richiesta</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'">Con finanziamento</div><div style="font-size:22px;font-weight:900;color:#7c3aed;">'+(n?Math.round(fin/n*100):0)+'%</div><div style="font-size:11px;color:#94a3b8;">'+fin+' preventivi</div></div>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-bottom:8px;">'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Auto pi\u00f9 preventivate</div>'
+        +(top.length?top.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid #f1f5f9;"><span style="font-weight:700;">'+cvEsc(t.k)+'</span><span style="white-space:nowrap;color:#475569;">'+t.n+' prev. \u00b7 '+t.c+' contr. \u00b7 media '+eu(t.pm)+'</span></div>'; }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun dato</div>')
+      +'</div>'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Fasce di prezzo</div>'
+        +fc.map(function(f){ return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 0;"><span style="width:92px;color:#475569;">'+f.lab+'</span><span style="flex:1;background:#eef2ff;border-radius:4px;height:12px;overflow:hidden;"><span style="display:block;height:12px;width:'+Math.round(f.n/maxF*100)+'%;background:#1a4fa0;"></span></span><span style="width:28px;text-align:right;font-weight:700;">'+f.n+'</span></div>'; }).join('')
+      +'</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">\ud83d\udd0e Cerca un\u2019auto del magazzino</div>'
+      +'<input id="cv-st-q" value="'+cvEsc(_cvStQ)+'" oninput="_cvStQ=this.value;cvStatCerca();" placeholder="targa, modello o N\u00b0 interno (bastano 3 lettere)" style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'
+      +'<div id="cv-st-ris" style="margin-top:6px;"></div></div>'
+      +'</details>';
+    w.innerHTML=h;
+    cvStatCerca();
+  }catch(e){ w.innerHTML=''; }
+}
+function cvStatCerca(){
+  var box=document.getElementById('cv-st-ris'); if(!box) return;
+  var q=String(_cvStQ||'').trim().toLowerCase().replace(/\s/g,'');
+  if(q.length<3){ box.innerHTML=''; return; }
+  var auto=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){
+    if(!a || a.deleted) return false;
+    var t=(String(a.targa||'')+String(a.marca||'')+String(a.modello||'')+'n'+String(a.numero_interno||'')).toLowerCase().replace(/\s/g,'');
+    return t.indexOf(q)>=0;
+  }).slice(0,8);
+  if(!auto.length){ box.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessuna auto trovata.</div>'; return; }
+  var tutti=cvLoad().filter(function(c){ var o=c&&c.origine; return c && !(o==='sicom' || o==='sicom_ap'); });
+  var eu=function(v){ return (typeof cvEuro==='function')?cvEuro(v):(v+' \u20ac'); };
+  box.innerHTML=auto.map(function(a){
+    var tg=String(a.targa||'').replace(/\s/g,'').toUpperCase();
+    var pv=tutti.filter(function(c){ return c.autoId===a.id || (tg && String((c.autoSnapshot&&c.autoSnapshot.targa)||'').replace(/\s/g,'').toUpperCase()===tg); })
+      .sort(function(x,y){ return cvStatTs(y)-cvStatTs(x); });
+    var pr=pv.map(cvStatPrezzo).filter(function(x){ return x>0; });
+    var conv=pv.filter(function(c){ return c.isContratto; }).length;
+    var gg=null; try{ if(a.dataCarico){ var dc=Date.parse(a.dataCarico); if(!isNaN(dc)) gg=Math.floor((Date.now()-dc)/86400000); } }catch(e){}
+    var ultimo=pv[0]?new Date(cvStatTs(pv[0])).toLocaleDateString('it-IT'):'';
+    return '<div style="border:1px solid #e2e8f0;border-radius:9px;padding:8px 10px;margin-bottom:6px;">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b>'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+(a.numero_interno?(' \u00b7 N\u00b0'+cvEsc(a.numero_interno)):'')+'</b>'
+      +'<span style="font-size:12px;color:#475569;">prezzo in scheda '+eu(cvNum(a.prezzoVen))+(gg!==null?(' \u00b7 in stock da '+gg+' gg'):'')+(a.stato?(' \u00b7 '+cvEsc(a.stato)):'')+'</span></div>'
+      +'<div style="font-size:12.5px;margin-top:4px;"><b style="color:#1a4fa0;">'+pv.length+' preventiv'+(pv.length===1?'o':'i')+'</b>'
+      +(pv.length?(' \u00b7 '+conv+' diventat'+(conv===1?'o':'i')+' contratto \u00b7 prezzo offerto '+(pr.length?(eu(Math.min.apply(null,pr))+(Math.min.apply(null,pr)!==Math.max.apply(null,pr)?(' \u2013 '+eu(Math.max.apply(null,pr))):'')):'\u2014')+' \u00b7 ultimo il '+ultimo):' \u00b7 nessuno ancora')+'</div>'
+      +(pv.length?('<div style="font-size:11.5px;color:#64748b;margin-top:3px;">'+pv.slice(0,6).map(function(c){ var cl=((c.cliente&&c.cliente.cognome)||'')+' '+((c.cliente&&c.cliente.nome)||''); return '<span onclick="cvVista(\''+c.id+'\')" style="cursor:pointer;text-decoration:underline;">'+cvEsc(cl.trim()||'cliente')+'</span> ('+new Date(cvStatTs(c)).toLocaleDateString('it-IT')+(c.isContratto?', contratto':'')+')'; }).join(' \u00b7 ')+(pv.length>6?' \u2026':'')+'</div>'):'')
+      +'</div>';
+  }).join('');
+}
 function cvRender(){
+  try{ cvStatRender(); }catch(e){}
   var wrap=document.getElementById('cv-lista'); if(!wrap) return;
   /* Lo storico importato dal vecchio gestionale non e' una trattativa aperta:
      vive in Vendite (Consegnate), non tra i preventivi. */
