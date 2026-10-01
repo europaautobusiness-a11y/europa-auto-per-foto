@@ -12367,6 +12367,25 @@ var WF_TRASF = {
   italia: { pieno:46.48, uno:30.99, due:15.49 },
   estero: { pieno:77.47, uno:51.65, due:25.82 }
 };
+/* ===== INDENNITA' STANDARD E UNA TRASFERTA AL GIORNO =====
+   Le trasferte create dai buoni nascono senza importo: senza un valore
+   standard il riepilogo del mese restava a 0,00. L'indennita' giornaliera
+   standard (di partenza la soglia esente Italia, 46,48 euro) vale per ogni
+   trasferta senza importo proprio; si cambia dal riepilogo.
+   In un giorno conta una sola trasferta: se ce ne sono due (manuale e da
+   buono), si tiene quella con l'indennita' piu' alta. */
+function wfIndStd(){ try{ var v=Number((wfLoad().impostazioni||{}).indStd); return (v>0)?v:46.48; }catch(e){ return 46.48; } }
+function wfIndStdSet(v){ var n=parseFloat(String(v).replace(',','.')); if(!(n>=0)) return; var t=wfLoad(); t.impostazioni=t.impostazioni||{}; t.impostazioni.indStd=n; t.updatedAt=Date.now(); wfSave(t); try{ wfRender(); }catch(e){} }
+function wfIndEff(t){ var v=Number(t&&t.indennita); return (v>0)?v:wfIndStd(); }
+function wfTrGiorno(t){
+  if(t && t.giorno) return String(t.giorno).slice(0,10);
+  var q=String((t&&t.data)||'').match(/(\d{2})\/(\d{2})\/(\d{4})/); return q?(q[3]+'-'+q[2]+'-'+q[1]):'';
+}
+function wfTrasferteUniche(arr){
+  var perG={}, senza=[];
+  (arr||[]).forEach(function(t){ var g=wfTrGiorno(t); if(!g){ senza.push(t); return; } var ex=perG[g]; if(!ex || wfIndEff(t)>wfIndEff(ex)) perG[g]=t; });
+  return Object.keys(perG).sort().map(function(g){ return perG[g]; }).concat(senza);
+}
 function wfLimiteTrasferta(estero, vittoAll){
   var t = estero ? WF_TRASF.estero : WF_TRASF.italia;
   if(vittoAll==='due') return t.due;      /* vitto E alloggio a carico azienda */
@@ -12405,22 +12424,26 @@ function wfPersone(){
 var _wfTrMese=null;
 function wfTrasferteRiepilogo(){
   try{
-    var anno=wfAnno(); var oggi=new Date();
-    if(!_wfTrMese) _wfTrMese=anno+'-'+('0'+(oggi.getMonth()+1)).slice(-2);
+    var oggi=new Date();
+    if(!_wfTrMese) _wfTrMese=oggi.getFullYear()+'-'+('0'+(oggi.getMonth()+1)).slice(-2);
+    var anno=parseInt(String(_wfTrMese).slice(0,4),10)||wfAnno(), meseN=parseInt(String(_wfTrMese).slice(5,7),10)||1;
     var MESI=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-    var opz=''; for(var m=0;m<12;m++){ var k=anno+'-'+('0'+(m+1)).slice(-2); opz+='<option value="'+k+'"'+(k===_wfTrMese?' selected':'')+'>'+MESI[m]+' '+anno+'</option>'; }
+    var _tutto=wfLoad(); var anni=Object.keys(_tutto).filter(function(k){ return /^\d{4}$/.test(k); }).map(Number); if(anni.indexOf(oggi.getFullYear())<0) anni.push(oggi.getFullYear()); anni.sort(function(a,b){ return b-a; });
+    var opzM=''; for(var m=0;m<12;m++){ opzM+='<option value="'+(m+1)+'"'+((m+1)===meseN?' selected':'')+'>'+MESI[m]+'</option>'; }
+    var opzA=anni.map(function(y){ return '<option value="'+y+'"'+(y===anno?' selected':'')+'>'+y+'</option>'; }).join('');
+    var opz=null;
     var righe=[], totMese={n:0,g:0,i:0}, totAnno={n:0,g:0,i:0};
     (wfPersone()||[]).forEach(function(p){
-      var rec=wfDati(p.chiave||wfChiave(p)); var tr=(rec.trasferte||[]);
+      var rec=((_tutto[String(anno)]||{})[p.chiave||wfChiave(p)])||{}; var tr=wfTrasferteUniche(rec.trasferte||[]);
       var mM={n:0,g:0,i:0}, mA={n:0,g:0,i:0};
       tr.forEach(function(t){
-        var g=Number(t.giorni)||1, ind=(Number(t.indennita)||0)*g;
+        var g=Number(t.giorni)||1, ind=wfIndEff(t)*g;
         mA.n++; mA.g+=g; mA.i+=ind;
-        if(String(t.giorno||'').slice(0,7)===_wfTrMese){ mM.n++; mM.g+=g; mM.i+=ind; }
+        if(wfTrGiorno(t).slice(0,7)===_wfTrMese){ mM.n++; mM.g+=g; mM.i+=ind; }
       });
       if(!mA.n) return;
       totMese.n+=mM.n; totMese.g+=mM.g; totMese.i+=mM.i; totAnno.n+=mA.n; totAnno.g+=mA.g; totAnno.i+=mA.i;
-      righe.push({ nome:p.nome, collab:!!p.collab, m:mM, a:mA, senzaInd:tr.filter(function(t){ return !(Number(t.indennita)>0); }).length });
+      righe.push({ nome:p.nome, collab:!!p.collab, m:mM, a:mA, senzaInd:0 });
     });
     if(!righe.length) return '';
     var td='padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12.5px;white-space:nowrap;';
@@ -12428,7 +12451,10 @@ function wfTrasferteRiepilogo(){
     var h='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">'
       +'<div style="font-weight:800;color:#1a4fa0;">\u2708\ufe0f Riepilogo trasferte</div>'
-      +'<div style="display:flex;gap:6px;align-items:center;"><select onchange="_wfTrMese=this.value;wfRender();" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12.5px;">'+opz+'</select>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+      +'<select onchange="_wfTrMese=String(_wfTrMese).slice(0,4)+\'-\'+(\'0\'+this.value).slice(-2);wfRender();" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12.5px;">'+opzM+'</select>'
+      +'<select onchange="_wfTrMese=this.value+String(_wfTrMese).slice(4);wfRender();" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12.5px;">'+opzA+'</select>'
+      +'<span style="font-size:12px;color:#64748b;margin-left:6px;">indennit\u00e0 \u20ac/giorno</span><input type="number" step="0.01" value="'+wfIndStd()+'" onchange="wfIndStdSet(this.value)" title="vale per le trasferte senza un importo proprio" style="width:76px;padding:6px 7px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12.5px;">'
       +'<button onclick="wfTrasferteCopia()" style="padding:6px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">Copia per lo studio</button></div></div>'
       +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>'
       +'<th style="'+th+'text-align:left;">Persona</th><th style="'+th+'">Trasferte mese</th><th style="'+th+'">Giorni mese</th><th style="'+th+'">Indennit\u00e0 mese</th>'
@@ -12442,25 +12468,26 @@ function wfTrasferteRiepilogo(){
     });
     h+='</tbody><tfoot><tr style="background:#f8fafc;"><td style="'+td+'text-align:left;font-weight:900;">Totale</td><td style="'+td+'font-weight:800;">'+totMese.n+'</td><td style="'+td+'font-weight:800;">'+totMese.g+'</td><td style="'+td+'font-weight:900;">'+wfEuro(totMese.i)+'</td>'
       +'<td style="'+td+'border-left:2px solid #e2e8f0;font-weight:800;">'+totAnno.n+'</td><td style="'+td+'font-weight:800;">'+totAnno.g+'</td><td style="'+td+'font-weight:900;">'+wfEuro(totAnno.i)+'</td></tr></tfoot></table></div>'
-      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Indennit\u00e0 = indennit\u00e0 giornaliera \u00d7 giorni. Chi ha la busta annua (co.co.co.) va letto sulle colonne dell\u2019anno.</div></div>';
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Una sola trasferta per giorno: se in un giorno ce ne sono due si conta quella con l\u2019indennit\u00e0 pi\u00f9 alta. Indennit\u00e0 = importo della trasferta, oppure quella standard qui sopra se la trasferta non ne ha uno, \u00d7 giorni. Chi ha la busta annua (co.co.co.) va letto sulle colonne dell\u2019anno.</div></div>';
     return h;
   }catch(e){ return ''; }
 }
 function wfTrasferteCopia(){
   try{
     var MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
-    var mm=parseInt(String(_wfTrMese||'').slice(5,7),10)||1, anno=wfAnno();
+    var mm=parseInt(String(_wfTrMese||'').slice(5,7),10)||1, anno=parseInt(String(_wfTrMese||'').slice(0,4),10)||wfAnno();
     var out=['Trasferte '+MESI[mm-1]+' '+anno+' \u2014 Europa Auto S.r.l.',''];
+    var _tt=wfLoad();
     (wfPersone()||[]).forEach(function(p){
-      var rec=wfDati(p.chiave||wfChiave(p)); var tr=(rec.trasferte||[]);
-      var nelMese=tr.filter(function(t){ return String(t.giorno||'').slice(0,7)===_wfTrMese; });
-      var annoT=tr.reduce(function(s,t){ return s+(Number(t.indennita)||0)*(Number(t.giorni)||1); },0);
+      var rec=((_tt[String(anno)]||{})[p.chiave||wfChiave(p)])||{}; var tr=wfTrasferteUniche(rec.trasferte||[]);
+      var nelMese=tr.filter(function(t){ return wfTrGiorno(t).slice(0,7)===_wfTrMese; });
+      var annoT=tr.reduce(function(s,t){ return s+wfIndEff(t)*(Number(t.giorni)||1); },0);
       if(!nelMese.length && !(p.collab && tr.length)) return;
       out.push(p.nome+(p.collab?' (busta annua)':''));
       nelMese.sort(function(a,b){ return String(a.giorno).localeCompare(String(b.giorno)); }).forEach(function(t){
-        out.push('  '+wfDataIt(t.giorno)+' \u2014 '+String(t.data||'').replace(/^[^\u00b7]*\u00b7\s*/,'')+' \u2014 '+(Number(t.giorni)||1)+' gg \u00d7 '+wfEuro(Number(t.indennita)||0)+' = '+wfEuro((Number(t.indennita)||0)*(Number(t.giorni)||1)));
+        out.push('  '+wfDataIt(wfTrGiorno(t))+' \u2014 '+String(t.data||'').replace(/^[^\u00b7]*\u00b7\s*/,'')+' \u2014 '+(Number(t.giorni)||1)+' gg \u00d7 '+wfEuro(wfIndEff(t))+' = '+wfEuro(wfIndEff(t)*(Number(t.giorni)||1)));
       });
-      out.push('  Totale mese: '+wfEuro(nelMese.reduce(function(s,t){ return s+(Number(t.indennita)||0)*(Number(t.giorni)||1); },0))+(p.collab?('  \u00b7  Totale anno: '+wfEuro(annoT)):''));
+      out.push('  Totale mese: '+wfEuro(nelMese.reduce(function(s,t){ return s+wfIndEff(t)*(Number(t.giorni)||1); },0))+(p.collab?('  \u00b7  Totale anno: '+wfEuro(annoT)):''));
       out.push('');
     });
     var txt=out.join('\n');
@@ -12813,9 +12840,10 @@ function wfRender(){
 
     /* ---- trasferte, conteggio annuale ---- */
     var _tr=(rec.trasferte||[]);
+    var _trU=wfTrasferteUniche(_tr);   /* una al giorno */
     var _trTot=0, _trEsente=0, _trImpon=0, _trGiorni=0;
-    _tr.forEach(function(t){
-      var lim=wfLimiteTrasferta(t.estero, t.coperto), gg=Number(t.giorni)||0, ind=Number(t.indennita)||0;
+    _trU.forEach(function(t){
+      var lim=wfLimiteTrasferta(t.estero, t.coperto), gg=Number(t.giorni)||0, ind=wfIndEff(t);
       _trGiorni+=gg; _trTot+=ind*gg;
       _trEsente+=Math.min(ind,lim)*gg;
       _trImpon+=Math.max(0,ind-lim)*gg;
@@ -12837,9 +12865,9 @@ function wfRender(){
        e l'auto che si e' portata. */
 
     /* ---- riepilogo per mese ---- */
-    if(_tr.length){
+    if(_trU.length){
       var perMese={};
-      _tr.forEach(function(t){
+      _trU.forEach(function(t){
         var m=(t.mese!=null)?t.mese:null;
         if(m===null){
           /* righe vecchie con una data vera: si ricava il mese da li' */
@@ -12849,11 +12877,11 @@ function wfRender(){
         var et=(m!=null && WF_MESI[m])?WF_MESI[m]:'senza mese';
         perMese[et]=perMese[et]||{gg:0, tot:0};
         perMese[et].gg  += Number(t.giorni)||0;
-        perMese[et].tot += (Number(t.indennita)||0)*(Number(t.giorni)||0);
+        perMese[et].tot += wfIndEff(t)*(Number(t.giorni)||0);
       });
       var ordine=WF_MESI.concat(['senza mese']);
       var presenti=ordine.filter(function(m){ return perMese[m]; });
-      if(presenti.length>1){
+      if(presenti.length>=1){   /* sempre visibile, anche con un solo mese */
         h+='<div style="margin-top:9px;padding:8px 11px;background:#eff6ff;border-radius:9px;">'
           +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Riepilogo per mese</div>'
           +'<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;">';
@@ -12892,7 +12920,7 @@ function wfRender(){
               var tg=t.auto.targa?(' '+t.auto.targa):'';
               return '<div style="color:#1a4fa0;font-size:11.5px;font-weight:700;">\ud83d\ude97 '+wfEsc(d+tg)+'</div>';
             })()
-          +'<div style="color:#94a3b8;font-size:11.5px;">'+wfEuro(t.indennita)+'/giorno \u00b7 soglia esente '+wfEuro(lim)
+          +'<div style="color:#94a3b8;font-size:11.5px;">'+wfEuro(wfIndEff(t))+'/giorno'+((Number(t.indennita)>0)?'':' (standard)')+' \u00b7 soglia esente '+wfEuro(lim)
           +(ecc>0?(' \u2192 imponibile '+wfEuro(ecc)):'')+'</div></div>'
           +'<button onclick="wfTogliTrasferta(\''+wfEsc(k)+'\','+i+')" style="border:none;background:none;color:#94a3b8;font-size:14px;cursor:pointer;padding:2px 4px;">\u2715</button>'
           +'</div>';
