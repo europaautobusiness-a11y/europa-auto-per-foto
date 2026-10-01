@@ -12886,18 +12886,30 @@ function wfRender(){
           +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Riepilogo per mese</div>'
           +'<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;">';
         var _apertoEt=WF_MESI[wfMeseCorrente()];
+        /* Toccando un mese si vedono solo le trasferte di quel mese;
+           "Tutti" torna all'elenco completo. */
+        var _sel=(window._wfMeseSel||{})[k]||'';
+        var _chip=function(et,lab,on){
+          return '<span onclick="wfSelMese(\''+wfEsc(k)+'\',\''+et+'\')" style="cursor:pointer;padding:3px 9px;border-radius:999px;'
+            +(on?'background:#1a4fa0;color:#fff;':'background:#fff;border:1px solid #bfdbfe;')+'">'+lab+'</span>';
+        };
+        h+=_chip('', '<b>Tutti</b>', !_sel);
         presenti.forEach(function(m){
-          var _aperto=(m===_apertoEt);
-          h+='<span'+(_aperto?' style="color:#16a34a;"':'')+'><b>'+m+'</b> '
-            +perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)
-            +(_aperto?' \u00b7 in corso':'')+'</span>';
+          var _aperto=(m===_apertoEt), on=(_sel===m);
+          h+=_chip(m, '<b>'+m+'</b> '+perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)+(_aperto?' \u00b7 in corso':''), on);
         });
         h+='</div></div>';
       }
     }
 
     if(_tr.length){
+      var _selM=(window._wfMeseSel||{})[k]||'';
+      if(_selM){
+        var _nM=_tr.filter(function(t){ return wfMeseDiTrasferta(t)===_selM; }).length;
+        h+='<div style="font-size:12px;color:#1a4fa0;font-weight:700;margin-top:8px;">'+_nM+' trasfert'+(_nM===1?'a':'e')+' di '+_selM+'</div>';
+      }
       _tr.forEach(function(t,i){
+        if(_selM && wfMeseDiTrasferta(t)!==_selM) return;   /* i resta l'indice vero: serve per togliere la riga giusta */
         var lim=wfLimiteTrasferta(t.estero, t.coperto);
         var ecc=Math.max(0,(Number(t.indennita)||0)-lim)*(Number(t.giorni)||0);
         h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;font-size:12.5px;">'
@@ -13859,6 +13871,19 @@ function wfMeseTrasferte(k){
   wfScrivi(k, rec);
   wfRender();
   if(typeof tcToastNew==='function') tcToastNew(n+' trasferte di '+WF_MESI[mese]+' registrate \u00b7 '+nome, true);
+}
+
+/* mese di una trasferta, come etichetta ('settembre'): dal campo mese
+   se c'e', altrimenti dalla data gg/mm/aaaa scritta in testa */
+function wfMeseDiTrasferta(t){
+  var m=(t && t.mese!=null)?t.mese:null;
+  if(m===null){ var r=String((t&&t.data)||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(r) m=parseInt(r[2],10)-1; }
+  return (m!=null && WF_MESI[m])?WF_MESI[m]:'senza mese';
+}
+function wfSelMese(k, m){
+  window._wfMeseSel=window._wfMeseSel||{};
+  window._wfMeseSel[k]=(window._wfMeseSel[k]===m)?'':m;   /* ritoccare lo stesso mese = tutti */
+  wfRender();
 }
 
 function wfTogliTrasferta(k, idx){
@@ -24987,6 +25012,14 @@ function cvStatRender(){
    dalle statistiche. Elenco salvato anche sul cloud. */
 var CV_STAT_ESCL_KEY='ea_cv_stat_escluse_v1', _cvStatEsclMem=null;
 function cvStatEscluse(){ if(_cvStatEsclMem) return _cvStatEsclMem; try{ _cvStatEsclMem=JSON.parse(localStorage.getItem(CV_STAT_ESCL_KEY)||'{}')||{}; }catch(e){ _cvStatEsclMem={}; } return _cvStatEsclMem; }
+function cvStInfo(w){
+  var a=document.getElementById('cv-st-info-'+w), b=document.getElementById('cv-st-info-'+(w==='t'?'p':'t'));
+  if(!a) return;
+  var apri=(a.style.display==='none');
+  a.style.display=apri?'block':'none';
+  if(b) b.style.display='none';
+  if(apri) a.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
 function cvStatEscludi(id, si){
   var o=cvStatEscluse(); if(si) o[id]=1; else delete o[id]; _cvStatEsclMem=o;
   try{ localStorage.setItem(CV_STAT_ESCL_KEY, JSON.stringify(o)); }catch(e){}
@@ -25056,8 +25089,19 @@ function cvStatPermanenza(){
       +'<div><div style="font-size:11px;color:#64748b;">In stock oltre 90 giorni</div><div style="font-size:18px;font-weight:900;color:#b45309;">'+pct(o90)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+o90+' su '+nS+' \u00b7 oltre 180: '+o180+'</div></div>'
       +'<div><div style="font-size:11px;color:#64748b;">Senza preventivi da 30 giorni</div><div style="font-size:18px;font-weight:900;color:#64748b;">'+pct(zero30)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+zero30+' auto</div></div>'
       +'<div><div style="font-size:11px;color:#64748b;">Auto con un problema</div><div style="font-size:18px;font-weight:900;color:#dc2626;">'+pct(prob)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+prob+' da guardare</div></div></div>'
+      /* spiegazioni delle due colonne: si aprono con la (i) nell'intestazione */
+      +'<div id="cv-st-info-t" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;color:#1e293b;line-height:1.5;">'
+        +'<b>Tempo vs normale</b><br>Quanto tempo l\u2019auto \u00e8 ferma rispetto a quanto ci mette di solito un\u2019auto a vendersi.<br>'
+        +'<b>Come si calcola:</b> giorni in stock \u00f7 '+rifG+' giorni (il tempo normale, cio\u00e8 la mediana dal carico al contratto delle '+rif.length+' auto gi\u00e0 vendute) \u00d7 100.<br>'
+        +'<b>Esempio:</b> un\u2019auto in stock da '+(rifG*2)+' giorni \u2192 '+(rifG*2)+' \u00f7 '+rifG+' = <b>200%</b>, ci sta mettendo il doppio del normale. Sotto 100% (verde) \u00e8 nei tempi.'
+        +'<div style="text-align:right;margin-top:4px;"><span onclick="cvStInfo(\'t\')" style="cursor:pointer;color:#1a4fa0;font-weight:700;">chiudi</span></div></div>'
+      +'<div id="cv-st-info-p" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;color:#1e293b;line-height:1.5;">'
+        +'<b>Preventivi vs normale</b><br>Quanti preventivi ha gi\u00e0 avuto l\u2019auto rispetto a quelli che di solito bastano per venderla.<br>'
+        +'<b>Come si calcola:</b> preventivi fatti su quell\u2019auto da quando \u00e8 entrata \u00f7 '+rifP+' (la mediana dei preventivi fatti prima del contratto sulle auto gi\u00e0 vendute) \u00d7 100.<br>'
+        +'<b>Esempio:</b> '+(rifP*4)+' preventivi \u00f7 '+rifP+' = <b>400%</b>: l\u2019auto interessa quattro volte il normale ma non si vende, quindi qualcosa frena (prezzo, condizioni, finanziamento). Percentuale bassa e tanti giorni in stock invece = l\u2019auto non viene vista o non interessa a quel prezzo.'
+        +'<div style="text-align:right;margin-top:4px;"><span onclick="cvStInfo(\'p\')" style="cursor:pointer;color:#1a4fa0;font-weight:700;">chiudi</span></div></div>'
       +'<div style="overflow-x:auto;max-height:420px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>'
-      +'<th style="'+th+'text-align:left;">Auto</th><th style="'+th+'">Giorni in stock</th><th style="'+th+'">Tempo vs normale</th><th style="'+th+'">Preventivi</th><th style="'+th+'">Preventivi vs normale</th><th style="'+th+'">Al mese</th><th style="'+th+'">Ultimo</th><th style="'+th+'text-align:left;">Diagnosi</th>'+(adm?'<th style="'+th+'"></th>':'')+'</tr></thead><tbody>'
+      +'<th style="'+th+'text-align:left;">Auto</th><th style="'+th+'">Giorni in stock</th><th style="'+th+'">Tempo vs normale <span onclick="cvStInfo(\'t\')" title="cos\u2019\u00e8" style="cursor:pointer;display:inline-block;width:15px;height:15px;line-height:15px;border-radius:50%;background:#1a4fa0;color:#fff;text-align:center;font-size:10px;font-style:italic;text-transform:none;">i</span></th><th style="'+th+'">Preventivi</th><th style="'+th+'">Preventivi vs normale <span onclick="cvStInfo(\'p\')" title="cos\u2019\u00e8" style="cursor:pointer;display:inline-block;width:15px;height:15px;line-height:15px;border-radius:50%;background:#1a4fa0;color:#fff;text-align:center;font-size:10px;font-style:italic;text-transform:none;">i</span></th><th style="'+th+'">Al mese</th><th style="'+th+'">Ultimo</th><th style="'+th+'text-align:left;">Diagnosi</th>'+(adm?'<th style="'+th+'"></th>':'')+'</tr></thead><tbody>'
       +righe.map(function(r){ var a=r.a;
         return '<tr><td style="'+td+'text-align:left;"><b>'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</b>'+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+(a.numero_interno?(' \u00b7 N\u00b0'+cvEsc(a.numero_interno)):'')+'</td>'
           +'<td style="'+td+((r.g||0)>180?'color:#dc2626;font-weight:800;':((r.g||0)>90?'color:#b45309;font-weight:700;':''))+'">'+(r.g===null?'\u2014':r.g)+'</td>'
@@ -25071,7 +25115,6 @@ function cvStatPermanenza(){
           +'</tr>'; }).join('')
       +'</tbody></table></div>'
       +(nEscl?('<div style="font-size:11px;color:#64748b;margin-top:6px;">'+nEscl+' auto escluse perch\u00e9 non in vendita'+(adm?(': '+auto.filter(function(a){ return escl[a.id]; }).map(function(a){ return '<span onclick="cvStatEscludi(\''+a.id+'\',false)" title="rimetti nelle statistiche" style="cursor:pointer;text-decoration:underline;">'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</span>'; }).join(', ')):'')+'</div>'):'')
-      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;"><b>Tempo vs normale</b>: giorni in stock divisi per i giorni che di solito servono per vendere (200% = il doppio). <b>Preventivi vs normale</b>: preventivi fatti divisi per quelli che di solito bastano per vendere (500% = cinque volte). Se entrambi sono alti l\u2019auto interessa ma qualcosa frena la vendita. Il riferimento viene dalle auto gi\u00e0 vendute: mediana dei preventivi fatti e dei giorni dal carico al contratto. Un\u2019auto con il doppio dei preventivi del riferimento e nessuna vendita ha qualcosa che frena il cliente; un\u2019auto ferma da molto tempo con pochissimi preventivi non viene vista o non interessa a quel prezzo. Contano tutti i preventivi fatti su quell\u2019auto da quando \u00e8 entrata, indipendentemente dal periodo scelto sopra.</div>'
       +'</div>';
     return h;
   }catch(e){ return ''; }
