@@ -24898,7 +24898,8 @@ function cvStatRender(){
     var top=Object.keys(mod).map(function(k){ return {k:k, n:mod[k].n, c:mod[k].c, pm:mod[k].p.length?Math.round(mod[k].p.reduce(function(s,x){return s+x;},0)/mod[k].p.length):0}; }).sort(function(a,b){ return b.n-a.n; }).slice(0,10);
     /* meno preventivate: i modelli oggi in magazzino, dal meno richiesto
        (anche zero preventivi nel periodo) */
-    var _inStock=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){ return a && !a.deleted && (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato); });
+    var _escl=(typeof cvStatEscluse==='function')?cvStatEscluse():{};
+    var _inStock=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){ return a && !a.deleted && !_escl[a.id] && (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato); });
     var _modStock={}; _inStock.forEach(function(a){ var k=((a.marca||'')+' '+(a.modello||'')).trim().toUpperCase(); if(!k) return; if(!_modStock[k]) _modStock[k]={auto:0}; _modStock[k].auto++; });
     var menoPrev=Object.keys(_modStock).map(function(k){ return { k:k, auto:_modStock[k].auto, n:(mod[k]?mod[k].n:0) }; }).sort(function(a,b){ return (a.n-b.n) || (b.auto-a.auto); }).slice(0,10);
     /* meno vendute: modelli preventivati nel periodo con meno vendite, a
@@ -24954,6 +24955,17 @@ function cvStatRender(){
      (prezzo, condizioni, finanziamento): da rivedere;
    - tanti giorni e pochi preventivi -> non la chiede nessuno: visibilita',
      prezzo di partenza o foto. */
+/* auto che non sono in vendita (uso aziendale, mezzi di servizio): fuori
+   dalle statistiche. Elenco salvato anche sul cloud. */
+var CV_STAT_ESCL_KEY='ea_cv_stat_escluse_v1', _cvStatEsclMem=null;
+function cvStatEscluse(){ if(_cvStatEsclMem) return _cvStatEsclMem; try{ _cvStatEsclMem=JSON.parse(localStorage.getItem(CV_STAT_ESCL_KEY)||'{}')||{}; }catch(e){ _cvStatEsclMem={}; } return _cvStatEsclMem; }
+function cvStatEscludi(id, si){
+  var o=cvStatEscluse(); if(si) o[id]=1; else delete o[id]; _cvStatEsclMem=o;
+  try{ localStorage.setItem(CV_STAT_ESCL_KEY, JSON.stringify(o)); }catch(e){}
+  try{ if(typeof cfgSupaSave==='function') cfgSupaSave('cv_stat_escluse', o); }catch(e){}
+  cvStatRender();
+}
+try{ setTimeout(function(){ try{ cfgSupaLoad('cv_stat_escluse', function(body){ if(body && typeof body==='object'){ _cvStatEsclMem=body; try{ localStorage.setItem(CV_STAT_ESCL_KEY, JSON.stringify(body)); }catch(e){} try{ cvStatRender(); }catch(e){} } }, cvStatEscluse); }catch(e){} }, 1500); }catch(e){}
 function cvStatPermanenza(){
   try{
     var auto=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){ return a && !a.deleted; });
@@ -24963,29 +24975,44 @@ function cvStatPermanenza(){
     var diAuto=function(a){ var tg=String(a.targa||'').replace(/\s/g,'').toUpperCase(); return (perAuto[a.id]||[]).concat(tg?(perTarga[tg]||[]):[]); };
     var gg=function(a, fine){ var d=Date.parse(a.dataCarico||''); if(isNaN(d)) return null; return Math.max(0,Math.floor(((fine||Date.now())-d)/86400000)); };
     /* riferimento: auto vendute con data di carico e preventivi registrati */
+    /* Prima la data finale mancava per le vendite importate (nessun
+       contratto nel gestionale) e si contava fino a OGGI: da qui i 762
+       giorni. Ora valgono solo le vendite con una data vera (contratto,
+       data di vendita o di scarico) e i preventivi fatti prima di quella. */
     var vend=auto.filter(function(a){ return a.stato==='venduta'; }), rif=[];
     vend.forEach(function(a){
       var pv=diAuto(a); if(!pv.length) return;
-      var cont=pv.filter(function(c){ return c.isContratto; })[0]; var fine=cont?+(cont.contrattoTs||cont.createdAt||0):0;
-      var g=gg(a, fine||undefined); if(g===null) return;
-      rif.push({ p:pv.length, g:g });
+      var cont=pv.filter(function(c){ return c.isContratto; })[0];
+      var fine=cont?+(cont.contrattoTs||cont.createdAt||0):0;
+      if(!fine) fine=+(a.vendutaTs||0)||Date.parse(a.dataScarico||'')||Date.parse((a.scarico&&a.scarico.dataScarico)||'')||0;
+      if(!fine || isNaN(fine)) return;
+      var g=gg(a, fine); if(g===null || g>1500) return;
+      var nPrima=pv.filter(function(c){ return (+(c.createdAt||0))<=fine+86400000; }).length;
+      if(!nPrima) return;
+      rif.push({ p:nPrima, g:g });
     });
     var med=function(arr){ if(!arr.length) return 0; var x=arr.slice().sort(function(a,b){return a-b;}); return x[Math.floor(x.length/2)]; };
     var rifP=med(rif.map(function(r){ return r.p; }))||3, rifG=med(rif.map(function(r){ return r.g; }))||60;
     /* auto in magazzino */
-    var stock=auto.filter(function(a){ return a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato; });
+    var escl=cvStatEscluse();
+    var stock=auto.filter(function(a){ return (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato) && !escl[a.id]; });
+    var nEscl=auto.filter(function(a){ return escl[a.id]; }).length;
+    var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
     var righe=stock.map(function(a){
       var pv=diAuto(a), g=gg(a), n=pv.length;
       var ult=pv.reduce(function(m,c){ return Math.max(m, +(c.createdAt||0)); },0);
       var ggUlt=ult?Math.floor((Date.now()-ult)/86400000):null;
       var mese=(g&&g>0)?Math.round(n/(g/30)*10)/10:n;
+      /* indici rispetto al normale: 100% = quanto serve di solito per vendere */
+      var iP=Math.round(n/rifP*100), iT=(g===null)?null:Math.round(g/rifG*100);
       var diag, col, peso;
-      if(g!==null && n>=Math.max(2*rifP,6) ){ diag='Molti preventivi, nessuna vendita: rivedere prezzo, condizioni o proposta di finanziamento'; col='#dc2626'; peso=3; }
+      if(g!==null && n>=Math.max(2*rifP,6) && iT>=100){ diag='Interessa ma non si vende: '+n+' preventivi in '+g+' giorni. Rivedere prezzo, condizioni o proposta di finanziamento'; col='#dc2626'; peso=4; }
+      else if(g!==null && n>=Math.max(2*rifP,6) ){ diag='Molti preventivi, nessuna vendita: rivedere prezzo, condizioni o proposta di finanziamento'; col='#dc2626'; peso=3; }
       else if(g!==null && g>=Math.max(1.5*rifG,90) && n<=Math.max(1,Math.floor(rifP/2))){ diag='Ferma e poco richiesta: rivedere visibilit\u00e0, foto, prezzo di partenza'; col='#b45309'; peso=2; }
       else if(g!==null && g>=180){ diag='Oltre 180 giorni: sottocosto per la provvigione'; col='#b45309'; peso=2; }
       else if(ggUlt!==null && ggUlt>45 && n>0){ diag='Nessun preventivo da '+ggUlt+' giorni'; col='#64748b'; peso=1; }
       else { diag='In linea'; col='#16a34a'; peso=0; }
-      return { a:a, g:g, n:n, mese:mese, diag:diag, col:col, peso:peso, ult:ggUlt };
+      return { a:a, g:g, n:n, mese:mese, diag:diag, col:col, peso:peso, ult:ggUlt, iP:iP, iT:iT };
     }).sort(function(x,y){ return (y.peso-x.peso) || ((y.g||0)-(x.g||0)); });
     var nS=righe.length; if(!nS) return '';
     var o90=righe.filter(function(r){ return (r.g||0)>90; }).length, o180=righe.filter(function(r){ return (r.g||0)>180; }).length;
@@ -25002,15 +25029,21 @@ function cvStatPermanenza(){
       +'<div><div style="font-size:11px;color:#64748b;">Senza preventivi da 30 giorni</div><div style="font-size:18px;font-weight:900;color:#64748b;">'+pct(zero30)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+zero30+' auto</div></div>'
       +'<div><div style="font-size:11px;color:#64748b;">Auto con un problema</div><div style="font-size:18px;font-weight:900;color:#dc2626;">'+pct(prob)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+prob+' da guardare</div></div></div>'
       +'<div style="overflow-x:auto;max-height:420px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>'
-      +'<th style="'+th+'text-align:left;">Auto</th><th style="'+th+'">Giorni in stock</th><th style="'+th+'">Preventivi</th><th style="'+th+'">Al mese</th><th style="'+th+'">Ultimo</th><th style="'+th+'text-align:left;">Diagnosi</th></tr></thead><tbody>'
+      +'<th style="'+th+'text-align:left;">Auto</th><th style="'+th+'">Giorni in stock</th><th style="'+th+'">Tempo vs normale</th><th style="'+th+'">Preventivi</th><th style="'+th+'">Preventivi vs normale</th><th style="'+th+'">Al mese</th><th style="'+th+'">Ultimo</th><th style="'+th+'text-align:left;">Diagnosi</th>'+(adm?'<th style="'+th+'"></th>':'')+'</tr></thead><tbody>'
       +righe.map(function(r){ var a=r.a;
         return '<tr><td style="'+td+'text-align:left;"><b>'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</b>'+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+(a.numero_interno?(' \u00b7 N\u00b0'+cvEsc(a.numero_interno)):'')+'</td>'
           +'<td style="'+td+((r.g||0)>180?'color:#dc2626;font-weight:800;':((r.g||0)>90?'color:#b45309;font-weight:700;':''))+'">'+(r.g===null?'\u2014':r.g)+'</td>'
-          +'<td style="'+td+'font-weight:800;">'+r.n+'</td><td style="'+td+'">'+r.mese+'</td>'
+          +'<td style="'+td+(r.iT>=200?'color:#dc2626;font-weight:800;':(r.iT>=100?'color:#b45309;font-weight:700;':'color:#16a34a;'))+'">'+(r.iT===null?'\u2014':(r.iT+'%'))+'</td>'
+          +'<td style="'+td+'font-weight:800;">'+r.n+'</td>'
+          +'<td style="'+td+(r.iP>=200?'color:#dc2626;font-weight:800;':(r.iP>=100?'color:#b45309;font-weight:700;':'color:#64748b;'))+'">'+r.iP+'%</td>'
+          +'<td style="'+td+'">'+r.mese+'</td>'
           +'<td style="'+td+'">'+(r.ult===null?'mai':(r.ult===0?'oggi':(r.ult+' gg fa')))+'</td>'
-          +'<td style="'+td+'text-align:left;white-space:normal;min-width:220px;color:'+r.col+';font-weight:'+(r.peso?'700':'500')+';">'+cvEsc(r.diag)+'</td></tr>'; }).join('')
+          +'<td style="'+td+'text-align:left;white-space:normal;min-width:220px;color:'+r.col+';font-weight:'+(r.peso?'700':'500')+';">'+cvEsc(r.diag)+'</td>'
+          +(adm?('<td style="'+td+'"><span onclick="cvStatEscludi(\''+a.id+'\',true)" title="non \u00e8 in vendita (uso aziendale): togli dalle statistiche" style="cursor:pointer;font-size:11px;color:#94a3b8;text-decoration:underline;">non in vendita</span></td>'):'')
+          +'</tr>'; }).join('')
       +'</tbody></table></div>'
-      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;">Il riferimento viene dalle auto gi\u00e0 vendute: mediana dei preventivi fatti e dei giorni dal carico al contratto. Un\u2019auto con il doppio dei preventivi del riferimento e nessuna vendita ha qualcosa che frena il cliente; un\u2019auto ferma da molto tempo con pochissimi preventivi non viene vista o non interessa a quel prezzo. Contano tutti i preventivi fatti su quell\u2019auto da quando \u00e8 entrata, indipendentemente dal periodo scelto sopra.</div>'
+      +(nEscl?('<div style="font-size:11px;color:#64748b;margin-top:6px;">'+nEscl+' auto escluse perch\u00e9 non in vendita'+(adm?(': '+auto.filter(function(a){ return escl[a.id]; }).map(function(a){ return '<span onclick="cvStatEscludi(\''+a.id+'\',false)" title="rimetti nelle statistiche" style="cursor:pointer;text-decoration:underline;">'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</span>'; }).join(', ')):'')+'</div>'):'')
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;"><b>Tempo vs normale</b>: giorni in stock divisi per i giorni che di solito servono per vendere (200% = il doppio). <b>Preventivi vs normale</b>: preventivi fatti divisi per quelli che di solito bastano per vendere (500% = cinque volte). Se entrambi sono alti l\u2019auto interessa ma qualcosa frena la vendita. Il riferimento viene dalle auto gi\u00e0 vendute: mediana dei preventivi fatti e dei giorni dal carico al contratto. Un\u2019auto con il doppio dei preventivi del riferimento e nessuna vendita ha qualcosa che frena il cliente; un\u2019auto ferma da molto tempo con pochissimi preventivi non viene vista o non interessa a quel prezzo. Contano tutti i preventivi fatti su quell\u2019auto da quando \u00e8 entrata, indipendentemente dal periodo scelto sopra.</div>'
       +'</div>';
     return h;
   }catch(e){ return ''; }
