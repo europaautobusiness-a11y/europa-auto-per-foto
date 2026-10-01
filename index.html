@@ -14847,7 +14847,7 @@ function tcAdminRenderRegistro() {
       var orario=tcOrarioCell(r);
       var min=tcMinutiRec(r); if(min) tot[d.email]+=min;
       var ore=min?tcFmtMin(min):'';
-      var perm=(typeof riPerGiorno==='function'?riPerGiorno(d.email,dataStr):'')||(r?(r.permesso||r.ferie||r.nota||''):'');
+      var perm=tcPermConVirtuale(d.email,dataStr)||(r?(r.permesso||r.ferie||r.nota||''):'');
       var cella = orario ? ('<div style="white-space:nowrap;">'+orario+'</div>'+(ore?'<div style="font-weight:700;color:#16a34a;">'+ore+'</div>':'')) : '';
       var rit = (typeof tcRitardoMin==='function') ? tcRitardoMin(r) : 0;
       if(rit>0) cella += '<div style="color:#dc2626;font-weight:700;font-size:11px;white-space:nowrap;">▲ '+rit+' min ritardo</div>';
@@ -14906,10 +14906,42 @@ var DIPENDENTI_EXTRA = ['Renato','Davide'];
    dell'email: non puo' timbrare, non riceve avvisi, ma la colonna
    Perm/Ferie funziona e il riepilogo esportato tiene conto dei permessi. */
 var TC_EXTRA_VIRTUALI = { 'Renato':'renato@extra' };
+/* Il dipendente vero che corrisponde a un "virtuale" (es. Renato Longo
+   creato in Dipendenti per Renato). Quando c'e', il virtuale non serve
+   piu': altrimenti nel file scaricato Renato compariva due volte.
+   Vale SOLO per i nomi in TC_EXTRA_VIRTUALI: "Davide" (titolare) resta
+   anche se esiste Davide Basso, che e' un'altra persona. */
+function tcDipVeroPerVirtuale(nome){
+  var n=String(nome||'').toLowerCase().trim(); if(!n) return null;
+  return tcLoadDip().filter(function(d){
+    var dn=String((d&&d.nome)||(d&&typeof tcGetNome==='function'?tcGetNome(d.email):'')||'').toLowerCase().trim();
+    return dn===n || dn.indexOf(n+' ')===0;
+  })[0]||null;
+}
+function tcExtraSenzaDoppi(){
+  return DIPENDENTI_EXTRA.filter(function(nome){
+    return !(TC_EXTRA_VIRTUALI[nome] && tcDipVeroPerVirtuale(nome));
+  });
+}
+/* Permessi/ferie: per il dipendente vero valgono anche quelli segnati
+   prima sulla colonna virtuale, cosi' non si perde niente del passato. */
+function tcPermConVirtuale(email, dataStr){
+  if(typeof riPerGiorno!=='function') return '';
+  var p=riPerGiorno(email, dataStr); if(p) return p;
+  try{
+    var nm=String(typeof tcGetNome==='function'?tcGetNome(email):'').toLowerCase().trim();
+    for(var nome in TC_EXTRA_VIRTUALI){
+      var v=nome.toLowerCase();
+      if(nm===v || nm.indexOf(v+' ')===0) return riPerGiorno(TC_EXTRA_VIRTUALI[nome], dataStr)||'';
+    }
+  }catch(e){}
+  return '';
+}
 function tcDipConExtra(){
   var dips=tcLoadDip().slice();
   Object.keys(TC_EXTRA_VIRTUALI).forEach(function(nome){
     var em=TC_EXTRA_VIRTUALI[nome];
+    if(tcDipVeroPerVirtuale(nome)) return;
     if(!dips.some(function(d){ return d && (d.email===em || String(d.nome||'').toLowerCase()===nome.toLowerCase()); }))
       dips.push({ nome:nome, email:em, ruolo:'dipendente', sede:'sede_a', virtuale:true });
   });
@@ -14971,7 +15003,7 @@ function tcScaricaRiepilogoCSV(){
   var filter=document.getElementById('tc-admin-dip-filter'), fv=filter?filter.value:'';
   var cols=tcLoadDip().filter(function(d){return !fv||d.email===fv;});
   // i dipendenti "extra" (es. Renato) si aggiungono solo nell'esportazione completa
-  var extra = fv ? [] : DIPENDENTI_EXTRA.slice();
+  var extra = fv ? [] : tcExtraSenzaDoppi();
   if(!cols.length && !extra.length){ alert('Nessun dipendente.'); return; }
   var recs=tcLoadReg().filter(function(r){return r.mese===mese;});
   var map={}; recs.forEach(function(r){ map[r.dipendente+'|'+r.data]=r; });
@@ -14997,7 +15029,7 @@ function tcScaricaRiepilogoCSV(){
     cols.forEach(function(d){
       var r=map[d.email+'|'+dataStr];
       var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0;
-      var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
+      var perm=tcPermConVirtuale(d.email,dataStr);
       var pc=tcPermCodice(perm);
       if(!pc && dow===0) pc='/';
       min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
@@ -15036,7 +15068,7 @@ function tcScaricaRiepilogoXLS(){
   var mese=_tcAdminMese||tcGetMese();
   var filter=document.getElementById('tc-admin-dip-filter'), fv=filter?filter.value:'';
   var cols=tcLoadDip().filter(function(d){return !fv||d.email===fv;});
-  var extra = fv ? [] : DIPENDENTI_EXTRA.slice();
+  var extra = fv ? [] : tcExtraSenzaDoppi();
   if(!cols.length && !extra.length){ alert('Nessun dipendente.'); return; }
   var recs=tcLoadReg().filter(function(r){return r.mese===mese;});
   var map={}; recs.forEach(function(r){ map[r.dipendente+'|'+r.data]=r; });
@@ -15080,7 +15112,7 @@ function tcScaricaRiepilogoXLS(){
     cols.forEach(function(d){
       var r=map[d.email+'|'+dataStr];
       var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r):0;
-      var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
+      var perm=tcPermConVirtuale(d.email,dataStr);
       var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
       min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
       if(min) tot[d.email]+=min;
@@ -15198,7 +15230,7 @@ function tcScaricaRiepilogoXLS(){
           var c=2+i*2;
           var r0=map[d.email+'|'+dataStr];
           var min=(typeof tcMinutiRec==='function')?tcMinutiRec(r0):0;
-          var perm=(typeof riPerGiorno==='function')?riPerGiorno(d.email,dataStr):'';
+          var perm=tcPermConVirtuale(d.email,dataStr);
           var pc=tcPermCodice(perm); if(!pc && dow===0) pc='/';
           min=tcMinutiRiepilogo(d.email, tcGetNome(d.email), dow, min, pc);
           if(min) tot2[d.email]+=min;
