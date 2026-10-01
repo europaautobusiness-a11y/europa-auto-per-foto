@@ -24868,14 +24868,22 @@ function cvStatRender(){
   try{
     var tutti=cvLoad().filter(function(c){ var o=c&&c.origine; return c && !(o==='sicom' || o==='sicom_ap'); });
     /* _cvStPer: numero = ultimi N giorni (0 = tutto); 'y2025' = anno solare */
-    var L;
+    var L, _da=0, _a=Infinity;
     if(typeof _cvStPer==='string' && /^y\d{4}$/.test(_cvStPer)){
-      var _y=parseInt(_cvStPer.slice(1),10), _da=new Date(_y,0,1).getTime(), _a=new Date(_y+1,0,1).getTime();
-      L=tutti.filter(function(c){ var t=cvStatTs(c); return t>=_da && t<_a; });
-    } else {
-      var lim=_cvStPer>0?(Date.now()-_cvStPer*86400000):0;
-      L=tutti.filter(function(c){ return cvStatTs(c)>=lim; });
-    }
+      var _y=parseInt(_cvStPer.slice(1),10); _da=new Date(_y,0,1).getTime(); _a=new Date(_y+1,0,1).getTime();
+    } else if(_cvStPer>0){ _da=Date.now()-_cvStPer*86400000; }
+    L=tutti.filter(function(c){ var t=cvStatTs(c); return t>=_da && t<_a; });
+    /* auto vendute: contratti del periodo per data del contratto (stessa
+       regola delle Statistiche), compreso lo storico importato */
+    var _vend={};
+    cvLoad().filter(function(c){ return c && c.isContratto; }).forEach(function(c){
+      var t=+(c.contrattoTs||c.createdAt||0); if(!t && c.data){ var d0=Date.parse(c.data); if(!isNaN(d0)) t=d0; }
+      if(!(t>=_da && t<_a)) return;
+      var k=cvStatModello(c); if(!_vend[k]) _vend[k]={n:0,p:[]}; _vend[k].n++; var p=cvStatPrezzo(c); if(p) _vend[k].p.push(p);
+    });
+    var topV=Object.keys(_vend).filter(function(k){ return k!=='(SENZA AUTO)' && k!=='(senza auto)'; }).map(function(k){ return {k:k, n:_vend[k].n, pm:_vend[k].p.length?Math.round(_vend[k].p.reduce(function(s,x){return s+x;},0)/_vend[k].p.length):0}; }).sort(function(a,b){ return b.n-a.n; }).slice(0,10);
+    var totVend=Object.keys(_vend).reduce(function(s,k){ return s+_vend[k].n; },0);
+
     var n=L.length, conv=L.filter(function(c){ return c.isContratto; }).length, fin=L.filter(cvStatFin).length;
     var prezzi=L.map(cvStatPrezzo).filter(function(x){ return x>0; }).sort(function(a,b){ return a-b; });
     var media=prezzi.length?Math.round(prezzi.reduce(function(s,x){ return s+x; },0)/prezzi.length):0;
@@ -24888,6 +24896,14 @@ function cvStatRender(){
     /* modelli */
     var mod={}; L.forEach(function(c){ var k=cvStatModello(c); if(!mod[k]) mod[k]={n:0,c:0,p:[]}; mod[k].n++; if(c.isContratto) mod[k].c++; var p=cvStatPrezzo(c); if(p) mod[k].p.push(p); });
     var top=Object.keys(mod).map(function(k){ return {k:k, n:mod[k].n, c:mod[k].c, pm:mod[k].p.length?Math.round(mod[k].p.reduce(function(s,x){return s+x;},0)/mod[k].p.length):0}; }).sort(function(a,b){ return b.n-a.n; }).slice(0,10);
+    /* meno preventivate: i modelli oggi in magazzino, dal meno richiesto
+       (anche zero preventivi nel periodo) */
+    var _inStock=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){ return a && !a.deleted && (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato); });
+    var _modStock={}; _inStock.forEach(function(a){ var k=((a.marca||'')+' '+(a.modello||'')).trim().toUpperCase(); if(!k) return; if(!_modStock[k]) _modStock[k]={auto:0}; _modStock[k].auto++; });
+    var menoPrev=Object.keys(_modStock).map(function(k){ return { k:k, auto:_modStock[k].auto, n:(mod[k]?mod[k].n:0) }; }).sort(function(a,b){ return (a.n-b.n) || (b.auto-a.auto); }).slice(0,10);
+    /* meno vendute: modelli preventivati nel periodo con meno vendite, a
+       parita' quelli piu' richiesti prima (tanti preventivi, poche vendite) */
+    var menoVend=Object.keys(mod).filter(function(k){ return k!=='(SENZA AUTO)' && k!=='(senza auto)'; }).map(function(k){ return { k:k, n:mod[k].n, v:(_vend[k]?_vend[k].n:0) }; }).filter(function(x){ return x.n>=2; }).sort(function(a,b){ return (a.v-b.v) || (b.n-a.n); }).slice(0,10);
     var eu=function(v){ return (typeof cvEuro==='function')?cvEuro(v):(v+' \u20ac'); };
     var card='background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px;';
     var kl='font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;';
@@ -24900,17 +24916,28 @@ function cvStatRender(){
       +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:8px;">'
       +'<div style="'+card+'"><div style="'+kl+'">Preventivi</div><div style="font-size:22px;font-weight:900;">'+n+'</div></div>'
       +'<div style="'+card+'"><div style="'+kl+'">Diventati contratto</div><div style="font-size:22px;font-weight:900;color:#16a34a;">'+(n?Math.round(conv/n*100):0)+'%</div><div style="font-size:11px;color:#94a3b8;">'+conv+' su '+n+'</div></div>'
-      +'<div style="'+card+'"><div style="'+kl+'">Prezzo medio</div><div style="font-size:20px;font-weight:900;">'+eu(media)+'</div><div style="font-size:11px;color:#94a3b8;">mediana '+eu(mediana)+'</div></div>'
+      +'<div style="'+card+'"><div style="'+kl+'display:flex;align-items:center;gap:5px;">Prezzo medio '+(typeof stInfo==='function'?stInfo('Media: la somma dei prezzi di tutti i preventivi del periodo divisa per il loro numero. Il prezzo e\u2019 quello dell\u2019auto, al netto dello sconto promo, senza passaggio e servizi. Poche auto molto care la fanno salire.'):'')+'</div><div style="font-size:20px;font-weight:900;">'+eu(media)+'</div>'
+      +'<div style="font-size:11px;color:#64748b;display:flex;align-items:center;gap:5px;margin-top:2px;">Mediana <b>'+eu(mediana)+'</b> '+(typeof stInfo==='function'?stInfo('Mediana: il prezzo che sta esattamente a meta\u2019. Si mettono in fila tutti i preventivi del periodo dal meno caro al piu\u2019 caro e si prende quello centrale: meta\u2019 dei clienti ha chiesto meno, meta\u2019 di piu\u2019. Non si lascia spostare dalle poche auto molto care, quindi descrive meglio il cliente tipico. Se media e mediana sono lontane, i prezzi sono sbilanciati verso l\u2019alto o verso il basso.'):'')+'</div></div>'
       +'<div style="'+card+'"><div style="'+kl+'">Cliente tipo</div><div style="font-size:17px;font-weight:900;color:#1a4fa0;">'+(topF&&topF.n?topF.lab:'\u2014')+'</div><div style="font-size:11px;color:#94a3b8;">fascia pi\u00f9 richiesta</div></div>'
       +'<div style="'+card+'"><div style="'+kl+'">Con finanziamento</div><div style="font-size:22px;font-weight:900;color:#7c3aed;">'+(n?Math.round(fin/n*100):0)+'%</div><div style="font-size:11px;color:#94a3b8;">'+fin+' preventivi</div></div>'
       +'</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-bottom:8px;">'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px;margin-bottom:8px;">'
       +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Auto pi\u00f9 preventivate</div>'
         +(top.length?top.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid #f1f5f9;"><span style="font-weight:700;">'+cvEsc(t.k)+'</span><span style="white-space:nowrap;color:#475569;">'+t.n+' prev. \u00b7 '+t.c+' contr. \u00b7 media '+eu(t.pm)+'</span></div>'; }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun dato</div>')
+      +'</div>'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Auto pi\u00f9 vendute <span style="font-weight:600;color:#94a3b8;text-transform:none;">('+totVend+' contratti)</span></div>'
+        +(topV.length?topV.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid #f1f5f9;"><span style="font-weight:700;">'+cvEsc(t.k)+'</span><span style="white-space:nowrap;color:#475569;"><b style="color:#16a34a;">'+t.n+'</b> vendut'+(t.n===1?'a':'e')+' \u00b7 media '+eu(t.pm)+'</span></div>'; }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessuna vendita nel periodo</div>')
+      +'</div>'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Auto meno preventivate <span style="font-weight:600;color:#94a3b8;text-transform:none;">(in magazzino oggi)</span></div>'
+        +(menoPrev.length?menoPrev.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid #f1f5f9;"><span style="font-weight:700;">'+cvEsc(t.k)+'</span><span style="white-space:nowrap;color:'+(t.n?'#475569':'#dc2626')+';"><b>'+t.n+'</b> prev. \u00b7 '+t.auto+' in stock</span></div>'; }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun dato</div>')
+      +'</div>'
+      +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Auto meno vendute <span style="font-weight:600;color:#94a3b8;text-transform:none;">(fra le preventivate)</span></div>'
+        +(menoVend.length?menoVend.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid #f1f5f9;"><span style="font-weight:700;">'+cvEsc(t.k)+'</span><span style="white-space:nowrap;color:#475569;">'+t.n+' prev. \u00b7 <b style="color:'+(t.v?'#475569':'#dc2626')+';">'+t.v+' vendut'+(t.v===1?'a':'e')+'</b></span></div>'; }).join(''):'<div style="font-size:12px;color:#94a3b8;">Nessun dato</div>')
       +'</div>'
       +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">Fasce di prezzo</div>'
         +fc.map(function(f){ return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 0;"><span style="width:92px;color:#475569;">'+f.lab+'</span><span style="flex:1;background:#eef2ff;border-radius:4px;height:12px;overflow:hidden;"><span style="display:block;height:12px;width:'+Math.round(f.n/maxF*100)+'%;background:#1a4fa0;"></span></span><span style="width:28px;text-align:right;font-weight:700;">'+f.n+'</span></div>'; }).join('')
       +'</div></div>'
+      +cvStatPermanenza()
       +'<div style="'+card+'"><div style="'+kl+'margin-bottom:6px;">\ud83d\udd0e Cerca un\u2019auto del magazzino</div>'
       +'<input id="cv-st-q" value="'+cvEsc(_cvStQ)+'" oninput="_cvStQ=this.value;cvStatCerca();" placeholder="targa, modello o N\u00b0 interno (bastano 3 lettere)" style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'
       +'<div id="cv-st-ris" style="margin-top:6px;"></div></div>'
@@ -24918,6 +24945,75 @@ function cvStatRender(){
     w.innerHTML=h;
     cvStatCerca();
   }catch(e){ w.innerHTML=''; }
+}
+/* ===== PERMANENZA E PREVENTIVI: DOVE SI INCEPPA LA VENDITA =====
+   Riferimento dalle auto vendute: quanti preventivi servono in media per
+   vendere un'auto e in quanti giorni. Poi ogni auto in magazzino viene
+   confrontata con quel riferimento:
+   - tanti preventivi e nessuna vendita -> interessa ma qualcosa frena
+     (prezzo, condizioni, finanziamento): da rivedere;
+   - tanti giorni e pochi preventivi -> non la chiede nessuno: visibilita',
+     prezzo di partenza o foto. */
+function cvStatPermanenza(){
+  try{
+    var auto=((typeof mzLoad==='function')?mzLoad():[]).filter(function(a){ return a && !a.deleted; });
+    var prev=cvLoad().filter(function(c){ var o=c&&c.origine; return c && !(o==='sicom' || o==='sicom_ap'); });
+    var perAuto={}, perTarga={};
+    prev.forEach(function(c){ if(c.autoId){ (perAuto[c.autoId]=perAuto[c.autoId]||[]).push(c); } else { var tg=String((c.autoSnapshot&&c.autoSnapshot.targa)||'').replace(/\s/g,'').toUpperCase(); if(tg) (perTarga[tg]=perTarga[tg]||[]).push(c); } });
+    var diAuto=function(a){ var tg=String(a.targa||'').replace(/\s/g,'').toUpperCase(); return (perAuto[a.id]||[]).concat(tg?(perTarga[tg]||[]):[]); };
+    var gg=function(a, fine){ var d=Date.parse(a.dataCarico||''); if(isNaN(d)) return null; return Math.max(0,Math.floor(((fine||Date.now())-d)/86400000)); };
+    /* riferimento: auto vendute con data di carico e preventivi registrati */
+    var vend=auto.filter(function(a){ return a.stato==='venduta'; }), rif=[];
+    vend.forEach(function(a){
+      var pv=diAuto(a); if(!pv.length) return;
+      var cont=pv.filter(function(c){ return c.isContratto; })[0]; var fine=cont?+(cont.contrattoTs||cont.createdAt||0):0;
+      var g=gg(a, fine||undefined); if(g===null) return;
+      rif.push({ p:pv.length, g:g });
+    });
+    var med=function(arr){ if(!arr.length) return 0; var x=arr.slice().sort(function(a,b){return a-b;}); return x[Math.floor(x.length/2)]; };
+    var rifP=med(rif.map(function(r){ return r.p; }))||3, rifG=med(rif.map(function(r){ return r.g; }))||60;
+    /* auto in magazzino */
+    var stock=auto.filter(function(a){ return a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato; });
+    var righe=stock.map(function(a){
+      var pv=diAuto(a), g=gg(a), n=pv.length;
+      var ult=pv.reduce(function(m,c){ return Math.max(m, +(c.createdAt||0)); },0);
+      var ggUlt=ult?Math.floor((Date.now()-ult)/86400000):null;
+      var mese=(g&&g>0)?Math.round(n/(g/30)*10)/10:n;
+      var diag, col, peso;
+      if(g!==null && n>=Math.max(2*rifP,6) ){ diag='Molti preventivi, nessuna vendita: rivedere prezzo, condizioni o proposta di finanziamento'; col='#dc2626'; peso=3; }
+      else if(g!==null && g>=Math.max(1.5*rifG,90) && n<=Math.max(1,Math.floor(rifP/2))){ diag='Ferma e poco richiesta: rivedere visibilit\u00e0, foto, prezzo di partenza'; col='#b45309'; peso=2; }
+      else if(g!==null && g>=180){ diag='Oltre 180 giorni: sottocosto per la provvigione'; col='#b45309'; peso=2; }
+      else if(ggUlt!==null && ggUlt>45 && n>0){ diag='Nessun preventivo da '+ggUlt+' giorni'; col='#64748b'; peso=1; }
+      else { diag='In linea'; col='#16a34a'; peso=0; }
+      return { a:a, g:g, n:n, mese:mese, diag:diag, col:col, peso:peso, ult:ggUlt };
+    }).sort(function(x,y){ return (y.peso-x.peso) || ((y.g||0)-(x.g||0)); });
+    var nS=righe.length; if(!nS) return '';
+    var o90=righe.filter(function(r){ return (r.g||0)>90; }).length, o180=righe.filter(function(r){ return (r.g||0)>180; }).length;
+    var zero30=righe.filter(function(r){ return r.ult===null || r.ult>30; }).length;
+    var prob=righe.filter(function(r){ return r.peso>=2; }).length;
+    var pct=function(x){ return nS?Math.round(x/nS*100):0; };
+    var th='padding:6px 7px;border-bottom:1px solid #e2e8f0;font-size:10px;font-weight:800;text-transform:uppercase;color:#94a3b8;text-align:right;white-space:nowrap;';
+    var td='padding:6px 7px;border-bottom:1px solid #f1f5f9;font-size:12.5px;text-align:right;white-space:nowrap;';
+    var h='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px;margin-bottom:8px;">'
+      +'<div style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:6px;">\u23f1 Permanenza in magazzino e preventivi</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:8px;">'
+      +'<div><div style="font-size:11px;color:#64748b;">Per vendere un\u2019auto servono</div><div style="font-size:18px;font-weight:900;">'+rifP+' preventivi</div><div style="font-size:10.5px;color:#94a3b8;">e '+rifG+' giorni (mediana su '+rif.length+' vendute)</div></div>'
+      +'<div><div style="font-size:11px;color:#64748b;">In stock oltre 90 giorni</div><div style="font-size:18px;font-weight:900;color:#b45309;">'+pct(o90)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+o90+' su '+nS+' \u00b7 oltre 180: '+o180+'</div></div>'
+      +'<div><div style="font-size:11px;color:#64748b;">Senza preventivi da 30 giorni</div><div style="font-size:18px;font-weight:900;color:#64748b;">'+pct(zero30)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+zero30+' auto</div></div>'
+      +'<div><div style="font-size:11px;color:#64748b;">Auto con un problema</div><div style="font-size:18px;font-weight:900;color:#dc2626;">'+pct(prob)+'%</div><div style="font-size:10.5px;color:#94a3b8;">'+prob+' da guardare</div></div></div>'
+      +'<div style="overflow-x:auto;max-height:420px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>'
+      +'<th style="'+th+'text-align:left;">Auto</th><th style="'+th+'">Giorni in stock</th><th style="'+th+'">Preventivi</th><th style="'+th+'">Al mese</th><th style="'+th+'">Ultimo</th><th style="'+th+'text-align:left;">Diagnosi</th></tr></thead><tbody>'
+      +righe.map(function(r){ var a=r.a;
+        return '<tr><td style="'+td+'text-align:left;"><b>'+cvEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</b>'+(a.targa?(' \u00b7 '+cvEsc(a.targa)):'')+(a.numero_interno?(' \u00b7 N\u00b0'+cvEsc(a.numero_interno)):'')+'</td>'
+          +'<td style="'+td+((r.g||0)>180?'color:#dc2626;font-weight:800;':((r.g||0)>90?'color:#b45309;font-weight:700;':''))+'">'+(r.g===null?'\u2014':r.g)+'</td>'
+          +'<td style="'+td+'font-weight:800;">'+r.n+'</td><td style="'+td+'">'+r.mese+'</td>'
+          +'<td style="'+td+'">'+(r.ult===null?'mai':(r.ult===0?'oggi':(r.ult+' gg fa')))+'</td>'
+          +'<td style="'+td+'text-align:left;white-space:normal;min-width:220px;color:'+r.col+';font-weight:'+(r.peso?'700':'500')+';">'+cvEsc(r.diag)+'</td></tr>'; }).join('')
+      +'</tbody></table></div>'
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;">Il riferimento viene dalle auto gi\u00e0 vendute: mediana dei preventivi fatti e dei giorni dal carico al contratto. Un\u2019auto con il doppio dei preventivi del riferimento e nessuna vendita ha qualcosa che frena il cliente; un\u2019auto ferma da molto tempo con pochissimi preventivi non viene vista o non interessa a quel prezzo. Contano tutti i preventivi fatti su quell\u2019auto da quando \u00e8 entrata, indipendentemente dal periodo scelto sopra.</div>'
+      +'</div>';
+    return h;
+  }catch(e){ return ''; }
 }
 function cvStatCerca(){
   var box=document.getElementById('cv-st-ris'); if(!box) return;
