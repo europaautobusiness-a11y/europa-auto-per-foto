@@ -34840,15 +34840,12 @@ function cmpCaricaTabelle(cb){
   try{
     var sb=(typeof sbClient==='function')?sbClient():null;
     if(!sb){ clearTimeout(to); chiudi(); return; }
-    sb.storage.from(SIM_BUCKET).download(CMP_REMOTO).then(function(r){
+    /* chiamata diretta con tempo massimo: la libreria puo' restare appesa */
+    simFetchDiretto(CMP_REMOTO, function(buf){
       if(fatto) return;
-      if(r && !r.error && r.data){
-        r.data.text().then(function(t){
-          try{ var d=JSON.parse(t); if(d && d.dati && d.coeff) cmpSetDati(d); }catch(e){}
-          clearTimeout(to); chiudi();
-        }).catch(function(){ clearTimeout(to); chiudi(); });
-      } else { clearTimeout(to); chiudi(); }
-    }).catch(function(){ clearTimeout(to); chiudi(); });
+      try{ if(buf){ var d=JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf))); if(d && d.dati && d.coeff) cmpSetDati(d); } }catch(e){}
+      clearTimeout(to); chiudi();
+    });
   }catch(e){ clearTimeout(to); chiudi(); }
 }
 
@@ -34925,10 +34922,46 @@ function simLoadLibs(cb){
 }
 
 /* ---- scarica il file dallo storage ---- */
+/* ===== SCARICO DIRETTO =====
+   Il file veniva chiesto attraverso la libreria Supabase, che prima di ogni
+   richiesta aspetta un "lucchetto" sulla sessione: quando quel lucchetto
+   resta preso (capita con piu' schede aperte o dopo un rinnovo del token)
+   la richiesta non parte mai e il simulatore resta fermo per sempre, senza
+   errore. Qui si scarica il file con una chiamata diretta allo storage,
+   con la sessione gia' in mano e un tempo massimo; la libreria resta come
+   seconda strada se la diretta non ce la fa. */
+function simFetchDiretto(path, cb){
+  try{
+    if(typeof fetch!=='function' || typeof SB_URL==='undefined') { cb(null,'no fetch'); return; }
+    var tok=(typeof _eaSbSessione!=='undefined' && _eaSbSessione && _eaSbSessione.access_token) ? _eaSbSessione.access_token : null;
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var to=setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(e){} }, 45000);
+    var url=SB_URL+'/storage/v1/object/'+(tok?'authenticated':'public')+'/'+SIM_BUCKET+'/'+path;
+    var h={ 'apikey':SB_KEY, 'Authorization':'Bearer '+(tok||SB_KEY) };
+    fetch(url, { method:'GET', headers:h, signal:(ctrl?ctrl.signal:undefined), cache:'no-store' })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.arrayBuffer(); })
+      .then(function(buf){ clearTimeout(to); if(buf && buf.byteLength>1000) cb(buf,null); else cb(null,'file vuoto'); })
+      .catch(function(e){ clearTimeout(to); cb(null, String(e&&e.message||e)); });
+  }catch(e){ cb(null, String(e&&e.message||e)); }
+}
 function simFetch(cb){
   var sb = (typeof sbClient==='function') ? sbClient() : null;
   if(!sb){ cb(null, 'Supabase non disponibile'); return; }
   var i = 0, ultimo = '';
+  /* prima la strada diretta, su tutti i percorsi noti */
+  var j = 0;
+  var diretta = function(){
+    if(j >= SIM_PATHS.length){ prova(); return; }   /* poi la libreria */
+    var path = SIM_PATHS[j++];
+    simFetchDiretto(path, function(buf, err){
+      if(buf){
+        try{ var dir=path.indexOf('/')>=0?path.slice(0,path.lastIndexOf('/')):'', nome=path.slice(path.lastIndexOf('/')+1);
+             sb.storage.from(SIM_BUCKET).list(dir,{limit:100}).then(function(l){ if(l&&l.data){ for(var k=0;k<l.data.length;k++){ if(l.data[k].name===nome) _simMeta=l.data[k]; } } }).catch(function(){}); }catch(e){}
+        cb(buf, null); return;
+      }
+      ultimo = err || ultimo; diretta();
+    });
+  };
   var prova = function(){
     if(i >= SIM_PATHS.length){
       cb(null, 'Nessun file simulatore trovato nel bucket \u00ab'+SIM_BUCKET+'\u00bb.'+(ultimo?(' ('+ultimo+')'):''));
@@ -34951,7 +34984,7 @@ function simFetch(cb){
       }).catch(function(e){ ultimo=String(e && e.message || e); prova(); });
     }catch(e){ ultimo=String(e && e.message || e); prova(); }
   };
-  prova();
+  diretta();
 }
 
 /* ---- costruisce il motore dal file ---- */
