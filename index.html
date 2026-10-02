@@ -7500,6 +7500,27 @@ function pProvvAuto(cv){
       if(String(_r.gap||'NO')!==String(_d.gap||'NO')) _diff.push('GAP: '+(_r.gap||'NO')+' \u2192 '+(_d.gap||'NO'));
       if(String(_r.finanziariaDelibera||'')!==String(_d.finanziaria||'')) _diff.push('Finanziaria: '+(_r.finanziariaDelibera||'\u2014')+' \u2192 '+(_d.finanziaria||'\u2014'));
       if(!_diff.length) return;             /* la delibera conferma: non si tocca niente */
+      /* ===== FORZATA A MANO = INTOCCABILE =====
+         Una provvigione salvata a mano (dal modulo, magari in deroga alla
+         delibera o col sottocosto cambiato) e' una decisione presa: prima la
+         delibera la ricalcolava e la rimetteva in bozza a ogni nuovo
+         passaggio, e l'importo deciso spariva. Ora resta com'e'; si annota
+         soltanto cosa dice la delibera, una volta, e lo si vede nel Dettaglio. */
+      if(pProvvForzata(_r)){
+        var _firma=_diff.join(' | ');
+        if(_r.delibDiversaFirma!==_firma){
+          _r.delibDiversa={ diff:_diff.slice(0), ts:Date.now() };
+          _r.delibDiversaFirma=_firma;
+          _r.updatedAt=Date.now();
+          reg[tro.i]=_r; pSaveReg(reg);
+          try{ if(typeof pSupaUpsert==='function') pSupaUpsert(_r); }catch(_e){}
+          try{
+            if(typeof notifPush==='function')
+              notifPush('Provvigione forzata a mano, lasciata com\u2019\u00e8 \u2014 '+(_r.cliente||'pratica')+'. La delibera dice: '+_diff.join(' \u00b7 '), '\u2139\ufe0f');
+          }catch(_n){}
+        }
+        return;
+      }
     }
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var fin=!!(typeof cvHaFinanziamento==='function' && cvHaFinanziamento(cv));
@@ -7619,6 +7640,14 @@ function pProvvAuto(cv){
     try{ if(document.getElementById('pRegistro')) pRenderReg(); }catch(_e){}
   }catch(err){ console.error(err); }
 }
+/* Riga decisa a mano: salvata dal modulo (manuale), in deroga alla delibera,
+   col sottocosto forzato, oppure confermata senza venire dal calcolo
+   automatico della delibera (le righe vecchie non hanno il segno "manuale"). */
+function pProvvForzata(r){
+  if(!r || r.bozza===true) return false;
+  if(r.manuale || r.delibForzata || r.sottoForzato) return true;
+  return (r.tipo==='fin' || r.tipo==='sotto') && r.calcolataDaDelibera!==true;
+}
 function pProvvEsiste(cv, reg){
   try{
     for(var k=0;k<reg.length;k++){ if(reg[k] && reg[k].cvId===cv.id) return true; }
@@ -7664,10 +7693,15 @@ function pVenditeAperte(){
        mese in corso. Quelle vecchie non spariscono in silenzio — sono soldi di
        chi vende — ma restano contate a parte e si riaprono dal selettore mese
        del registro. */
-    var mc=(typeof pGetMese==='function')?pGetMese():'';
+    /* Il mese e' quello scelto nel selettore: scegliendo un mese passato lo
+       si riapre e qui compaiono le sue vendite da completare. Prima il
+       selettore mostrava solo il registro e queste restavano irraggiungibili. */
+    var mc=window._pMeseVisto || ((typeof pGetMese==='function')?pGetMese():'');
     var _mese=function(t){ var d=new Date(t); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
     var correnti=out.filter(function(x){ return _mese(x.ts)===mc; });
     window._pArretrate=out.length-correnti.length;
+    /* il mese passato piu' recente con qualcosa da finire: il link lo apre */
+    window._pArretrateMese=out.filter(function(x){ return _mese(x.ts)<mc; }).map(function(x){ return _mese(x.ts); }).sort().reverse()[0]||'';
     out=correnti;
   }catch(e){}
   return out.slice(0,12);
@@ -7686,7 +7720,25 @@ function pVenditeRender(){
   try{
     var box=document.getElementById('pDaVendite'); if(!box) return;
     var list=pVenditeAperte();
-    if(!list.length){ box.style.display='none'; box.innerHTML=''; return; }
+    /* Mese passato riaperto: una fascia lo dice chiaramente, con il ritorno
+       al mese in corso a portata di dito. */
+    var _ria=(window._pMeseVisto && window._pMeseVisto!==pGetMese()) ? window._pMeseVisto : '';
+    var _fascia=_ria
+      ? ('<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:#78350f;">'
+         +'\uD83D\uDD13 <b>'+(pGetMeseLabel(_ria)||_ria)+' riaperto.</b> Puoi completare e modificare le sue pratiche; una provvigione nuova salvata adesso va in questo mese.'
+         +'<div style="margin-top:7px;"><button type="button" onclick="pMeseRichiudi()" style="padding:6px 12px;border-radius:7px;border:1px solid #b45309;background:#fff;color:#92400e;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDD12 Richiudi e torna al mese in corso</button></div></div>')
+      : '';
+    if(!list.length){
+      if(_fascia){ box.innerHTML=_fascia+'<div style="font-size:12px;color:#64748b;margin:-4px 0 6px;">Nessuna provvigione da completare in questo mese.</div>'; box.style.display='block'; }
+      else if(window._pArretrate>0 && window._pArretrateMese){
+        box.innerHTML='<div style="font-size:11.5px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:7px 9px;">\u26a0\ufe0f '
+          +window._pArretrate+(window._pArretrate===1?' provvigione di mesi precedenti \u00e8 rimasta':' provvigioni di mesi precedenti sono rimaste')
+          +' da completare. <a href="#" onclick="pMeseCambia(\''+window._pArretrateMese+'\');return false;" style="color:#9a3412;font-weight:800;">Riapri '+(pGetMeseLabel(window._pArretrateMese)||window._pArretrateMese)+'</a></div>';
+        box.style.display='block';
+      }
+      else { box.style.display='none'; box.innerHTML=''; }
+      return;
+    }
     /* Mettere da parte una provvigione resta all'amministratore: chi vende
        deve completarle tutte, non poterle far sparire. */
     var _puoIgnorare = (typeof getCurrentRole==='function' && getCurrentRole()==='admin');
@@ -7696,8 +7748,11 @@ function pVenditeRender(){
       +((window._pArretrate>0)
          ? ('<div style="font-size:11.5px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:7px 9px;margin-bottom:8px;">\u26a0\ufe0f '
             +window._pArretrate+(window._pArretrate===1?' provvigione di mesi precedenti \u00e8 rimasta':' provvigioni di mesi precedenti sono rimaste')
-            +' da completare. Si riaprono dal selettore del mese, qui sopra.</div>')
+            +' da completare. '+(window._pArretrateMese
+               ? ('<a href="#" onclick="pMeseCambia(\''+window._pArretrateMese+'\');return false;" style="color:#9a3412;font-weight:800;">Riapri '+(pGetMeseLabel(window._pArretrateMese)||window._pArretrateMese)+'</a>')
+               : 'Si riaprono dal selettore del mese.')+'</div>')
          : '');
+    h=_fascia+h;
     list.forEach(function(x){
       var cv=x.cv, cl=cv.cliente||{}, a=cv.autoSnapshot||{};
       var nome=((cl.business&&cl.ragSociale)?cl.ragSociale:(((cl.cognome||'')+' '+(cl.nome||'')).trim()))||'(cliente)';
@@ -8421,7 +8476,8 @@ function pSalva() {
     else if (_pFinSelezionata === 'best'){ provvSelezionata = res.bestProvv; finanziaria = 'Prov Premium'; }
   }
 
-  const mese = pGetMese();
+  /* Col mese riaperto dal selettore, una provvigione nuova va in quel mese. */
+  const mese = window._pMeseVisto || pGetMese();
   const reg  = pLoadReg();
   const existingEntry = _pEditingId ? reg.find(x => x.id === _pEditingId) : null;
   const entry = {
@@ -8442,6 +8498,8 @@ function pSalva() {
       : undefined,
     /* Salvata contro la delibera: il perche' resta qui, con nome e ora. */
     delibForzata: (window._pDelibForzata || undefined),
+    /* Salvata a mano: da qui in poi la delibera non la ricalcola piu'. */
+    manuale: { ts:Date.now(), da:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') },
     fi: PS.fi, fiMesi: PS.fi!=='NO'?(PS.fiMesi||48):null, cpi: PS.cpi, gap: PS.gap,
     valore, acconto: parseFloat(document.getElementById('pAcconto')?.value)||0, comm, tan, C15: res.C15,
     fonte: PS.fonte || 'Non specificato',
@@ -9056,8 +9114,11 @@ function pVerificaEsegui(){
    finanziaria. Qui c'e' tutto, insieme al ricalcolo fatto adesso. */
 /* Cambio del mese mostrato. Il registro locale contiene tutti i mesi: si
    cambia solo cio' che si guarda, nessun dato viene toccato o riscritto. */
+function pMeseRichiudi(){ pMeseCambia(null); }
 function pMeseCambia(m){
-  window._pMeseVisto = m || null;
+  /* il mese in corso non e' un mese "riaperto" */
+  window._pMeseVisto = (m && m!==pGetMese()) ? m : null;
+  try{ var _s=document.getElementById('pMeseSel'); if(_s && m) _s.value=m; }catch(e){}
   try{ pRenderReg(); }catch(e){}
   try{ pAggStats(); }catch(e){}
   try{ pRenderFonteChart(); }catch(e){}
@@ -9130,6 +9191,10 @@ function pDettaglio(id){
       + (scarto===null?'':riga('Scostamento',
           '<span style="color:'+(Math.abs(scarto)<1?'#16a34a':'#dc2626')+';font-weight:800;">'
           +(Math.abs(scarto)<1?'nessuno':((scarto>0?'+':'')+scarto+' \u20ac'))+'</span>'))
+      + (r.delibDiversa&&r.delibDiversa.diff&&r.delibDiversa.diff.length
+          ? '<div style="margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;font-size:12px;color:#1e3a8a;">'
+            +'<b>Forzata a mano: lasciata com\u2019\u00e8.</b> La delibera dice:<br>'+r.delibDiversa.diff.join('<br>')+'</div>'
+          : '')
       + (r.riallineataDiff&&r.riallineataDiff.length
           ? '<div style="margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;font-size:12px;color:#9a3412;">'
             +'<b>Riallineata alla delibera:</b><br>'+r.riallineataDiff.join('<br>')+'</div>'
@@ -12882,28 +12947,28 @@ function wfRender(){
       var ordine=WF_MESI.concat(['senza mese']);
       var presenti=ordine.filter(function(m){ return perMese[m]; });
       if(presenti.length>=1){   /* sempre visibile, anche con un solo mese */
-        h+='<div style="margin-top:9px;padding:8px 11px;background:#eff6ff;border-radius:9px;">'
-          +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">Riepilogo per mese</div>'
-          +'<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;">';
+        /* Tendina come quella dell'anno nelle Statistiche: di base il mese
+           in corso (al cambio mese si passa da soli al nuovo), oppure un
+           altro mese o tutto l'anno. */
         var _apertoEt=WF_MESI[wfMeseCorrente()];
-        /* Toccando un mese si vedono solo le trasferte di quel mese;
-           "Tutti" torna all'elenco completo. */
-        var _sel=(window._wfMeseSel||{})[k]||'';
-        var _chip=function(et,lab,on){
-          return '<span onclick="wfSelMese(\''+wfEsc(k)+'\',\''+et+'\')" style="cursor:pointer;padding:3px 9px;border-radius:999px;'
-            +(on?'background:#1a4fa0;color:#fff;':'background:#fff;border:1px solid #bfdbfe;')+'">'+lab+'</span>';
-        };
-        h+=_chip('', '<b>Tutti</b>', !_sel);
-        presenti.forEach(function(m){
-          var _aperto=(m===_apertoEt), on=(_sel===m);
-          h+=_chip(m, '<b>'+m+'</b> '+perMese[m].gg+' \u00b7 '+wfEuro(perMese[m].tot)+(_aperto?' \u00b7 in corso':''), on);
+        var _sel=wfMeseSelEff(k);
+        var _opz=presenti.slice();
+        if(_opz.indexOf(_apertoEt)<0) _opz.push(_apertoEt);
+        _opz.sort(function(a,b){ return ordine.indexOf(a)-ordine.indexOf(b); });
+        h+='<div style="margin-top:9px;padding:8px 11px;background:#eff6ff;border-radius:9px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+          +'<b style="font-size:13px;color:#1a4fa0;">Mese:</b>'
+          +'<select onchange="wfSelMese(\''+wfEsc(k)+'\',this.value)" style="padding:8px 10px;border:1px solid #bfdbfe;border-radius:8px;font-size:14px;background:#fff;min-width:0;max-width:100%;">';
+        _opz.forEach(function(m){
+          var pm=perMese[m]||{gg:0,tot:0};
+          h+='<option value="'+m+'"'+(_sel===m?' selected':'')+'>'+m+(m===_apertoEt?' (in corso)':'')+' \u2014 '+pm.gg+' gg \u00b7 '+wfEuro(pm.tot)+'</option>';
         });
-        h+='</div></div>';
+        h+='<option value="tutti"'+(_sel==='tutti'?' selected':'')+'>Tutto l\u2019anno</option>'
+          +'</select></div>';
       }
     }
 
     if(_tr.length){
-      var _selM=(window._wfMeseSel||{})[k]||'';
+      var _selM=wfMeseSelEff(k); if(_selM==='tutti') _selM='';
       if(_selM){
         var _nM=_tr.filter(function(t){ return wfMeseDiTrasferta(t)===_selM; }).length;
         h+='<div style="font-size:12px;color:#1a4fa0;font-weight:700;margin-top:8px;">'+_nM+' trasfert'+(_nM===1?'a':'e')+' di '+_selM+'</div>';
@@ -13880,9 +13945,14 @@ function wfMeseDiTrasferta(t){
   if(m===null){ var r=String((t&&t.data)||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(r) m=parseInt(r[2],10)-1; }
   return (m!=null && WF_MESI[m])?WF_MESI[m]:'senza mese';
 }
+/* mese mostrato nelle trasferte: se non e' stato scelto niente, quello in corso */
+function wfMeseSelEff(k){
+  var v=(window._wfMeseSel||{})[k];
+  return v ? v : WF_MESI[wfMeseCorrente()];
+}
 function wfSelMese(k, m){
   window._wfMeseSel=window._wfMeseSel||{};
-  window._wfMeseSel[k]=(window._wfMeseSel[k]===m)?'':m;   /* ritoccare lo stesso mese = tutti */
+  window._wfMeseSel[k]=m;   /* un mese, oppure 'tutti' */
   wfRender();
 }
 
@@ -18896,8 +18966,9 @@ function sinAggiornaCampo(id, campo, valore){
   if(valore && !old && (campo==='dataRicezione'||campo==='dataRicezioneIntegrazione')){
     var tipo=(campo==='dataRicezioneIntegrazione')?'integrazione':'concordato';
     var importo=(campo==='dataRicezioneIntegrazione')?list[idx].importoIntegrazione:list[idx].importoConcordato;
-    sinNotificaBonifico(list[idx], tipo, importo);
-    if(typeof tcToastNew==='function') tcToastNew('📧 Avviso bonifico inviato alla contabilità',true);
+    list[idx]['mailBonifico_'+tipo]=Date.now();
+    sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+    sinNotificaBonifico(list[idx], tipo, importo);   /* il messaggio a video lo da' lei, solo se la mail parte davvero */
     /* pagamento ricevuto: proponi la chiusura della pratica */
     var _st=list[idx].stato;
     var _chiudibile = (campo==='dataRicezione' && (_st==='saldo'||_st==='concluso')) ||
@@ -18912,21 +18983,46 @@ function sinAggiornaCampo(id, campo, valore){
   }
   sinRender();
 }
+/* Avviso alla contabilita' quando arriva il bonifico di un sinistro.
+   Prima passava da Google Apps Script (GS_URL), che e' spento: la mail
+   non partiva mai, anche se compariva il messaggio "avviso inviato".
+   Ora va per la stessa strada di tutte le altre mail (Resend), a
+   contabilita@ e amministrazione@ come gli avvisi di incasso. */
 function sinNotificaBonifico(s, tipo, importo){
-  if(typeof GS_URL==='undefined' || !GS_URL) return;
-  var cb='mailCb_'+Date.now();
-  var sc=document.createElement('script');
-  var to=setTimeout(function(){ try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); },12000);
-  window[cb]=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); };
-  var params='action=inviaMailBonifico'
-    +'&cliente='+encodeURIComponent(s.nome||'')
-    +'&tipo='+encodeURIComponent(tipo||'concordato')
-    +'&importo='+encodeURIComponent(importo!=null?importo:'')
-    +'&targa='+encodeURIComponent(s.targa||'')
-    +'&nsin='+encodeURIComponent(s.numeroSinistro||'');
-  sc.src=GS_URL+'?'+params+'&callback='+cb;
-  sc.onerror=function(){ clearTimeout(to); try{delete window[cb];}catch(e){} if(sc.parentNode)sc.parentNode.removeChild(sc); };
-  document.body.appendChild(sc);
+  try{
+    if(typeof eaInviaMessaggio!=='function' || !s) return Promise.resolve(false);
+    var e=function(v){ return (typeof eaMailEsc==='function')?eaMailEsc(v):String(v==null?'':v); };
+    var eur=function(v){ var n=parseFloat(v); return isNaN(n)?'\u2014':('\u20ac '+sinFmtEuro(n)); };
+    var chi=(typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'utente';
+    var riga=function(a,b){ return '<tr><td style="padding:6px 10px 6px 0;color:#64748b;white-space:nowrap;vertical-align:top;">'+a+'</td><td style="padding:6px 0;font-weight:700;">'+b+'</td></tr>'; };
+    var cosa = (tipo==='integrazione') ? 'Integrazione' : (tipo==='liquidato' ? 'Pratica liquidata' : 'Concordato');
+    var dataRic = (tipo==='integrazione') ? s.dataRicezioneIntegrazione : s.dataRicezione;
+    var corpo='<h2 style="margin:0 0 12px;font-size:18px;color:#15803d;">\u2705 Bonifico sinistro ricevuto</h2>'
+      +'<table style="border-collapse:collapse;font-size:14px;">'
+      +riga('Cliente', e(s.nome||''))
+      +riga('Targa', e(s.targa||''))
+      +(s.numeroSinistro?riga('N\u00b0 sinistro', e(s.numeroSinistro)):'')
+      +riga('Voce', cosa)
+      +riga('Importo', eur(importo))
+      +(dataRic?riga('Ricevuto il', e(sinFmtData(dataRic))):'')
+      +(s.stato==='liquidato'?riga('Stato pratica', 'LIQUIDATA'):'')
+      +riga('Confermato da', e(chi))
+      +riga('Quando', e(new Date().toLocaleString('it-IT')))
+      +'</table>'
+      +'<p style="font-size:12.5px;color:#64748b;margin-top:14px;margin-bottom:0;">Da riscontrare con l\u2019incasso in prima nota.</p>';
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    var ogg='Bonifico sinistro \u2014 '+(s.nome||'')+(s.targa?(' \u00b7 '+s.targa):'')+' \u00b7 '+eur(importo);
+    var invii=['contabilita@europaautosrl.it','amministrazione@europaautosrl.it'].map(function(dest){
+      return eaInviaMessaggio({ to:dest, subject:ogg, html:html })
+        .then(function(r){ return !(r && (r.error || r.ok===false)); })
+        .catch(function(){ return false; });
+    });
+    return Promise.all(invii).then(function(es){
+      var ok=es.some(function(x){ return x; });
+      if(typeof tcToastNew==='function') tcToastNew(ok?'\uD83D\uDCE7 Avviso bonifico inviato alla contabilit\u00e0':'\u26a0\ufe0f Mail alla contabilit\u00e0 NON partita', ok);
+      return ok;
+    });
+  }catch(err){ return Promise.resolve(false); }
 }
 function sinPanelSoldi(s, st){
   if(!sinVedePreventivo()) return '';
@@ -19031,6 +19127,17 @@ function sinProssimoStato(id){
   if(!nuovo) return; // nessuno stato successivo (es. liquidato)
   list[idx].stato=nuovo;
   if(nuovo==='concluso' && !list[idx].docInviatiAt) list[idx].docInviatiAt=Date.now();
+  /* Liquidata col pulsante, senza aver segnato la data del bonifico: la
+     contabilita' non aveva ricevuto niente. Si avvisa ora, una volta sola. */
+  if(nuovo==='liquidato'){
+    var _x=list[idx];
+    if(!_x.liquidatoAt) _x.liquidatoAt=Date.now();
+    if(!_x.mailBonifico_concordato && !_x.mailBonifico_integrazione && !_x.mailBonifico_liquidato){
+      _x.mailBonifico_liquidato=Date.now();
+      var _tot=(parseFloat(_x.importoConcordato)||0)+(parseFloat(_x.importoIntegrazione)||0);
+      setTimeout(function(){ sinNotificaBonifico(_x, 'liquidato', _tot); }, 0);
+    }
+  }
   sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
   _sinTab=nuovo; sinSetTab(nuovo);
   if(typeof tcToastNew==='function') tcToastNew('➡️ '+(SIN_ICONS[nuovo]||'')+' '+(SIN_STATI[nuovo]||nuovo),true);
