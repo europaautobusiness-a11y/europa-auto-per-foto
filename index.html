@@ -34917,7 +34917,7 @@ function simLoadLibs(cb){
     var sc = document.createElement('script');
     sc.src = SIM_LIBS[i++];
     var fatto = false;
-    var to = setTimeout(function(){ if(!fatto){ fatto=true; cb(false); } }, 20000);
+    var to = setTimeout(function(){ if(!fatto){ fatto=true; cb(false); } }, 60000);
     sc.onload = function(){ if(fatto) return; fatto=true; clearTimeout(to); next(); };
     sc.onerror = function(){ if(fatto) return; fatto=true; clearTimeout(to); cb(false); };
     document.head.appendChild(sc);
@@ -35076,33 +35076,37 @@ function simProvince(){
    Ora: la scritta di caricamento si mette sempre; se c'e' gia' un caricamento
    in corso si aspetta quello; dopo 25 secondi senza risposta si sblocca e
    compare "Riprova" invece della finestra vuota. */
-var _simAvvioTs = 0, _simAvvioGiro = 0;
+var _simAvvioTs = 0, _simAvvioGiro = 0, _simFaseTs = 0;
+/* Correzione: il controllo dei 25 secondi era troppo stretto. Scaricare il
+   file della finanziaria e ricalcolarne le ~5.000 formule su un PC lento o
+   con la rete carica ci mette di piu', e allo scadere il caricamento in
+   corso veniva buttato: "Riprova" ripartiva da zero e finiva uguale, in
+   giro senza fine. Ora: si guarda se il caricamento AVANZA (librerie, file,
+   formule); solo se resta fermo 60 secondi si propone di riprovare, e il
+   caricamento in corso non si butta mai: se arriva, si usa. */
+function simFase(t){ _simFaseTs = Date.now(); var e=simEl('sim-boot'); if(e && t) e.textContent=t; }
 function simInit(){
   var w = simBox(); if(!w) return;
   if(_simCaricato){ simRender(); return; }
-  /* librerie gia' presenti nella pagina (caricate da un altro giro) */
   try{ if(!_simLibs && window.XLSX && window.HyperFormula) _simLibs = true; }catch(e){}
   w.innerHTML = '<div style="padding:40px 16px;text-align:center;color:#64748b;">'
     + '<div style="font-size:15px;font-weight:700;margin-bottom:6px;">Avvio simulatore\u2026</div>'
     + '<div id="sim-boot" style="font-size:12px;">carico il motore di calcolo</div></div>';
-  /* un caricamento appeso da troppo tempo non deve bloccare per sempre */
-  if(_simInCorso && (Date.now()-_simAvvioTs) > 25000) _simInCorso = false;
+  /* un caricamento fermo da troppo (nessun avanzamento) si puo' rilanciare */
+  if(_simInCorso && (Date.now()-_simFaseTs) > 60000) _simInCorso = false;
   if(_simInCorso){ simAttendiAvvio(); return; }
-  _simInCorso = true; _simAvvioTs = Date.now();
-  var giro = ++_simAvvioGiro;
-  var vivo = function(){ return giro===_simAvvioGiro; };
-  var st = function(t){ var e=simEl('sim-boot'); if(e) e.textContent=t; };
+  _simInCorso = true; _simAvvioTs = Date.now(); simFase();
+  ++_simAvvioGiro;
   simAttendiAvvio();
   simLoadLibs(function(ok){
-    if(!vivo()) return;
+    if(_simCaricato){ _simInCorso=false; simRender(); return; }
     if(!ok){ _simInCorso=false; simErrore('Impossibile caricare il motore di calcolo (connessione assente?)'); return; }
-    st('scarico il file del simulatore\u2026');
+    simFase('scarico il file del simulatore\u2026');
     simFetch(function(buf, err){
-      if(!vivo()) return;
+      if(_simCaricato){ _simInCorso=false; simRender(); return; }
       if(!buf){ _simInCorso=false; simErrore(err || 'File non disponibile'); return; }
-      st('ricalcolo le formule\u2026');
+      simFase('ricalcolo le formule\u2026');
       setTimeout(function(){
-        if(!vivo() && _simCaricato){ simRender(); return; }
         try{ if(!_simCaricato) simBuild(buf); }
         catch(e){ _simInCorso=false; simErrore('Il file non e\u2019 leggibile: '+(e && e.message || e)); return; }
         _simInCorso = false;
@@ -35111,23 +35115,22 @@ function simInit(){
     });
   });
 }
-/* Controlla ogni mezzo secondo: appena il motore e' pronto (da questo giro o
-   da un altro, es. il ricalcolo provvigioni) disegna; se dopo 25 secondi non
-   e' arrivato niente, mostra l'errore con "Riprova". */
+/* Ogni mezzo secondo: appena il motore e' pronto disegna. Se il caricamento
+   non avanza da 60 secondi lo dice e offre "Riprova", ma intanto continua ad
+   aspettare: se il file arriva lo stesso, il simulatore compare da solo. */
 function simAttendiAvvio(){
-  var t0 = Date.now();
+  var avvisato = false;
   var tick = function(){
     var w = simBox(); if(!w) return;
     if(_simCaricato){ if(!w.querySelector('#sim_C10')) simRender(); return; }
     if(!_simInCorso) return;   /* finito con errore: lo ha gia' scritto simErrore */
-    if(Date.now()-t0 > 25000){
-      _simInCorso = false; _simAvvioGiro++;
+    if(!avvisato && Date.now()-_simFaseTs > 60000){
+      avvisato = true;
       w.innerHTML = '<div style="padding:30px 16px;text-align:center;">'
         + '<div style="font-size:36px;">\u23f3</div>'
-        + '<div style="font-weight:800;color:#0f172a;margin:8px 0;">Il simulatore non risponde</div>'
-        + '<div style="color:#64748b;font-size:13px;margin-bottom:14px;">Il file della finanziaria non \u00e8 arrivato. Di solito basta riprovare.</div>'
+        + '<div style="font-weight:800;color:#0f172a;margin:8px 0;">Il simulatore ci sta mettendo pi\u00f9 del solito</div>'
+        + '<div style="color:#64748b;font-size:13px;margin-bottom:14px;">Sto ancora aspettando il file della finanziaria: se arriva, il simulatore compare da solo.</div>'
         + '<button type="button" onclick="simInit()" style="padding:10px 18px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u21bb Riprova</button></div>';
-      return;
     }
     setTimeout(tick, 500);
   };
