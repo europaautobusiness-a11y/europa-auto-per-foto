@@ -33791,10 +33791,27 @@ function simChiudiModal(){
   _simTargetId = 'view-simulatore';
   _simPagIdx = null;
 }
+/* ===== QUALE FINANZIARIA NEL PREVENTIVO =====
+   Dal pulsante Simulatore del pagamento si sceglie Deutsche Bank o Compass:
+   la barra in cima alla finestra passa dall'uno all'altro. Si riapre con
+   l'ultima finanziaria usata su quel pagamento. */
+function simPrevBarra(att, idx){
+  var b=function(k,et){ var on=(att===k);
+    return '<button type="button" onclick="simPrevScegli('+idx+',\''+k+'\')" style="flex:1;padding:9px 12px;border-radius:9px;border:2px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">'+et+'</button>'; };
+  return '<div style="display:flex;gap:8px;margin-bottom:10px;">'+b('db','\uD83C\uDFE6 Deutsche Bank')+b('compass','\uD83E\uDDEE Compass')+'</div>';
+}
+function simPrevScegli(idx, k){
+  window._simPrevFin=k;
+  if(k==='compass'){ try{ simChiudiModal(); }catch(e){} cmpDaPreventivo(idx); }
+  else { try{ cmpChiudi(false); }catch(e){} simDaPreventivo(idx); }
+}
 function simDaPreventivo(idx){
   try{
     if(typeof _cv==='undefined' || !_cv || !_cv.pagamenti || !_cv.pagamenti[idx]){ alert('Pagamento non trovato.'); return; }
     var pag = _cv.pagamenti[idx];
+    var _sc=window._simPrevFin || ((pag.compassStato || (pag.finDati && pag.finDati.finanziaria==='Compass')) ? 'compass' : 'db');
+    window._simPrevFin=null;
+    if(_sc==='compass'){ cmpDaPreventivo(idx); return; }
     var imp = (typeof cvNum==='function') ? cvNum(pag.importo) : parseFloat(pag.importo||0);
     if(!imp || imp<=0){ alert('Inserisci prima l\u2019importo da finanziare in questa riga.'); return; }
     _simPagIdx = idx;
@@ -33842,6 +33859,7 @@ function simDaPreventivo(idx){
       +     ' = da finanziare <b>'+((typeof cvEuro==='function')?cvEuro(imp+_pk):(imp+_pk))+'</b>'
       +     (_pk>0?('<div style="margin-top:6px;color:#b91c1c;font-weight:800;">\u26a0 Compreso pacchetto manutenzione '+((_cv.promoVincolata&&_cv.promoVincolata.pacchettoAnni)||'')+' anni: '+((typeof cvEuro==='function')?cvEuro(_pk):_pk)+' \u2014 sta nel valore del bene e nell\u2019importo finanziato ('+((typeof cvEuro==='function')?cvEuro(imp):imp)+' + '+((typeof cvEuro==='function')?cvEuro(_pk):_pk)+'), non nell\u2019anticipo. In stampa il cliente vede finanziamento '+((typeof cvEuro==='function')?cvEuro(imp):imp)+'.</div>'):'')
       +   '</div>'
+      +   simPrevBarra('db', idx)
       +   '<div id="sim-modal-box"></div>'
       + '</div>'
       + '<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
@@ -34549,6 +34567,91 @@ function cmpAvvia(p){
     ['cpi','cvt','gap','kasko'].forEach(function(k){ var e=document.getElementById('cmp_'+k); if(e && p[k]) e.value=p[k]; });
     cmpCalcNow();
 }
+/* ===== COMPASS NEL PREVENTIVO =====
+   Stessa finestra del simulatore Deutsche, ma col motore Compass: alla
+   conferma rata, durata, TAN/TAEG e polizze passano nel pagamento del
+   preventivo, come fa "Usa nel preventivo" della Deutsche. */
+var _cmpPagIdx=null;
+function cmpDaPreventivo(idx){
+  try{
+    if(typeof _cv==='undefined' || !_cv || !_cv.pagamenti || !_cv.pagamenti[idx]){ alert('Pagamento non trovato.'); return; }
+    var pag=_cv.pagamenti[idx];
+    var imp=(typeof cvNum==='function')?cvNum(pag.importo):parseFloat(pag.importo||0);
+    if(!imp||imp<=0){ alert('Inserisci prima l\u2019importo da finanziare in questa riga.'); return; }
+    _cmpCvId=null; _cmpPagIdx=idx;
+    var _tt=(typeof cvCalcola==='function')?cvCalcola(_cv):null, _tot=imp, _pk=0;
+    if(_tt){
+      var _base=(_tt.totaleScontato!=null?_tt.totaleScontato:_tt.totaleVendita)||0;
+      _pk=(typeof cvNum==='function')?cvNum(_tt.pacchettoRata):(parseFloat(_tt.pacchettoRata)||0);
+      _tot=_base+_pk+((typeof cvNum==='function')?cvNum(_tt.permVal):(parseFloat(_tt.permVal)||0));
+    }
+    if(_tot<imp) _tot=imp;
+    var m=document.getElementById('cmp-modal');
+    if(!m){ m=document.createElement('div'); m.id='cmp-modal';
+      m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100060;overflow:auto;padding:12px;';
+      document.body.appendChild(m); }
+    m.innerHTML='<div style="max-width:420px;margin:60px auto;background:#fff;border-radius:14px;padding:30px;text-align:center;color:#64748b;font-weight:700;">Carico le tabelle Compass\u2026</div>';
+    m.style.display='block';
+    cmpCaricaTabelle(function(ok){
+      if(!ok || !cmpPronto()){ alert('Tabelle Compass non disponibili.'); cmpChiudi(false); return; }
+      var mz=(_cv.autoId && typeof mzById==='function')?mzById(_cv.autoId):null;
+      var di=String((mz&&mz.dataImm)||(_cv.autoSnapshot&&_cv.autoSnapshot.dataImm)||''), q=di.split('-');
+      var def={ prod:(q.length===3)?'1U':'1N', acc:'000000', tab:'8CK',
+        valore:Math.round(_tot*100)/100, anticipo:Math.round((_tot-imp-_pk)*100)/100,
+        mese:(q.length===3)?parseInt(q[1],10):'', anno:(q.length===3)?parseInt(q[0],10):'',
+        durata:((typeof cvNum==='function')?cvNum(pag.rate):parseInt(pag.rate,10))||60, cpi:'', cvt:'', gap:'', kasko:'',
+        provincia:String((_cv.cliente&&_cv.cliente.prov)||'').toUpperCase().trim(), durataCop:60, cfi:'', pagamento:'SDD' };
+      /* simulazione gia' fatta su questo pagamento: si riparte da li', ma
+         valore e anticipo seguono sempre il preventivo di adesso */
+      var p=Object.assign({}, def, pag.compassStato||{}, { valore:def.valore, anticipo:def.anticipo });
+      m.innerHTML='<div style="max-width:680px;margin:0 auto;background:#f1f5f9;border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35);">'
+        +'<div style="background:#0f4c81;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
+        +'<span style="font-weight:800;">\uD83E\uDDEE Simulatore Compass</span>'
+        +'<button onclick="cmpChiudi(false)" style="margin-left:auto;background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:5px 11px;font-family:inherit;font-weight:700;cursor:pointer;">Chiudi</button></div>'
+        +'<div style="padding:12px;">'
+        +'<div style="background:#dbeafe;border:1px solid #bfdbfe;border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:12px;color:#1e40af;">Dal preventivo: valore del veicolo <b>'+((typeof cvEuro==='function')?cvEuro(_tot):_tot)+'</b> \u2212 anticipo <b>'+((typeof cvEuro==='function')?cvEuro(_tot-imp-_pk):(_tot-imp-_pk))+'</b> = da finanziare <b>'+((typeof cvEuro==='function')?cvEuro(imp+_pk):(imp+_pk))+'</b></div>'
+        +simPrevBarra('compass', idx)
+        +cmpModuloHtml(p)+'</div>'
+        +'<div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:10px 12px;display:flex;gap:8px;">'
+        +'<button onclick="cmpChiudi(false)" style="flex:0 0 auto;padding:11px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+        +'<button onclick="cmpUsaNelPreventivo()" style="flex:1;padding:11px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u2705 Usa nel preventivo</button>'
+        +'</div></div>';
+      cmpAvvia(p);
+    });
+  }catch(e){ alert('Errore apertura simulatore Compass: '+(e&&e.message||e)); }
+}
+function cmpUsaNelPreventivo(){
+  try{
+    var idx=_cmpPagIdx;
+    if(idx===null || typeof _cv==='undefined' || !_cv || !_cv.pagamenti[idx]){ cmpChiudi(false); return; }
+    cmpCalcNow();
+    var u=_cmpUltimo; if(!u) return;
+    var r=u.ris, p=u.input;
+    if(!(r.rataValida>0)){ alert('La rata non \u00e8 calcolabile con questi dati: correggi gli avvisi in rosso.'); return; }
+    if(r.sopraSoglia && !confirm('Il TEG ('+cmpPc(r.teg)+') supera la soglia d\u2019usura ('+cmpPc(r.sogliaTeg)+').\n\nUsare comunque questi valori nel preventivo?')) return;
+    var pg=_cv.pagamenti[idx];
+    var rata=Math.round(r.rataValida*100)/100;
+    pg.rate=p.durata; pg.importoRata=rata;
+    var tanP=Math.round(r.tan*10000)/100, taegP=(r.taeg!=null)?Math.round(r.taeg*10000)/100:null;
+    var nota='TAN '+tanP.toFixed(2).replace('.',',')+'% \u00b7 TAEG '+(taegP!=null?taegP.toFixed(2).replace('.',','):'-')+'%';
+    var vecchia=String(pg.note||'').replace(/TAN [^\u00b7]*\u00b7 TAEG [^%]*%/,'').trim();
+    pg.note=(vecchia?(vecchia+' \u2014 '):'')+nota;
+    /* piano alla francese sul finanziato: capitale residuo mese per mese,
+       per l'estinzione anticipata sul contratto */
+    var res={}, i=r.tan/12, cap=r.finanziato;
+    for(var k=1;k<=p.durata;k++){ cap=(i>0)?(cap*(1+i)-rata):(cap-rata); res[k]=Math.max(0,Math.round(cap*100)/100); }
+    pg.finDati={ tan:tanP, taeg:taegP, istruttoria:Math.round(r.cfi*100)/100,
+      polizzaCpi:Math.round(r.premi.cpi*100)/100, polizzaCvt:Math.round((r.premi.cvt+r.premi.gap+r.premi.kasko)*100)/100, polizzaEasyCare:0,
+      durata:p.durata, rata:rata, importoFinanziato:Math.round(r.finanziato*100)/100,
+      polizzeTotale:Math.round(r.premiTot*100)/100, finanziaria:'Compass', provvAzienda:r.provvTot,
+      capitaleResiduo:res, aggiornatoTs:Date.now() };
+    pg.compassStato=p;
+    cmpChiudi(false);
+    if(typeof cvRenderPag==='function') cvRenderPag();
+    if(typeof cvLive==='function') cvLive();
+    if(typeof tcToastNew==='function') tcToastNew('\u2705 Rata Compass inserita nel preventivo', true);
+  }catch(e){ alert('Errore: '+(e&&e.message||e)); }
+}
 /* ===== COMPASS NELLA SEZIONE SIMULATORE FINANZIARIO =====
    Senza una vendita sotto: si prova un finanziamento Compass e basta. */
 function cmpStandalone(){
@@ -34703,7 +34806,7 @@ function cmpUsaNellaDelibera(){
     cmpChiudi(true);
   }catch(e){ alert('Errore: '+(e&&e.message||e)); }
 }
-try{ window.cmpDaDelibera=cmpDaDelibera; window.cmpUsaNellaDelibera=cmpUsaNellaDelibera; window.cmpChiudi=cmpChiudi;
+try{ window.cmpDaPreventivo=cmpDaPreventivo; window.cmpUsaNelPreventivo=cmpUsaNelPreventivo; window.cmpDaDelibera=cmpDaDelibera; window.cmpUsaNellaDelibera=cmpUsaNellaDelibera; window.cmpChiudi=cmpChiudi;
      window.cmpCalcNow=cmpCalcNow; window.cmpCalcSoon=cmpCalcSoon; window.cmpTabRefresh=cmpTabRefresh; window.cmpDurRefresh=cmpDurRefresh; }catch(e){}
 
 
