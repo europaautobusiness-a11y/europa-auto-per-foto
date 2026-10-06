@@ -20029,6 +20029,46 @@ function pmById(id){ return pmLoad().filter(function(p){return p.id===id;})[0]; 
 /* Si scrive solo su Supabase: il foglio Google era il ramo che poi rimandava
    indietro i dati vecchi. Ogni scrittura porta con se' updatedAt, che e' il
    criterio con cui gli altri dispositivi decidono quale versione tenere. */
+/* ===== COSA E' SUCCESSO AL LINK =====
+   Sulle perizie ancora da firmare: quando e' stato mandato il link, quando
+   scade o e' scaduto, se il cliente lo ha aperto, e se una firma e' stata
+   tentata ma non salvata. Cosi' si capisce da soli se la firma manca
+   perche' il cliente non ha aperto, perche' il link era scaduto, o per un
+   errore del salvataggio. */
+function pmStatoLinkHTML(p){
+  var r=[];
+  if(!p.linkTs) r.push(['#64748b','\uD83D\uDD17 Nessun link inviato al cliente']);
+  else {
+    var sc=pmLinkScadenzaTs(p), scad=Date.now()>sc;
+    r.push(['#1e40af','\uD83D\uDD17 Link inviato il '+pmFmtDataOra(p.linkTs)+' \u00b7 '+(scad?('<b style="color:#b91c1c;">scaduto il '+pmFmtDataOra(sc)+'</b>'):('valido fino al '+pmFmtDataOra(sc)))]);
+    if(p.linkApertoTs) r.push(['#15803d','\uD83D\uDC41 Aperto dal cliente il '+pmFmtDataOra(p.linkApertoTs)+(Number(p.linkAperture)>1?(' ('+p.linkAperture+' volte, ultima '+pmFmtDataOra(p.linkUltimaAperturaTs||p.linkApertoTs)+')'):'')+(p.linkApertoScaduto?' \u2014 <b style="color:#b91c1c;">a link gi\u00e0 scaduto</b>':'')]);
+    else r.push(['#b45309','\uD83D\uDC41 Il cliente non ha mai aperto il link']);
+  }
+  if(p.firmaTentataTs) r.push(['#b91c1c','\u26a0\ufe0f Firma tentata il '+pmFmtDataOra(p.firmaTentataTs)+(p.firmaEmailTentata?(' da '+pmEsc(p.firmaEmailTentata)):'')+' ma <b>non salvata</b>'+(p.firmaErrore?(' \u00b7 '+pmEsc(p.firmaErrore)):'')+'. La perizia firmata \u00e8 nella mail \u201cPerizia firmata\u201d.']);
+  return '<div style="font-size:11.5px;line-height:1.5;margin-bottom:8px;padding:7px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">'
+    +r.map(function(x){ return '<div style="color:'+x[0]+';">'+x[1]+'</div>'; }).join('')+'</div>';
+}
+/* Quello che il cliente ha dichiarato compilando la perizia dal link:
+   danni segnati sulla sagoma, chilometri, gomme, chiavi, bollo, revisione.
+   Sta sulla scheda, senza dover aprire la perizia. */
+function pmDanniClienteHTML(p){
+  var pins=(p.pins||[]).filter(Boolean);
+  var info=[];
+  if(p.km) info.push('km '+pmEsc(p.km));
+  if(p.gomme) info.push('gomme '+pmEsc(p.gomme));
+  if(p.chiavi) info.push('chiavi '+pmEsc(p.chiavi));
+  if(p.bollo) info.push('bollo '+pmEsc(p.bollo));
+  if(p.revisione) info.push('revisione '+pmEsc(p.revisione));
+  if(p.proprietari) info.push('proprietari '+pmEsc(p.proprietari));
+  if(!pins.length && !info.length) return '';
+  var h='<div style="margin-top:8px;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#7c2d12;line-height:1.5;">';
+  if(pins.length){
+    h+='<b>\uD83D\uDD27 '+pins.length+(pins.length===1?' danno segnato':' danni segnati')+(p.firmatoDalCliente?' dal cliente':'')+':</b><br>';
+    h+=pins.map(function(pin,i){ var z=pin.zona||pin.area||pin.parte||''; return (i+1)+'. '+pmEsc(pin.nota||pin.descrizione||pin.desc||pin.text||'danno')+(z?(' <span style="color:#9a3412;">('+pmEsc(z)+')</span>'):''); }).join('<br>');
+  } else h+='<b>Nessun danno segnato dal cliente.</b>';
+  if(info.length) h+='<div style="margin-top:4px;color:#9a3412;">'+info.join(' \u00b7 ')+'</div>';
+  return h+'</div>';
+}
 function pmPush(p){
   if(!p || !p.id) return;
   if(!p.updatedAt) p.updatedAt=Date.now();
@@ -20046,17 +20086,76 @@ function pmTombAdd(ids){
     if(cambiato) localStorage.setItem(PERMUTE_DEL_KEY, JSON.stringify(t.slice(-3000)));
   }catch(e){}
 }
-function pmSupaLoad(){
-  if(typeof supaLoadList!=='function') return;
-  supaLoadList('permute_app', pmLoad, function(arr){
-    /* prima si registrano le eliminazioni fatte altrove */
-    pmTombAdd((arr||[]).filter(function(x){ return x && x.deleted===true; }).map(function(x){ return x.id; }));
-    var t=pmTombstones();
-    pmSave(arr.filter(function(x){ return x && x.deleted!==true && t.indexOf(x.id)<0; }));   /* i cancellati restano cancellati */
-  }, function(){
-    try{ var v=document.getElementById('view-permute'); if(v && v.classList.contains('active') && typeof pmRender==='function') pmRender(); }catch(e){}
-  });
+/* ===== LA FIRMA DEL CLIENTE VINCE SEMPRE =====
+   Il caricamento generico teneva la copia piu' recente per data di
+   aggiornamento. Se in concessionaria la perizia era stata ritoccata dopo
+   l'invio del link (una nota, la valutazione, anche solo riaprirla e
+   salvarla), la copia locale risultava "piu' nuova" di quella firmata dal
+   cliente: la firma veniva ignorata e addirittura la copia locale senza
+   firma veniva rispedita sul database, cancellando danni e firma. Da qui
+   la perizia che restava "Da firmare" anche con la mail arrivata.
+   Ora: se sul database c'e' la firma del cliente e in locale no, si prende
+   la versione firmata, portandosi dietro quello che in locale era stato
+   aggiunto nel frattempo (valutazione, note, stato conclusa). */
+function pmUnisci(loc, rem){
+  if(!rem) return loc; if(!loc) return rem;
+  var fr=!!(rem.firmatoDalCliente||rem.firmaTs||rem.firma), fl=!!(loc.firmatoDalCliente||loc.firmaTs||loc.firma);
+  var ts=function(r){ return +(r&&(r.updatedAt||r.createdAt)||0); };
+  if(fr && !fl){
+    var out=Object.assign({}, loc, rem);
+    ['valutazione','note','noteInterne','conclusaManuale','conclusaMotivo','conclusaTs','permutaStato','autoId','vendutaA'].forEach(function(k){
+      if(loc[k]!==undefined && loc[k]!==null && loc[k]!=='' && (rem[k]===undefined||rem[k]===null||rem[k]==='')) out[k]=loc[k];
+    });
+    out.updatedAt=Math.max(ts(loc), ts(rem))+1;
+    return out;
+  }
+  return (ts(loc)>ts(rem))?loc:rem;
 }
+function pmSupaLoad(fine){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(fine) fine(false); return; }
+  var PASSO=1000, righe=[];
+  var pagina=function(da){
+    sb.from('permute_app').select('id,data').range(da, da+PASSO-1).then(function(res){
+      if(!res||res.error){ if(res&&res.error&&typeof supaSegnalaErrore==='function') supaSegnalaErrore('permute_app', res.error.message); if(fine) fine(false); return; }
+      righe=righe.concat(res.data||[]);
+      if(res.data && res.data.length===PASSO){ pagina(da+PASSO); return; }
+      unisci();
+    }, function(){ if(fine) fine(false); });
+  };
+  var unisci=function(){
+    var byId={};
+    righe.forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(d&&d.id) byId[d.id]=d; });
+    pmTombAdd(Object.keys(byId).filter(function(k){ return byId[k].deleted===true; }));
+    var t=pmTombstones(), daSpingere=[], appenaFirmate=[];
+    var prima={}; pmLoad().forEach(function(r){ if(r&&r.id) prima[r.id]=r; });
+    pmLoad().forEach(function(loc){
+      if(!loc||!loc.id) return;
+      var rem=byId[loc.id];
+      if(!rem){ byId[loc.id]=loc; daSpingere.push(loc); return; }
+      var u=pmUnisci(loc, rem);
+      byId[loc.id]=u;
+      if(u!==rem) daSpingere.push(u);
+    });
+    Object.keys(byId).forEach(function(k){
+      var r=byId[k], p=prima[k];
+      if(pmFirmata(r) && (!p || !pmFirmata(p))) appenaFirmate.push(r);
+    });
+    pmSave(Object.keys(byId).map(function(k){ return byId[k]; }).filter(function(x){ return x && x.deleted!==true && t.indexOf(x.id)<0; }));
+    daSpingere.forEach(function(r){ pmPush(r); });
+    appenaFirmate.forEach(function(r){
+      try{ if(typeof tcToastNew==='function') tcToastNew('\u270d\ufe0f Perizia firmata dal cliente: '+(r.cliente||'')+' \u00b7 '+(r.modello||''), true); }catch(e){}
+    });
+    try{ var v=document.getElementById('view-permute'); if(v && v.classList.contains('active') && typeof pmRender==='function') pmRender(); }catch(e){}
+    if(fine) fine(true, appenaFirmate.length);
+  };
+  try{ pagina(0); }catch(e){ if(fine) fine(false); }
+}
+/* Finche' la sezione Permute e' aperta si ricontrolla ogni 45 secondi:
+   la firma del cliente compare da sola, senza premere Sincronizza. */
+setInterval(function(){
+  try{ var v=document.getElementById('view-permute'); if(v && v.classList.contains('active') && document.visibilityState!=='hidden') pmSupaLoad(); }catch(e){}
+}, 45000);
 /* ===== FOGLIO GOOGLE: SOLA LETTURA STORICA, NON PIU' USATO =====
    Il foglio Permute contiene la fotografia delle perizie com'erano al
    momento della migrazione: non sa chi e' stato concluso, ne' chi e' stato
@@ -20103,8 +20202,7 @@ function pmSincronizza(btn){
   };
   if(typeof pmSupaLoad!=='function'){ fine(false,'non disponibile'); return; }
   try{
-    pmSupaLoad();
-    setTimeout(function(){ try{ pmRender(); }catch(e){} fine(true, pmLoad().length); }, 1400);
+    pmSupaLoad(function(ok, nuove){ try{ pmRender(); }catch(e){} fine(ok, ok?pmLoad().length:'database non raggiungibile'); });
   }catch(e){ fine(false,'errore'); }
 }
 
@@ -20230,6 +20328,8 @@ function pmRender(){
        continuava a risultare "Da firmare". */
     var firmato = pmFirmata(p);
     h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);">';
+    if(!firmato && _pmTab!=='concluse') h+=pmStatoLinkHTML(p);
+    h+=pmDanniClienteHTML(p);
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
     h+='<div onclick="pmApri(\''+p.id+'\')" style="cursor:pointer;flex:1;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+pmEsc(p.cliente||'(cliente senza nome)')+'</div>';
     h+='<div style="font-size:13px;color:#475569;margin-top:2px;">'+pmEsc(p.modello||'—')+(p.targa?(' · '+pmEsc(p.targa)):'')+'</div>';
@@ -20793,6 +20893,17 @@ function pmClientOpen(id){
       var r=(res.data||[])[0]; var d=r && r.data;
       if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
       if(d && d.deleted) d=null;
+      /* ===== IL CLIENTE HA APERTO IL LINK =====
+         Si scrive la prima apertura (e l'ultima), cosi' in concessionaria
+         si vede se il cliente ha guardato il link oppure no. Se il link e'
+         gia' scaduto si segna lo stesso: e' utile sapere che l'ha aperto
+         tardi. Se la scrittura non riesce la pagina va avanti lo stesso. */
+      try{
+        if(d && !d.firmatoDalCliente){
+          var _ap=Object.assign({}, d, { linkApertoTs:(d.linkApertoTs||Date.now()), linkUltimaAperturaTs:Date.now(), linkAperture:(Number(d.linkAperture)||0)+1, linkApertoScaduto:pmLinkScaduto(d)?true:undefined });
+          _sb.from('permute_app').update({ data:_ap }).eq('id', String(id)).then(function(){}, function(){});
+        }
+      }catch(e){}
       _mostra(d);
     });
   }catch(e){ ov.firstChild.textContent='Perizia non raggiungibile. Riprova fra poco.'; }
@@ -20816,6 +20927,7 @@ function pmClientOpenDaFoglio(id, ov){
   document.body.appendChild(s);
 }
 function pmClientRender(ov, rec){
+  try{ _pmcl=_pmcl||{}; _pmcl.recOriginale=JSON.parse(JSON.stringify(rec)); }catch(e){}
   var _draft=null; try{ _draft=JSON.parse(localStorage.getItem('ea_pmcl_draft_'+rec.id)||'null'); }catch(e){ _draft=null; }
   if(_draft){ ['proprietari','gomme','targa','valutazione','dotazioni','chiavi','carta','bollo','revisione','email'].forEach(function(k){ if(_draft[k]!=null && _draft[k]!=='') rec[k]=_draft[k]; }); if(_draft.tagliandi) rec.tagliandi=_draft.tagliandi; if(_draft.pins) rec.pins=_draft.pins; if(_draft.questionario) rec.questionario=_draft.questionario; if(_draft.dichiarazioni) rec.dichiarazioni=_draft.dichiarazioni; }
   _pmcl={ rec:rec, pins:(rec.pins?JSON.parse(JSON.stringify(rec.pins)):[]), sigUsed:false, otpOk:false, code:(_draft&&_draft.code)||null, sent:!!(_draft&&_draft.sent), firmaTs:null };
@@ -21062,7 +21174,17 @@ function pmClientSubmit(){
          aggiornare, senza dover concedere a chi non ha un account anche
          quello di creare righe nuove. */
       var _fatto=false;
-      var _chiudi=function(esito){ if(_fatto) return; _fatto=true; _avvisa(esito); };
+      var _chiudi=function(esito){
+        if(_fatto) return; _fatto=true; _avvisa(esito);
+        /* firma non salvata: si prova almeno a scrivere l'esito, cosi' in
+           concessionaria compare "firma tentata il ... ma non salvata" */
+        if(esito && esito.ok===false){
+          try{
+            var _es=Object.assign({}, _pmcl.recOriginale||{}, { firmaTentataTs:Date.now(), firmaErrore:String(esito.msg||'errore'), firmaEmailTentata:rec.email||'' });
+            _sb2.from('permute_app').update({ data:_es }).eq('id', String(rec.id)).then(function(){}, function(){});
+          }catch(e){}
+        }
+      };
       setTimeout(function(){ _chiudi({ok:false, msg:'nessuna risposta dal database'}); }, 12000);
       _sb2.from('permute_app').update({ data:rec }).eq('id', String(rec.id)).select('id')
         .then(function(r2){
@@ -28261,6 +28383,14 @@ function cvStampaFascicolo(cv, tipo, allegati){
   try{ html=cvBuildHTML(cv, tipo||'preventivo'); }catch(e){}
   if(!html){ cvFascLog('RINUNCIA', 'documento vuoto'); alert('Non riesco a preparare la proposta.'); return; }
   if(tipo!=='preventivo') html=cvDoppiaCopia(html);
+  /* ===== LA PERIZIA FIRMATA VA NEL FASCICOLO =====
+     Se il contratto ha una permuta con perizia gia' firmata dal cliente dal
+     link, al contratto si accoda una pagina con la perizia (danni, dati
+     dichiarati, firma digitale) e sotto uno spazio per la firma a penna:
+     il cliente rivede quello che ha firmato e ne resta una copia cartacea. */
+  if(tipo!=='preventivo'){
+    try{ var _pz=cvPeriziaPaginaHTML(cv); if(_pz){ var _fb=html.lastIndexOf('</body>'); html=(_fb>=0)?html.slice(0,_fb)+_pz+html.slice(_fb):html+_pz; } }catch(e){ cvFascLog('perizia non accodata', String((e&&e.message)||e)); }
+  }
   avviso('\ud83d\udcc4 Preparo il fascicolo\u2026');
   var _pagine=[];
   var _fatto=false, _dove='avvio';
@@ -28357,6 +28487,37 @@ function cvStampaFascicolo(cv, tipo, allegati){
     alert('Non sono riuscito ad accodare i moduli: stampo la sola proposta.\n\nMotivo: '+String((e&&e.message)||e));
     _stampaHtml(html);
   });
+}
+/* La perizia collegata al contratto: per id, altrimenti per targa della permuta. */
+function cvPeriziaPerContratto(cv){
+  try{
+    if(!cv || !cv.permutaOn || !cv.permuta || typeof pmLoad!=='function') return null;
+    var L=pmLoad().filter(function(p){ return p && !p.deleted; });
+    if(cv.permuta.periziaId){ var x=L.filter(function(p){ return p.id===cv.permuta.periziaId; })[0]; if(x) return x; }
+    var tg=String(cv.permuta.targa||'').replace(/\s/g,'').toUpperCase(); if(!tg) return null;
+    return L.filter(function(p){ return String(p.targa||'').replace(/\s/g,'').toUpperCase()===tg; }).sort(function(a,b){ return (+(b.updatedAt||0))-(+(a.updatedAt||0)); })[0]||null;
+  }catch(e){ return null; }
+}
+function cvPeriziaPaginaHTML(cv){
+  var p=cvPeriziaPerContratto(cv);
+  if(!p || typeof pmFirmata!=='function' || !pmFirmata(p)) return '';
+  var corpo=''; try{ corpo=pmPeriziaMailHTML(p); }catch(e){}
+  if(!corpo) return '';
+  var e=function(v){ return (typeof docEsc==='function')?docEsc(v):String(v==null?'':v); };
+  var dig=(p.metodoFirma!=='carta');
+  var quando=p.firmaTs?pmFmtDataOra(p.firmaTs):(p.dataFirma||'');
+  return '<div style="page-break-before:always;break-before:page;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0f172a;">'
+    +'<div style="font-size:15px;font-weight:800;margin-bottom:4px;">Allegato \u2014 Perizia del veicolo in permuta</div>'
+    +'<div style="font-size:11px;color:#475569;margin-bottom:10px;">'+(dig?('Firmata digitalmente dal cliente il '+e(quando)+(p.email?(' ('+e(p.email)+')'):'')):'Firmata su carta')+'. Il cliente conferma con firma autografa di aver preso visione e di riconoscere quanto dichiarato.</div>'
+    +corpo
+    +'<div style="margin-top:22px;padding-top:12px;border-top:1px solid #cbd5e1;page-break-inside:avoid;break-inside:avoid;">'
+    +'<div style="font-weight:800;font-size:12px;margin-bottom:6px;">CONFERMA CARTACEA</div>'
+    +'<div style="font-size:11px;color:#334155;line-height:1.5;margin-bottom:14px;">Il sottoscritto <b>'+e(p.cliente||'')+'</b> conferma che la presente perizia corrisponde a quella compilata e firmata digitalmente, che i danni elencati sono tutti quelli presenti sul veicolo <b>'+e((p.modello||'')+(p.targa?(' \u00b7 '+p.targa):''))+'</b> e che il chilometraggio dichiarato \u00e8 quello reale.</div>'
+    +'<table style="width:100%;border-collapse:collapse;"><tr>'
+    +'<td style="width:50%;padding:0 12px 0 0;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Luogo e data</div><div style="border-bottom:1px solid #0f172a;height:34px;"></div></td>'
+    +'<td style="width:50%;padding:0 0 0 12px;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Firma del cliente (autografa)</div><div style="border-bottom:1px solid #0f172a;height:34px;"></div></td>'
+    +'</tr><tr><td colspan="2" style="padding-top:18px;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Per Europa Auto \u2014 timbro e firma</div><div style="border-bottom:1px solid #0f172a;height:34px;width:50%;"></div></td></tr></table>'
+    +'</div></div>';
 }
 function cvContrattoFinaleStampa(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
@@ -29087,6 +29248,11 @@ function cvStampaDoc(c, tipo){
      preventivo nemmeno: li' si sta ancora trattando, non firma nessuno, e
      due copie erano solo carta sprecata. */
   if(tipo!=='fattura' && tipo!=='preventivo') html=cvDoppiaCopia(html);
+  /* contratto (proposta e finale): in coda la perizia firmata della
+     permuta, con lo spazio per la firma a penna */
+  if(tipo!=='fattura' && tipo!=='preventivo'){
+    try{ var _pz=cvPeriziaPaginaHTML(c); if(_pz){ var _fb=html.lastIndexOf('</body>'); html=(_fb>=0)?html.slice(0,_fb)+_pz+html.slice(_fb):html+_pz; } }catch(e){}
+  }
   var w=window.open('','_blank');
   if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
