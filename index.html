@@ -14228,14 +14228,26 @@ function riRenderDip(){
   riDedup();
   var ym = (typeof _tcMeseCorrente!=='undefined' && _tcMeseCorrente) ? _tcMeseCorrente : ((typeof tcGetMese==='function')?tcGetMese():new Date().toISOString().substring(0,7));
   var primo = ym+'-01', ultimo = ym+'-31';
+  /* Prima si vedevano solo le richieste del mese aperto: ferie chieste per
+     fra due o tre mesi sparivano dalla vista del dipendente. Ora si vedono
+     quelle del mese scelto PIU' tutte quelle future (da oggi in poi),
+     ordinate per data, con il mese scritto in testa. */
+  var oggi=new Date().toISOString().substring(0,10);
   var mie=riLoad().filter(function(r){
     if(r.dipendente!==_currentUserEmail) return false;
     var di = r.dataInizio||r.data||'', df = r.dataFine||di;
     if(!di) return true;
-    return (di <= ultimo) && (df >= primo);
-  }).sort(function(a,b){return (b.creato||'')<(a.creato||'')?-1:1;});
-  if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta per questo mese.</div>'; return; }
-  var html=''; mie.forEach(function(r){
+    return ((di <= ultimo) && (df >= primo)) || (df >= oggi);
+  }).sort(function(a,b){ var x=a.dataInizio||a.data||'', y=b.dataInizio||b.data||''; return x<y?-1:(x>y?1:0); });
+  if(!mie.length){ wrap.innerHTML='<div style="color:#64748b;font-size:13px;padding:10px;text-align:center;">Nessuna richiesta per questo mese n\u00e9 in programma.</div>'; return; }
+  var mesiN=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+  var html='', ultM='';
+  mie.forEach(function(r){
+    var di=r.dataInizio||r.data||'', m=di?di.substring(0,7):'';
+    if(m && m!==ultM){
+      ultM=m; var y=m.substring(0,4), mm=parseInt(m.substring(5,7),10)-1;
+      html+='<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;margin:'+(html?'10px':'0')+' 0 5px;text-align:left;">'+(mesiN[mm]||m)+' '+y+(m===ym?'':' \u00b7 in programma')+'</div>';
+    }
     html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;text-align:left;">'
       +'<div><div style="font-weight:700;color:#0f172a;font-size:13px;">'+r.categoria+'</div>'
       +'<div style="color:#64748b;font-size:12px;">'+riPeriodo(r)+(r.nota?(' · '+r.nota):'')+'</div></div>'
@@ -25112,7 +25124,9 @@ function cvStatRender(){
     var eu=function(v){ return (typeof cvEuro==='function')?cvEuro(v):(v+' \u20ac'); };
     var card='background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px;';
     var kl='font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;';
-    var _anniS={}; tutti.forEach(function(c){ var t=cvStatTs(c); if(t) _anniS[new Date(t).getFullYear()]=1; });
+    /* nel selettore solo gli anni con almeno un contratto: un anno con soli
+       preventivi (storico importato) dava statistiche senza senso */
+    var _anniS={}; cvLoad().forEach(function(c){ if(!c || !c.isContratto) return; var t=+(c.contrattoTs||c.createdAt||0); if(t) _anniS[new Date(t).getFullYear()]=1; });
     var _periodi=[[30,'30 giorni'],[90,'90 giorni'],[365,'12 mesi']].concat(Object.keys(_anniS).map(Number).sort(function(a,b){ return b-a; }).map(function(y){ return ['y'+y, String(y)]; })).concat([[0,'tutto']]);
     var per=_periodi.map(function(p){ var on=(_cvStPer===p[0]); var v=(typeof p[0]==='string')?('\''+p[0]+'\''):p[0];
       return '<button onclick="_cvStPer='+v+';cvStatRender();" style="padding:5px 10px;border-radius:99px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">'+p[1]+'</button>'; }).join('');
@@ -25207,7 +25221,16 @@ function cvStatPermanenza(){
     var rifP=med(rif.map(function(r){ return r.p; }))||3, rifG=med(rif.map(function(r){ return r.g; }))||60;
     /* auto in magazzino */
     var escl=cvStatEscluse();
-    var stock=auto.filter(function(a){ return (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato) && !escl[a.id]; });
+    /* Un'auto con un contratto attivo nel gestionale e' venduta anche se
+       in magazzino lo stato non e' stato aggiornato: non sta piu' qui. */
+    var conContratto={};
+    prev.forEach(function(c){ if(c.isContratto && !c.deleted && !c.annullato && c.autoId) conContratto[c.autoId]=true; });
+    var stock=auto.filter(function(a){
+      if(escl[a.id]) return false;
+      if(conContratto[a.id]) return false;
+      if(a.vendutaTs || a.dataScarico || (a.scarico&&a.scarico.dataScarico)) return false;
+      return (a.stato==='disponibile'||a.stato==='opzionata'||a.stato==='prenotata'||!a.stato);
+    });
     var nEscl=auto.filter(function(a){ return escl[a.id]; }).length;
     var adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
     var righe=stock.map(function(a){
@@ -40936,7 +40959,9 @@ function bmSupaLoad(){ try{ if(typeof supaLoadList==='function') supaLoadList('b
    bisognava cambiare periodo e rimetterlo per vederli. Ora l'apertura
    chiede l'archivio e, appena arriva, ridisegna con il periodo scelto. */
 function statInit(){ statRender(); try{ if(typeof cvSupaLoad==='function') cvSupaLoad(); }catch(e){} }
-function statAnni(){ var s={}; cvLoad().forEach(function(x){ var d=new Date(x.createdAt||x.contrattoTs||Date.now()); s[d.getFullYear()]=true; }); var arr=Object.keys(s).sort().reverse(); if(!arr.length) arr=[String(new Date().getFullYear())]; return arr; }
+/* Solo gli anni con almeno un contratto: gli anni con i soli preventivi
+   importati da SICOM (712 preventivi, zero contratti) non dicono niente. */
+function statAnni(){ var s={}; cvLoad().forEach(function(x){ if(!x || !x.isContratto || x.deleted) return; var d=new Date(x.contrattoTs||x.createdAt||Date.now()); s[d.getFullYear()]=true; }); var arr=Object.keys(s).sort().reverse(); if(!arr.length) arr=[String(new Date().getFullYear())]; return arr; }
 function statRender(){
   var wrap=document.getElementById('view-statistiche'); if(!wrap) return;
   var yr=(document.getElementById('stat-anno')||{}).value; if(!yr) yr=String(new Date().getFullYear());
