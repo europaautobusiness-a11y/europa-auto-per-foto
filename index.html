@@ -958,6 +958,11 @@ html, body{
       <button onclick="mzExportInventario('aziendali')" style="padding:8px 12px;border-radius:8px;border:1px solid #9a3412;background:#fff7ed;color:#9a3412;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Aziendali I.E.</button>
       <button onclick="mzExportInventario('estere')" style="padding:8px 12px;border-radius:8px;border:1px solid #1e40af;background:#eff6ff;color:#1e40af;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Estere</button>
       <button onclick="mzExportInventario('art36')" style="padding:8px 12px;border-radius:8px;border:1px solid #334155;background:#f1f5f9;color:#334155;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">⬇️ Art. 36</button>
+      <span style="display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding-left:10px;border-left:1px solid #e2e8f0;">
+        <span style="font-size:12px;color:#64748b;font-weight:700;">alla data</span>
+        <input type="date" id="mz-inv-data" title="Vuoto = oggi. Con una data passata l'inventario viene ricostruito: dentro le auto già caricate e non ancora vendute a quel giorno." style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;" onchange="mzInvDataCambia()">
+        <span id="mz-inv-nota" style="font-size:11px;color:#9a3412;font-weight:700;"></span>
+      </span>
     </div>
     <div id="mz-stat" style="font-size:12px;color:#64748b;margin-bottom:10px;"></div>
     <div id="mz-lista"></div>
@@ -7458,7 +7463,7 @@ function pSbloccaDelibera(){
    25 euro e la riga nasce gia' calcolata; col finanziamento resta in attesa
    e si completa da sola quando la delibera viene confermata.
    L'abbinamento e' per cvId, non per nome: niente doppioni. */
-var P_FI_DA_POLIZZA={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', nessuna:'NO'};
+var P_FI_DA_POLIZZA={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', compass_premium:'NET', nessuna:'NO'};
 function pProvvDiCv(cvId, reg){
   reg=reg||pLoadReg()||[];
   for(var i=0;i<reg.length;i++){ if(reg[i] && reg[i].cvId===cvId) return {i:i, r:reg[i]}; }
@@ -22381,13 +22386,76 @@ function mzScaricaBlob(blob,nome){
   document.body.appendChild(el); el.click(); document.body.removeChild(el);
   setTimeout(function(){ URL.revokeObjectURL(url); },1500);
 }
+/* ===== INVENTARIO A UNA DATA PASSATA =====
+   Le rimanenze si ricostruiscono dal registro di carico e scarico: a quel
+   giorno era in magazzino ogni auto caricata entro quella data e non ancora
+   uscita. L'uscita e' la data di scarico del registro (il giorno della
+   consegna); se manca, la consegna del contratto collegato; se manca anche
+   quella, la data di vendita. Un'auto venduta senza nessuna data d'uscita
+   si considera uscita il giorno in cui la scheda e' stata aggiornata
+   l'ultima volta, e viene segnalata. */
+function mzInvDataCambia(){
+  var el=document.getElementById('mz-inv-data'), n=document.getElementById('mz-inv-nota');
+  if(!n) return;
+  n.textContent=(el&&el.value)?('\u23f3 inventario ricostruito al '+el.value.split('-').reverse().join('/')):'';
+}
+function mzDataIso(v){
+  if(!v) return 0;
+  if(typeof v==='number') return v;
+  var m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return new Date(+m[1],+m[2]-1,+m[3]).getTime();
+  var t=Date.parse(v); return isNaN(t)?0:t;
+}
+function mzUscitaTs(a){
+  var t=0;
+  try{ t=mzDataIso(a.scarico&&a.scarico.dataScarico)||mzDataIso(a.dataScarico); }catch(e){}
+  if(!t){
+    try{
+      var cv=null;
+      if(typeof cvLoad==='function'){
+        var cvs=cvLoad().filter(function(c){ return c && c.isContratto && !c.annullato && !c.deleted && (c.autoId===a.id); });
+        cv=cvs.sort(function(x,y){ return (+(y.consegnatoTs||y.contrattoTs||0))-(+(x.consegnatoTs||x.contrattoTs||0)); })[0];
+      }
+      if(cv) t=+(cv.consegnatoTs||0);
+    }catch(e){}
+  }
+  if(!t) t=+(a.vendutaTs||0);
+  return { ts:t, stimata:!t };
+}
+function mzInventarioAllaData(all, giornoTs){
+  var fine=giornoTs+86400000-1, out=[], stimate=0;
+  all.forEach(function(a){
+    if(!a || a.nlt || a.deleted) return;
+    if(eaAutoTest(a)) return;
+    var inTs=mzDataIso(a.dataCarico)||+(a.createdAt||0);
+    if(!inTs || inTs>fine) return;
+    var fuori=(a.stato==='venduta') || !!(a.scarico&&a.scarico.dataScarico) || !!a.dataScarico;
+    if(fuori){
+      var u=mzUscitaTs(a);
+      var ts=u.ts || +(a.updatedAt||0);
+      if(u.stimata) stimate++;
+      if(ts && ts<=fine) return;
+    } else if(a.stato!=='disponibile' && a.stato!=='opzionata' && a.stato!=='prenotata' && a.stato){
+      return;
+    }
+    out.push(a);
+  });
+  out._stimate=stimate;
+  return out;
+}
 function mzExportInventario(cat){
   if(!mzPuoPrezzoAcq()){ alert('Export riservato ad amministratore e contabilità.'); return; }
   var all=(typeof mzLoad==='function')?mzLoad():[];
-  var rows=all.filter(function(a){
+  var _dEl=document.getElementById('mz-inv-data');
+  var _giorno=(_dEl&&_dEl.value)?mzDataIso(_dEl.value):0;
+  var _oggi0=new Date(); _oggi0.setHours(0,0,0,0);
+  var _storico=!!(_giorno && _giorno<_oggi0.getTime());
+  if(_giorno && _giorno>_oggi0.getTime()){ alert('La data \u00e8 nel futuro: l\u2019inventario si pu\u00f2 ricostruire solo per oggi o per il passato.'); return; }
+  var base=_storico?mzInventarioAllaData(all,_giorno):all;
+  var rows=base.filter(function(a){
     if(!a || a.nlt) return false;                                  /* noleggio LT: non e' merce nostra */
     if(eaAutoTest(a)) return false;                                /* auto di prova: non e' merce */
-    if(!(a.stato==='disponibile' && !a.impegnata)) return false;   /* rimanenze = solo la giacenza reale */
+    if(!_storico && !(a.stato==='disponibile' && !a.impegnata)) return false;   /* oggi: solo la giacenza reale */
     if(cat==='estere') return a.estera===true;
     if(cat==='aziendali') return a.estera!==true && a.ivaEsposta===true;
     return a.estera!==true && a.ivaEsposta!==true;                 /* art.36 (margine) */
@@ -22399,7 +22467,10 @@ function mzExportInventario(cat){
 
   var titoli={aziendali:'IVA ESPOSTA',estere:'ESTERE',art36:'ART. 36'};
   var nomi={aziendali:'IVA_esposta',estere:'Estere',art36:'Art36'};
-  var d=new Date(), z=function(n){ return (n<10?'0':'')+n; };
+  var d=_storico?new Date(_giorno):new Date(), z=function(n){ return (n<10?'0':'')+n; };
+  if(_storico && base._stimate){
+    if(!confirm(base._stimate+' auto vendute non hanno una data di uscita registrata: per loro si usa la data dell\u2019ultimo aggiornamento della scheda, che potrebbe non essere il giorno vero della consegna.\n\nProseguire con l\u2019export?')) return;
+  }
   var dataIt=z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear();
   var dataFile=d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());
   var nomeFile='Rimanenze_'+(nomi[cat]||cat)+'_'+dataFile;
@@ -22415,7 +22486,7 @@ function mzExportInventario(cat){
 
   var aoa=[];
   aoa.push(['']);
-  aoa.push(['RIMANENZE FINALI AL '+dataIt+' '+(titoli[cat]||'')]);
+  aoa.push(['RIMANENZE FINALI AL '+dataIt+' '+(titoli[cat]||'')+(_storico?' (ricostruite dal registro di carico/scarico)':'')]);
   aoa.push(['']);
   aoa.push(['']);
   aoa.push(['Quantità','Merce - Materia Prima - Servizi in corso di esecuzione','Costo Unitario','Totale Costo in €']);
@@ -24049,6 +24120,10 @@ var CV_POLIZZE=[
     la voce esiste e si puo' scegliere, ma il dettaglio va scritto a mano
     finche' non arrivano i testi ufficiali. Meglio un campo vuoto che un
     elenco di garanzie inventate su un documento contrattuale. */
+ /* Polizza del finanziamento Compass: Europ Assistance, pacchetto PREMIUM
+    (nel simulatore Compass e' la voce CVT "PREMIUM"). L'elenco delle
+    garanzie va trascritto dal fascicolo informativo. */
+ { id:'compass_premium', nome:'PREMIUM \u2014 Europ Assistance (Compass)', mesiDef:'60', testo:'' },
  { id:'zurich', nome:'Zurich', mesiDef:'60', testo:'' },
  { id:'unipol', nome:'Unipol', mesiDef:'60', testo:'' },
  { id:'kasko', nome:'Kasko', mesiDef:'60', testo:'' },
@@ -24067,6 +24142,14 @@ var CV_POLIZZE=[
   +'\u2022 Infortunio del conducente\n'
   +'\u2022 Annullamento franchigia per riparazioni interne tranne evento grandine franchigia 300\u20ac' }
 ];
+var CV_POLIZZE_PREMIO_MANUALE={ fit2you:1, zurich:1 };
+function cvPolizzaPremioObbligatorio(c){
+  try{ return !!(c && c.assicOn && CV_POLIZZE_PREMIO_MANUALE[String(c.polizzaTipo||'')]); }catch(e){ return false; }
+}
+function cvPolizzaNome(id){
+  try{ for(var i=0;i<CV_POLIZZE.length;i++){ if(CV_POLIZZE[i].id===id) return CV_POLIZZE[i].nome; } }catch(e){}
+  return id||'';
+}
 /* ===== CONDIZIONI DI POLIZZA =====
    Sul contratto finale l'elenco delle coperture deve esserci sempre. Se la
    scheda non ha un dettaglio scritto a mano si ricade sul testo standard
@@ -27808,6 +27891,12 @@ function cvTrasformaContrattoFinale(){
     }
     try{ if(typeof cvForm==='function') cvForm(_cv.id); }catch(e){}
     if(typeof tcToastNew==='function') tcToastNew('\u2713 Dati di fatturazione aggiornati', true);
+    return;
+  }
+  /* Fit2You e Zurich non passano da nessun simulatore: il premio lo
+     scrive chi vende. Senza, la delibera esce con polizze a zero. */
+  if(cvPolizzaPremioObbligatorio(_cv) && !(parseFloat(_cv.assicImporto)>0)){
+    alert('Inserisci l\u2019IMPORTO della polizza '+cvPolizzaNome(_cv.polizzaTipo)+'.\n\nPer questa polizza il premio non lo calcola nessun simulatore: va scritto a mano nel campo accanto ai mesi, nel riquadro Assicurazione.');
     return;
   }
   _cv.isContratto=true; _cv.contrattoTs=Date.now(); _cv.statoVendita='in_attesa_pagamento';
@@ -32697,6 +32786,9 @@ function tgSalvaBozza(){
     });
     var iv=document.getElementById('tg_ivaPct'); if(iv) f.ivaPct=tgNum(iv.value);
     var nu=document.getElementById('tg_num'); if(nu && nu.value!=='') f.numeroScelto=parseInt(nu.value,10)||'';
+    var dt=document.getElementById('tg_data'); if(dt && dt.value) f.dataScelta=dt.value;
+    /* documento gia' emesso: la data si corregge dal campo nella testata */
+    var dte=document.getElementById('tg_data_emessa'); if(dte && dte.value && f.numero) f.data=dte.value;
     f.righe=_tgRighe;
     list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
   }catch(e){}
@@ -32778,7 +32870,8 @@ function tgRender(){
 
   if(f.numero){
     h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:12px;">'
-      +'<div style="font-size:13px;color:#166534;font-weight:700;margin-bottom:8px;">\u2705 Fattura n. '+f.numero+'/'+f.anno+' emessa il '+((f.data||'').split('-').reverse().join('/'))+'</div>'
+      +'<div style="font-size:13px;color:#166534;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">\u2705 Fattura n. '+f.numero+'/'+f.anno+' emessa il '
+      +'<input id="tg_data_emessa" type="date" value="'+tgEsc(f.data||'')+'" onchange="tgSalvaBozza();tgRender()" title="Data del documento: si pu\u00f2 correggere, la ristampa la riporta" style="padding:4px 6px;border:1px solid #bbf7d0;border-radius:6px;font-family:inherit;font-size:12px;color:#166534;font-weight:700;background:#fff;"></div>'
       +'<div style="display:flex;gap:8px;">'
       +'<button onclick="tgScarica(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #16a34a;background:#fff;color:#166534;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\uD83D\uDDA8 Scarica di nuovo</button>'
       +'<button onclick="tgAnnulla(\''+_tgId+'\')" style="flex:1;padding:9px;border-radius:7px;border:1px solid #dc2626;background:#fff;color:#991b1b;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">\u274c Annulla fattura</button>'
@@ -32792,6 +32885,10 @@ function tgRender(){
       +'<input id="tg_num" type="number" min="1" value="'+tgEsc(scelto)+'" onchange="tgSalvaBozza();tgRender()" style="'+inp+'width:100px;font-weight:800;">'
       +'<span style="font-weight:800;color:#64748b;">/ '+tgAnno()+'</span>'
       + (dup?'<span style="color:#991b1b;font-size:11px;font-weight:700;">\u26a0\ufe0f gi\u00e0 usato</span>':'<span style="font-size:11px;color:#64748b;">serie tagliandi</span>')
+      /* La data del documento si puo' scegliere: di solito oggi, ma una
+         proforma fatta in ritardo va datata al giorno del lavoro. */
+      +'<label style="'+lbl+'margin:0 0 0 10px;">DATA</label>'
+      +'<input id="tg_data" type="date" value="'+tgEsc(f.dataScelta||new Date().toISOString().slice(0,10))+'" onchange="tgSalvaBozza()" style="'+inp+'width:150px;">'
       +'</div>';
   }
 
@@ -32883,9 +32980,9 @@ function tgGenera(){
   if(tgNumeroUsato(num,_tgId)){ alert('Il numero '+num+'/'+y+' \u00e8 gi\u00e0 usato: scegline un altro.'); return; }
   if(!confirm('Genero la fattura tagliando n. '+num+'/'+y+' intestata a '+f.nome+'?\n\nTotale \u20ac '+tgEu(t.totale))) return;
   var _f=tgListaFonte(); var list=_f.list, i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
-  f.numero=num; f.anno=y; f.data=new Date().toISOString().slice(0,10);
+  f.numero=num; f.anno=y; f.data=(f.dataScelta && /^\d{4}-\d{2}-\d{2}$/.test(f.dataScelta))?f.dataScelta:new Date().toISOString().slice(0,10);
   f.da=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
-  delete f.numeroScelto;
+  delete f.numeroScelto; delete f.dataScelta;
   list[i].fatturaTag=f; _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
   try{ ccSync(list[i]); }catch(e){}
   if(typeof tcToastNew==='function') tcToastNew('\uD83E\uDDFE Fattura tagliando n. '+num+'/'+y+' generata', true);
@@ -34845,6 +34942,7 @@ function cmpDaPreventivo(idx){
       /* simulazione gia' fatta su questo pagamento: si riparte da li', ma
          valore e anticipo seguono sempre il preventivo di adesso */
       var p=Object.assign({}, def, pag.compassStato||{}, { valore:def.valore, anticipo:def.anticipo });
+      try{ if(!pag.compassStato && _cv.assicOn && String(_cv.polizzaTipo||'')==='compass_premium'){ p.cvt='PREMIUM'; p.durataCop=parseInt(_cv.assicMesi,10)||60; } }catch(e){}
       m.innerHTML='<div style="max-width:680px;margin:0 auto;background:#f1f5f9;border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35);">'
         +'<div style="background:#0f4c81;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;">'
         +'<span style="font-weight:800;">\uD83E\uDDEE Simulatore Compass</span>'
@@ -35022,20 +35120,27 @@ function cmpUsaNellaDelibera(){
     if(!(r.rataValida>0)){ alert('La rata non \u00e8 calcolabile con questi dati: correggi gli avvisi in rosso.'); return; }
     if(r.sopraSoglia && !confirm('Il TEG ('+cmpPc(r.teg)+') supera la soglia d\u2019usura ('+cmpPc(r.sogliaTeg)+').\n\nUsare comunque questi dati nella delibera?')) return;
     var cv=(typeof cvById==='function')?cvById(_cmpCvId):null;
-    var tipoPol=(r.premiTot>0)
-      ? (p.kasko&&!p.cvt&&!p.cpi&&!p.gap ? 'kasko' : ((cv&&cv.assicOn&&cv.polizzaTipo)?String(cv.polizzaTipo):'altra'))
-      : 'nessuna';
+    /* Finanziamento e polizza sono due scelte: Compass puo' finanziare con
+       la sua Premium, con una polizza esterna (Fit2You, Zurich) o senza.
+       Decide la polizza scelta sul contratto. */
+    var _polContr=(cv&&cv.assicOn&&cv.polizzaTipo)?String(cv.polizzaTipo):'';
+    var _esterna=(_polContr && _polContr!=='compass_premium' && _polContr!=='nessuna' && typeof PAZ_POLIZZE_DEUTSCHE!=='undefined' && !PAZ_POLIZZE_DEUTSCHE[_polContr]);
+    var tipoPol=_esterna ? _polContr
+      : (p.cvt ? 'compass_premium'
+        : (p.kasko&&!p.cpi&&!p.gap ? 'kasko'
+          : (r.premiTot>0 ? (_polContr||'altra') : (_polContr==='nessuna'||!_polContr ? 'nessuna' : _polContr))));
+    var _premioEst=0; try{ if(_esterna) _premioEst=parseFloat(cv.assicImporto||0)||0; }catch(e){}
     window._delibDaSim={
       cvId:_cmpCvId, finanziaria:'Compass',
       provvAzienda:(r.provvTot>0?r.provvTot:null),
       tan:Math.round(r.tan*10000)/100,
       taeg:(r.taeg!=null?Math.round(r.taeg*10000)/100:null),
       valoreVeicolo:Math.round(p.valore*100)/100, anticipo:Math.round(p.anticipo*100)/100,
-      polizzaMesi:((p.cvt||p.kasko)?p.durataCop:(r.premiTot>0?p.durata:0)),
+      polizzaMesi:(_esterna ? (parseInt(cv.assicMesi,10)||60) : ((p.cvt||p.kasko)?p.durataCop:(r.premiTot>0?p.durata:0))),
       polizzaTipo:tipoPol,
       cpi:(p.cpi?'SI':'NO'), gap:(p.gap?'SI':'NO'),
       istruttoria:Math.round(r.cfi*100)/100,
-      polizze:Math.round(r.premiTot*100)/100,
+      polizze:Math.round((r.premiTot+_premioEst)*100)/100,
       rata:Math.round(r.rataValida*100)/100, durata:p.durata,
       importoFinanziato:Math.round((p.valore-p.anticipo)*100)/100
     };
@@ -36448,6 +36553,126 @@ function cvFatturaScarica(id, forza){
   });
 }
 
+/* ===== ESTINZIONE ANTICIPATA: LETTERA DI RICHIESTA RIMBORSO =====
+   Se il cliente estingue il finanziamento prima delle rate minime (18), la
+   finanziaria storna alla concessionaria la provvigione gia' pagata e ne
+   chiede la restituzione. Il contratto prevede che quell'importo lo
+   rimborsi il cliente: qui si prepara la lettera su carta intestata con
+   l'importo richiesto dalla banca, pronta da stampare o mandare in PDF.
+   Solo amministrazione e contabilita'. */
+var CV_ESTINZ_RATE_MIN=18;
+function cvEstinzBtn(cv){
+  if(!cvPuoFatturare() || !cv) return '';
+  var fin=(cv.pagamenti||[]).some(function(p){ return p && (/finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento'); });
+  if(!fin) return '';
+  var e=cv.estinzione;
+  if(e && e.importo>0){
+    return '<button onclick="event.stopPropagation();cvEstinzStampa(\''+cv.id+'\')" title="Lettera di richiesta rimborso provvigione per estinzione anticipata" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #b45309;background:#fff7ed;color:#9a3412;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">✉️ Estinzione € '+cvEuro(e.importo)+'</button>'
+      +'<a onclick="event.stopPropagation();cvEstinzForm(\''+cv.id+'\')" style="font-size:11px;color:#9a3412;cursor:pointer;text-decoration:underline;align-self:center;">modifica</a>';
+  }
+  return '<button onclick="event.stopPropagation();cvEstinzForm(\''+cv.id+'\')" title="Il cliente ha estinto prima del previsto: prepara la lettera di richiesta rimborso provvigione" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">✉️ Estinzione anticipata</button>';
+}
+function cvEstinzForm(id){
+  var cv=cvById(id); if(!cv) return;
+  var e=cv.estinzione||{};
+  var d=cv.finDelibera||{};
+  var m=(typeof cvModModal==='function')?cvModModal():document.getElementById('cv-mod-modal');
+  if(!m) return;
+  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:12px 0 4px;text-transform:uppercase;">'+t+'</label>'; };
+  var inp='width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var oggi=new Date().toISOString().slice(0,10);
+  var h='<div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">'
+    +'<div style="background:#9a3412;color:#fff;padding:14px 18px;font-weight:800;">✉️ Estinzione anticipata — richiesta rimborso provvigione</div>'
+    +'<div style="padding:16px 18px;">'
+    +'<div style="font-size:12.5px;color:#475569;line-height:1.5;">'+cvEsc(cvNomeCliente(cv.cliente))+' · '+cvEsc(((cv.autoSnapshot||{}).marca||'')+' '+((cv.autoSnapshot||{}).modello||''))+(d.finanziaria?(' · finanziamento '+cvEsc(d.finanziaria)):'')+(d.durata?(' · '+d.durata+' rate'):'')+'</div>'
+    +lab('Importo richiesto dalla finanziaria € *')+'<input id="est_importo" type="number" step="0.01" value="'+cvEsc(e.importo||'')+'" placeholder="es. 1824,79" style="'+inp+'font-weight:800;">'
+    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data estinzione')+'<input id="est_data" type="date" value="'+cvEsc(e.dataEstinzione||'')+'" style="'+inp+'"></div>'
+    +'<div style="flex:1;">'+lab('Rate pagate')+'<input id="est_rate" type="number" min="0" value="'+cvEsc(e.ratePagate||'')+'" placeholder="su '+CV_ESTINZ_RATE_MIN+' minime" style="'+inp+'"></div></div>'
+    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data della lettera')+'<input id="est_dataLettera" type="date" value="'+cvEsc(e.dataLettera||oggi)+'" style="'+inp+'"></div>'
+    +'<div style="flex:1;">'+lab('Pagamento entro (giorni)')+'<input id="est_giorni" type="number" min="1" value="'+cvEsc(e.giorni||15)+'" style="'+inp+'"></div></div>'
+    +lab('Riferimento comunicazione della finanziaria (facoltativo)')+'<input id="est_rif" value="'+cvEsc(e.riferimento||'')+'" placeholder="es. estratto conto provvigioni del 02/07/2026, pratica n. 1266863" style="'+inp+'">'
+    +lab('Note aggiuntive nella lettera (facoltativo)')+'<textarea id="est_note" rows="2" style="'+inp+'">'+cvEsc(e.note||'')+'</textarea>'
+    +'<button onclick="cvEstinzSalva(\''+cv.id+'\')" style="margin-top:18px;width:100%;padding:12px;border-radius:8px;border:none;background:#9a3412;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">🖨 Salva e stampa la lettera</button>'
+    +(e.importo>0?'<button onclick="cvEstinzElimina(\''+cv.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;cursor:pointer;">Togli l’estinzione da questa pratica</button>':'')
+    +'<button onclick="cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
+    +'</div></div>';
+  m.innerHTML=h; m.style.display='block';
+}
+function cvEstinzSalva(id){
+  var g=function(k){ var el=document.getElementById('est_'+k); return el?String(el.value).trim():''; };
+  var imp=parseFloat(String(g('importo')).replace(',','.'));
+  if(!(imp>0)){ alert('Inserisci l’importo richiesto dalla finanziaria.'); return; }
+  var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
+  list[i].estinzione={ importo:Math.round(imp*100)/100, dataEstinzione:g('data'), ratePagate:g('rate'), dataLettera:g('dataLettera')||new Date().toISOString().slice(0,10),
+    giorni:parseInt(g('giorni'),10)||15, riferimento:g('rif'), note:g('note'),
+    da:((typeof _currentUserName!=='undefined'&&_currentUserName)||''), ts:Date.now() };
+  list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){}
+  try{ cvLogRegistra(null, list[i], 'estinzione'); }catch(e){}
+  cvModChiudi();
+  try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+  cvEstinzStampa(id);
+}
+function cvEstinzElimina(id){
+  if(!confirm('Togliere la richiesta di rimborso da questa pratica?')) return;
+  var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
+  delete list[i].estinzione; list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){}
+  cvModChiudi(); try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+}
+function cvEstinzHTML(cv){
+  var e=cv.estinzione||{}, cl=cv.cliente||{}, a=cv.autoSnapshot||{}, d=cv.finDelibera||{};
+  var E=cvEsc, it=function(iso){ return iso?String(iso).split('-').reverse().join('/'):''; };
+  var nome=cvNomeCliente(cl)||'';
+  var ind=cl.business ? (cl.sedeLegale||'') : [((cl.via||'')+(cl.civico?(' '+cl.civico):'')).trim(), [(cl.cap||''),(cl.citta||''),(cl.prov?('('+cl.prov+')'):'')].filter(Boolean).join(' ')].filter(Boolean).join('<br>');
+  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa||cv.nuovaTarga?(' targa '+(cv.nuovaTarga||a.targa)):'')+(a.telaio?(' — telaio '+a.telaio):'');
+  var dContr=cv.contrattoTs?new Date(cv.contrattoTs).toLocaleDateString('it-IT'):'';
+  var fin=d.finanziaria||cv.finanziaria||'la finanziaria';
+  var scad=''; try{ var dl=new Date(e.dataLettera||Date.now()); dl.setDate(dl.getDate()+(e.giorni||15)); scad=dl.toLocaleDateString('it-IT'); }catch(x){}
+  var logo=(typeof eaMailLogo==='function')?eaMailLogo():'';
+  var testa=(/^https?:\/\//i.test(logo))
+    ? '<img src="'+logo+'" alt="Europa Auto" style="height:52px;display:block;">'
+    : '<div style="font-size:24px;font-weight:800;color:#1a4fa0;">Europa Auto S.r.l.</div>';
+  return '<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Richiesta rimborso provvigione — '+E(nome)+'</title>'
+    +'<style>@page{size:A4;margin:18mm 20mm;}body{font-family:Arial,Helvetica,sans-serif;font-size:12.5px;color:#0f172a;line-height:1.6;margin:0;}'
+    +'.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a4fa0;padding-bottom:10px;margin-bottom:28px;}'
+    +'.hd .az{font-size:11px;color:#475569;text-align:right;line-height:1.5;}'
+    +'.dest{margin:0 0 26px auto;width:62%;font-size:13px;}'
+    +'.box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin:16px 0;}'
+    +'.imp{font-size:18px;font-weight:800;color:#9a3412;}'
+    +'.firma{margin-top:48px;display:flex;justify-content:space-between;}'
+    +'.firma div{width:45%;}.firma .l{border-top:1px solid #0f172a;margin-top:46px;padding-top:4px;font-size:11px;color:#475569;}'
+    +'.ft{position:fixed;bottom:0;left:0;right:0;border-top:1px solid #e2e8f0;padding-top:6px;font-size:10px;color:#64748b;text-align:center;}'
+    +'@media print{.noprint{display:none;}}</style></head><body>'
+    +'<div class="hd">'+testa+'<div class="az"><b>Europa Auto S.r.l.</b><br>Via Nigra 4 — 20037 Paderno Dugnano (MI)<br>P.IVA 06440210968 · Tel. '+E(eaTel())+'<br>vendita@europaautosrl.it · www.europaautosrl.it</div></div>'
+    +'<div style="text-align:right;margin-bottom:10px;">Paderno Dugnano, '+E(it(e.dataLettera)||new Date().toLocaleDateString('it-IT'))+'</div>'
+    +'<div class="dest">Spett.le / Gentile<br><b>'+E(nome)+'</b>'+(ind?('<br>'+ind):'')+(cl.cf?('<br>C.F. '+E(cl.cf)):'')+(cl.business&&cl.piva?('<br>P.IVA '+E(cl.piva)):'')+'</div>'
+    +'<p><b>Oggetto: richiesta di rimborso provvigione per estinzione anticipata del finanziamento</b><br>'
+    +'Veicolo '+E(veic)+(dContr?(' — contratto del '+E(dContr)):'')+'</p>'
+    +'<p>Gentile Cliente,</p>'
+    +'<p>con la presente La informiamo che '+E(fin)+' ci ha comunicato l’<b>estinzione anticipata</b> del finanziamento collegato all’acquisto del veicolo in oggetto'
+    +(e.dataEstinzione?(', avvenuta in data <b>'+E(it(e.dataEstinzione))+'</b>'):'')
+    +(e.ratePagate?(', dopo il pagamento di <b>'+E(e.ratePagate)+'</b> rate'):'')
+    +(d.durata?(' su un piano di '+E(d.durata)+''):'')+'.</p>'
+    +'<p>Come previsto dalle condizioni contrattuali sottoscritte al momento dell’acquisto, l’estinzione del finanziamento prima della <b>'+CV_ESTINZ_RATE_MIN+'ª rata</b> comporta lo storno, da parte della finanziaria, della provvigione già corrisposta alla concessionaria, che viene a noi addebitata'
+    +(e.riferimento?(' (rif. '+E(e.riferimento)+')'):'')+'. Tale importo è a carico del cliente.</p>'
+    +'<div class="box">Importo richiesto a rimborso: <span class="imp">€ '+E(cvEuro(e.importo))+'</span></div>'
+    +'<p>La preghiamo pertanto di provvedere al versamento dell’importo indicato <b>entro il '+E(scad)+'</b> ('+E(e.giorni||15)+' giorni dalla presente) tramite bonifico bancario intestato a Europa Auto S.r.l.:</p>'
+    +'<div class="box" style="font-family:\'Courier New\',monospace;font-size:13px;">IBAN IT88E0344033990000001004900<br>Causale: rimborso provvigione estinzione anticipata — '+E(nome)+(cv.nuovaTarga||a.targa?(' — '+E(cv.nuovaTarga||a.targa)):'')+'</div>'
+    +(e.note?('<p>'+E(e.note).replace(/\n/g,'<br>')+'</p>'):'')
+    +'<p>Restiamo a disposizione per ogni chiarimento ai recapiti indicati e La ringraziamo per la collaborazione.</p>'
+    +'<p>Cordiali saluti,</p>'
+    +'<div class="firma"><div></div><div><b>Europa Auto S.r.l.</b><div class="l">Timbro e firma</div></div></div>'
+    +'<div class="ft">Europa Auto S.r.l. · Via Nigra 4, 20037 Paderno Dugnano (MI) · P.IVA 06440210968 · Tel. '+E(eaTel())+'</div>'
+    +'</body></html>';
+}
+function cvEstinzStampa(id){
+  var cv=cvById(id); if(!cv || !cv.estinzione){ cvEstinzForm(id); return; }
+  var html=cvEstinzHTML(cv);
+  var w=window.open('','_blank');
+  if(!w){ alert('Per stampare, consenti i popup per questo sito nel browser e riprova.'); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
+  try{ w.document.title='Rimborso provvigione estinzione anticipata - '+(cvNomeCliente(cv.cliente)||''); }catch(e){}
+  setTimeout(function(){ try{ w.print(); }catch(e){} }, 600);
+}
 function cvFatturaBtn(cv){
   var _puo=cvPuoFatturare();
   if(cv && cv.fattura){
@@ -36928,7 +37153,7 @@ function cvDelibPolManualeSwitch(){
    premio scritto in delibera l'azienda incassa il 38%. Totale =
    simulatore + 38% del premio. */
 var PAZ_PCT_POLIZZA=0.38;
-var PAZ_POLIZZE_DEUTSCHE={ net:1, unipol:1, kasko:1, nessuna:1 };
+var PAZ_POLIZZE_DEUTSCHE={ net:1, unipol:1, kasko:1, nessuna:1, compass_premium:1 };
 function cvProvvPolizzaAuto(tipo, premio){
   tipo=String(tipo||''); premio=parseFloat(premio); if(isNaN(premio)) premio=0;
   if(!tipo || PAZ_POLIZZE_DEUTSCHE[tipo] || premio<=0) return { pol:0, tipo:tipo, fuori:false };
@@ -36949,12 +37174,12 @@ function cvDelibProvvAggiorna(){
     var premio=parseFloat((document.getElementById('dl_polizze')||{}).value);
     var _fsel=(typeof cvDeliberaFinSelezionata==='function')?cvDeliberaFinSelezionata():'';
     var _isCmp=(cvFinNorm(cvFinRiconosci(_fsel)||_fsel)===cvFinNorm('Compass'));
-    var a=_isCmp?{ pol:0, tipo:tipo, fuori:false }:cvProvvPolizzaAuto(tipo, premio);
+    var a=cvProvvPolizzaAuto(tipo, premio);
     var tot=Math.round(((fin||0)+a.pol)*100)/100;
-    var nomi={zurich:'Zurich',fit2you:'Fit2You',altra:'altra polizza'};
+    var nomi={zurich:'Zurich',fit2you:'Fit2You',altra:'altra polizza',compass_premium:'Premium Europ Assistance'};
     var det=document.getElementById('dl_provvAziendaDett');
     if(det) det.innerHTML=
-      (_isCmp?'Compass (simulatore, polizze comprese): <b>':'Deutsche Bank (simulatore): <b>')+(fin!=null?('\u20ac '+fin):'non calcolata')+'</b>'
+      (_isCmp?'Compass (simulatore, polizze Compass comprese): <b>':'Deutsche Bank (simulatore): <b>')+(fin!=null?('\u20ac '+fin):'non calcolata')+'</b>'
       +(a.fuori?(' \u00b7 Polizza '+(nomi[tipo]||tipo)+' 38% di \u20ac '+(isNaN(premio)?0:premio)+': <b>\u20ac '+a.pol+'</b>'):'')
       +' \u00b7 Totale: <b>\u20ac '+tot+'</b>'
       +(fin==null?'<br>Manca la parte Deutsche: usa \u201cricalcola\u201d in Statistiche o scrivi qui il totale a mano.':'');
@@ -36987,6 +37212,10 @@ function cvDeliberaSalva(id){
      della provvigione in tutti e due i casi, quindi si pretende sempre. */
   if(!g('polizzaTipo')) mancanti.push('Tipo polizza');
   if(mancanti.length){ alert('Compila tutti i campi obbligatori:\n\n\u2022 '+mancanti.join('\n\u2022 ')); return; }
+  if(CV_POLIZZE_PREMIO_MANUALE[g('polizzaTipo')] && !(n('polizze')>0)){
+    alert('La polizza '+cvPolizzaNome(g('polizzaTipo'))+' non viene calcolata da nessun simulatore: inserisci il PREMIO nel campo Polizze \u20ac prima di confermare la delibera.');
+    return;
+  }
   /* ===== I CONTI DELLA DELIBERA DEVONO TORNARE COL CONTRATTO =====
      Il valore del veicolo in delibera puo' legittimamente essere piu' alto
      del prezzo di vendita: quando il cliente finanzia tutto, alla finanziaria
@@ -37109,9 +37338,10 @@ function cvDeliberaSalva(id){
      l'amministratore ha scritto un numero a mano, vale quello */
   var _pFin=(window._delibDaSimProvv!=null)?window._delibDaSimProvv:cvProvvAziendaFin(list[i].finDelibera);
   window._delibDaSimProvv=null;   /* usata una volta sola, per questa pratica */
-  var _pAuto=(cvFinNorm(cvFinRiconosci(_fin)||_fin)===cvFinNorm('Compass'))
-    ? { pol:0, tipo:'', fuori:false }      /* Compass: CPI, CVT, GAP e KASKO sono gia' nel suo calcolo */
-    : cvProvvPolizzaAuto(g('polizzaTipo'), n('polizze'));
+  /* Il 38% sul premio vale per le polizze ESTERNE con qualunque
+     finanziaria; quelle della finanziaria stessa sono gia' nel simulatore.
+     Decide la polizza, non chi finanzia. */
+  var _pAuto=cvProvvPolizzaAuto(g('polizzaTipo'), n('polizze'));
   var _pCalc=Math.round(((_pFin||0)+_pAuto.pol)*100)/100;
   var _pBox=document.getElementById('dl_provvAzienda');
   var _pTot=(_pBox && _pBox._manuale && n('provvAzienda')!=null && n('provvAzienda')>0) ? n('provvAzienda') : (_pCalc>0?_pCalc:null);
@@ -38133,7 +38363,7 @@ function cvVendCard(cv){
                 +'</div>'; }).join('')))
           +'</div>';
       })()
-      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+_demoC+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+cvEstinzBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
   var pag=(cv.pagamenti||[]).map(function(p,ri){ if(!cvNum(p.importo)) return '';
