@@ -36572,6 +36572,22 @@ function cvEstinzBtn(cv){
   }
   return '<button onclick="event.stopPropagation();cvEstinzForm(\''+cv.id+'\')" title="Il cliente ha estinto prima del previsto: prepara la lettera di richiesta rimborso provvigione" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">✉️ Estinzione anticipata</button>';
 }
+var CV_ESTINZ_FIN={
+  avvera:{nome:'Avvera S.p.A.',via:'Via Mirabello 2',cap:'42122',citta:'Reggio Emilia',piva:'IT02823390352',cf:'02279230359'},
+  compass:{nome:'Compass Banca S.p.A.',via:'Via Caldera 21',cap:'20153',citta:'Milano',piva:'10536040966',cf:'00864530159'},
+  deutsche:{nome:'Deutsche Bank S.p.A.',via:'Piazza del Calendario 3',cap:'20126',citta:'Milano',piva:'01340740156',cf:'01340740156'}
+};
+function cvEstinzFinKey(nome){
+  var n=String(nome||'').toLowerCase();
+  if(/avvera/.test(n)) return 'avvera';
+  if(/compass/.test(n)) return 'compass';
+  if(/deutsche|\bdb\b/.test(n)) return 'deutsche';
+  return '';
+}
+function cvEstinzFinTesto(key,conSede){
+  var f=CV_ESTINZ_FIN[key]; if(!f) return '';
+  return f.nome+(conSede?(' \u2014 '+f.via+', '+f.cap+' '+f.citta+' \u2014 P.IVA '+f.piva):'');
+}
 function cvEstinzForm(id){
   var cv=cvById(id); if(!cv) return;
   var e=cv.estinzione||{};
@@ -36585,7 +36601,14 @@ function cvEstinzForm(id){
     +'<div style="background:#9a3412;color:#fff;padding:14px 18px;font-weight:800;">✉️ Estinzione anticipata — richiesta rimborso provvigione</div>'
     +'<div style="padding:16px 18px;">'
     +'<div style="font-size:12.5px;color:#475569;line-height:1.5;">'+cvEsc(cvNomeCliente(cv.cliente))+' · '+cvEsc(((cv.autoSnapshot||{}).marca||'')+' '+((cv.autoSnapshot||{}).modello||''))+(d.finanziaria?(' · finanziamento '+cvEsc(d.finanziaria)):'')+(d.durata?(' · '+d.durata+' rate'):'')+'</div>'
-    +lab('Importo richiesto dalla finanziaria € *')+'<input id="est_importo" type="number" step="0.01" value="'+cvEsc(e.importo||'')+'" placeholder="es. 1824,79" style="'+inp+'font-weight:800;">'
+    +'<div style="display:flex;gap:8px;margin-top:12px;">'
+    +'<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px;border:2px solid '+(e.estinto===false?'#1a4fa0':'#e2e8f0')+';border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;"><input type="radio" name="est_stato" value="no" '+(e.estinto===false?'checked':'')+'> Ha chiesto il conteggio, non ha ancora estinto</label>'
+    +'<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px;border:2px solid '+(e.estinto!==false?'#9a3412':'#e2e8f0')+';border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;"><input type="radio" name="est_stato" value="si" '+(e.estinto!==false?'checked':'')+'> Finanziamento gi\u00e0 estinto</label>'
+    +'</div>'
+    +lab('Finanziaria *')+'<select id="est_fin" style="'+inp+'">'
+    +(function(){ var sel=e.fin||cvEstinzFinKey(d.finanziaria||cv.finanziaria); return '<option value="">\u2014 scegli \u2014</option>'+Object.keys(CV_ESTINZ_FIN).map(function(k){ var f=CV_ESTINZ_FIN[k]; return '<option value="'+k+'"'+(sel===k?' selected':'')+'>'+f.nome+' \u2014 '+f.via+', '+f.cap+' '+f.citta+'</option>'; }).join(''); })()
+    +'</select>'
+    +lab('Importo richiesto dalla finanziaria \u20ac *')+'<input id="est_importo" type="number" step="0.01" value="'+cvEsc(e.importo||'')+'" placeholder="es. 1824,79" style="'+inp+'font-weight:800;">'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data estinzione')+'<input id="est_data" type="date" value="'+cvEsc(e.dataEstinzione||'')+'" style="'+inp+'"></div>'
     +'<div style="flex:1;">'+lab('Rate pagate')+'<input id="est_rate" type="number" min="0" value="'+cvEsc(e.ratePagate||'')+'" placeholder="su '+CV_ESTINZ_RATE_MIN+' minime" style="'+inp+'"></div></div>'
     +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Data della lettera')+'<input id="est_dataLettera" type="date" value="'+cvEsc(e.dataLettera||oggi)+'" style="'+inp+'"></div>'
@@ -36602,8 +36625,10 @@ function cvEstinzSalva(id){
   var g=function(k){ var el=document.getElementById('est_'+k); return el?String(el.value).trim():''; };
   var imp=parseFloat(String(g('importo')).replace(',','.'));
   if(!(imp>0)){ alert('Inserisci l’importo richiesto dalla finanziaria.'); return; }
+  if(!g('fin')){ alert('Scegli la finanziaria.'); return; }
   var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
-  list[i].estinzione={ importo:Math.round(imp*100)/100, dataEstinzione:g('data'), ratePagate:g('rate'), dataLettera:g('dataLettera')||new Date().toISOString().slice(0,10),
+  var _st=document.querySelector('input[name="est_stato"]:checked');
+  list[i].estinzione={ fin:g('fin'), importo:Math.round(imp*100)/100, estinto:!(_st && _st.value==='no'), dataEstinzione:g('data'), ratePagate:g('rate'), dataLettera:g('dataLettera')||new Date().toISOString().slice(0,10),
     giorni:parseInt(g('giorni'),10)||15, riferimento:g('rif'), note:g('note'),
     da:((typeof _currentUserName!=='undefined'&&_currentUserName)||''), ts:Date.now() };
   list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){}
@@ -36625,7 +36650,9 @@ function cvEstinzHTML(cv){
   var ind=cl.business ? (cl.sedeLegale||'') : [((cl.via||'')+(cl.civico?(' '+cl.civico):'')).trim(), [(cl.cap||''),(cl.citta||''),(cl.prov?('('+cl.prov+')'):'')].filter(Boolean).join(' ')].filter(Boolean).join('<br>');
   var veic=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa||cv.nuovaTarga?(' targa '+(cv.nuovaTarga||a.targa)):'')+(a.telaio?(' — telaio '+a.telaio):'');
   var dContr=cv.contrattoTs?new Date(cv.contrattoTs).toLocaleDateString('it-IT'):'';
-  var fin=d.finanziaria||cv.finanziaria||'la finanziaria';
+  var finKey=e.fin||cvEstinzFinKey(d.finanziaria||cv.finanziaria);
+  var finObj=CV_ESTINZ_FIN[finKey];
+  var fin=finObj?finObj.nome:(d.finanziaria||cv.finanziaria||'la finanziaria');
   var scad=''; try{ var dl=new Date(e.dataLettera||Date.now()); dl.setDate(dl.getDate()+(e.giorni||15)); scad=dl.toLocaleDateString('it-IT'); }catch(x){}
   var logo=(typeof eaMailLogo==='function')?eaMailLogo():'';
   var testa=(/^https?:\/\//i.test(logo))
@@ -36645,20 +36672,25 @@ function cvEstinzHTML(cv){
     +'<div class="hd">'+testa+'<div class="az"><b>Europa Auto S.r.l.</b><br>Via Nigra 4 — 20037 Paderno Dugnano (MI)<br>P.IVA 06440210968 · Tel. '+E(eaTel())+'<br>vendita@europaautosrl.it · www.europaautosrl.it</div></div>'
     +'<div style="text-align:right;margin-bottom:10px;">Paderno Dugnano, '+E(it(e.dataLettera)||new Date().toLocaleDateString('it-IT'))+'</div>'
     +'<div class="dest">Spett.le / Gentile<br><b>'+E(nome)+'</b>'+(ind?('<br>'+ind):'')+(cl.cf?('<br>C.F. '+E(cl.cf)):'')+(cl.business&&cl.piva?('<br>P.IVA '+E(cl.piva)):'')+'</div>'
-    +'<p><b>Oggetto: richiesta di rimborso provvigione per estinzione anticipata del finanziamento</b><br>'
-    +'Veicolo '+E(veic)+(dContr?(' — contratto del '+E(dContr)):'')+'</p>'
+    +'<p><b>Oggetto: estinzione anticipata del finanziamento \u2014 rimborso provvigione dovuto ai sensi del contratto</b><br>'
+    +'Veicolo '+E(veic)+(dContr?(' — contratto del '+E(dContr)):'')
+    +(finObj?('<br>Finanziamento: <b>'+E(finObj.nome)+'</b> — '+E(finObj.via)+', '+E(finObj.cap)+' '+E(finObj.citta)+' — P.IVA '+E(finObj.piva)):'')+'</p>'
     +'<p>Gentile Cliente,</p>'
-    +'<p>con la presente La informiamo che '+E(fin)+' ci ha comunicato l’<b>estinzione anticipata</b> del finanziamento collegato all’acquisto del veicolo in oggetto'
-    +(e.dataEstinzione?(', avvenuta in data <b>'+E(it(e.dataEstinzione))+'</b>'):'')
+    +'<p>'+E(fin)+' ci ha comunicato la Sua '+(e.estinto===false?'richiesta di estinzione anticipata':'<b>estinzione anticipata</b>')+' del finanziamento collegato all’acquisto del veicolo in oggetto'
+    +(e.estinto!==false && e.dataEstinzione?(', avvenuta in data <b>'+E(it(e.dataEstinzione))+'</b>'):'')
     +(e.ratePagate?(', dopo il pagamento di <b>'+E(e.ratePagate)+'</b> rate'):'')
-    +(d.durata?(' su un piano di '+E(d.durata)+''):'')+'.</p>'
-    +'<p>Come previsto dalle condizioni contrattuali sottoscritte al momento dell’acquisto, l’estinzione del finanziamento prima della <b>'+CV_ESTINZ_RATE_MIN+'ª rata</b> comporta lo storno, da parte della finanziaria, della provvigione già corrisposta alla concessionaria, che viene a noi addebitata'
-    +(e.riferimento?(' (rif. '+E(e.riferimento)+')'):'')+'. Tale importo è a carico del cliente.</p>'
-    +'<div class="box">Importo richiesto a rimborso: <span class="imp">€ '+E(cvEuro(e.importo))+'</span></div>'
-    +'<p>La preghiamo pertanto di provvedere al versamento dell’importo indicato <b>entro il '+E(scad)+'</b> ('+E(e.giorni||15)+' giorni dalla presente) tramite bonifico bancario intestato a Europa Auto S.r.l.:</p>'
+    +(d.durata?(' su un piano di '+E(d.durata)):'')+'.</p>'
+    +'<p>Le ricordiamo che il contratto da Lei sottoscritto prevede il mantenimento del finanziamento <b>fino alla '+CV_ESTINZ_RATE_MIN+'ª rata</b>. L’estinzione prima di tale termine costituisce <b>inadempimento contrattuale</b> e comporta a Suo carico il rimborso della provvigione stornata dalla finanziaria'
+    +(e.riferimento?(' (rif. '+E(e.riferimento)+')'):'')+', pari a:</p>'
+    +'<div class="box">Importo dovuto: <span class="imp">€ '+E(cvEuro(e.importo))+'</span></div>'
+    +(e.estinto===false
+      ? ('<p>Il finanziamento risulta a oggi <b>ancora attivo</b>. <b>Può quindi evitare l’addebito</b> mantenendo il piano fino al pagamento della '+CV_ESTINZ_RATE_MIN+'ª rata e procedendo all’estinzione solo dopo tale data. '
+        +'Se intende comunque estinguere ora, l’importo sopra indicato sarà dovuto per intero e dovrà essere versato <b>entro '+E(e.giorni||15)+' giorni dalla data di estinzione</b> tramite bonifico intestato a Europa Auto S.r.l.:</p>')
+      : ('<p>Il contratto risulta pertanto <b>inadempiuto</b> e l’importo sopra indicato è <b>dovuto per intero</b>. La invitiamo a versarlo <b>entro il '+E(scad)+'</b> ('+E(e.giorni||15)+' giorni dalla presente) tramite bonifico bancario intestato a Europa Auto S.r.l.:</p>'))
     +'<div class="box" style="font-family:\'Courier New\',monospace;font-size:13px;">IBAN IT88E0344033990000001004900<br>Causale: rimborso provvigione estinzione anticipata — '+E(nome)+(cv.nuovaTarga||a.targa?(' — '+E(cv.nuovaTarga||a.targa)):'')+'</div>'
+    +'<p>In mancanza di pagamento entro il termine indicato saremo costretti, nostro malgrado, ad affidare la pratica al nostro legale per il recupero del credito, con aggravio di spese e interessi a Suo carico. A sostegno della richiesta produrremo il contratto da Lei sottoscritto e la documentazione di '+E(fin)+' che attesta l’estinzione e lo storno della provvigione.</p>'
     +(e.note?('<p>'+E(e.note).replace(/\n/g,'<br>')+'</p>'):'')
-    +'<p>Restiamo a disposizione per ogni chiarimento ai recapiti indicati e La ringraziamo per la collaborazione.</p>'
+    +'<p>Restiamo a disposizione per ogni chiarimento ai recapiti indicati.</p>'
     +'<p>Cordiali saluti,</p>'
     +'<div class="firma"><div></div><div><b>Europa Auto S.r.l.</b><div class="l">Timbro e firma</div></div></div>'
     +'<div class="ft">Europa Auto S.r.l. · Via Nigra 4, 20037 Paderno Dugnano (MI) · P.IVA 06440210968 · Tel. '+E(eaTel())+'</div>'
