@@ -36648,20 +36648,27 @@ function cvEstinzMailTesto(cv){
   var nome=cvNomeCliente(cl)||'Cliente';
   var finKey=e.fin||cvEstinzFinKey(d.finanziaria||cv.finanziaria);
   var fin=CV_ESTINZ_FIN[finKey]?CV_ESTINZ_FIN[finKey].nome:(d.finanziaria||cv.finanziaria||'la finanziaria');
-  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+((cv.nuovaTarga||a.targa)?(' targa '+(cv.nuovaTarga||a.targa)):'');
+  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+((cv.nuovaTarga||a.targa)?(' (targa '+(cv.nuovaTarga||a.targa)+')'):'');
+  var dContr=cv.contrattoTs?new Date(cv.contrattoTs).toLocaleDateString('it-IT'):'';
   var scad=''; try{ var dl=new Date(e.dataLettera||Date.now()); dl.setDate(dl.getDate()+(e.giorni||15)); scad=dl.toLocaleDateString('it-IT'); }catch(x){}
   var imp=cvEuro(e.importo);
+  var N=CV_ESTINZ_RATE_MIN;
   var t='Gentile '+nome+',\n\n'
-    +'in allegato trova la nostra comunicazione relativa all\u2019estinzione anticipata del finanziamento '+fin+' collegato all\u2019acquisto del veicolo '+veic+'.\n\n';
+    +'con riferimento al contratto di acquisto del veicolo '+veic+(dContr?(' sottoscritto in data '+dContr):'')+', Le trasmettiamo in allegato la nostra comunicazione formale relativa al finanziamento '+fin+' collegato all’acquisto.\n\n'
+    +'Le ricordiamo che il contratto prevede il mantenimento del finanziamento fino al pagamento della '+N+'ª rata. In caso di estinzione anticipata, '+fin+' storna a Europa Auto la provvigione riconosciuta sulla pratica e tale importo, pari a '+imp+', resta a carico del Cliente, come previsto dalle condizioni da Lei accettate.\n\n';
   if(e.estinto===false){
-    t+='Come indicato nella lettera, il contratto prevede il mantenimento del finanziamento fino alla '+CV_ESTINZ_RATE_MIN+'\u00aa rata. '
-      +'Poich\u00e9 il finanziamento risulta ancora attivo, Le ricordiamo che PU\u00d2 ANCORA EVITARE LA PENALE di '+imp+': \u00e8 sufficiente mantenere il piano fino al pagamento della '+CV_ESTINZ_RATE_MIN+'\u00aa rata e procedere all\u2019estinzione solo dopo tale data.\n\n'
-      +'Se invece decidesse di estinguere prima, l\u2019importo di '+imp+' sar\u00e0 dovuto per intero e dovr\u00e0 essere versato entro '+(e.giorni||15)+' giorni dalla data di estinzione, con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono indicati nella lettera).\n\n';
+    t+='Dalle informazioni in nostro possesso il finanziamento risulta ancora attivo'+(e.ratePagate?(' ('+e.ratePagate+' rate pagate su '+N+' minime)'):'')+'. '
+      +'Desideriamo quindi segnalarLe che PUÒ ANCORA EVITARE INTERAMENTE QUESTO ADDEBITO: è sufficiente proseguire con il piano di rimborso fino al pagamento della '+N+'ª rata e richiedere l’estinzione solo successivamente. In tal caso nulla Le sarà richiesto da parte nostra.\n\n'
+      +'Qualora decidesse invece di estinguere il finanziamento prima di tale termine, l’importo di '+imp+' diverrà dovuto per intero e dovrà essere versato entro '+(e.giorni||15)+' giorni dalla data di estinzione, con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono riportati nella lettera allegata).\n\n'
+      +'La invitiamo pertanto a valutare con attenzione la scelta e, in caso di dubbi, a contattarci prima di procedere: saremo lieti di chiarire ogni aspetto.\n\n';
   } else {
-    t+='Il finanziamento risulta estinto prima della '+CV_ESTINZ_RATE_MIN+'\u00aa rata prevista dal contratto: l\u2019importo di '+imp+' \u00e8 pertanto dovuto per intero e va versato entro il '+scad+' con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono indicati nella lettera).\n\n'
-      +'Trascorso tale termine senza pagamento saremo costretti ad affidare la pratica al nostro legale, con aggravio di spese a Suo carico.\n\n';
+    t+='Il finanziamento risulta estinto'+(e.dataEstinzione?(' in data '+String(e.dataEstinzione).split('-').reverse().join('/')):'')+(e.ratePagate?(', dopo il pagamento di '+e.ratePagate+' rate'):'')+', quindi prima del termine contrattuale della '+N+'ª rata. '
+      +'L’importo di '+imp+' è pertanto dovuto per intero.\n\n'
+      +'La invitiamo a provvedere al versamento ENTRO IL '+scad.toUpperCase()+' con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono riportati nella lettera allegata), inviandoci cortesemente copia della disposizione a '+CV_ESTINZ_CC+'.\n\n'
+      +'In assenza di pagamento entro tale data saremo costretti, nostro malgrado, ad affidare la pratica al nostro legale per il recupero del credito, con aggravio di spese e interessi a Suo carico. Confidiamo di non dover arrivare a tanto e restiamo disponibili a concordare, se necessario, le modalità di pagamento.\n\n';
   }
-  t+='Restiamo a disposizione per ogni chiarimento al '+eaTel()+' o scrivendo a '+CV_ESTINZ_CC+'.\n\nCordiali saluti,\nEuropa Auto S.r.l.';
+  t+='Per qualsiasi chiarimento può scriverci a '+CV_ESTINZ_CC+' oppure chiamare il '+eaTel()+'.\n\n'
+    +'Cordiali saluti,\nEuropa Auto S.r.l.\nAmministrazione';
   return t;
 }
 function cvEstinzMailStato(id, estinto){
@@ -36716,6 +36723,17 @@ function cvEstinzMailInvia(id){
       filename:'estinzione-anticipata-'+tg+'-'+Date.now()+'.pdf', cartella:'estinzioni' });
   })
   .then(function(r){
+    /* Copia interna SEMPRE ad amministrazione: il cc viene passato alla Edge Function,
+       ma se quella non lo inoltra la copia arriva comunque da qui (con il link al PDF). */
+    try{
+      var _nomeC=cvNomeCliente(cv.cliente)||'';
+      eaInviaMessaggio({ to:CV_ESTINZ_CC, subject:'[Copia interna] '+ogg+' \u2014 inviata a '+to,
+        html:eaMailWrap('<p><b>Lettera di estinzione anticipata inviata</b> a <b>'+cvEsc(to)+'</b> ('+cvEsc(_nomeC)+')'
+          +(cv.estinzione&&cv.estinzione.estinto===false?' \u2014 versione <b>non ancora estinto</b>':' \u2014 versione <b>gi\u00e0 estinto</b>')
+          +(cv.estinzione?(' \u2014 importo <b>'+cvEsc(cvEuro(cv.estinzione.importo))+'</b>'):'')+'.</p>'
+          +(r&&r.link?('<p><a href="'+r.link+'">Apri il PDF della lettera</a></p>'):'')
+          +'<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;"><div style="font-size:12.5px;color:#334155;">'+htmlTesto+'</div>') });
+    }catch(_e){}
     var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; });
     if(i>=0){ list[i].estinzione=list[i].estinzione||{}; list[i].estinzione.mailTs=Date.now(); list[i].estinzione.mailA=to; list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){} }
     try{ cvLogRegistra(null, cv, 'estinzione_mail'); }catch(e){}
