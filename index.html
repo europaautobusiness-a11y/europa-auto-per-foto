@@ -5277,6 +5277,7 @@ function eaInviaPdfMail(opts){
       html: eaMailWrap((opts.testo||'') + bottone)
     };
     if(b64) msg.attachments = [ Object.assign({ filename: fn }, b64) ];
+    if(opts.cc) msg.cc = opts.cc;
     return eaInviaMessaggio(msg).then(function(r){
       if(r && r.error) throw new Error(String(r.error));
       return { ok:true, link:link, allegato:!!b64, risposta:r };
@@ -36568,6 +36569,7 @@ function cvEstinzBtn(cv){
   var e=cv.estinzione;
   if(e && e.importo>0){
     return '<button onclick="event.stopPropagation();cvEstinzStampa(\''+cv.id+'\')" title="Lettera di richiesta rimborso provvigione per estinzione anticipata" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #b45309;background:#fff7ed;color:#9a3412;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">✉️ Estinzione € '+cvEuro(e.importo)+'</button>'
+      +'<button onclick="event.stopPropagation();cvEstinzMail(\''+cv.id+'\')" title="Invia la lettera via mail al cliente (copia ad amministrazione)" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap;">\ud83d\udce7 Invia'+(e.mailTs?(' \u2713'):'')+'</button>'
       +'<a onclick="event.stopPropagation();cvEstinzForm(\''+cv.id+'\')" style="font-size:11px;color:#9a3412;cursor:pointer;text-decoration:underline;align-self:center;">modifica</a>';
   }
   return '<button onclick="event.stopPropagation();cvEstinzForm(\''+cv.id+'\')" title="Il cliente ha estinto prima del previsto: prepara la lettera di richiesta rimborso provvigione" style="flex:0 0 auto;padding:8px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#475569;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">✉️ Estinzione anticipata</button>';
@@ -36616,26 +36618,101 @@ function cvEstinzForm(id){
     +lab('Riferimento comunicazione della finanziaria (facoltativo)')+'<input id="est_rif" value="'+cvEsc(e.riferimento||'')+'" placeholder="es. estratto conto provvigioni del 02/07/2026, pratica n. 1266863" style="'+inp+'">'
     +lab('Note aggiuntive nella lettera (facoltativo)')+'<textarea id="est_note" rows="2" style="'+inp+'">'+cvEsc(e.note||'')+'</textarea>'
     +'<button onclick="cvEstinzSalva(\''+cv.id+'\')" style="margin-top:18px;width:100%;padding:12px;border-radius:8px;border:none;background:#9a3412;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">🖨 Salva e stampa la lettera</button>'
+    +'<button onclick="cvEstinzSalva(\''+cv.id+'\',true)" style="margin-top:8px;width:100%;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udce7 Salva e invia via mail al cliente</button>'
+    +(e.mailTs?('<div style="font-size:11px;color:#166534;margin-top:6px;text-align:center;">Mail inviata il '+new Date(e.mailTs).toLocaleString('it-IT')+(e.mailA?(' a '+cvEsc(e.mailA)):'')+'</div>'):'')
     +(e.importo>0?'<button onclick="cvEstinzElimina(\''+cv.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-weight:700;cursor:pointer;">Togli l’estinzione da questa pratica</button>':'')
     +'<button onclick="cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
     +'</div></div>';
   m.innerHTML=h; m.style.display='block';
 }
-function cvEstinzSalva(id){
+function cvEstinzSalva(id, poiMail){
   var g=function(k){ var el=document.getElementById('est_'+k); return el?String(el.value).trim():''; };
   var imp=parseFloat(String(g('importo')).replace(',','.'));
   if(!(imp>0)){ alert('Inserisci l’importo richiesto dalla finanziaria.'); return; }
   if(!g('fin')){ alert('Scegli la finanziaria.'); return; }
   var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return;
   var _st=document.querySelector('input[name="est_stato"]:checked');
-  list[i].estinzione={ fin:g('fin'), importo:Math.round(imp*100)/100, estinto:!(_st && _st.value==='no'), dataEstinzione:g('data'), ratePagate:g('rate'), dataLettera:g('dataLettera')||new Date().toISOString().slice(0,10),
+  var _old=list[i].estinzione||{};
+  list[i].estinzione={ mailTs:_old.mailTs, mailA:_old.mailA, fin:g('fin'), importo:Math.round(imp*100)/100, estinto:!(_st && _st.value==='no'), dataEstinzione:g('data'), ratePagate:g('rate'), dataLettera:g('dataLettera')||new Date().toISOString().slice(0,10),
     giorni:parseInt(g('giorni'),10)||15, riferimento:g('rif'), note:g('note'),
     da:((typeof _currentUserName!=='undefined'&&_currentUserName)||''), ts:Date.now() };
   list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){}
   try{ cvLogRegistra(null, list[i], 'estinzione'); }catch(e){}
   cvModChiudi();
   try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
-  cvEstinzStampa(id);
+  if(poiMail) cvEstinzMail(id); else cvEstinzStampa(id);
+}
+var CV_ESTINZ_CC='amministrazione@europaautosrl.it';
+function cvEstinzMailTesto(cv){
+  var e=cv.estinzione||{}, cl=cv.cliente||{}, a=cv.autoSnapshot||{}, d=cv.finDelibera||{};
+  var nome=cvNomeCliente(cl)||'Cliente';
+  var finKey=e.fin||cvEstinzFinKey(d.finanziaria||cv.finanziaria);
+  var fin=CV_ESTINZ_FIN[finKey]?CV_ESTINZ_FIN[finKey].nome:(d.finanziaria||cv.finanziaria||'la finanziaria');
+  var veic=((a.marca||'')+' '+(a.modello||'')).trim()+((cv.nuovaTarga||a.targa)?(' targa '+(cv.nuovaTarga||a.targa)):'');
+  var scad=''; try{ var dl=new Date(e.dataLettera||Date.now()); dl.setDate(dl.getDate()+(e.giorni||15)); scad=dl.toLocaleDateString('it-IT'); }catch(x){}
+  var imp='\u20ac '+cvEuro(e.importo);
+  var t='Gentile '+nome+',\n\n'
+    +'in allegato trova la nostra comunicazione relativa all\u2019estinzione anticipata del finanziamento '+fin+' collegato all\u2019acquisto del veicolo '+veic+'.\n\n';
+  if(e.estinto===false){
+    t+='Come indicato nella lettera, il contratto prevede il mantenimento del finanziamento fino alla '+CV_ESTINZ_RATE_MIN+'\u00aa rata. '
+      +'Poich\u00e9 il finanziamento risulta ancora attivo, Le ricordiamo che PU\u00d2 ANCORA EVITARE LA PENALE di '+imp+': \u00e8 sufficiente mantenere il piano fino al pagamento della '+CV_ESTINZ_RATE_MIN+'\u00aa rata e procedere all\u2019estinzione solo dopo tale data.\n\n'
+      +'Se invece decidesse di estinguere prima, l\u2019importo di '+imp+' sar\u00e0 dovuto per intero e dovr\u00e0 essere versato entro '+(e.giorni||15)+' giorni dalla data di estinzione, con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono indicati nella lettera).\n\n';
+  } else {
+    t+='Il finanziamento risulta estinto prima della '+CV_ESTINZ_RATE_MIN+'\u00aa rata prevista dal contratto: l\u2019importo di '+imp+' \u00e8 pertanto dovuto per intero e va versato entro il '+scad+' con bonifico intestato a Europa Auto S.r.l. (IBAN e causale sono indicati nella lettera).\n\n'
+      +'Trascorso tale termine senza pagamento saremo costretti ad affidare la pratica al nostro legale, con aggravio di spese a Suo carico.\n\n';
+  }
+  t+='Restiamo a disposizione per ogni chiarimento al '+eaTel()+' o scrivendo a vendita@europaautosrl.it.\n\nCordiali saluti,\nEuropa Auto S.r.l.';
+  return t;
+}
+function cvEstinzMail(id){
+  var cv=cvById(id); if(!cv) return;
+  if(!cv.estinzione || !(cv.estinzione.importo>0)){ cvEstinzForm(id); return; }
+  var cl=cv.cliente||{};
+  var mail=cl.email||'';
+  try{ if(!mail && typeof recuperaEmailCliente==='function') mail=recuperaEmailCliente(cvNomeCliente(cl))||''; }catch(e){}
+  var m=(typeof cvModModal==='function')?cvModModal():document.getElementById('cv-mod-modal');
+  if(!m) return;
+  var inp='width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:12px 0 4px;text-transform:uppercase;">'+t+'</label>'; };
+  var ogg='Estinzione anticipata finanziamento \u2014 '+((cv.autoSnapshot||{}).marca||'')+' '+((cv.autoSnapshot||{}).modello||'')+((cv.nuovaTarga||(cv.autoSnapshot||{}).targa)?(' '+(cv.nuovaTarga||(cv.autoSnapshot||{}).targa)):'');
+  m.innerHTML='<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-weight:800;">\ud83d\udce7 Invia la lettera di estinzione anticipata</div>'
+    +'<div style="padding:16px 18px;">'
+    +lab('Email del cliente *')+'<input id="estm_to" type="email" value="'+cvEsc(mail)+'" placeholder="cliente@esempio.it" style="'+inp+'">'
+    +'<div style="font-size:11.5px;color:#64748b;margin-top:4px;">In copia: '+CV_ESTINZ_CC+' \u00b7 mittente no-reply \u00b7 la lettera PDF viene allegata.</div>'
+    +lab('Oggetto')+'<input id="estm_ogg" value="'+cvEsc(ogg)+'" style="'+inp+'">'
+    +lab('Testo della mail (modificabile)')+'<textarea id="estm_testo" rows="14" style="'+inp+'line-height:1.5;">'+cvEsc(cvEstinzMailTesto(cv))+'</textarea>'
+    +'<button id="estm_btn" onclick="cvEstinzMailInvia(\''+cv.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\ud83d\udce7 Invia ora</button>'
+    +'<button onclick="cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
+    +'</div></div>';
+  m.style.display='block';
+}
+function cvEstinzMailInvia(id){
+  var cv=cvById(id); if(!cv) return;
+  var to=String((document.getElementById('estm_to')||{}).value||'').trim();
+  if(to.indexOf('@')<0){ alert('Inserisci l\u2019email del cliente.'); return; }
+  var ogg=String((document.getElementById('estm_ogg')||{}).value||'').trim()||'Estinzione anticipata finanziamento';
+  var testo=String((document.getElementById('estm_testo')||{}).value||'');
+  var btn=document.getElementById('estm_btn'); if(btn){ btn.disabled=true; btn.textContent='\u23f3 Genero il PDF e invio\u2026'; }
+  var toast=function(msg,ok){ try{ if(typeof tcToastNew==='function') tcToastNew(msg,ok!==false); }catch(e){} };
+  var tg=String(cv.nuovaTarga||(cv.autoSnapshot||{}).targa||'auto').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  var htmlTesto=cvEsc(testo).replace(/\n/g,'<br>');
+  Promise.resolve().then(function(){ return eaHtmlToPdf(cvEstinzHTML(cv)); })
+  .then(function(blob){
+    return eaInviaPdfMail({ to:to, cc:CV_ESTINZ_CC, subject:ogg, testo:htmlTesto, blob:blob,
+      filename:'estinzione-anticipata-'+tg+'-'+Date.now()+'.pdf', cartella:'estinzioni' });
+  })
+  .then(function(r){
+    var list=cvLoad(); var i=list.findIndex(function(x){ return x.id===id; });
+    if(i>=0){ list[i].estinzione=list[i].estinzione||{}; list[i].estinzione.mailTs=Date.now(); list[i].estinzione.mailA=to; list[i].updatedAt=Date.now(); cvSave(list); try{ supaUpsert('preventivi', list[i]); }catch(e){} }
+    try{ cvLogRegistra(null, cv, 'estinzione_mail'); }catch(e){}
+    cvModChiudi(); try{ if(typeof cvVendRender==='function') cvVendRender(); }catch(e){}
+    toast('\u2705 Mail inviata a '+to+' (copia ad amministrazione)'+(r&&r.allegato?'':' \u2014 PDF come link'),true);
+  })
+  .catch(function(err){
+    if(btn){ btn.disabled=false; btn.textContent='\ud83d\udce7 Invia ora'; }
+    alert('Invio non riuscito: '+(err&&err.message?err.message:err));
+  });
 }
 function cvEstinzElimina(id){
   if(!confirm('Togliere la richiesta di rimborso da questa pratica?')) return;
