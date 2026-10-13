@@ -19618,16 +19618,76 @@ function pvUpd(i,k,v){ if(_pvRighe[i]) _pvRighe[i][k]=v; pvCalc(); }
 function pvDel(i){ _pvRighe.splice(i,1); pvRenderRighe(); pvCalc(); }
 function pvAdd(){ _pvRighe.push({cr:'',descr:'',sr:'',la:'',ve:'',me:'',ric:''}); pvRenderRighe(); pvCalc(); }
 
-function sinPreventivo(id){
+/* ===== LE VERSIONI DEL PREVENTIVO =====
+   Un preventivo confermato puo' dover essere rifatto (il riparatore non
+   lo accetta, la compagnia chiede altro). Ogni volta che un preventivo gia'
+   confermato viene modificato, quello vecchio finisce in preventivoVersioni
+   e non si perde: si riapre, si stampa, si confronta e, se serve, si
+   riprende come base. Le bozze non fanno versione: solo i confermati. */
+function pvArchiviaSeServe(rec, nuovo){
+  try{
+    if(!rec || !rec.preventivoConfermato || !rec.preventivo) return false;
+    if(JSON.stringify(rec.preventivo)===JSON.stringify(nuovo)) return false;
+    var v=rec.preventivoVersioni||[];
+    v.push({ n:v.length+1, ts:Date.now(), confermatoTs:rec.preventivoConfermatoTs||null,
+             da:((typeof _currentUserName!=='undefined'&&_currentUserName)||''),
+             totale:rec.preventivoTotale||0, imponibile:rec.preventivoImponibile||0,
+             preventivo:JSON.parse(JSON.stringify(rec.preventivo)) });
+    rec.preventivoVersioni=v;
+    return true;
+  }catch(e){ return false; }
+}
+var _pvVersioneVista=null;
+function pvVersioniBarra(s){
+  var v=s.preventivoVersioni||[];
+  if(!v.length && !s.preventivoConfermato) return '';
+  var it=function(ts){ try{ return new Date(ts).toLocaleDateString('it-IT'); }catch(e){ return ''; } };
+  var h='<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;">'
+    +'<div style="font-weight:800;color:#92400e;margin-bottom:5px;">📚 Versioni del preventivo</div>';
+  v.forEach(function(x,i){
+    var attiva=(_pvVersioneVista===i);
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid #fde68a;'+(attiva?'font-weight:800;':'')+'">'
+      +'<span style="flex:1;">v'+x.n+' — '+(x.confermatoTs?('confermata il '+it(x.confermatoTs)):('sostituita il '+it(x.ts)))
+      +' · imponibile € '+pvEu(x.imponibile||0)+' · totale € '+pvEu(x.totale||0)
+      +' · manodopera € '+sinEsc(((x.preventivo||{}).params||{}).orario||'')+'/h, materiale € '+sinEsc(((x.preventivo||{}).params||{}).materiale||'')+'/h</span>'
+      +(attiva?'<span style="color:#92400e;">stai guardando questa</span>'
+              :'<button onclick="sinPreventivo(\''+s.id+'\','+i+')" style="padding:4px 9px;border-radius:6px;border:1px solid #d97706;background:#fff;color:#92400e;font-family:inherit;font-weight:700;font-size:11px;cursor:pointer;">Apri</button>')
+      +'</div>';
+  });
+  h+='<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid #fde68a;'+(_pvVersioneVista==null?'font-weight:800;':'')+'">'
+    +'<span style="flex:1;">v'+(v.length+1)+' — attuale'+(s.preventivoConfermato?' (confermata)':' (bozza)')+'</span>'
+    +(_pvVersioneVista==null?'':'<button onclick="sinPreventivo(\''+s.id+'\')" style="padding:4px 9px;border-radius:6px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:700;font-size:11px;cursor:pointer;">Torna all\u2019attuale</button>')
+    +'</div>';
+  if(s.preventivoConfermato && _pvVersioneVista==null) h+='<div style="color:#92400e;margin-top:5px;">Questo preventivo è confermato: se lo modifichi e salvi, la versione confermata resta qui in elenco.</div>';
+  return h+'</div>';
+}
+function pvRipristinaVersione(id, i){
+  var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  var v=(list[idx].preventivoVersioni||[])[i]; if(!v) return;
+  if(!confirm('Riprendo la v'+v.n+' come nuova bozza da modificare?\n\nLa versione attuale'+(list[idx].preventivoConfermato?' (confermata)':'')+' resta nello storico.')) return;
+  var nuovo=JSON.parse(JSON.stringify(v.preventivo));
+  pvArchiviaSeServe(list[idx], nuovo);
+  list[idx].preventivo=nuovo; list[idx].preventivoConfermato=false;
+  list[idx].preventivoTotale=v.totale||0; list[idx].preventivoImponibile=v.imponibile||0;
+  list[idx].updatedAt=Date.now();
+  sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  if(typeof tcToastNew==='function') tcToastNew('↩ v'+v.n+' ripresa come bozza',true);
+  sinPreventivo(id);
+}
+function sinPreventivo(id, versione){
   if(typeof sinVedePreventivo==='function' && !sinVedePreventivo()){ return; }
   var s=sinById(id); if(!s) return; _pvId=id;
-  var pv=s.preventivo||{}; var p=pv.params||{};
+  _pvVersioneVista=(versione==null?null:versione);
+  var _ver=(_pvVersioneVista!=null)?((s.preventivoVersioni||[])[_pvVersioneVista]||null):null;
+  if(_pvVersioneVista!=null && !_ver){ _pvVersioneVista=null; }
+  var pv=_ver?(_ver.preventivo||{}):(s.preventivo||{}); var p=pv.params||{};
   _pvRighe=(pv.righe&&pv.righe.length)?pv.righe.map(function(r){return {cr:r.cr||'',descr:r.descr||'',sr:r.sr||'',la:r.la||'',ve:r.ve||'',me:r.me||'',ric:r.ric||''};}):[{cr:'',descr:'',sr:'',la:'',ve:'',me:'',ric:''}];
   var o=new Date(); var dataIt=p.data||(String(o.getDate()).padStart(2,'0')+'/'+String(o.getMonth()+1).padStart(2,'0')+'/'+o.getFullYear());
   function fld(lab,fid,val,type){ return '<div style="margin-bottom:8px;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;text-transform:uppercase;">'+lab+'</label><input id="'+fid+'" type="'+(type||'text')+'" value="'+sinEsc(val==null?'':val)+'" oninput="pvCalc()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'; }
   var m=document.getElementById('sin-modal');
   var html='<div style="max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3);">';
-  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div style="font-weight:800;font-size:17px;color:#1a4fa0;">🧾 Preventivo di riparazione</div><button onclick="sinChiudi()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#64748b;line-height:1;">×</button></div>';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div style="font-weight:800;font-size:17px;color:#1a4fa0;">🧾 Preventivo di riparazione'+(_ver?(' <span style="font-size:13px;color:#92400e;">— versione v'+_ver.n+' (sola lettura)</span>'):'')+'</div><button onclick="sinChiudi()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#64748b;line-height:1;">×</button></div>';
+  html+=pvVersioniBarra(s);
   html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;">';
   html+=fld('Cliente','pv_cliente', pv.cliente!=null?pv.cliente:(s.nome||''));
   html+=fld('Indirizzo','pv_indirizzo', pv.indirizzo!=null?pv.indirizzo:(s.residenza||''));
@@ -19667,6 +19727,14 @@ function sinPreventivo(id){
   html+='<div id="pv-righe"></div>';
   html+='<button onclick="pvAdd()" style="width:100%;padding:10px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:12px;">+ Aggiungi lavorazione</button>';
   html+='<div id="pv-totali" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;"></div>';
+  if(_ver){
+    html+='<div style="display:flex;gap:8px;">';
+    html+='<button onclick="pvStampa()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">🖨️ Stampa / PDF v'+_ver.n+'</button>';
+    html+='<button onclick="pvRipristinaVersione(\''+s.id+'\','+_pvVersioneVista+')" style="flex:1;padding:12px;border-radius:8px;border:1px solid #d97706;background:#fffbeb;color:#92400e;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">↩ Riprendi v'+_ver.n+' come bozza</button>';
+    html+='<button onclick="sinPreventivo(\''+s.id+'\')" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">Torna all\u2019attuale</button>';
+    html+='</div>';
+    html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:#92400e;">Versione archiviata: si pu\u00f2 guardare e stampare, non modificare.</div>';
+  } else {
   html+='<div style="display:flex;gap:8px;">';
   html+='<button onclick="pvSalva()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">💾 Salva bozza</button>';
   html+='<button onclick="pvStampa()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #16a34a;background:#f0fdf4;color:#15803d;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">🖨️ Stampa / PDF</button>';
@@ -19674,10 +19742,12 @@ function sinPreventivo(id){
   html+='</div>';
   html+='<button onclick="pvConferma()" style="margin-top:8px;width:100%;padding:13px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">✅ Conferma preventivo (rendilo scaricabile)</button>';
   html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:'+(s.preventivoConfermato?'#16a34a':'#d97706')+';">'+(s.preventivoConfermato?'✅ Preventivo confermato — scaricabile dalla scheda':'⏳ Bozza — confermalo per poterlo scaricare')+'</div>';
+  }
   html+='</div>';
   m.innerHTML=html; m.style.display='block';
-  pvConvenzione(p.orario==null && p.materiale==null);
+  pvConvenzione(!_ver && p.orario==null && p.materiale==null);
   pvRenderRighe(); pvCalc();
+  if(_ver){ try{ m.querySelectorAll('input,select,textarea').forEach(function(el){ el.disabled=true; }); m.querySelectorAll('#pv-righe button').forEach(function(b){ b.disabled=true; b.style.opacity='.4'; }); var ab=m.querySelector('button[onclick="pvAdd()"]'); if(ab) ab.style.display='none'; }catch(e){} }
 }
 
 /* ===== CONVENZIONI DELLE COMPAGNIE =====
@@ -19839,15 +19909,22 @@ function pvCollect(){
 }
 function pvSalva(){
   if(!_pvId) return; var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===_pvId;}); if(idx<0) return;
-  list[idx].preventivo=pvCollect(); list[idx].preventivoConfermato=false;
+  if(_pvVersioneVista!=null){ alert('Stai guardando una versione archiviata: usa \u201cRiprendi come bozza\u201d per modificarla.'); return; }
+  var _nuovo=pvCollect();
+  var _arch=pvArchiviaSeServe(list[idx], _nuovo);
+  list[idx].preventivo=_nuovo; list[idx].preventivoConfermato=false; list[idx].updatedAt=Date.now();
   try{ var _t=pvCompute(); list[idx].preventivoTotale=Math.round(_t.totale*100)/100; list[idx].preventivoImponibile=Math.round(_t.imponibile*100)/100; }catch(e){}
   sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
-  if(typeof tcToastNew==='function') tcToastNew('💾 Bozza salvata (da confermare per scaricarla)',true);
+  if(typeof tcToastNew==='function') tcToastNew(_arch?('💾 Bozza salvata \u2014 la versione confermata \u00e8 nello storico come v'+list[idx].preventivoVersioni.length):'💾 Bozza salvata (da confermare per scaricarla)',true);
+  try{ var _bar=document.getElementById('sin-modal'); if(_bar && _bar.style.display==='block') sinPreventivo(_pvId); }catch(e){}
   if(typeof sinRender==='function') sinRender();
 }
 function pvConferma(){
   if(!_pvId) return; var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===_pvId;}); if(idx<0) return;
-  list[idx].preventivo=pvCollect(); list[idx].preventivoConfermato=true;
+  if(_pvVersioneVista!=null){ alert('Stai guardando una versione archiviata: usa \u201cRiprendi come bozza\u201d per modificarla.'); return; }
+  var _nuovoC=pvCollect();
+  pvArchiviaSeServe(list[idx], _nuovoC);
+  list[idx].preventivo=_nuovoC; list[idx].preventivoConfermato=true; list[idx].preventivoConfermatoTs=Date.now(); list[idx].updatedAt=Date.now();
   try{ var _t2=pvCompute(); list[idx].preventivoTotale=Math.round(_t2.totale*100)/100; list[idx].preventivoImponibile=Math.round(_t2.imponibile*100)/100; }catch(e){}
   sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
   if(typeof tcToastNew==='function') tcToastNew('✅ Preventivo confermato',true);
