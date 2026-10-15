@@ -4106,6 +4106,22 @@ function salvaUtentiApp() {
   try { localStorage.setItem('ea_utenti_app', JSON.stringify(UTENTI_APP)); } catch(e) {}
 }
 function utenteId(email){ return 'u_'+String(email||'').toLowerCase().replace(/[^a-z0-9]/gi,'_'); }
+/* ===== LA MAIL DEL VENDITORE NON E' LA MAIL DEL CLIENTE =====
+   Capitava di dimenticare di chiedere l'email al cliente e di mettere la
+   propria per andare avanti: poi preventivi, promemoria e link di firma
+   partivano verso il venditore. Queste email non si possono usare come
+   email del cliente, da nessuna parte: preventivi, appuntamenti, anagrafica. */
+var EA_EMAIL_VIETATE=['rudy.scropetta@gmail.com','s.rudy@europaautosrl.it','no.reply.europaauto@gmail.com'];
+function eaEmailVietata(email){
+  var e=String(email||'').trim().toLowerCase(); if(!e) return '';
+  if(EA_EMAIL_VIETATE.indexOf(e)>=0) return e;
+  try{ if((UTENTI_APP||[]).some(function(u){ return u && String(u.email||'').toLowerCase()===e; })) return e; }catch(x){}
+  if(/@europaautosrl\.it$/.test(e)) return e;
+  return '';
+}
+function eaEmailVietataMsg(email){
+  return 'L\u2019email \u201c'+String(email||'').trim()+'\u201d \u00e8 di un utente del gestionale, non del cliente: non si pu\u00f2 usare.\n\nChiedi al cliente la SUA email e inseriscila qui.';
+}
 /* Ultimo valore dei permessi visto su Supabase: serve a non sovrascriverli con null
    da un dispositivo che non li ha ancora scaricati. */
 var _utentiSezRemote = {};
@@ -17602,6 +17618,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var email=(emEl&&emEl.value||'').trim(), tel=(telEl&&telEl.value||'').trim();
     if(categoria!=='task'){
       if(!email || !/.+@.+\..+/.test(email)){ ccToast('Email cliente obbligatoria'); if(emEl) emEl.focus(); return; }
+      if(typeof eaEmailVietata==='function' && eaEmailVietata(email)){ alert(eaEmailVietataMsg(email)); if(emEl) emEl.focus(); return; }
       if(!tel){ ccToast('Telefono cliente obbligatorio'); if(telEl) telEl.focus(); return; }
     }
     /* La nota descrive l'intervento (tagliando, pastiglie, spia motore...):
@@ -25180,6 +25197,8 @@ function clSalvaAnagrafica(keyEnc){
   e.business=ck('cl_business'); e.ragSociale=g('cl_ragSociale'); e.piva=g('cl_piva'); e.sdi=g('cl_sdi');
   e.nome=g('cl_nome'); e.cognome=g('cl_cognome'); e.telefono=g('cl_telefono'); e.email=g('cl_email'); e.cf=g('cl_cf');
   e.telefono2=g('cl_telefono2'); e.email2=g('cl_email2');
+  if(eaEmailVietata(e.email)){ alert(eaEmailVietataMsg(e.email)); return; }
+  if(eaEmailVietata(e.email2)){ alert(eaEmailVietataMsg(e.email2)); return; }
   e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
   clSupaUpsert(key);
   var _n=clPropagaAPratiche(key, e);
@@ -27796,6 +27815,14 @@ function cvTrasformaContratto(){
      chiederebbe dati che a quel punto non servono. */
   _cvPermutaCompleta = true;
   try{ return cvTrasformaContrattoInterno(); }
+  catch(e){
+    /* Un errore qui dentro prima spariva nella console e il pulsante
+       sembrava morto: ora lo si vede. */
+    var _msg='Non riesco ad aprire la proposta d\u2019acquisto: '+((e&&e.message)||e);
+    try{ if(typeof tcToastNew==='function') tcToastNew('\u26a0\ufe0f '+_msg, false); }catch(x){}
+    try{ alert(_msg); }catch(x){}
+    try{ console.error('cvTrasformaContratto', e); }catch(x){}
+  }
   finally{ _cvPermutaCompleta = false; }
 }
 function cvTrasformaContrattoInterno(){
@@ -27803,7 +27830,7 @@ function cvTrasformaContrattoInterno(){
   if(typeof cvById==='function' && !cvById(_cv.id)){ alert('Prima devi salvare il preventivo: premi «Stampa preventivo», poi riaprilo dalla lista e trasformalo in proposta d’acquisto.'); return; }
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Completa i dati del cliente.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Email cliente obbligatoria.'); return; }
-  if(!cvValidaPromo()) return;
+  if(!cvValidaPromo(cvTrasformaContratto)) return;
   if(!cvValidaPermuta()) return;
   if(_cv.autoId && typeof mzById==='function'){
     var _av=mzById(_cv.autoId);
@@ -28110,7 +28137,7 @@ function cvEImportata(cv){
   }catch(e){ return false; }
 }
 
-function cvValidaPromo(){
+function cvValidaPromo(dopo){
   /* Sulle pratiche importate i controlli non si applicano: sono vendite gia'
      concluse nel vecchio gestionale, con dati incompleti per come sono state
      esportate. Chiedere di completarle bloccherebbe il salvataggio di una
@@ -28142,13 +28169,31 @@ function cvValidaPromo(){
     }catch(e){}
     var _scMin = _finPromoTot>=15000 ? 4000 : (_finPromoTot>10000 ? 3000 : 2000);
     var _scOra = cvNum(_cv.scontoImporto);
-    if(_finPromoTot>0 && _scOra < _scMin){
-      if(!confirm('Sconto PROMO basso per un finanziamento da '+cvEuro(_finPromoTot)+'.\n\n'
-        +'Concordato per questo scaglione: '+cvEuro(_scMin)+'\n'
-        +'Inserito ora: '+cvEuro(_scOra)+'\n\n'
-        +'Il contratto dice che estinguendo prima dei 18 mesi il cliente riconosce lo sconto '
-        +'applicato: con '+cvEuro(_scOra)+' si potr\u00e0 chiedere indietro solo quello.\n\n'
-        +'Proseguo lo stesso?')) return false;
+    /* ===== NON PIU' UN confirm() DEL BROWSER =====
+       Chrome, dopo qualche finestra di seguito, propone "impedisci a questa
+       pagina di creare altre finestre": spuntata quella, ogni confirm
+       risponde "no" in silenzio e il pulsante "Trasforma in proposta"
+       sembra non fare niente. La domanda si fa dentro l'app, e la risposta
+       vale finche' lo sconto non cambia. */
+    if(_finPromoTot>0 && _scOra < _scMin && _cv.scontoBassoOk!==_scOra){
+      try{
+        var _m=cvModModal();
+        window._cvDopoScontoBasso=dopo||null;
+        _m.innerHTML='<div style="max-width:460px;margin:8vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+          +'<div style="background:#b45309;color:#fff;padding:14px 18px;font-weight:800;">\u26a0\ufe0f Sconto PROMO basso</div>'
+          +'<div style="padding:18px;font-size:14px;line-height:1.55;color:#0f172a;">'
+          +'Finanziamento da <b>'+cvEuro(_finPromoTot)+'</b>.<br>Concordato per questo scaglione: <b>'+cvEuro(_scMin)+'</b><br>Inserito ora: <b>'+cvEuro(_scOra)+'</b>'
+          +'<p style="margin:12px 0 0;color:#475569;">Il contratto dice che estinguendo prima dei 18 mesi il cliente riconosce lo sconto applicato: con '+cvEuro(_scOra)+' si potr\u00e0 chiedere indietro solo quello.</p>'
+          +'<div style="display:flex;gap:8px;margin-top:16px;">'
+          +'<button type="button" onclick="cvModChiudi();window._cvDopoScontoBasso=null;" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Correggo lo sconto</button>'
+          +'<button type="button" onclick="_cv.scontoBassoOk='+_scOra+';cvModChiudi();var _f=window._cvDopoScontoBasso;window._cvDopoScontoBasso=null;if(typeof _f===\'function\') setTimeout(_f,50);" style="flex:1;padding:12px;border-radius:9px;border:none;background:#b45309;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">Proseguo lo stesso</button>'
+          +'</div></div></div>';
+        _m.style.display='block';
+        return false;
+      }catch(e){
+        if(!confirm('Sconto PROMO basso ('+cvEuro(_scOra)+' su '+cvEuro(_finPromoTot)+', concordato '+cvEuro(_scMin)+'). Proseguo lo stesso?')) return false;
+        _cv.scontoBassoOk=_scOra;
+      }
     }
   }
   return true;
@@ -28435,8 +28480,10 @@ function cvSalva(){
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
   if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
+  if(eaEmailVietata(_cv.cliente.email)){ alert(eaEmailVietataMsg(_cv.cliente.email)); try{ var _ee=document.getElementById('cv_email'); if(_ee) _ee.focus(); }catch(e){} return; }
+  if(eaEmailVietata(_cv.cliente.email2)){ alert(eaEmailVietataMsg(_cv.cliente.email2)); return; }
   if(!cvValidaAssic()) return;
-  if(!cvValidaPromo()) return;
+  if(!cvValidaPromo(cvSalva)) return;
   if(!cvValidaPermuta()) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   var isNew=(idx<0);
@@ -28529,13 +28576,13 @@ function cvStampa(tipo){
   cvSync();
   if(!cvValidaPermuta()) return;   /* niente stampa con la permuta vuota */
   if(!cvValidaAssic()) return;
-  if(!cvValidaPromo()) return;
+  if(!cvValidaPromo(function(){ cvStampa(tipo); })) return;
   cvStampaDoc(_cv, tipo);
 }
 function cvStampaESalva(){
   cvSync();
   if(!cvValidaAssic()) return;
-  if(!cvValidaPromo()) return;
+  if(!cvValidaPromo(cvStampaESalva)) return;
   if(!cvValidaPermuta()) return;
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
   if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
@@ -30069,6 +30116,63 @@ function docSmista(tipo, id, cat){
   }catch(e){}
   return {tipo:tipo, id:id, spostato:false};
 }
+/* ===== LIBRETTO NUOVO CARICATO: AVVISO ALLA VENDITA =====
+   Quando l'amministrazione carica il libretto intestato al cliente, il
+   veicolo e' stato immatricolato e il libretto va consegnato. Parte una mail
+   a vendita@ con targa, veicolo e cliente, cosi' il venditore non deve
+   accorgersene da solo. */
+var DOC_MAIL_VENDITA='vendita@europaautosrl.it';
+function docAvvisaLibrettoNuovo(tipo, id, files){
+  try{
+    var ctx=docContesto(tipo, id);
+    var autoId=ctx.auto||null, cv=null, a=null;
+    if(ctx.pratica && typeof cvById==='function') cv=cvById(ctx.pratica);
+    if(!cv && tipo==='pratica' && typeof cvById==='function') cv=cvById(id);
+    if(!autoId && cv) autoId=cv.autoId||null;
+    if(autoId && typeof mzById==='function') a=mzById(autoId);
+    var snap=(cv&&cv.autoSnapshot)||{};
+    var marca=(a&&a.marca)||snap.marca||'', modello=(a&&a.modello)||snap.modello||'';
+    var targa=(cv&&cv.nuovaTarga)||(a&&a.targa)||snap.targa||'';
+    var telaio=(a&&a.telaio)||snap.telaio||'';
+    var cl=(cv&&cv.cliente)||{};
+    var nome=(typeof cvNomeCliente==='function')?(cvNomeCliente(cl)||''):(((cl.cognome||'')+' '+(cl.nome||'')).trim());
+    var chi=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'amministrazione');
+    var nomiFile=(files||[]).map(function(f){ return f&&f.name; }).filter(Boolean).join(', ');
+    var E=function(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+    var veic=((marca+' '+modello).trim()||'veicolo');
+    var html='<p>Ciao,</p>'
+      +'<p>\u00e8 stato caricato il <b>libretto nuovo intestato al cliente</b>: il veicolo \u00e8 immatricolato.</p>'
+      +'<table style="border-collapse:collapse;font-size:14px;">'
+      +'<tr><td style="padding:4px 10px 4px 0;color:#64748b;">Veicolo</td><td style="padding:4px 0;"><b>'+E(veic)+'</b></td></tr>'
+      +(targa?('<tr><td style="padding:4px 10px 4px 0;color:#64748b;">Targa</td><td style="padding:4px 0;"><b>'+E(targa)+'</b></td></tr>'):'')
+      +(telaio?('<tr><td style="padding:4px 10px 4px 0;color:#64748b;">Telaio</td><td style="padding:4px 0;">'+E(telaio)+'</td></tr>'):'')
+      +(nome?('<tr><td style="padding:4px 10px 4px 0;color:#64748b;">Cliente</td><td style="padding:4px 0;"><b>'+E(nome)+'</b>'+(cl.telefono?(' \u00b7 '+E(cl.telefono)):'')+(cl.email?(' \u00b7 '+E(cl.email)):'')+'</td></tr>'):'')
+      +'<tr><td style="padding:4px 10px 4px 0;color:#64748b;">Caricato da</td><td style="padding:4px 0;">'+E(chi)+(nomiFile?(' ('+E(nomiFile)+')'):'')+'</td></tr>'
+      +'</table>'
+      +'<p style="margin-top:14px;"><b>Da fare: consegnare il libretto al cliente</b> e avvisarlo che l\u2019auto \u00e8 immatricolata. Il documento \u00e8 nella scheda del veicolo nel gestionale (Documenti \u2192 Libretto nuovo intestato).</p>';
+    var subj='Immatricolato '+veic+(targa?(' \u2014 targa '+targa):'')+(nome?(' \u2014 '+nome):'')+': libretto da consegnare';
+    var msg={ to:DOC_MAIL_VENDITA, subject:subj, html:(typeof eaMailWrap==='function')?eaMailWrap(html):html };
+    /* Il libretto viaggia in allegato: il venditore lo ha gia' in mano senza
+       aprire il gestionale. Oltre la soglia resta solo il riferimento. */
+    var _lim=(typeof EA_PDF_MAXALL!=='undefined')?EA_PDF_MAXALL:6*1024*1024;
+    var _da=(files||[]).filter(function(f){ return f && f.size>0 && f.size<=_lim; }).slice(0,5);
+    var _prep=Promise.all(_da.map(function(f){
+      return (typeof eaBlobToBase64==='function'?eaBlobToBase64(f):Promise.reject(new Error('no b64')))
+        .then(function(b){ return { filename:(f.name||'libretto'), content:b }; })
+        .catch(function(){ return null; });
+    })).then(function(all){ var ok=all.filter(Boolean); if(ok.length) msg.attachments=ok; return msg; }, function(){ return msg; });
+    _prep.then(function(m2){ return eaInviaMessaggio(m2); }).then(function(r){
+      if(r && r.error){ console.log('avviso libretto:', r.error); return; }
+      try{ if(typeof tcToastNew==='function') tcToastNew('\ud83d\udce7 Avvisata la vendita: libretto da consegnare'+(targa?(' ('+targa+')'):''), true); }catch(e){}
+      try{
+        if(cv && typeof cvLoad==='function'){
+          var l=cvLoad(), i=l.findIndex(function(x){ return x.id===cv.id; });
+          if(i>=0){ l[i].librettoAvvisoTs=Date.now(); l[i].librettoAvvisoDa=chi; l[i].updatedAt=Date.now(); cvSave(l); try{ supaUpsert('preventivi', l[i]); }catch(e){} }
+        }
+      }catch(e){}
+    }, function(err){ console.log('avviso libretto:', err); });
+  }catch(e){ console.log('docAvvisaLibrettoNuovo', e); }
+}
 function docDestLabel(t){
   if(t==='cliente')  return 'scheda cliente';
   if(t==='auto')     return 'scheda veicolo';
@@ -30263,6 +30367,8 @@ function docCarica(tipo, id, pfx){
       }catch(e){}
       /* se e' un libretto, l'indice della barra di ricerca va rinfrescato */
       try{ if(tipo==='auto' && /libretto/.test(cat) && typeof gsLibCarica==='function') gsLibCarica(); }catch(e){}
+      /* libretto nuovo intestato = auto immatricolata: la vendita deve saperlo */
+      try{ if(cat==='libretto_nuovo' && typeof docAvvisaLibrettoNuovo==='function') docAvvisaLibrettoNuovo(tipo, id, files); }catch(e){}
       docListaRender(tipo,id,pfx, (tipo==='auto'&&typeof docSoloVendita==='function')?docSoloVendita():null); return;
     }
     var file=files[i++];
