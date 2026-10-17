@@ -11357,7 +11357,7 @@ function applyRoleUI() {
        altri sparirebbero a tutti, amministratore compreso. */
     if(v==='online' || v==='simulatore') return;
     /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
-    if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnAbilitato!=='function' || mnAbilitato())) ? '' : 'none'; return; }
+    if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnSezioneVisibile!=='function' || mnSezioneVisibile())) ? '' : 'none'; return; }
     if(v==='appuntamenti'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
     btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
@@ -16453,7 +16453,7 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
       return;
     }
-    if(view==='mansioni' && typeof mnAbilitato==='function' && !mnAbilitato()){
+    if(view==='mansioni' && typeof mnSezioneVisibile==='function' && !mnSezioneVisibile()){
       if(typeof tcToastNew==='function') tcToastNew('Sezione in prova: non ancora attiva per il tuo utente.', false);
       return;
     }
@@ -36450,6 +36450,8 @@ function mnAbilitato(email){
   var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
   return MN_BETA.indexOf(e)>=0;
 }
+/* la sezione si apre a chi ha la bacheca O la chat */
+function mnSezioneVisibile(email){ return mnAbilitato(email) || (typeof chMembro==='function' && chMembro(email)); }
 var _mnFiltro='mie', _mnMostraFatte=false, _mnBloccoChiusoTs=0, _mnRec=null;
 var MN_RIPROPONI_MS=15*60*1000;   /* "lo faccio dopo" vale un quarto d'ora */
 
@@ -36493,6 +36495,9 @@ function mnPersone(){
 /* ------------------------------ bacheca ------------------------------ */
 function mnRender(){
   var v=document.getElementById('view-mansioni'); if(!v) return;
+  var _soloChat=(!mnAbilitato() && typeof chMembro==='function' && chMembro());
+  if(_soloChat) _mnTab='chat';
+  if(typeof chMembro==='function' && chMembro() && _mnTab==='chat'){ chRender(v); return; }
   if(!mnAbilitato()){ v.innerHTML='<div style="color:#64748b;">Sezione in prova: non ancora attiva per il tuo utente.</div>'; return; }
   var me=mnMe();
   var tutte=mnLista();
@@ -36507,8 +36512,8 @@ function mnRender(){
   var doneVis=_mnMostraFatte?col.done:col.done.filter(function(c){ return (c.fattoTs||c.updatedAt||0)>lim; });
   var scadMie=mnMie().filter(mnScaduta).length;
 
-  var btn=function(txt,on,stile){ return '<button onclick="'+on+'" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;'+(stile||'')+'">'+txt+'</button>'; };
-  var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+  var h=(typeof mnTabsHTML==='function')?mnTabsHTML():'';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
     +'<button onclick="mnNuova()" style="padding:11px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">+ Nuova mansione</button>'
     +'<div style="display:flex;border:1px solid #cbd5e1;border-radius:9px;overflow:hidden;">'
     +'<button onclick="_mnFiltro=\'mie\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='mie'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='mie'?'#fff':'#334155')+';">Le mie</button>'
@@ -36566,13 +36571,15 @@ function mnCardHTML(c){
 function mnBadge(){
   try{
     var btn=document.getElementById('si-task'); if(!btn) return;
-    if(!mnAbilitato()){ btn.style.display='none'; return; }
+    if(!mnSezioneVisibile()){ btn.style.display='none'; return; }
+    if(!mnAbilitato()){ btn.style.display=''; try{ chBadge(); }catch(e){} return; }
     var bd=btn.querySelector('.si-badge');
     if(!bd){ bd=document.createElement('span'); bd.className='si-badge'; btn.appendChild(bd); }
     var mie=mnMie().filter(function(c){ return !c.fatto; });
     var sc=mie.filter(mnScaduta).length;
-    bd.textContent=mie.length; bd.style.display=mie.length?'':'none';
-    bd.style.background=sc?'#dc2626':'';
+    var nch=0; try{ if(typeof chNonLetti==='function' && chMembro()) nch=chNonLetti().length; }catch(e){}
+    bd.textContent=mie.length+nch; bd.style.display=(mie.length+nch)?'':'none';
+    bd.style.background=sc?'#dc2626':(nch?'#16a34a':'');
   }catch(e){}
 }
 
@@ -36800,9 +36807,208 @@ function mnDopoTimbratura(tipo){
   setTimeout(function(){ try{ _mnBloccoChiusoTs=0; mnBloccoScadute(true); }catch(e){} }, 2500);
 }
 
+/* =====================================================================
+   CHAT DI GRUPPO — dentro Mansioni
+   ---------------------------------------------------------------------
+   Una sola stanza, per il gruppo di lavoro. Messaggi di testo e vocali,
+   stile WhatsApp: i miei a destra, gli altri a sinistra, separatori per
+   giorno. Tabella Supabase 'chat_app' (id text, data jsonb). Si legge ogni
+   pochi secondi solo quello che manca (per ts), cosi' il traffico resta
+   leggero anche con migliaia di messaggi.
+   Notifiche: contatore sul menu, avviso nell'app, notifica del sistema
+   (quando il browser lo permette) e un suono breve.
+   ===================================================================== */
+var CH_TAB='chat_app', CH_KEY='ea_chat_v1', CH_LETTO_KEY='ea_chat_letto_ts', CH_POLL_MS=10000;
+var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it','no.reply.europaauto@gmail.com','rudy.scropetta@gmail.com','s.rudy@europaautosrl.it'];
+var _mnTab='bacheca', _chTimer=null, _chBusy=false, _chRec=null, _chPrimo=true;
+function chMembro(email){
+  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
+  return !!e && MN_CHAT_MEMBRI.indexOf(e)>=0;
+}
+function chLoad(){ try{ return JSON.parse(localStorage.getItem(CH_KEY)||'[]')||[]; }catch(e){ return []; } }
+function chSave(l){ try{ localStorage.setItem(CH_KEY, JSON.stringify(l.slice(-600))); }catch(e){} }
+function chLettoTs(){ try{ return parseInt(localStorage.getItem(CH_LETTO_KEY)||'0',10)||0; }catch(e){ return 0; } }
+function chSegnaLetto(){ try{ var l=chLoad(); var mx=l.reduce(function(m,x){ return Math.max(m,x.ts||0); },0); localStorage.setItem(CH_LETTO_KEY, String(mx)); }catch(e){} chBadge(); }
+function chNonLetti(){ var me=mnMe().email, t=chLettoTs(); return chLoad().filter(function(m){ return (m.ts||0)>t && String(m.email||'').toLowerCase()!==me; }); }
+function chBadge(){
+  try{
+    var n=chNonLetti().length;
+    var t=document.getElementById('mn-tab-chat'); if(t){ var b=t.querySelector('.ch-badge'); if(b){ b.textContent=n; b.style.display=n?'':'none'; } }
+    /* sul menu laterale il contatore somma mansioni aperte e messaggi non letti */
+    var btn=document.getElementById('si-task'); if(!btn) return;
+    var bd=btn.querySelector('.si-badge'); if(!bd) return;
+    var mans=0; try{ mans=(typeof mnAbilitato==='function'&&mnAbilitato())?mnMie().filter(function(c){ return !c.fatto; }).length:0; }catch(e){}
+    var tot=mans+n; bd.textContent=tot; bd.style.display=tot?'':'none';
+    if(n && !/dc2626/.test(bd.style.background)) bd.style.background='#16a34a';
+  }catch(e){}
+}
+function chSync(cb){
+  if(_chBusy){ if(cb) cb(); return; }
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ if(cb) cb(); return; }
+  _chBusy=true;
+  var loc=chLoad(); var ultimo=loc.reduce(function(m,x){ return Math.max(m,x.ts||0); },0);
+  /* ts a 13 cifre: il confronto testuale coincide con quello numerico */
+  var q=sb.from(CH_TAB).select('id,data');
+  if(ultimo) q=q.gt('data->>ts', String(ultimo));
+  q.order('created_at',{ascending:true}).limit(500).then(function(r){
+    _chBusy=false;
+    if(!r || r.error){ if(r&&r.error) console.log('chat:', r.error.message); if(cb) cb(); return; }
+    var nuovi=(r.data||[]).map(function(x){ return x&&x.data; }).filter(function(m){ return m&&m.id&&m.ts; });
+    if(nuovi.length){
+      var ids={}; loc.forEach(function(m){ ids[m.id]=1; });
+      var agg=nuovi.filter(function(m){ return !ids[m.id]; });
+      if(agg.length){
+        loc=loc.concat(agg).sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+        chSave(loc);
+        var me=mnMe().email;
+        var altrui=agg.filter(function(m){ return String(m.email||'').toLowerCase()!==me; });
+        if(altrui.length && !_chPrimo) chNotifica(altrui);
+        if(_mnTab==='chat' && document.getElementById('ch-lista')){ chRenderLista(); if(document.visibilityState==='visible') chSegnaLetto(); }
+      }
+    }
+    _chPrimo=false;
+    chBadge();
+    if(cb) cb();
+  }, function(){ _chBusy=false; if(cb) cb(); });
+}
+function chAvvia(){
+  if(!chMembro()) return;
+  chBadge();
+  chSync();
+  if(_chTimer) clearInterval(_chTimer);
+  _chTimer=setInterval(function(){ try{ chSync(); }catch(e){} }, CH_POLL_MS);
+  try{ document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible'){ chSync(); if(_mnTab==='chat' && document.getElementById('ch-lista')) chSegnaLetto(); } }); }catch(e){}
+}
+function chSuono(){
+  try{
+    var ctx=new (window.AudioContext||window.webkitAudioContext)();
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type='sine'; o.frequency.value=880; g.gain.value=0.08;
+    o.connect(g); g.connect(ctx.destination); o.start();
+    setTimeout(function(){ o.frequency.value=1175; },90);
+    setTimeout(function(){ o.stop(); ctx.close(); },200);
+  }catch(e){}
+}
+function chNotifica(msgs){
+  var ultimo=msgs[msgs.length-1];
+  var anteprima=ultimo.testo?ultimo.testo:(ultimo.audioUrl?'🎙 Messaggio vocale':'Nuovo messaggio');
+  var vedoChat=(_mnTab==='chat' && document.getElementById('ch-lista') && document.visibilityState==='visible');
+  if(vedoChat) return;
+  chSuono();
+  try{ if(typeof tcToastNew==='function') tcToastNew('💬 '+(ultimo.da||'')+': '+anteprima.slice(0,80), true); }catch(e){}
+  try{
+    if('Notification' in window && Notification.permission==='granted' && document.visibilityState!=='visible'){
+      var n=new Notification('Europa Auto — '+(ultimo.da||'chat'), { body:anteprima.slice(0,160), tag:'ea-chat', renotify:true });
+      n.onclick=function(){ try{ window.focus(); mnApriChat(); }catch(e){} };
+    }
+  }catch(e){}
+}
+function chChiediPermesso(){
+  try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission().then(function(){ chRenderLista(); }); }catch(e){}
+}
+function mnApriChat(){
+  _mnTab='chat';
+  try{ if(typeof sidebarNav==='function' && !(document.getElementById('view-mansioni')||{}).classList.contains('active')) sidebarNav('mansioni', document.getElementById('si-task')); }catch(e){}
+  mnRender();
+}
+function mnTabsHTML(){
+  if(!chMembro()) return '';
+  var n=chNonLetti().length;
+  var t=function(id,lab,extra){ var on=(_mnTab===id); return '<button id="mn-tab-'+id+'" onclick="_mnTab=\''+id+'\';mnRender()" style="padding:10px 18px;border:none;border-bottom:3px solid '+(on?'#1a4fa0':'transparent')+';background:none;font-family:inherit;font-weight:800;font-size:14px;color:'+(on?'#1a4fa0':'#64748b')+';cursor:pointer;">'+lab+(extra||'')+'</button>'; };
+  return '<div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;">'
+    +(typeof mnAbilitato==='function'&&mnAbilitato()?t('bacheca','✅ Bacheca'):'')
+    +t('chat','💬 Chat di gruppo','<span class="ch-badge" style="display:'+(n?'':'none')+';background:#16a34a;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;">'+n+'</span>')
+    +'</div>';
+}
+function chRender(v){
+  var membri=MN_CHAT_MEMBRI.map(function(e){ var n=mnNome(e); return (n&&n.indexOf('@')<0)?n:String(e).split('@')[0]; }).filter(function(x,i,a){ return x && a.indexOf(x)===i; });
+  var permesso=('Notification' in window)?Notification.permission:'nd';
+  v.innerHTML=mnTabsHTML()
+    +'<div style="max-width:820px;margin:0 auto;background:#e5ddd5;border:1px solid #d1d5db;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;">'
+    +'<div style="width:38px;height:38px;border-radius:50%;background:#fff;color:#1a4fa0;display:flex;align-items:center;justify-content:center;font-weight:800;">EA</div>'
+    +'<div style="flex:1;min-width:0;"><div style="font-weight:800;">Gruppo Europa Auto</div><div style="font-size:11.5px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mnEsc(membri.join(', '))+'</div></div>'
+    +(permesso==='default'?'<button onclick="chChiediPermesso()" title="Ricevi un avviso anche quando il gestionale è in un’altra scheda" style="padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">🔔 Attiva notifiche</button>':'')
+    +'</div>'
+    +'<div id="ch-lista" style="flex:1;overflow:auto;padding:12px 12px 4px;"></div>'
+    +'<div style="background:#f0f2f5;padding:8px 10px;display:flex;gap:8px;align-items:flex-end;">'
+    +'<button id="ch-rec-btn" onclick="chRecToggle()" title="Messaggio vocale" style="width:42px;height:42px;border-radius:50%;border:none;background:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">🎙</button>'
+    +'<textarea id="ch-testo" rows="1" placeholder="Scrivi un messaggio…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();chInvia();}" oninput="this.style.height=\'auto\';this.style.height=Math.min(this.scrollHeight,120)+\'px\';" style="flex:1;resize:none;padding:11px 12px;border:none;border-radius:20px;font-family:inherit;font-size:14px;box-sizing:border-box;max-height:120px;"></textarea>'
+    +'<button onclick="chInvia()" style="width:42px;height:42px;border-radius:50%;border:none;background:#1a4fa0;color:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">➤</button>'
+    +'</div>'
+    +'<div id="ch-rec-stato" style="display:none;background:#fff7ed;color:#9a3412;font-size:12.5px;padding:6px 12px;"></div>'
+    +'</div>';
+  chRenderLista(); chSegnaLetto(); chSync();
+}
+function chRenderLista(){
+  var box=document.getElementById('ch-lista'); if(!box) return;
+  var me=mnMe().email, msgs=chLoad(), h='', giorno='';
+  var oggi=mnOggi();
+  var ieri=(function(){ var d=new Date(); d.setDate(d.getDate()-1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })();
+  if(!msgs.length) h='<div style="text-align:center;color:#64748b;font-size:13px;margin-top:30px;">Nessun messaggio ancora. Scrivi il primo.</div>';
+  msgs.forEach(function(m){
+    var d=new Date(m.ts||0); var g=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(g!==giorno){ giorno=g; h+='<div style="text-align:center;margin:10px 0;"><span style="background:#fff;color:#64748b;font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;box-shadow:0 1px 1px rgba(0,0,0,.08);">'+(g===oggi?'Oggi':(g===ieri?'Ieri':mnDataIt(g)))+'</span></div>'; }
+    var mio=String(m.email||'').toLowerCase()===me;
+    h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin:3px 0;">'
+      +'<div style="max-width:78%;background:'+(mio?'#d9fdd3':'#fff')+';border-radius:10px;padding:6px 9px 4px;box-shadow:0 1px 1px rgba(0,0,0,.1);">'
+      +(mio?'':('<div style="font-size:11.5px;font-weight:800;color:#1a4fa0;">'+mnEsc(m.da||'')+'</div>'))
+      +(m.testo?('<div style="font-size:14px;color:#111;white-space:pre-wrap;word-break:break-word;">'+chLinkify(m.testo)+'</div>'):'')
+      +(m.audioUrl?('<audio controls preload="none" src="'+mnEsc(m.audioUrl)+'" style="width:230px;max-width:100%;height:34px;margin-top:2px;"></audio>'):'')
+      +'<div style="font-size:10.5px;color:#667781;text-align:right;margin-top:2px;">'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+(mio?' ✓✓':'')+'</div>'
+      +'</div></div>';
+  });
+  box.innerHTML=h;
+  box.scrollTop=box.scrollHeight;
+}
+function chLinkify(t){
+  var s=mnEsc(t);
+  return s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#1a4fa0;">$1</a>');
+}
+function chInvia(testo, audioUrl){
+  var ta=document.getElementById('ch-testo');
+  if(testo==null){ testo=ta?String(ta.value).trim():''; }
+  if(!testo && !audioUrl) return;
+  var me=mnMe();
+  var m={ id:'ch_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), ts:Date.now(), da:me.nome, email:me.email, testo:testo||'', audioUrl:audioUrl||'' };
+  var l=chLoad(); l.push(m); chSave(l);
+  if(ta){ ta.value=''; ta.style.height='auto'; }
+  chRenderLista(); chSegnaLetto();
+  try{ supaUpsert(CH_TAB, m); }catch(e){}
+}
+function chRecToggle(){
+  var btn=document.getElementById('ch-rec-btn'), st=document.getElementById('ch-rec-stato');
+  if(_chRec && _chRec.rec && _chRec.rec.state==='recording'){ _chRec.rec.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio.'); return; }
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
+    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    var chunks=[], t0=Date.now(), timer=null;
+    _chRec={ rec:rec, stream:stream };
+    rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
+    rec.onstop=function(){
+      clearInterval(timer);
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+      if(btn){ btn.textContent='🎙'; btn.style.background='#fff'; }
+      var blob=new Blob(chunks,{type:mime||'audio/webm'});
+      if((Date.now()-t0)<700){ if(st){ st.style.display='none'; } return; }
+      if(st){ st.style.display='block'; st.textContent='⏳ Invio il vocale…'; }
+      var ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
+      var up=(typeof eaR2Upload==='function')?eaR2Upload(blob,'chat','vocale-'+Date.now()+'.'+ext):Promise.reject(new Error('archivio non configurato'));
+      up.then(function(url){ if(st) st.style.display='none'; chInvia('', url); },
+        function(err){ if(st){ st.textContent='Vocale non inviato: '+((err&&err.message)||err); setTimeout(function(){ st.style.display='none'; },4000); } });
+    };
+    rec.start();
+    if(btn){ btn.textContent='⏹'; btn.style.background='#fecaca'; }
+    if(st){ st.style.display='block'; st.textContent='⏺ Sto registrando… premi di nuovo per inviare'; }
+    timer=setInterval(function(){ if(st) st.textContent='⏺ Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s — premi di nuovo per inviare'; if(Date.now()-t0>300000){ try{ rec.stop(); }catch(e){} } },500);
+  }).catch(function(err){ alert('Microfono non disponibile: '+((err&&err.message)||err)); });
+}
+
 function eaBadgeBoot(){
   try{ eaSyncVivo(); }catch(e){}
   try{ mnAvvio(); }catch(e){}
+  try{ chAvvia(); }catch(e){}
   /* Meglio avvisare quando manca poco che spiegare dopo perche' non salva. */
   setTimeout(function(){
     try{
