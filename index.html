@@ -25686,7 +25686,8 @@ function cvRender(){
       +'<div style="display:flex;justify-content:space-between;gap:10px;"><div><div style="font-weight:800;font-size:15px;">'+cvEsc((c.cliente&&(c.cliente.nome||'')+' '+(c.cliente&&c.cliente.cognome||''))||'Cliente')+badge+'</div>'
       +'<div style="font-size:13px;color:#475569;margin-top:2px;">'+cvEsc(c.autoDesc||(c.autoSnapshot&&c.autoSnapshot.modello)||'—')+(cvAutoNum(c)?(' \u00b7 <b style="color:#3730a3;">N\u00b0 '+cvEsc(cvAutoNum(c))+'</b>'):'')+'</div>'
       +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+cvEsc(cvDataIt(c.data))+'</div></div>'
-      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div></div>';
+      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div>'
+      +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(c,true):'')+'</div>';
   }).join('')+_piu;
 }
 
@@ -25776,6 +25777,7 @@ function cvVista(id){
    +'<button onclick="cvVistaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button>'
    +'</span></div>'
    +'<div style="padding:14px 16px;max-height:74vh;overflow:auto;">'
+   +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(cv,false).replace('margin-top:8px','margin:0 0 10px'):'')
    +vBox
    +tit('Cliente')
    +riga('Nominativo', cvEsc((cvNomeCliente(cl))||'\u2014'))
@@ -27229,6 +27231,59 @@ try{ setTimeout(function(){
   if(n) console.log('buste ripulite dai preventivi gia inviati:', n);
 }, 8000); }catch(e){}
 
+/* ===== LA MAIL AL CLIENTE SI PUO' FERMARE =====
+   Il preventivo parte via mail dopo un'ora. Se e' sbagliato, in quell'ora si
+   puo' bloccare: mailDaInviareAt torna vuoto (il cron non lo vede piu') e
+   resta il segno mailBloccata. Da li' si puo' riprogrammare o mandare subito. */
+function cvMailStatoHTML(c, compatto){
+  try{
+    if(!c || c.isContratto || c.annullato) return '';
+    var now=Date.now();
+    var box=function(bg,bd,fg,testo,bott){ return '<div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:'+bg+';border:1px solid '+bd+';color:'+fg+';border-radius:8px;padding:'+(compatto?'6px 9px':'9px 12px')+';margin-top:8px;font-size:12px;font-weight:700;">'+testo+(bott||'')+'</div>'; };
+    var b=function(txt,fn,col){ return '<button onclick="event.stopPropagation();'+fn+'(\''+c.id+'\')" style="padding:5px 10px;border-radius:7px;border:1px solid '+col+';background:#fff;color:'+col+';font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;">'+txt+'</button>'; };
+    if(c.emailInviata) return compatto?'':box('#f0fdf4','#bbf7d0','#166534','\ud83d\udce7 Mail inviata al cliente'+(c.emailInviataTs?(' il '+new Date(c.emailInviataTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):''));
+    if(c.mailBloccata) return box('#fef2f2','#fecaca','#991b1b','\u26d4 Mail al cliente BLOCCATA'+(c.mailBloccataDa?(' da '+cvEsc(c.mailBloccataDa)):''),'<span style="flex:1;"></span>'+b('\u21ba Riprogramma tra 1 ora','cvMailRiprogramma','#1a4fa0')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
+    if(c.mailDaInviareAt && c.mailDaInviareAt>now){
+      var m=Math.max(1,Math.round((c.mailDaInviareAt-now)/60000));
+      return box('#fffbeb','#fde68a','#92400e','\ud83d\udce7 Mail al cliente tra ~'+m+' min','<span style="flex:1;"></span>'+b('\u26d4 Blocca invio','cvMailBlocca','#dc2626')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
+    }
+    return '';
+  }catch(e){ return ''; }
+}
+function cvMailAggiorna(id, fn){
+  var l=cvLoad(); var i=l.findIndex(function(x){ return x.id===id; }); if(i<0) return null;
+  fn(l[i]); l[i].updatedAt=Date.now(); cvSave(l);
+  try{ supaUpsert('preventivi', l[i]); }catch(e){}
+  try{ if(typeof _cv!=='undefined' && _cv && _cv.id===id) Object.assign(_cv, l[i]); }catch(e){}
+  try{ cvRender(); }catch(e){}
+  try{ var m=document.getElementById('cvVistaModal'); if(m && m.style.display!=='none' && m.innerHTML) cvVista(id); }catch(e){}
+  return l[i];
+}
+function cvMailBlocca(id){
+  var c=cvMailAggiorna(id, function(x){
+    x.mailDaInviareAt=null; x.mailBloccata=true; x.mailBloccataTs=Date.now();
+    x.mailBloccataDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  });
+  if(c){ try{ tcToastNew('\u26d4 Mail al cliente bloccata: non partir\u00e0', true); }catch(e){} try{ cvLogRegistra(null, c, 'mail_bloccata'); }catch(e){} }
+}
+function cvMailRiprogramma(id){
+  var c=cvMailAggiorna(id, function(x){
+    x.mailBloccata=false; x.emailInviata=false; x.mailDaInviareAt=Date.now()+3600000;
+    try{ x.mailProg={ to:x.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:cvMailArricchisci(x, cvMailPreventivoHtml(x)) }; }catch(e){}
+    try{ if(!x.mailPdfUrl) cvPreparaPdfPreventivo(x); }catch(e){}
+  });
+  if(c){ try{ tcToastNew('\u21ba Mail riprogrammata: parte tra 1 ora (puoi ancora bloccarla)', true); }catch(e){} }
+}
+function cvMailInviaOra(id){
+  var c=cvById(id); if(!c) return;
+  if(!(c.cliente&&c.cliente.email)){ alert('Il preventivo non ha l\u2019email del cliente.'); return; }
+  if(!confirm('Mandare ADESSO la mail del preventivo a '+c.cliente.email+'?')) return;
+  var r=cvMailAggiorna(id, function(x){
+    x.mailBloccata=false; x.emailInviata=true; x.emailInviataTs=Date.now(); x.mailDaInviareAt=null;
+    x.emailInviataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  });
+  if(r){ try{ cvInviaMailCliente(r); }catch(e){} try{ tcToastNew('\u2709 Mail del preventivo inviata a '+r.cliente.email, true); }catch(e){} }
+}
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
