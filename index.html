@@ -502,7 +502,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Calendario</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-appuntamenti" onclick="apriCalCat('appuntamento',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128197;</span><span class="si-label"> Appuntamenti</span><span class="si-badge" id="cc-badge" style="display:none;">0</span></button>
-    <button class="sidebar-item" id="si-task" onclick="apriCalCat('task',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Task</span></button>
+    <button class="sidebar-item" id="si-task" onclick="sidebarNav('mansioni',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Mansioni</span><span class="si-badge" style="display:none;">0</span></button>
     </div>
   </div>
   <div class="sidebar-divider"></div>
@@ -1310,6 +1310,7 @@ html, body{
 
 <!-- PERMESSI -->
 <div class="view" id="view-noleggio" style="padding:22px 16px;"></div>
+<div class="view" id="view-mansioni" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-welfare" style="padding:22px 16px;"></div>
 
@@ -11356,7 +11357,8 @@ function applyRoleUI() {
        altri sparirebbero a tutti, amministratore compreso. */
     if(v==='online' || v==='simulatore') return;
     /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
-    if(v==='appuntamenti' || v==='task'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
+    if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnAbilitato!=='function' || mnAbilitato())) ? '' : 'none'; return; }
+    if(v==='appuntamenti'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
     btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
   try{ eaSidebarGruppi(); }catch(e){}
@@ -14751,6 +14753,8 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
       if(sub) sub.textContent = ok ? (nomi[tipo]+' · '+ora+' salvata') : (nomi[tipo]+' · '+ora+' salvata (sincronizzo…)');
       tcToastNew('✅ '+nomi[tipo]+': '+ora, true);
       tcRenderLog(); tcAggiornaPulsanti(); tcRenderMese();
+      /* appena timbrata l'entrata: le mansioni in ritardo si fanno vedere */
+      try{ if(typeof mnDopoTimbratura==='function') mnDopoTimbratura(tipo); }catch(e){}
       if(!ok){ try{ gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:rec}); }catch(e){} } // ritenta in background
     }, wait);
   });
@@ -16057,6 +16061,7 @@ function presenzeEsportaExcel(){
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
+  'mansioni': 'Mansioni',
   'bmvalue': 'BM Value',
   'simulatore': 'Simulatore finanziamento',
   'editor':  'Nuovo Report',
@@ -16345,7 +16350,7 @@ function eaSezioniMie(){
 }
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
    servizio raggiungibili da tutti): non vanno bloccate. */
-var EA_SEZIONI_LIBERE=['impostazioni'];
+var EA_SEZIONI_LIBERE=['impostazioni','mansioni'];
 /* ===== DUE SEZIONI IN DUE SCHEDE =====
    Capita di dover guardare una cosa mentre se ne lavora un'altra. Finora
    serviva aprire il gestionale in una seconda scheda e ritrovare la sezione
@@ -16448,6 +16453,10 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
       return;
     }
+    if(view==='mansioni' && typeof mnAbilitato==='function' && !mnAbilitato()){
+      if(typeof tcToastNew==='function') tcToastNew('Sezione in prova: non ancora attiva per il tuo utente.', false);
+      return;
+    }
     if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && view!=='online' && mie.indexOf(view)<0){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata: chiedi all\u2019amministratore.', false);
       return;
@@ -16501,6 +16510,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
+  if(view==='mansioni'){ try{ mnRender(); if(typeof ccSupaLoad==='function') ccSupaLoad(function(){ try{ mnRender(); }catch(e){} }); }catch(e){} }
   if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); wfBuoniSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
@@ -36419,8 +36429,380 @@ function eaSyncVivo(){
 }
 try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVistaAttiva=eaVistaAttiva; }catch(e){}
 
+/* =====================================================================
+   MANSIONI — la bacheca dei compiti fra colleghi
+   ---------------------------------------------------------------------
+   Nasce per togliere le mansioni da WhatsApp. Chiunque assegna a chiunque,
+   anche con un messaggio vocale. Il destinatario le vede nella sua
+   bacheca (Da fare / In corso / Fatte) e riceve una mail. Se una mansione
+   scade e non e' stata fatta, il giorno dopo, appena timbra l'entrata (e
+   a ogni avvio del gestionale), gli compare a tutto schermo e ricompare
+   finche' non la segna fatta.
+   I dati stanno nella stessa tabella del calendario (compiti_app, categoria
+   'task'): niente migrazioni, e nel calendario restano visibili come prima.
+   ===================================================================== */
+var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
+/* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
+   tutti basta svuotare l'elenco (MN_BETA=[]). */
+var MN_BETA=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
+function mnAbilitato(email){
+  if(!MN_BETA.length) return true;
+  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
+  return MN_BETA.indexOf(e)>=0;
+}
+var _mnFiltro='mie', _mnMostraFatte=false, _mnBloccoChiusoTs=0, _mnRec=null;
+var MN_RIPROPONI_MS=15*60*1000;   /* "lo faccio dopo" vale un quarto d'ora */
+
+function mnOggi(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function mnEsc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function mnDataIt(iso){ return iso?String(iso).split('-').reverse().join('/'):''; }
+function mnMe(){
+  var em=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+  var nome=(typeof eaNomeDaMail==='function')?eaNomeDaMail(em):em;
+  var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'dipendente';
+  return { email:em, nome:nome, ruolo:ruolo };
+}
+function mnNome(email){ try{ return eaNomeDaMail(email)||email; }catch(e){ return email||''; } }
+function mnLista(){
+  var l=(typeof window.ccLoad==='function')?window.ccLoad():[];
+  return l.filter(function(c){ return c && c.categoria==='task' && c.deleted!==true; });
+}
+function mnById(id){ return mnLista().filter(function(c){ return c.id===id; })[0]||null; }
+function mnStato(c){ if(!c) return 'todo'; if(c.fatto) return 'done'; return c.stato==='doing'?'doing':'todo'; }
+function mnScaduta(c){ return !!(c && !c.fatto && c.data && c.data<mnOggi()); }
+function mnMia(c){ var me=mnMe().email; return !!(c && me && String(c.dipEmail||'').toLowerCase()===me); }
+function mnMie(){ return mnLista().filter(mnMia); }
+function mnSalvaRec(c){
+  var l=window.ccLoad(); var i=l.findIndex(function(x){ return x.id===c.id; });
+  c.updatedAt=Date.now();
+  if(i>=0) l[i]=c; else l.push(c);
+  window.ccSave(l);
+  try{ ccSupaUpsert(c); }catch(e){}
+  try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
+  try{ mnBadge(); }catch(e){}
+}
+function mnPersone(){
+  var out=[];
+  var add=function(nome,email){ email=String(email||'').trim(); if(!email) return; if(out.some(function(p){ return p.email.toLowerCase()===email.toLowerCase(); })) return; out.push({ nome:(nome&&String(nome).indexOf('@')<0)?nome:mnNome(email), email:email }); };
+  var me=mnMe(); add(me.nome, me.email);
+  try{ (tcLoadDip()||[]).forEach(function(d){ add(d.nome,d.email); }); }catch(e){}
+  try{ (UTENTI_APP||[]).forEach(function(u){ add(u.nome,u.email); }); }catch(e){}
+  return out.filter(function(p){ return mnAbilitato(p.email); });
+}
+
+/* ------------------------------ bacheca ------------------------------ */
+function mnRender(){
+  var v=document.getElementById('view-mansioni'); if(!v) return;
+  if(!mnAbilitato()){ v.innerHTML='<div style="color:#64748b;">Sezione in prova: non ancora attiva per il tuo utente.</div>'; return; }
+  var me=mnMe();
+  var tutte=mnLista();
+  var lista=(_mnFiltro==='mie')?tutte.filter(mnMia):tutte;
+  var oggi=mnOggi();
+  var col={ todo:[], doing:[], done:[] };
+  lista.forEach(function(c){ col[mnStato(c)].push(c); });
+  var ord=function(a,b){ return String(a.data||'').localeCompare(String(b.data||'')) || (a.updatedAt||0)-(b.updatedAt||0); };
+  col.todo.sort(ord); col.doing.sort(ord);
+  col.done.sort(function(a,b){ return (b.fattoTs||b.updatedAt||0)-(a.fattoTs||a.updatedAt||0); });
+  var lim=Date.now()-14*86400000;
+  var doneVis=_mnMostraFatte?col.done:col.done.filter(function(c){ return (c.fattoTs||c.updatedAt||0)>lim; });
+  var scadMie=mnMie().filter(mnScaduta).length;
+
+  var btn=function(txt,on,stile){ return '<button onclick="'+on+'" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;'+(stile||'')+'">'+txt+'</button>'; };
+  var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+    +'<button onclick="mnNuova()" style="padding:11px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">+ Nuova mansione</button>'
+    +'<div style="display:flex;border:1px solid #cbd5e1;border-radius:9px;overflow:hidden;">'
+    +'<button onclick="_mnFiltro=\'mie\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='mie'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='mie'?'#fff':'#334155')+';">Le mie</button>'
+    +'<button onclick="_mnFiltro=\'tutte\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='tutte'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='tutte'?'#fff':'#334155')+';">Tutte</button>'
+    +'</div>'
+    +(scadMie?('<span style="background:#fee2e2;color:#b91c1c;font-weight:800;font-size:12.5px;padding:7px 11px;border-radius:20px;">'+scadMie+' in ritardo '+(scadMie===1?'tua':'tue')+'</span>'):'')
+    +'<span style="flex:1;"></span>'
+    +'<label style="font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" '+(_mnMostraFatte?'checked':'')+' onchange="_mnMostraFatte=this.checked;mnRender()"> mostra tutte le fatte</label>'
+    +'</div>';
+  var colonna=function(tit,colore,arr,vuoto){
+    return '<div style="flex:1;min-width:260px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 4px 10px;"><div style="font-weight:800;color:'+colore+';">'+tit+'</div><div style="font-size:12px;color:#64748b;font-weight:700;">'+arr.length+'</div></div>'
+      +(arr.length?arr.map(mnCardHTML).join(''):('<div style="font-size:12.5px;color:#94a3b8;padding:12px 6px;">'+vuoto+'</div>'))
+      +'</div>';
+  };
+  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">'
+    +colonna('Da fare','#b45309',col.todo,'Niente da fare. Bene.')
+    +colonna('In corso','#1a4fa0',col.doing,'Nessuna mansione in corso.')
+    +colonna('Fatte','#15803d',doneVis,'Ancora nessuna mansione completata'+(_mnMostraFatte?'':' negli ultimi 14 giorni')+'.')
+    +'</div>';
+  v.innerHTML=h;
+  mnBadge();
+}
+function mnCardHTML(c){
+  var me=mnMe(), st=mnStato(c), scad=mnScaduta(c), oggi=mnOggi();
+  var mia=mnMia(c), creatore=(String(c.creatoDaEmail||'').toLowerCase()===me.email), admin=(me.ruolo==='admin');
+  var dataCol=scad?'#b91c1c':(c.data===oggi?'#b45309':'#475569');
+  var dataTxt=c.data===oggi?'oggi':(scad?('scaduta il '+mnDataIt(c.data)):('entro il '+mnDataIt(c.data)));
+  var h='<div style="background:#fff;border:1px solid '+(scad&&st!=='done'?'#fca5a5':'#e2e8f0')+';border-left:4px solid '+(st==='done'?'#16a34a':(scad?'#dc2626':(st==='doing'?'#1a4fa0':'#f59e0b')))+';border-radius:10px;padding:10px 12px;margin-bottom:8px;">'
+    +'<div style="font-weight:800;font-size:14px;color:#0f172a;'+(st==='done'?'text-decoration:line-through;color:#64748b;':'')+'">'+mnEsc(c.titolo||'(senza titolo)')+'</div>'
+    +(c.nota?('<div style="font-size:12.5px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
+    +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
+    +(c.rif?('<div style="font-size:12px;color:#1a4fa0;margin-top:4px;">🔗 '+mnEsc(c.rif)+'</div>'):'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px;color:#64748b;margin-top:6px;">'
+    +'<span>👤 <b style="color:#0f172a;">'+mnEsc(mnNome(c.dipEmail)||c.dipNome||'')+'</b></span>'
+    +'<span style="color:'+dataCol+';font-weight:700;">📅 '+mnEsc(dataTxt)+(c.ora?(' '+mnEsc(c.ora)):'')+'</span>'
+    +'<span>da '+mnEsc(c.creatoDa||'')+'</span>'
+    +(st==='done'&&c.fattoTs?('<span style="color:#15803d;">✓ '+new Date(c.fattoTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(c.fattoDa?(' '+mnEsc(c.fattoDa)):'')+'</span>'):'')
+    +'</div>';
+  if(c.commenti&&c.commenti.length){
+    h+='<div style="margin-top:7px;border-top:1px dashed #e2e8f0;padding-top:6px;">'+c.commenti.slice(-4).map(function(k){
+      return '<div style="font-size:12px;color:#334155;margin:2px 0;"><b>'+mnEsc(k.da||'')+'</b> <span style="color:#94a3b8;">'+new Date(k.ts||0).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span><br>'+mnEsc(k.testo||'')+'</div>';
+    }).join('')+'</div>';
+  }
+  var b=function(txt,on,bg,fg,bd){ return '<button onclick="'+on+'" style="padding:6px 10px;border-radius:7px;border:1px solid '+(bd||'#cbd5e1')+';background:'+(bg||'#fff')+';color:'+(fg||'#334155')+';font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">'+txt+'</button>'; };
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">';
+  if(st==='todo') h+=b('▶ Inizio','mnSegna(\''+c.id+'\',\'doing\')','#eff6ff','#1a4fa0','#1a4fa0');
+  if(st!=='done') h+=b('✓ Fatto','mnSegna(\''+c.id+'\',\'done\')','#16a34a','#fff','#16a34a');
+  if(st==='done') h+=b('↩ Riapri','mnSegna(\''+c.id+'\',\'todo\')');
+  h+=b('💬 Commenta','mnCommenta(\''+c.id+'\')');
+  if(creatore||admin) h+=b('✎ Modifica','mnNuova(\''+c.id+'\')')+b('🗑','mnElimina(\''+c.id+'\')','#fef2f2','#dc2626','#fecaca');
+  h+='</div></div>';
+  return h;
+}
+function mnBadge(){
+  try{
+    var btn=document.getElementById('si-task'); if(!btn) return;
+    if(!mnAbilitato()){ btn.style.display='none'; return; }
+    var bd=btn.querySelector('.si-badge');
+    if(!bd){ bd=document.createElement('span'); bd.className='si-badge'; btn.appendChild(bd); }
+    var mie=mnMie().filter(function(c){ return !c.fatto; });
+    var sc=mie.filter(mnScaduta).length;
+    bd.textContent=mie.length; bd.style.display=mie.length?'':'none';
+    bd.style.background=sc?'#dc2626':'';
+  }catch(e){}
+}
+
+/* --------------------------- nuova / modifica --------------------------- */
+function mnNuova(id){
+  var c=id?mnById(id):null;
+  var me=mnMe();
+  var m=(typeof cvModModal==='function')?cvModModal():document.getElementById('cv-mod-modal'); if(!m) return;
+  mnRecReset();
+  var inp='width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:12px 0 4px;text-transform:uppercase;">'+t+'</label>'; };
+  var persone=mnPersone();
+  var sel=(c&&c.dipEmail)||me.email;
+  var h='<div style="max-width:520px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-weight:800;">'+(c?'✎ Modifica mansione':'➕ Nuova mansione')+'</div>'
+    +'<div style="padding:4px 18px 18px;max-height:80vh;overflow:auto;">'
+    +lab('Cosa va fatto *')+'<input id="mn_titolo" value="'+mnEsc(c?c.titolo:'')+'" placeholder="es. Portare la BMW 118 GP084RN dal gommista" style="'+inp+'font-weight:700;">'
+    +lab('Dettagli (facoltativo)')+'<textarea id="mn_nota" rows="3" style="'+inp+'" placeholder="indicazioni, orari, cosa controllare…">'+mnEsc(c?c.nota:'')+'</textarea>'
+    +lab('Messaggio vocale')
+    +'<div id="mn-audio-box" style="border:1px dashed #cbd5e1;border-radius:9px;padding:10px;background:#f8fafc;">'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    +'<button type="button" id="mn-rec-btn" onclick="mnRecToggle()" style="padding:9px 14px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">⏺ Registra</button>'
+    +'<span id="mn-rec-stato" style="font-size:12.5px;color:#64748b;">'+(c&&c.audioUrl?'C’è già un vocale: registrane uno nuovo per sostituirlo.':'Premi e parla: chi riceve la mansione lo ascolta dalla bacheca.')+'</span>'
+    +'</div>'
+    +'<div id="mn-rec-play" style="margin-top:8px;">'+(c&&c.audioUrl?('<audio controls src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;"></audio>'):'')+'</div>'
+    +'</div>'
+    +lab('Assegnata a *')+'<select id="mn_dip" style="'+inp+'">'+persone.map(function(p){ return '<option value="'+mnEsc(p.email)+'"'+(p.email.toLowerCase()===String(sel).toLowerCase()?' selected':'')+'>'+mnEsc(p.nome)+'</option>'; }).join('')+'</select>'
+    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Entro il *')+'<input id="mn_data" type="date" value="'+mnEsc(c?c.data:mnOggi())+'" style="'+inp+'"></div>'
+    +'<div style="flex:1;">'+lab('Ora (facoltativa)')+'<input id="mn_ora" type="time" value="'+mnEsc(c?c.ora:'')+'" style="'+inp+'"></div></div>'
+    +lab('Riferimento (targa, cliente, pratica…)')+'<input id="mn_rif" value="'+mnEsc(c?c.rif:'')+'" placeholder="es. GP084RN · Rossi" style="'+inp+'">'
+    +'<button onclick="mnSalva(\''+(c?c.id:'')+'\')" id="mn-salva-btn" style="margin-top:18px;width:100%;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">'+(c?'Salva modifiche':'Assegna la mansione')+'</button>'
+    +'<button onclick="mnRecReset();cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
+    +'</div></div>';
+  m.innerHTML=h; m.style.display='block';
+  setTimeout(function(){ try{ document.getElementById('mn_titolo').focus(); }catch(e){} }, 50);
+}
+/* registrazione vocale: MediaRecorder del browser, niente librerie */
+function mnRecReset(){
+  try{ if(_mnRec && _mnRec.rec && _mnRec.rec.state!=='inactive') _mnRec.rec.stop(); }catch(e){}
+  try{ if(_mnRec && _mnRec.stream) _mnRec.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  _mnRec=null;
+}
+function mnRecToggle(){
+  var btn=document.getElementById('mn-rec-btn'), st=document.getElementById('mn-rec-stato'), play=document.getElementById('mn-rec-play');
+  if(_mnRec && _mnRec.rec && _mnRec.rec.state==='recording'){ _mnRec.rec.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio. Scrivi la mansione nei dettagli.'); return; }
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
+    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    var chunks=[]; var t0=Date.now(); var timer=null;
+    _mnRec={ rec:rec, stream:stream, blob:null, mime:mime||'audio/webm' };
+    rec.ondataavailable=function(e){ if(e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop=function(){
+      clearInterval(timer);
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+      var blob=new Blob(chunks,{type:_mnRec.mime}); _mnRec.blob=blob;
+      var url=URL.createObjectURL(blob);
+      if(play) play.innerHTML='<audio controls src="'+url+'" style="width:100%;height:34px;"></audio>';
+      if(btn){ btn.textContent='⏺ Registra di nuovo'; btn.style.background='#dc2626'; }
+      if(st) st.textContent='Vocale pronto ('+Math.round((Date.now()-t0)/1000)+' s). Si allega quando salvi.';
+    };
+    rec.start();
+    if(btn){ btn.textContent='⏹ Ferma'; btn.style.background='#0f172a'; }
+    if(st) st.textContent='Sto registrando… 0 s';
+    timer=setInterval(function(){ if(st) st.textContent='Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s'; if(Date.now()-t0>180000){ try{ rec.stop(); }catch(e){} } },500);
+  }).catch(function(err){
+    alert('Microfono non disponibile: '+((err&&err.message)||err)+'\n\nControlla che il browser abbia il permesso di usare il microfono.');
+  });
+}
+function mnAudioCarica(){
+  /* ritorna una Promise con l'URL del vocale (o '' se non c'e') */
+  if(!_mnRec || !_mnRec.blob) return Promise.resolve('');
+  var blob=_mnRec.blob, ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
+  var nome='mansione-'+Date.now()+'.'+ext;
+  var viaR2=(typeof eaR2Upload==='function')?eaR2Upload(blob,'mansioni',nome):Promise.reject(new Error('no r2'));
+  return viaR2.catch(function(){
+    /* senza R2: il vocale va dentro il record, se e' piccolo */
+    if(blob.size>1500000) throw new Error('Vocale troppo lungo per essere salvato senza archivio: riprova più breve.');
+    return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result)); }; r.onerror=function(){ rej(new Error('lettura audio')); }; r.readAsDataURL(blob); });
+  });
+}
+function mnSalva(id){
+  var g=function(k){ var el=document.getElementById('mn_'+k); return el?String(el.value).trim():''; };
+  var titolo=g('titolo'), dip=g('dip'), data=g('data');
+  if(!titolo){ alert('Scrivi cosa va fatto.'); return; }
+  if(!dip){ alert('Scegli a chi assegnarla.'); return; }
+  if(!data){ alert('Scegli entro quando va fatta.'); return; }
+  var btn=document.getElementById('mn-salva-btn'); if(btn){ btn.disabled=true; btn.textContent='⏳ Salvo…'; }
+  var me=mnMe();
+  mnAudioCarica().then(function(audioUrl){
+    var c=id?mnById(id):null, nuova=!c;
+    if(!c){
+      c={ id:'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), categoria:'task', tipo:'task',
+          creatoDa:me.nome, creatoDaEmail:me.email, createdAt:Date.now(), fatto:false, fattoDa:'', avvisato:false, stato:'todo', commenti:[] };
+    }
+    var dipPrima=c.dipEmail;
+    c.titolo=titolo; c.nota=g('nota'); c.dipEmail=dip; c.dipNome=mnNome(dip); c.data=data; c.ora=g('ora'); c.rif=g('rif');
+    if(audioUrl) c.audioUrl=audioUrl;
+    mnSalvaRec(c);
+    mnRecReset(); cvModChiudi(); mnRender();
+    try{ if(typeof tcToastNew==='function') tcToastNew(nuova?('✅ Mansione assegnata a '+c.dipNome):'✅ Mansione aggiornata', true); }catch(e){}
+    /* avviso al destinatario: nuova, o riassegnata a un altro */
+    if((nuova || (dipPrima && dipPrima!==dip)) && String(dip).toLowerCase()!==me.email) mnAvvisaAssegnazione(c);
+  }).catch(function(err){
+    if(btn){ btn.disabled=false; btn.textContent=id?'Salva modifiche':'Assegna la mansione'; }
+    alert('Non sono riuscito a salvare: '+((err&&err.message)||err));
+  });
+}
+function mnAvvisaAssegnazione(c){
+  try{
+    if(!c || !c.dipEmail || typeof eaInviaMessaggio!=='function') return;
+    var E=mnEsc, link='https://auto.europaautosrl.it/#mansioni';
+    var html='<p>Ciao '+E(mnNome(c.dipEmail))+',</p>'
+      +'<p><b>'+E(c.creatoDa||'un collega')+'</b> ti ha assegnato una mansione:</p>'
+      +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:12px 14px;">'
+      +'<div style="font-size:16px;font-weight:800;">'+E(c.titolo)+'</div>'
+      +(c.nota?('<div style="margin-top:6px;white-space:pre-wrap;">'+E(c.nota)+'</div>'):'')
+      +(c.rif?('<div style="margin-top:6px;color:#1a4fa0;">Rif. '+E(c.rif)+'</div>'):'')
+      +'<div style="margin-top:8px;color:#b45309;font-weight:700;">Entro il '+E(mnDataIt(c.data))+(c.ora?(' alle '+E(c.ora)):'')+'</div>'
+      +(c.audioUrl&&/^https?:/.test(c.audioUrl)?('<div style="margin-top:8px;">🎙 C’è un messaggio vocale: <a href="'+E(c.audioUrl)+'">ascoltalo</a> (o aprilo dalla bacheca).</div>'):(c.audioUrl?'<div style="margin-top:8px;">🎙 C’è un messaggio vocale: lo ascolti dalla bacheca Mansioni.</div>':''))
+      +'</div>'
+      +'<p style="margin-top:14px;">La trovi nella sezione <a href="'+link+'"><b>Mansioni</b></a> del gestionale: segnala <b>Fatto</b> quando l’hai completata. Se resta indietro, te la ripropongo all’apertura.</p>';
+    eaInviaMessaggio({ to:c.dipEmail, subject:'Mansione per te: '+c.titolo+' (entro il '+mnDataIt(c.data)+')', html:(typeof eaMailWrap==='function')?eaMailWrap(html):html }).then(function(){}, function(){});
+  }catch(e){}
+}
+function mnSegna(id, stato){
+  var c=mnById(id); if(!c) return;
+  var me=mnMe();
+  if(stato==='done'){ c.fatto=true; c.stato='done'; c.fattoDa=me.nome; c.fattoTs=Date.now(); }
+  else { c.fatto=false; c.stato=stato; c.fattoDa=''; c.fattoTs=null; }
+  mnSalvaRec(c); mnRender();
+  try{ if(typeof tcToastNew==='function') tcToastNew(stato==='done'?'✅ Mansione completata':(stato==='doing'?'▶ Mansione in corso':'↩ Mansione riaperta'), true); }catch(e){}
+  /* chi l'ha assegnata sa che e' stata fatta (se non e' lui stesso) */
+  if(stato==='done' && c.creatoDaEmail && c.creatoDaEmail!==me.email && typeof eaInviaMessaggio==='function'){
+    try{
+      var E=mnEsc;
+      eaInviaMessaggio({ to:c.creatoDaEmail, subject:'Fatto: '+c.titolo,
+        html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha segnato come fatta la mansione <b>'+E(c.titolo)+'</b>'+(c.rif?(' ('+E(c.rif)+')'):'')+'.</p>'+((c.commenti&&c.commenti.length)?('<p>Ultimo commento: '+E(c.commenti[c.commenti.length-1].testo)+'</p>'):'')) }).then(function(){}, function(){});
+    }catch(e){}
+  }
+  /* la finestra a tutto schermo si aggiorna, e sparisce quando non c'e' piu' niente in ritardo */
+  try{ var bl=document.getElementById('mn-blocco'); if(bl){ if(mnMie().filter(mnScaduta).length) mnBloccoScadute(true); else bl.remove(); } }catch(e){}
+}
+function mnCommenta(id){
+  var c=mnById(id); if(!c) return;
+  var t=prompt('Commento sulla mansione “'+c.titolo+'”:'); if(t===null) return; t=String(t).trim(); if(!t) return;
+  var me=mnMe();
+  c.commenti=(c.commenti||[]).concat([{ da:me.nome, email:me.email, ts:Date.now(), testo:t }]);
+  mnSalvaRec(c); mnRender();
+  /* il commento arriva all'altra parte: a chi l'ha assegnata se commenta l'assegnatario, e viceversa */
+  try{
+    var dest=(me.email===String(c.dipEmail||'').toLowerCase())?c.creatoDaEmail:c.dipEmail;
+    if(dest && dest!==me.email && typeof eaInviaMessaggio==='function'){
+      var E=mnEsc;
+      eaInviaMessaggio({ to:dest, subject:'Commento su: '+c.titolo, html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha scritto sulla mansione <b>'+E(c.titolo)+'</b>:</p><blockquote style="border-left:3px solid #cbd5e1;margin:0;padding:6px 12px;color:#334155;">'+E(t)+'</blockquote>') }).then(function(){}, function(){});
+    }
+  }catch(e){}
+}
+function mnElimina(id){
+  var c=mnById(id); if(!c) return;
+  if(!confirm('Eliminare la mansione “'+c.titolo+'”?')) return;
+  try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
+  var l=window.ccLoad().filter(function(x){ return x.id!==id; }); window.ccSave(l);
+  try{ ccSupaUpsert({ id:id, deleted:true, updatedAt:Date.now() }); }catch(e){}
+  mnRender(); try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
+}
+
+/* ----------------- la finestra che non si toglie finche' non fai ----------------- */
+function mnBloccoScadute(forza){
+  var me=mnMe(); if(!me.email || !mnAbilitato(me.email)) return false;
+  var scad=mnMie().filter(mnScaduta).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
+  var vecchio=document.getElementById('mn-blocco');
+  if(!scad.length){ if(vecchio) vecchio.remove(); return false; }
+  if(!forza && (Date.now()-_mnBloccoChiusoTs)<MN_RIPROPONI_MS) return false;
+  if(!vecchio){
+    vecchio=document.createElement('div'); vecchio.id='mn-blocco';
+    vecchio.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.78);z-index:20000;overflow:auto;padding:16px;';
+    document.body.appendChild(vecchio);
+  }
+  var h='<div style="max-width:620px;margin:4vh auto 0;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);">'
+    +'<div style="background:#b91c1c;color:#fff;padding:16px 20px;">'
+    +'<div style="font-size:19px;font-weight:800;">⚠️ '+scad.length+' mansion'+(scad.length===1?'e':'i')+' in ritardo</div>'
+    +'<div style="font-size:13px;opacity:.9;margin-top:3px;">'+mnEsc(me.nome)+', queste erano da fare e non risultano completate. Restano qui finché non le segni fatte.</div>'
+    +'</div>'
+    +'<div style="padding:14px 18px;max-height:62vh;overflow:auto;">'
+    +scad.map(function(c){
+      return '<div style="border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff7f7;">'
+        +'<div style="font-weight:800;font-size:15px;">'+mnEsc(c.titolo)+'</div>'
+        +(c.nota?('<div style="font-size:13px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
+        +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
+        +'<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-top:5px;">Scadeva il '+mnEsc(mnDataIt(c.data))+(c.ora?(' alle '+mnEsc(c.ora)):'')+' · assegnata da '+mnEsc(c.creatoDa||'')+(c.rif?(' · '+mnEsc(c.rif)):'')+'</div>'
+        +'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">'
+        +'<button onclick="mnSegna(\''+c.id+'\',\'done\')" style="padding:9px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">✓ Fatta</button>'
+        +'<button onclick="mnCommenta(\''+c.id+'\')" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">💬 Spiega il ritardo</button>'
+        +'</div></div>';
+    }).join('')
+    +'</div>'
+    +'<div style="padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    +'<span style="flex:1;font-size:12px;color:#64748b;">Chi le ha assegnate viene avvisato quando le completi o commenti.</span>'
+    +'<button onclick="mnBloccoDopo()" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Le faccio adesso, chiudi (15 min)</button>'
+    +'</div></div>';
+  vecchio.innerHTML=h;
+  return true;
+}
+function mnBloccoDopo(){
+  _mnBloccoChiusoTs=Date.now();
+  try{ localStorage.setItem('ea_mn_blocco_chiuso', String(_mnBloccoChiusoTs)); }catch(e){}
+  var b=document.getElementById('mn-blocco'); if(b) b.remove();
+}
+/* All'avvio e poi ogni 15 minuti: se c'e' qualcosa in ritardo, si fa vedere.
+   Il primo controllo aspetta il caricamento delle mansioni dal cloud. */
+function mnAvvio(){
+  try{ _mnBloccoChiusoTs=parseInt(localStorage.getItem('ea_mn_blocco_chiuso')||'0',10)||0; }catch(e){}
+  var tenta=function(n){
+    try{ mnBadge(); if(mnBloccoScadute(false)) return; }catch(e){}
+    if(n>0) setTimeout(function(){ tenta(n-1); }, 4000);
+  };
+  setTimeout(function(){ tenta(3); }, 2500);
+  try{ setInterval(function(){ try{ mnBadge(); mnBloccoScadute(false); }catch(e){} }, MN_RIPROPONI_MS); }catch(e){}
+}
+/* Dopo la timbratura d'entrata: e' il momento in cui uno si siede e guarda
+   cosa c'e' da fare. Qui il blocco compare anche se era stato chiuso. */
+function mnDopoTimbratura(tipo){
+  if(tipo!=='entrata') return;
+  setTimeout(function(){ try{ _mnBloccoChiusoTs=0; mnBloccoScadute(true); }catch(e){} }, 2500);
+}
+
 function eaBadgeBoot(){
   try{ eaSyncVivo(); }catch(e){}
+  try{ mnAvvio(); }catch(e){}
   /* Meglio avvisare quando manca poco che spiegare dopo perche' non salva. */
   setTimeout(function(){
     try{
