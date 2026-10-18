@@ -502,7 +502,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Calendario</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-appuntamenti" onclick="apriCalCat('appuntamento',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128197;</span><span class="si-label"> Appuntamenti</span><span class="si-badge" id="cc-badge" style="display:none;">0</span></button>
-    <button class="sidebar-item" id="si-task" onclick="sidebarNav('mansioni',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Mansioni</span><span class="si-badge" style="display:none;">0</span></button>
+    <button class="sidebar-item" id="si-task" onclick="apriCalCat('task',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Task</span></button>
     </div>
   </div>
   <div class="sidebar-divider"></div>
@@ -1216,10 +1216,13 @@ html, body{
 
       <div style="margin-bottom:14px;">
         <label class="lbl">📊 Come ci ha trovato il cliente?</label>
+        <div id="pFonteInfo" style="display:none;font-size:12px;line-height:1.5;border-radius:6px;padding:8px 10px;margin-bottom:6px;"></div>
         <div class="ptg" id="ptg-fonte" style="flex-wrap:wrap;">
-          <button class="ptb" onclick="ptog('fonte','AutoScout24',this)" style="flex:1;min-width:calc(50% - 4px);">🌐 AutoScout24</button>
-          <button class="ptb" onclick="ptog('fonte','Conoscenze',this)" style="flex:1;min-width:calc(50% - 4px);">👥 Conoscenze/Clienti</button>
-          <button class="ptb" onclick="ptog('fonte','Passaggio',this)" style="flex:1;min-width:calc(50% - 4px);">🚶 Di passaggio</button>
+          <button class="ptb" onclick="ptog('fonte','AutoScout',this)" style="flex:1;min-width:calc(50% - 4px);">🌐 AutoScout24</button>
+          <button class="ptb" onclick="ptog('fonte','Social',this)" style="flex:1;min-width:calc(50% - 4px);">📱 Social</button>
+          <button class="ptb" onclick="ptog('fonte','Passaparola',this)" style="flex:1;min-width:calc(50% - 4px);">👥 Conoscenze/Clienti</button>
+          <button class="ptb" onclick="ptog('fonte','Salone',this)" style="flex:1;min-width:calc(50% - 4px);">🚶 Di passaggio</button>
+          <button class="ptb" onclick="ptog('fonte','Sito web',this)" style="flex:1;min-width:calc(50% - 4px);">💻 Sito web</button>
           <button class="ptb" onclick="ptog('fonte','Altro',this)" style="flex:1;min-width:calc(50% - 4px);">❓ Altro</button>
         </div>
       </div>
@@ -1310,7 +1313,6 @@ html, body{
 
 <!-- PERMESSI -->
 <div class="view" id="view-noleggio" style="padding:22px 16px;"></div>
-<div class="view" id="view-mansioni" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-welfare" style="padding:22px 16px;"></div>
 
@@ -7200,6 +7202,7 @@ function pAggiornaSottocosto(cv){
 }
 
 function ptog(k,v,btn){
+  if(k==='fonte' && window._pFonteBloccata){ alert('La provenienza di questo cliente \u00e8 gi\u00e0 registrata nel CRM: '+window._pFonteBloccata+'.\n\nSi cambia solo dal CRM, e solo l\u2019amministratore.'); return; }
   /* Il sottocosto non si tocca quando lo decide la giacenza \u2014 salvo il
      titolare, per cui il blocco non viene mai acceso. */
   if(k==='sotto' && _pSottoBloccato) return;
@@ -7553,6 +7556,7 @@ function pProvvAuto(cv){
                       data:new Date().toLocaleDateString('it-IT'),
                       mese:(typeof pGetMese==='function'?pGetMese():''), fonte:'' };
     e.cvId=cv.id; e.bozza=true;
+    try{ if(!e.fonte || e.fonte==='Non specificato'){ var _fi=crmFonteDiCliente(cv.cliente||{}); if(_fi && _fi.rec && _fi.rec.fonte) e.fonte=eaFonteNorm(_fi.rec.fonte); } }catch(_f){}
     e.cliente=(cvNomeCliente(cl));
     (function(){
       var _mm=(typeof pMarcaModelloDaCv==='function')?pMarcaModelloDaCv(cv):null;
@@ -7929,10 +7933,52 @@ function pAzSalva(){
   try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
   var es=document.getElementById('pAzEsito'); if(es) es.textContent='\u2713 salvata: \u20ac '+(d.provvAzienda||0)+' sulla delibera';
 }
+/* ===== PROVENIENZA NELLE PROVVIGIONI =====
+   Non si sceglie piu' qui se il CRM la conosce gia': la si legge dalla
+   scheda del cliente e i pulsanti restano fermi. Se il CRM non la ha, la
+   scelta fatta qui viene scritta nel CRM (e da quel momento e' bloccata),
+   con la data di oggi: essendo dopo il contratto, un "Social" registrato
+   qui non vale come contatto social. */
+function pFonteSync(cv){
+  var info=null, box=document.getElementById('pFonteInfo');
+  window._pFonteBloccata=null; window._pFonteKey=null;
+  try{ if(cv && typeof crmFonteDiCliente==='function') info=crmFonteDiCliente(cv.cliente||{}); }catch(e){}
+  var g=document.getElementById('ptg-fonte');
+  if(g) g.querySelectorAll('.ptb').forEach(function(b){ b.classList.remove('on'); b.style.opacity=''; });
+  PS.fonte='';
+  if(info) window._pFonteKey=info.key;
+  var r=info&&info.rec;
+  if(r && r.fonte){
+    var f=eaFonteNorm(r.fonte); PS.fonte=f; window._pFonteBloccata=f;
+    if(g) g.querySelectorAll('.ptb').forEach(function(b){ var oc=b.getAttribute('onclick')||''; if(oc.indexOf("'"+f+"'")>=0) b.classList.add('on'); else b.style.opacity='.35'; });
+    var tem=(typeof crmFonteTempismo==='function')?crmFonteTempismo(r, cv&&cv.contrattoTs):'';
+    if(box){ box.style.display='block'; box.style.background='#e8eef8'; box.style.color='#1a4fa0';
+      box.innerHTML='🔒 Dal CRM: <b>'+f+'</b>'+(r.fonteTs?(' · registrata il '+crmDMY(r.fonteTs)+' da '+crmEsc(r.fonteDa||'')):'')+(r.fonteConf?' · ✔ confermata':' · da confermare')
+        +(tem==='dopo'?'<br><span style="color:#991b1b;font-weight:700;">⚠️ Registrata dopo il contratto</span>':''); }
+  } else if(box){
+    if(cv){ box.style.display='block'; box.style.background='#fff3cd'; box.style.color='#856404';
+      box.innerHTML='Il CRM non ha ancora la provenienza di questo cliente: quella che scegli qui viene registrata nel CRM con la data di oggi e poi non si cambia più.'; }
+    else box.style.display='none';
+  }
+}
+/* Al salvataggio: provenienza dal CRM se c'e', altrimenti la si scrive li'. */
+function pFonteAlSalvataggio(entry){
+  try{
+    var cv=entry.cvId && (typeof cvById==='function')?cvById(entry.cvId):null;
+    var info=cv?crmFonteDiCliente(cv.cliente||{}):null;
+    if(info && info.rec && info.rec.fonte){ entry.fonte=eaFonteNorm(info.rec.fonte); return; }
+    if(info && info.key && PS.fonte){
+      var st=crmLoad(); if(!st[info.key]) st[info.key]={ id:info.key, cognome:(cv.cliente||{}).cognome||'', nome:(cv.cliente||{}).nome||'', telefono:(cv.cliente||{}).telefono||'' };
+      if(crmFonteApplica(st[info.key], PS.fonte, 'provvigioni')){ crmSave(st); crmSupaUpsert(info.key, st[info.key]); }
+      entry.fonte=eaFonteNorm(PS.fonte);
+    }
+  }catch(e){ console.log('fonte provvigione:', e); }
+}
 function pCaricaVendita(cvId){
   try{
     var cv=(typeof cvById==='function')?cvById(cvId):null; if(!cv){ alert('Vendita non trovata.'); return; }
     try{ pAzMostra(cv); }catch(e){}
+    try{ pFonteSync(cv); }catch(e){}
     /* si continua la bozza gia' creata dalla vendita, non se ne apre una nuova */
     try{ var _b=pProvvDiCv(cv.id); _pEditingId=_b?_b.r.id:null; }catch(e){ _pEditingId=null; }
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
@@ -8535,6 +8581,7 @@ function pSalva() {
     cvId: (existingEntry && existingEntry.cvId) || null,
     bozza: false, manca: []
   };
+  pFonteAlSalvataggio(entry);
   if (res.tipo === 'noFin') { entry.provv = 25; }
   else if (res.tipo === 'sotto') { entry.provv = res.provv; }
   else { entry.compass = res.compass; entry.dbAvvera = res.dbAvvera; entry.bestProvv = res.bestProvv; }
@@ -8578,6 +8625,8 @@ function pSalva() {
   try{ window._pDaDelibera=false; pBloccaCampi(false); }catch(e){}
   ['pCliente','pMarca','pModello','pValore','pAcconto','pComm'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('pTan').value='';
+  /* la provenienza non passa al cliente successivo */
+  try{ pFonteSync(null); }catch(e){}
   pCalcola();
   // Salva subito su Google Sheets
   pGsSaveAndReload(entry, reg);
@@ -8682,6 +8731,11 @@ function pModifica(id){
     }
   };
   ct('ptg-fin',(r.tipo==='noFin')?'NO':'SI');
+  try{
+    var _cvF=(r.cvId && typeof cvById==='function')?cvById(r.cvId):null;
+    pFonteSync(_cvF);
+    if(!window._pFonteBloccata && r.fonte && r.fonte!=='Non specificato'){ var _fn=eaFonteNorm(r.fonte); PS.fonte=_fn; var _g=document.getElementById('ptg-fonte'); if(_g) _g.querySelectorAll('.ptb').forEach(function(b){ if((b.getAttribute('onclick')||'').indexOf("'"+_fn+"'")>=0) b.classList.add('on'); }); }
+  }catch(e){}
   /* righe vecchie con eta 'usata' (regola dei 6 mesi): si riportano alle due
      fasce vere del modulo, cosi' il pulsante acceso e' quello che si calcola */
   try{
@@ -8788,7 +8842,8 @@ function pRenderFonteChart() {
   
   var fonti = {};
   reg.forEach(function(r) {
-    var f = r.fonte || 'Non specificato';
+    var f = (typeof eaFonteNorm==='function' ? eaFonteNorm(r.fonte) : r.fonte) || 'Non specificato';
+    if (f==='AutoScout') f='AutoScout24'; else if (f==='Passaparola') f='Conoscenze/Clienti'; else if (f==='Salone') f='Di passaggio';
     fonti[f] = (fonti[f] || 0) + 1;
   });
   
@@ -11357,8 +11412,7 @@ function applyRoleUI() {
        altri sparirebbero a tutti, amministratore compreso. */
     if(v==='online' || v==='simulatore') return;
     /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
-    if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnSezioneVisibile!=='function' || mnSezioneVisibile())) ? '' : 'none'; return; }
-    if(v==='appuntamenti'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
+    if(v==='appuntamenti' || v==='task'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
     btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
   try{ eaSidebarGruppi(); }catch(e){}
@@ -14753,8 +14807,6 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
       if(sub) sub.textContent = ok ? (nomi[tipo]+' · '+ora+' salvata') : (nomi[tipo]+' · '+ora+' salvata (sincronizzo…)');
       tcToastNew('✅ '+nomi[tipo]+': '+ora, true);
       tcRenderLog(); tcAggiornaPulsanti(); tcRenderMese();
-      /* appena timbrata l'entrata: le mansioni in ritardo si fanno vedere */
-      try{ if(typeof mnDopoTimbratura==='function') mnDopoTimbratura(tipo); }catch(e){}
       if(!ok){ try{ gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:rec}); }catch(e){} } // ritenta in background
     }, wait);
   });
@@ -16061,7 +16113,6 @@ function presenzeEsportaExcel(){
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
-  'mansioni': 'Mansioni',
   'bmvalue': 'BM Value',
   'simulatore': 'Simulatore finanziamento',
   'editor':  'Nuovo Report',
@@ -16350,7 +16401,7 @@ function eaSezioniMie(){
 }
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
    servizio raggiungibili da tutti): non vanno bloccate. */
-var EA_SEZIONI_LIBERE=['impostazioni','mansioni'];
+var EA_SEZIONI_LIBERE=['impostazioni'];
 /* ===== DUE SEZIONI IN DUE SCHEDE =====
    Capita di dover guardare una cosa mentre se ne lavora un'altra. Finora
    serviva aprire il gestionale in una seconda scheda e ritrovare la sezione
@@ -16453,10 +16504,6 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
       return;
     }
-    if(view==='mansioni' && typeof mnSezioneVisibile==='function' && !mnSezioneVisibile()){
-      if(typeof tcToastNew==='function') tcToastNew('Sezione in prova: non ancora attiva per il tuo utente.', false);
-      return;
-    }
     if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && view!=='online' && mie.indexOf(view)<0){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata: chiedi all\u2019amministratore.', false);
       return;
@@ -16510,7 +16557,6 @@ function sidebarNav(view,btn){
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
-  if(view==='mansioni'){ try{ mnRender(); if(typeof ccSupaLoad==='function') ccSupaLoad(function(){ try{ mnRender(); }catch(e){} }); }catch(e){} }
   if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); wfBuoniSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
@@ -16740,7 +16786,11 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '</div>'
   +       '<div class="cc-row2">'
   +         '<div class="cc-field"><label>Email cliente *</label><input type="email" id="cc-email" placeholder="cliente@email.it"></div>'
-  +         '<div class="cc-field"><label>Telefono cliente *</label><input type="tel" id="cc-tel" placeholder="333 1234567"></div>'
+  +         '<div class="cc-field"><label>Telefono cliente *</label><input type="tel" id="cc-tel" placeholder="333 1234567" onchange="ccFonteUI()"></div>'
+  +       '</div>'
+  +       '<div class="cc-field" id="cc-fonte-wrap" style="display:none;"><label>Come ci ha conosciuto? *</label>'
+  +         '<select id="cc-fonte"></select>'
+  +         '<div id="cc-fonte-nota" style="font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.5;"></div>'
   +       '</div>'
   +       '<div class="cc-field" style="display:none"><select id="cc-dip"></select></div>'
   +       '<div class="cc-field"><label>Data</label><input type="date" id="cc-data"></div>'
@@ -17456,6 +17506,7 @@ document.addEventListener('DOMContentLoaded',function(){
       }
       var v=((document.getElementById('cc-titolo')||{}).value||'').toLowerCase().trim(); if(!v||typeof clAggrega!=='function') return;
       var lista=clAggrega();
+      window._ccFonteCli=null;
       var match=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim()===v; })[0];
       if(!match){ var pref=lista.filter(function(o){ return ccNomeCliente(o).toLowerCase().trim().indexOf(v)===0; }); if(pref.length===1) match=pref[0]; }
       if(match){
@@ -17463,6 +17514,7 @@ document.addEventListener('DOMContentLoaded',function(){
         var em=document.getElementById('cc-email'), te=document.getElementById('cc-tel');
         if(em && c.email) em.value=c.email;
         if(te && (c.telefono||c.tel)) te.value=(c.telefono||c.tel);
+        try{ window._ccFonteCli=c; ccFonteUI(); }catch(e){}
         /* Scelto il cliente si tira su anche la sua auto: prima bisognava
            ricordarsi targa e modello e riscriverli a mano nel campo sopra. */
         try{
@@ -17665,6 +17717,16 @@ document.addEventListener('DOMContentLoaded',function(){
         return;
       }
     }
+    /* ===== PROVENIENZA SULL'APPUNTAMENTO DI VENDITA =====
+       Si chiede qui, prima che il cliente entri in salone: e' il momento
+       in cui la si conosce davvero, e da qui in poi non si cambia piu'. */
+    var _ccFonte='';
+    if(categoria!=='task' && _tipoSel==='vendita'){
+      try{ ccFonteUI(); }catch(e){}
+      var _fEl=document.getElementById('cc-fonte');
+      _ccFonte=(window._ccFonteBloccata)||((_fEl&&_fEl.value)||'');
+      if(!_ccFonte){ ccToast('Scegli come ci ha conosciuto il cliente'); if(_fEl){ _fEl.focus(); _fEl.style.borderColor='#dc2626'; setTimeout(function(){ _fEl.style.borderColor=''; }, 2500); } return; }
+    }
     var dipSel = document.getElementById('cc-dip');
     if (!dipSel.options.length){ ccToast('Aggiungi prima un dipendente in Presenze'); return; }
     var u = ccUtente();
@@ -17703,6 +17765,7 @@ document.addEventListener('DOMContentLoaded',function(){
       buono20: !!((tipo!=='vendita') && (document.getElementById('cc-buono20')||{}).checked),
       creatoDa: u.nome, fatto:false, fattoDa:'', avvisato:false
     };
+    if(_ccFonte){ c.fonte=_ccFonte; try{ ccFonteRegistra(titolo, email, tel, _ccFonte); }catch(e){ console.log('fonte appuntamento:', e); } }
     /* ===== IL PROMEMORIA AL CLIENTE NON E' QUI, E' SU SUPABASE =====
        La mail della sera prima la manda il cron ogni ora, e la manda a
        chiunque abbia un appuntamento domani e non sia ancora segnato come
@@ -17766,6 +17829,7 @@ document.addEventListener('DOMContentLoaded',function(){
     document.getElementById('cc-titolo').value=''; document.getElementById('cc-ora').value=''; document.getElementById('cc-nota').value='';
     try{ var _b20=document.getElementById('cc-buono20'); if(_b20) _b20.checked=false; }catch(e){}
     if(emEl) emEl.value=''; if(telEl) telEl.value='';
+    try{ window._ccFonteCli=null; var _fs=document.getElementById('cc-fonte'); if(_fs) _fs.value=''; ccFonteUI(); }catch(e){}
     ccRenderList(); ccRenderCal(); ccUpdateBadge(); ccRenderRiepilogo(); ccToast(categoria==='task'?'Task salvato':'Appuntamento salvato \u2014 email di conferma inviata');
     try{ if(typeof notifPush==='function'){ if(categoria==='task') notifPush('Nuovo task: '+titolo+(c.dipNome?(' \u2014 '+c.dipNome):''), '\u2705', (c.dipEmail?{tipo:'task_new', refId:c.id, per:c.dipEmail}:null));
     if(categoria==='task') ccMailNuovoTask(c); else notifPush('Appuntamento salvato ('+titolo+') \u2014 email di conferma inviata', '\ud83d\udcc5'); } }catch(e){}
@@ -18636,6 +18700,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var t=(document.getElementById('cc-tipo')||{}).value||'intervento';
       var box=document.getElementById('cc-nota-wrap');
       if(box) box.style.display=(t==='vendita')?'none':'';
+      try{ ccFonteUI(); }catch(e){}
       /* Su un intervento l'auto e' quella che il cliente ha gia' comprato:
          cercarla in magazzino non ha senso, il campo sparisce e si compila
          da solo scegliendo il cliente. Sulla vendita invece l'auto e'
@@ -25686,8 +25751,7 @@ function cvRender(){
       +'<div style="display:flex;justify-content:space-between;gap:10px;"><div><div style="font-weight:800;font-size:15px;">'+cvEsc((c.cliente&&(c.cliente.nome||'')+' '+(c.cliente&&c.cliente.cognome||''))||'Cliente')+badge+'</div>'
       +'<div style="font-size:13px;color:#475569;margin-top:2px;">'+cvEsc(c.autoDesc||(c.autoSnapshot&&c.autoSnapshot.modello)||'—')+(cvAutoNum(c)?(' \u00b7 <b style="color:#3730a3;">N\u00b0 '+cvEsc(cvAutoNum(c))+'</b>'):'')+'</div>'
       +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+cvEsc(cvDataIt(c.data))+'</div></div>'
-      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div>'
-      +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(c,true):'')+'</div>';
+      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div></div>';
   }).join('')+_piu;
 }
 
@@ -25777,7 +25841,6 @@ function cvVista(id){
    +'<button onclick="cvVistaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button>'
    +'</span></div>'
    +'<div style="padding:14px 16px;max-height:74vh;overflow:auto;">'
-   +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(cv,false).replace('margin-top:8px','margin:0 0 10px'):'')
    +vBox
    +tit('Cliente')
    +riga('Nominativo', cvEsc((cvNomeCliente(cl))||'\u2014'))
@@ -27231,59 +27294,6 @@ try{ setTimeout(function(){
   if(n) console.log('buste ripulite dai preventivi gia inviati:', n);
 }, 8000); }catch(e){}
 
-/* ===== LA MAIL AL CLIENTE SI PUO' FERMARE =====
-   Il preventivo parte via mail dopo un'ora. Se e' sbagliato, in quell'ora si
-   puo' bloccare: mailDaInviareAt torna vuoto (il cron non lo vede piu') e
-   resta il segno mailBloccata. Da li' si puo' riprogrammare o mandare subito. */
-function cvMailStatoHTML(c, compatto){
-  try{
-    if(!c || c.isContratto || c.annullato) return '';
-    var now=Date.now();
-    var box=function(bg,bd,fg,testo,bott){ return '<div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:'+bg+';border:1px solid '+bd+';color:'+fg+';border-radius:8px;padding:'+(compatto?'6px 9px':'9px 12px')+';margin-top:8px;font-size:12px;font-weight:700;">'+testo+(bott||'')+'</div>'; };
-    var b=function(txt,fn,col){ return '<button onclick="event.stopPropagation();'+fn+'(\''+c.id+'\')" style="padding:5px 10px;border-radius:7px;border:1px solid '+col+';background:#fff;color:'+col+';font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;">'+txt+'</button>'; };
-    if(c.emailInviata) return compatto?'':box('#f0fdf4','#bbf7d0','#166534','\ud83d\udce7 Mail inviata al cliente'+(c.emailInviataTs?(' il '+new Date(c.emailInviataTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):''));
-    if(c.mailBloccata) return box('#fef2f2','#fecaca','#991b1b','\u26d4 Mail al cliente BLOCCATA'+(c.mailBloccataDa?(' da '+cvEsc(c.mailBloccataDa)):''),'<span style="flex:1;"></span>'+b('\u21ba Riprogramma tra 1 ora','cvMailRiprogramma','#1a4fa0')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
-    if(c.mailDaInviareAt && c.mailDaInviareAt>now){
-      var m=Math.max(1,Math.round((c.mailDaInviareAt-now)/60000));
-      return box('#fffbeb','#fde68a','#92400e','\ud83d\udce7 Mail al cliente tra ~'+m+' min','<span style="flex:1;"></span>'+b('\u26d4 Blocca invio','cvMailBlocca','#dc2626')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
-    }
-    return '';
-  }catch(e){ return ''; }
-}
-function cvMailAggiorna(id, fn){
-  var l=cvLoad(); var i=l.findIndex(function(x){ return x.id===id; }); if(i<0) return null;
-  fn(l[i]); l[i].updatedAt=Date.now(); cvSave(l);
-  try{ supaUpsert('preventivi', l[i]); }catch(e){}
-  try{ if(typeof _cv!=='undefined' && _cv && _cv.id===id) Object.assign(_cv, l[i]); }catch(e){}
-  try{ cvRender(); }catch(e){}
-  try{ var m=document.getElementById('cvVistaModal'); if(m && m.style.display!=='none' && m.innerHTML) cvVista(id); }catch(e){}
-  return l[i];
-}
-function cvMailBlocca(id){
-  var c=cvMailAggiorna(id, function(x){
-    x.mailDaInviareAt=null; x.mailBloccata=true; x.mailBloccataTs=Date.now();
-    x.mailBloccataDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
-  });
-  if(c){ try{ tcToastNew('\u26d4 Mail al cliente bloccata: non partir\u00e0', true); }catch(e){} try{ cvLogRegistra(null, c, 'mail_bloccata'); }catch(e){} }
-}
-function cvMailRiprogramma(id){
-  var c=cvMailAggiorna(id, function(x){
-    x.mailBloccata=false; x.emailInviata=false; x.mailDaInviareAt=Date.now()+3600000;
-    try{ x.mailProg={ to:x.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:cvMailArricchisci(x, cvMailPreventivoHtml(x)) }; }catch(e){}
-    try{ if(!x.mailPdfUrl) cvPreparaPdfPreventivo(x); }catch(e){}
-  });
-  if(c){ try{ tcToastNew('\u21ba Mail riprogrammata: parte tra 1 ora (puoi ancora bloccarla)', true); }catch(e){} }
-}
-function cvMailInviaOra(id){
-  var c=cvById(id); if(!c) return;
-  if(!(c.cliente&&c.cliente.email)){ alert('Il preventivo non ha l\u2019email del cliente.'); return; }
-  if(!confirm('Mandare ADESSO la mail del preventivo a '+c.cliente.email+'?')) return;
-  var r=cvMailAggiorna(id, function(x){
-    x.mailBloccata=false; x.emailInviata=true; x.emailInviataTs=Date.now(); x.mailDaInviareAt=null;
-    x.emailInviataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
-  });
-  if(r){ try{ cvInviaMailCliente(r); }catch(e){} try{ tcToastNew('\u2709 Mail del preventivo inviata a '+r.cliente.email, true); }catch(e){} }
-}
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
@@ -30667,7 +30677,10 @@ var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIO
      telefono   = quello che il cliente legge e chiama
      telefonoWa = quello delle chat WhatsApp, in cifre col prefisso e
                   senza il +, come lo vuole wa.me */
-  telefono:'02 9181820', telefonoWa:'39029181820', telefonoPrepara:'', logoUrl:'' };
+  telefono:'02 9181820', telefonoWa:'39029181820', telefonoPrepara:'', logoUrl:'',
+  /* Provenienza clienti: frase del link WhatsApp dei social e chi puo'
+     confermare la provenienza oltre all'admin (email separate da virgola) */
+  waFraseSocial:'Ciao, vi scrivo dai social', fonteConfermano:'' };
 function parLoad(){ try{ var o=JSON.parse(localStorage.getItem(PARAM_KEY)||'{}'); var r={}; for(var k in PARAM_DEF){ r[k]=(o[k]!=null?o[k]:PARAM_DEF[k]); } return r; }catch(e){ return JSON.parse(JSON.stringify(PARAM_DEF)); } }
 /* parLoad restituisce solo i campi noti: qui serve il grezzo, con dentro
    updatedAt, per capire quale versione e' la piu' recente. */
@@ -31066,6 +31079,13 @@ function parInit(){
   h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
     +'Solo cifre, col prefisso internazionale e senza il segno pi\u00f9: 39029181820. '
     +'\u00c8 quello a cui portano i link \u201cScrivici su WhatsApp\u201d.</div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Provenienza clienti (social)</div>';
+  h+=lab('Frase WhatsApp dei social')+inp('par_waFraseSocial',p.waFraseSocial);
+  h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
+    +'\u00c8 il messaggio gi\u00e0 scritto nel link WhatsApp da mettere nei reel e nella bio. Chi scrive con questa frase viene segnato \u201cSocial\u201d in automatico. '
+    +'Il link pronto da copiare \u00e8 in CRM \u203a Provenienze. Se la cambi, il vecchio link smette di essere riconosciuto.</div>';
+  h+=lab('Chi pu\u00f2 confermare la provenienza (oltre all\u2019admin)')+inp('par_fonteConfermano',p.fonteConfermano);
+  h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">Email separate da virgola, per esempio chi sta all\u2019accoglienza. Non metterci il venditore n\u00e9 chi fa i social.</div>';
   h+=lab('Numero WhatsApp di Renato (prepara le auto)')+inp('par_telefonoPrepara',p.telefonoPrepara);
   h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
     +'Stesso formato: 393401234567. Salvando un appuntamento con veicolo in magazzino compare un '
@@ -31106,7 +31126,7 @@ function parInit(){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['telefono','telefonoWa','telefonoPrepara','logoUrl','condizioni','condizioniFinali','pacchettoManut','pacchettoManutDove','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
+  ['telefono','telefonoWa','telefonoPrepara','logoUrl','waFraseSocial','fonteConfermano','condizioni','condizioniFinali','pacchettoManut','pacchettoManutDove','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
   /* Anche se il locale e' pieno i parametri devono partire per il cloud:
      e' li' che li leggono gli altri. Prima si salva su Supabase, poi si
@@ -36484,586 +36504,8 @@ function eaSyncVivo(){
 }
 try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVistaAttiva=eaVistaAttiva; }catch(e){}
 
-/* =====================================================================
-   MANSIONI — la bacheca dei compiti fra colleghi
-   ---------------------------------------------------------------------
-   Nasce per togliere le mansioni da WhatsApp. Chiunque assegna a chiunque,
-   anche con un messaggio vocale. Il destinatario le vede nella sua
-   bacheca (Da fare / In corso / Fatte) e riceve una mail. Se una mansione
-   scade e non e' stata fatta, il giorno dopo, appena timbra l'entrata (e
-   a ogni avvio del gestionale), gli compare a tutto schermo e ricompare
-   finche' non la segna fatta.
-   I dati stanno nella stessa tabella del calendario (compiti_app, categoria
-   'task'): niente migrazioni, e nel calendario restano visibili come prima.
-   ===================================================================== */
-var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
-/* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
-   tutti basta svuotare l'elenco (MN_BETA=[]). */
-var MN_BETA=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
-function mnAbilitato(email){
-  if(!MN_BETA.length) return true;
-  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
-  return MN_BETA.indexOf(e)>=0;
-}
-/* la sezione si apre a chi ha la bacheca O la chat */
-function mnSezioneVisibile(email){ return mnAbilitato(email) || (typeof chMembro==='function' && chMembro(email)); }
-var _mnFiltro='mie', _mnMostraFatte=false, _mnBloccoChiusoTs=0, _mnRec=null;
-var MN_RIPROPONI_MS=15*60*1000;   /* "lo faccio dopo" vale un quarto d'ora */
-
-function mnOggi(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function mnEsc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function mnDataIt(iso){ return iso?String(iso).split('-').reverse().join('/'):''; }
-function mnMe(){
-  var em=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
-  var nome=(typeof eaNomeDaMail==='function')?eaNomeDaMail(em):em;
-  var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'dipendente';
-  return { email:em, nome:nome, ruolo:ruolo };
-}
-function mnNome(email){ try{ return eaNomeDaMail(email)||email; }catch(e){ return email||''; } }
-function mnLista(){
-  var l=(typeof window.ccLoad==='function')?window.ccLoad():[];
-  return l.filter(function(c){ return c && c.categoria==='task' && c.deleted!==true; });
-}
-function mnById(id){ return mnLista().filter(function(c){ return c.id===id; })[0]||null; }
-function mnStato(c){ if(!c) return 'todo'; if(c.fatto) return 'done'; return c.stato==='doing'?'doing':'todo'; }
-function mnScaduta(c){ return !!(c && !c.fatto && c.data && c.data<mnOggi()); }
-function mnMia(c){ var me=mnMe().email; return !!(c && me && String(c.dipEmail||'').toLowerCase()===me); }
-function mnMie(){ return mnLista().filter(mnMia); }
-function mnSalvaRec(c){
-  var l=window.ccLoad(); var i=l.findIndex(function(x){ return x.id===c.id; });
-  c.updatedAt=Date.now();
-  if(i>=0) l[i]=c; else l.push(c);
-  window.ccSave(l);
-  try{ ccSupaUpsert(c); }catch(e){}
-  try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
-  try{ mnBadge(); }catch(e){}
-}
-function mnPersone(){
-  var out=[];
-  var add=function(nome,email){ email=String(email||'').trim(); if(!email) return; if(out.some(function(p){ return p.email.toLowerCase()===email.toLowerCase(); })) return; out.push({ nome:(nome&&String(nome).indexOf('@')<0)?nome:mnNome(email), email:email }); };
-  var me=mnMe(); add(me.nome, me.email);
-  try{ (tcLoadDip()||[]).forEach(function(d){ add(d.nome,d.email); }); }catch(e){}
-  try{ (UTENTI_APP||[]).forEach(function(u){ add(u.nome,u.email); }); }catch(e){}
-  return out.filter(function(p){ return mnAbilitato(p.email); });
-}
-
-/* ------------------------------ bacheca ------------------------------ */
-function mnRender(){
-  var v=document.getElementById('view-mansioni'); if(!v) return;
-  var _soloChat=(!mnAbilitato() && typeof chMembro==='function' && chMembro());
-  if(_soloChat) _mnTab='chat';
-  if(typeof chMembro==='function' && chMembro() && _mnTab==='chat'){ chRender(v); return; }
-  if(!mnAbilitato()){ v.innerHTML='<div style="color:#64748b;">Sezione in prova: non ancora attiva per il tuo utente.</div>'; return; }
-  var me=mnMe();
-  var tutte=mnLista();
-  var lista=(_mnFiltro==='mie')?tutte.filter(mnMia):tutte;
-  var oggi=mnOggi();
-  var col={ todo:[], doing:[], done:[] };
-  lista.forEach(function(c){ col[mnStato(c)].push(c); });
-  var ord=function(a,b){ return String(a.data||'').localeCompare(String(b.data||'')) || (a.updatedAt||0)-(b.updatedAt||0); };
-  col.todo.sort(ord); col.doing.sort(ord);
-  col.done.sort(function(a,b){ return (b.fattoTs||b.updatedAt||0)-(a.fattoTs||a.updatedAt||0); });
-  var lim=Date.now()-14*86400000;
-  var doneVis=_mnMostraFatte?col.done:col.done.filter(function(c){ return (c.fattoTs||c.updatedAt||0)>lim; });
-  var scadMie=mnMie().filter(mnScaduta).length;
-
-  var h=(typeof mnTabsHTML==='function')?mnTabsHTML():'';
-  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
-    +'<button onclick="mnNuova()" style="padding:11px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">+ Nuova mansione</button>'
-    +'<div style="display:flex;border:1px solid #cbd5e1;border-radius:9px;overflow:hidden;">'
-    +'<button onclick="_mnFiltro=\'mie\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='mie'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='mie'?'#fff':'#334155')+';">Le mie</button>'
-    +'<button onclick="_mnFiltro=\'tutte\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='tutte'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='tutte'?'#fff':'#334155')+';">Tutte</button>'
-    +'</div>'
-    +(scadMie?('<span style="background:#fee2e2;color:#b91c1c;font-weight:800;font-size:12.5px;padding:7px 11px;border-radius:20px;">'+scadMie+' in ritardo '+(scadMie===1?'tua':'tue')+'</span>'):'')
-    +'<span style="flex:1;"></span>'
-    +'<label style="font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" '+(_mnMostraFatte?'checked':'')+' onchange="_mnMostraFatte=this.checked;mnRender()"> mostra tutte le fatte</label>'
-    +'</div>';
-  var colonna=function(tit,colore,arr,vuoto){
-    return '<div style="flex:1;min-width:260px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 4px 10px;"><div style="font-weight:800;color:'+colore+';">'+tit+'</div><div style="font-size:12px;color:#64748b;font-weight:700;">'+arr.length+'</div></div>'
-      +(arr.length?arr.map(mnCardHTML).join(''):('<div style="font-size:12.5px;color:#94a3b8;padding:12px 6px;">'+vuoto+'</div>'))
-      +'</div>';
-  };
-  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">'
-    +colonna('Da fare','#b45309',col.todo,'Niente da fare. Bene.')
-    +colonna('In corso','#1a4fa0',col.doing,'Nessuna mansione in corso.')
-    +colonna('Fatte','#15803d',doneVis,'Ancora nessuna mansione completata'+(_mnMostraFatte?'':' negli ultimi 14 giorni')+'.')
-    +'</div>';
-  v.innerHTML=h;
-  mnBadge();
-}
-function mnCardHTML(c){
-  var me=mnMe(), st=mnStato(c), scad=mnScaduta(c), oggi=mnOggi();
-  var mia=mnMia(c), creatore=(String(c.creatoDaEmail||'').toLowerCase()===me.email), admin=(me.ruolo==='admin');
-  var dataCol=scad?'#b91c1c':(c.data===oggi?'#b45309':'#475569');
-  var dataTxt=c.data===oggi?'oggi':(scad?('scaduta il '+mnDataIt(c.data)):('entro il '+mnDataIt(c.data)));
-  var h='<div style="background:#fff;border:1px solid '+(scad&&st!=='done'?'#fca5a5':'#e2e8f0')+';border-left:4px solid '+(st==='done'?'#16a34a':(scad?'#dc2626':(st==='doing'?'#1a4fa0':'#f59e0b')))+';border-radius:10px;padding:10px 12px;margin-bottom:8px;">'
-    +'<div style="font-weight:800;font-size:14px;color:#0f172a;'+(st==='done'?'text-decoration:line-through;color:#64748b;':'')+'">'+mnEsc(c.titolo||'(senza titolo)')+'</div>'
-    +(c.nota?('<div style="font-size:12.5px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
-    +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
-    +(c.rif?('<div style="font-size:12px;color:#1a4fa0;margin-top:4px;">🔗 '+mnEsc(c.rif)+'</div>'):'')
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px;color:#64748b;margin-top:6px;">'
-    +'<span>👤 <b style="color:#0f172a;">'+mnEsc(mnNome(c.dipEmail)||c.dipNome||'')+'</b></span>'
-    +'<span style="color:'+dataCol+';font-weight:700;">📅 '+mnEsc(dataTxt)+(c.ora?(' '+mnEsc(c.ora)):'')+'</span>'
-    +'<span>da '+mnEsc(c.creatoDa||'')+'</span>'
-    +(st==='done'&&c.fattoTs?('<span style="color:#15803d;">✓ '+new Date(c.fattoTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(c.fattoDa?(' '+mnEsc(c.fattoDa)):'')+'</span>'):'')
-    +'</div>';
-  if(c.commenti&&c.commenti.length){
-    h+='<div style="margin-top:7px;border-top:1px dashed #e2e8f0;padding-top:6px;">'+c.commenti.slice(-4).map(function(k){
-      return '<div style="font-size:12px;color:#334155;margin:2px 0;"><b>'+mnEsc(k.da||'')+'</b> <span style="color:#94a3b8;">'+new Date(k.ts||0).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span><br>'+mnEsc(k.testo||'')+'</div>';
-    }).join('')+'</div>';
-  }
-  var b=function(txt,on,bg,fg,bd){ return '<button onclick="'+on+'" style="padding:6px 10px;border-radius:7px;border:1px solid '+(bd||'#cbd5e1')+';background:'+(bg||'#fff')+';color:'+(fg||'#334155')+';font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">'+txt+'</button>'; };
-  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">';
-  if(st==='todo') h+=b('▶ Inizio','mnSegna(\''+c.id+'\',\'doing\')','#eff6ff','#1a4fa0','#1a4fa0');
-  if(st!=='done') h+=b('✓ Fatto','mnSegna(\''+c.id+'\',\'done\')','#16a34a','#fff','#16a34a');
-  if(st==='done') h+=b('↩ Riapri','mnSegna(\''+c.id+'\',\'todo\')');
-  h+=b('💬 Commenta','mnCommenta(\''+c.id+'\')');
-  if(creatore||admin) h+=b('✎ Modifica','mnNuova(\''+c.id+'\')')+b('🗑','mnElimina(\''+c.id+'\')','#fef2f2','#dc2626','#fecaca');
-  h+='</div></div>';
-  return h;
-}
-function mnBadge(){
-  try{
-    var btn=document.getElementById('si-task'); if(!btn) return;
-    if(!mnSezioneVisibile()){ btn.style.display='none'; return; }
-    if(!mnAbilitato()){ btn.style.display=''; try{ chBadge(); }catch(e){} return; }
-    var bd=btn.querySelector('.si-badge');
-    if(!bd){ bd=document.createElement('span'); bd.className='si-badge'; btn.appendChild(bd); }
-    var mie=mnMie().filter(function(c){ return !c.fatto; });
-    var sc=mie.filter(mnScaduta).length;
-    var nch=0; try{ if(typeof chNonLetti==='function' && chMembro()) nch=chNonLetti().length; }catch(e){}
-    bd.textContent=mie.length+nch; bd.style.display=(mie.length+nch)?'':'none';
-    bd.style.background=sc?'#dc2626':(nch?'#16a34a':'');
-  }catch(e){}
-}
-
-/* --------------------------- nuova / modifica --------------------------- */
-function mnNuova(id){
-  var c=id?mnById(id):null;
-  var me=mnMe();
-  var m=(typeof cvModModal==='function')?cvModModal():document.getElementById('cv-mod-modal'); if(!m) return;
-  mnRecReset();
-  var inp='width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
-  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:12px 0 4px;text-transform:uppercase;">'+t+'</label>'; };
-  var persone=mnPersone();
-  var sel=(c&&c.dipEmail)||me.email;
-  var h='<div style="max-width:520px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
-    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-weight:800;">'+(c?'✎ Modifica mansione':'➕ Nuova mansione')+'</div>'
-    +'<div style="padding:4px 18px 18px;max-height:80vh;overflow:auto;">'
-    +lab('Cosa va fatto *')+'<input id="mn_titolo" value="'+mnEsc(c?c.titolo:'')+'" placeholder="es. Portare la BMW 118 GP084RN dal gommista" style="'+inp+'font-weight:700;">'
-    +lab('Dettagli (facoltativo)')+'<textarea id="mn_nota" rows="3" style="'+inp+'" placeholder="indicazioni, orari, cosa controllare…">'+mnEsc(c?c.nota:'')+'</textarea>'
-    +lab('Messaggio vocale')
-    +'<div id="mn-audio-box" style="border:1px dashed #cbd5e1;border-radius:9px;padding:10px;background:#f8fafc;">'
-    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-    +'<button type="button" id="mn-rec-btn" onclick="mnRecToggle()" style="padding:9px 14px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">⏺ Registra</button>'
-    +'<span id="mn-rec-stato" style="font-size:12.5px;color:#64748b;">'+(c&&c.audioUrl?'C’è già un vocale: registrane uno nuovo per sostituirlo.':'Premi e parla: chi riceve la mansione lo ascolta dalla bacheca.')+'</span>'
-    +'</div>'
-    +'<div id="mn-rec-play" style="margin-top:8px;">'+(c&&c.audioUrl?('<audio controls src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;"></audio>'):'')+'</div>'
-    +'</div>'
-    +lab('Assegnata a *')+'<select id="mn_dip" style="'+inp+'">'+persone.map(function(p){ return '<option value="'+mnEsc(p.email)+'"'+(p.email.toLowerCase()===String(sel).toLowerCase()?' selected':'')+'>'+mnEsc(p.nome)+'</option>'; }).join('')+'</select>'
-    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Entro il *')+'<input id="mn_data" type="date" value="'+mnEsc(c?c.data:mnOggi())+'" style="'+inp+'"></div>'
-    +'<div style="flex:1;">'+lab('Ora (facoltativa)')+'<input id="mn_ora" type="time" value="'+mnEsc(c?c.ora:'')+'" style="'+inp+'"></div></div>'
-    +lab('Riferimento (targa, cliente, pratica…)')+'<input id="mn_rif" value="'+mnEsc(c?c.rif:'')+'" placeholder="es. GP084RN · Rossi" style="'+inp+'">'
-    +'<button onclick="mnSalva(\''+(c?c.id:'')+'\')" id="mn-salva-btn" style="margin-top:18px;width:100%;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">'+(c?'Salva modifiche':'Assegna la mansione')+'</button>'
-    +'<button onclick="mnRecReset();cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
-    +'</div></div>';
-  m.innerHTML=h; m.style.display='block';
-  setTimeout(function(){ try{ document.getElementById('mn_titolo').focus(); }catch(e){} }, 50);
-}
-/* registrazione vocale: MediaRecorder del browser, niente librerie */
-function mnRecReset(){
-  try{ if(_mnRec && _mnRec.rec && _mnRec.rec.state!=='inactive') _mnRec.rec.stop(); }catch(e){}
-  try{ if(_mnRec && _mnRec.stream) _mnRec.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
-  _mnRec=null;
-}
-function mnRecToggle(){
-  var btn=document.getElementById('mn-rec-btn'), st=document.getElementById('mn-rec-stato'), play=document.getElementById('mn-rec-play');
-  if(_mnRec && _mnRec.rec && _mnRec.rec.state==='recording'){ _mnRec.rec.stop(); return; }
-  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio. Scrivi la mansione nei dettagli.'); return; }
-  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
-    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
-    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
-    var chunks=[]; var t0=Date.now(); var timer=null;
-    _mnRec={ rec:rec, stream:stream, blob:null, mime:mime||'audio/webm' };
-    rec.ondataavailable=function(e){ if(e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop=function(){
-      clearInterval(timer);
-      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
-      var blob=new Blob(chunks,{type:_mnRec.mime}); _mnRec.blob=blob;
-      var url=URL.createObjectURL(blob);
-      if(play) play.innerHTML='<audio controls src="'+url+'" style="width:100%;height:34px;"></audio>';
-      if(btn){ btn.textContent='⏺ Registra di nuovo'; btn.style.background='#dc2626'; }
-      if(st) st.textContent='Vocale pronto ('+Math.round((Date.now()-t0)/1000)+' s). Si allega quando salvi.';
-    };
-    rec.start();
-    if(btn){ btn.textContent='⏹ Ferma'; btn.style.background='#0f172a'; }
-    if(st) st.textContent='Sto registrando… 0 s';
-    timer=setInterval(function(){ if(st) st.textContent='Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s'; if(Date.now()-t0>180000){ try{ rec.stop(); }catch(e){} } },500);
-  }).catch(function(err){
-    alert('Microfono non disponibile: '+((err&&err.message)||err)+'\n\nControlla che il browser abbia il permesso di usare il microfono.');
-  });
-}
-function mnAudioCarica(){
-  /* ritorna una Promise con l'URL del vocale (o '' se non c'e') */
-  if(!_mnRec || !_mnRec.blob) return Promise.resolve('');
-  var blob=_mnRec.blob, ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
-  var nome='mansione-'+Date.now()+'.'+ext;
-  var viaR2=(typeof eaR2Upload==='function')?eaR2Upload(blob,'mansioni',nome):Promise.reject(new Error('no r2'));
-  return viaR2.catch(function(){
-    /* senza R2: il vocale va dentro il record, se e' piccolo */
-    if(blob.size>1500000) throw new Error('Vocale troppo lungo per essere salvato senza archivio: riprova più breve.');
-    return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result)); }; r.onerror=function(){ rej(new Error('lettura audio')); }; r.readAsDataURL(blob); });
-  });
-}
-function mnSalva(id){
-  var g=function(k){ var el=document.getElementById('mn_'+k); return el?String(el.value).trim():''; };
-  var titolo=g('titolo'), dip=g('dip'), data=g('data');
-  if(!titolo){ alert('Scrivi cosa va fatto.'); return; }
-  if(!dip){ alert('Scegli a chi assegnarla.'); return; }
-  if(!data){ alert('Scegli entro quando va fatta.'); return; }
-  var btn=document.getElementById('mn-salva-btn'); if(btn){ btn.disabled=true; btn.textContent='⏳ Salvo…'; }
-  var me=mnMe();
-  mnAudioCarica().then(function(audioUrl){
-    var c=id?mnById(id):null, nuova=!c;
-    if(!c){
-      c={ id:'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), categoria:'task', tipo:'task',
-          creatoDa:me.nome, creatoDaEmail:me.email, createdAt:Date.now(), fatto:false, fattoDa:'', avvisato:false, stato:'todo', commenti:[] };
-    }
-    var dipPrima=c.dipEmail;
-    c.titolo=titolo; c.nota=g('nota'); c.dipEmail=dip; c.dipNome=mnNome(dip); c.data=data; c.ora=g('ora'); c.rif=g('rif');
-    if(audioUrl) c.audioUrl=audioUrl;
-    mnSalvaRec(c);
-    mnRecReset(); cvModChiudi(); mnRender();
-    try{ if(typeof tcToastNew==='function') tcToastNew(nuova?('✅ Mansione assegnata a '+c.dipNome):'✅ Mansione aggiornata', true); }catch(e){}
-    /* avviso al destinatario: nuova, o riassegnata a un altro */
-    if((nuova || (dipPrima && dipPrima!==dip)) && String(dip).toLowerCase()!==me.email) mnAvvisaAssegnazione(c);
-  }).catch(function(err){
-    if(btn){ btn.disabled=false; btn.textContent=id?'Salva modifiche':'Assegna la mansione'; }
-    alert('Non sono riuscito a salvare: '+((err&&err.message)||err));
-  });
-}
-function mnAvvisaAssegnazione(c){
-  try{
-    if(!c || !c.dipEmail || typeof eaInviaMessaggio!=='function') return;
-    var E=mnEsc, link='https://auto.europaautosrl.it/#mansioni';
-    var html='<p>Ciao '+E(mnNome(c.dipEmail))+',</p>'
-      +'<p><b>'+E(c.creatoDa||'un collega')+'</b> ti ha assegnato una mansione:</p>'
-      +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:12px 14px;">'
-      +'<div style="font-size:16px;font-weight:800;">'+E(c.titolo)+'</div>'
-      +(c.nota?('<div style="margin-top:6px;white-space:pre-wrap;">'+E(c.nota)+'</div>'):'')
-      +(c.rif?('<div style="margin-top:6px;color:#1a4fa0;">Rif. '+E(c.rif)+'</div>'):'')
-      +'<div style="margin-top:8px;color:#b45309;font-weight:700;">Entro il '+E(mnDataIt(c.data))+(c.ora?(' alle '+E(c.ora)):'')+'</div>'
-      +(c.audioUrl&&/^https?:/.test(c.audioUrl)?('<div style="margin-top:8px;">🎙 C’è un messaggio vocale: <a href="'+E(c.audioUrl)+'">ascoltalo</a> (o aprilo dalla bacheca).</div>'):(c.audioUrl?'<div style="margin-top:8px;">🎙 C’è un messaggio vocale: lo ascolti dalla bacheca Mansioni.</div>':''))
-      +'</div>'
-      +'<p style="margin-top:14px;">La trovi nella sezione <a href="'+link+'"><b>Mansioni</b></a> del gestionale: segnala <b>Fatto</b> quando l’hai completata. Se resta indietro, te la ripropongo all’apertura.</p>';
-    eaInviaMessaggio({ to:c.dipEmail, subject:'Mansione per te: '+c.titolo+' (entro il '+mnDataIt(c.data)+')', html:(typeof eaMailWrap==='function')?eaMailWrap(html):html }).then(function(){}, function(){});
-  }catch(e){}
-}
-function mnSegna(id, stato){
-  var c=mnById(id); if(!c) return;
-  var me=mnMe();
-  if(stato==='done'){ c.fatto=true; c.stato='done'; c.fattoDa=me.nome; c.fattoTs=Date.now(); }
-  else { c.fatto=false; c.stato=stato; c.fattoDa=''; c.fattoTs=null; }
-  mnSalvaRec(c); mnRender();
-  try{ if(typeof tcToastNew==='function') tcToastNew(stato==='done'?'✅ Mansione completata':(stato==='doing'?'▶ Mansione in corso':'↩ Mansione riaperta'), true); }catch(e){}
-  /* chi l'ha assegnata sa che e' stata fatta (se non e' lui stesso) */
-  if(stato==='done' && c.creatoDaEmail && c.creatoDaEmail!==me.email && typeof eaInviaMessaggio==='function'){
-    try{
-      var E=mnEsc;
-      eaInviaMessaggio({ to:c.creatoDaEmail, subject:'Fatto: '+c.titolo,
-        html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha segnato come fatta la mansione <b>'+E(c.titolo)+'</b>'+(c.rif?(' ('+E(c.rif)+')'):'')+'.</p>'+((c.commenti&&c.commenti.length)?('<p>Ultimo commento: '+E(c.commenti[c.commenti.length-1].testo)+'</p>'):'')) }).then(function(){}, function(){});
-    }catch(e){}
-  }
-  /* la finestra a tutto schermo si aggiorna, e sparisce quando non c'e' piu' niente in ritardo */
-  try{ var bl=document.getElementById('mn-blocco'); if(bl){ if(mnMie().filter(mnScaduta).length) mnBloccoScadute(true); else bl.remove(); } }catch(e){}
-}
-function mnCommenta(id){
-  var c=mnById(id); if(!c) return;
-  var t=prompt('Commento sulla mansione “'+c.titolo+'”:'); if(t===null) return; t=String(t).trim(); if(!t) return;
-  var me=mnMe();
-  c.commenti=(c.commenti||[]).concat([{ da:me.nome, email:me.email, ts:Date.now(), testo:t }]);
-  mnSalvaRec(c); mnRender();
-  /* il commento arriva all'altra parte: a chi l'ha assegnata se commenta l'assegnatario, e viceversa */
-  try{
-    var dest=(me.email===String(c.dipEmail||'').toLowerCase())?c.creatoDaEmail:c.dipEmail;
-    if(dest && dest!==me.email && typeof eaInviaMessaggio==='function'){
-      var E=mnEsc;
-      eaInviaMessaggio({ to:dest, subject:'Commento su: '+c.titolo, html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha scritto sulla mansione <b>'+E(c.titolo)+'</b>:</p><blockquote style="border-left:3px solid #cbd5e1;margin:0;padding:6px 12px;color:#334155;">'+E(t)+'</blockquote>') }).then(function(){}, function(){});
-    }
-  }catch(e){}
-}
-function mnElimina(id){
-  var c=mnById(id); if(!c) return;
-  if(!confirm('Eliminare la mansione “'+c.titolo+'”?')) return;
-  try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
-  var l=window.ccLoad().filter(function(x){ return x.id!==id; }); window.ccSave(l);
-  try{ ccSupaUpsert({ id:id, deleted:true, updatedAt:Date.now() }); }catch(e){}
-  mnRender(); try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
-}
-
-/* ----------------- la finestra che non si toglie finche' non fai ----------------- */
-function mnBloccoScadute(forza){
-  var me=mnMe(); if(!me.email || !mnAbilitato(me.email)) return false;
-  var scad=mnMie().filter(mnScaduta).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
-  var vecchio=document.getElementById('mn-blocco');
-  if(!scad.length){ if(vecchio) vecchio.remove(); return false; }
-  if(!forza && (Date.now()-_mnBloccoChiusoTs)<MN_RIPROPONI_MS) return false;
-  if(!vecchio){
-    vecchio=document.createElement('div'); vecchio.id='mn-blocco';
-    vecchio.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.78);z-index:20000;overflow:auto;padding:16px;';
-    document.body.appendChild(vecchio);
-  }
-  var h='<div style="max-width:620px;margin:4vh auto 0;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);">'
-    +'<div style="background:#b91c1c;color:#fff;padding:16px 20px;">'
-    +'<div style="font-size:19px;font-weight:800;">⚠️ '+scad.length+' mansion'+(scad.length===1?'e':'i')+' in ritardo</div>'
-    +'<div style="font-size:13px;opacity:.9;margin-top:3px;">'+mnEsc(me.nome)+', queste erano da fare e non risultano completate. Restano qui finché non le segni fatte.</div>'
-    +'</div>'
-    +'<div style="padding:14px 18px;max-height:62vh;overflow:auto;">'
-    +scad.map(function(c){
-      return '<div style="border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff7f7;">'
-        +'<div style="font-weight:800;font-size:15px;">'+mnEsc(c.titolo)+'</div>'
-        +(c.nota?('<div style="font-size:13px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
-        +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
-        +'<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-top:5px;">Scadeva il '+mnEsc(mnDataIt(c.data))+(c.ora?(' alle '+mnEsc(c.ora)):'')+' · assegnata da '+mnEsc(c.creatoDa||'')+(c.rif?(' · '+mnEsc(c.rif)):'')+'</div>'
-        +'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">'
-        +'<button onclick="mnSegna(\''+c.id+'\',\'done\')" style="padding:9px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">✓ Fatta</button>'
-        +'<button onclick="mnCommenta(\''+c.id+'\')" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">💬 Spiega il ritardo</button>'
-        +'</div></div>';
-    }).join('')
-    +'</div>'
-    +'<div style="padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-    +'<span style="flex:1;font-size:12px;color:#64748b;">Chi le ha assegnate viene avvisato quando le completi o commenti.</span>'
-    +'<button onclick="mnBloccoDopo()" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Le faccio adesso, chiudi (15 min)</button>'
-    +'</div></div>';
-  vecchio.innerHTML=h;
-  return true;
-}
-function mnBloccoDopo(){
-  _mnBloccoChiusoTs=Date.now();
-  try{ localStorage.setItem('ea_mn_blocco_chiuso', String(_mnBloccoChiusoTs)); }catch(e){}
-  var b=document.getElementById('mn-blocco'); if(b) b.remove();
-}
-/* All'avvio e poi ogni 15 minuti: se c'e' qualcosa in ritardo, si fa vedere.
-   Il primo controllo aspetta il caricamento delle mansioni dal cloud. */
-function mnAvvio(){
-  try{ _mnBloccoChiusoTs=parseInt(localStorage.getItem('ea_mn_blocco_chiuso')||'0',10)||0; }catch(e){}
-  var tenta=function(n){
-    try{ mnBadge(); if(mnBloccoScadute(false)) return; }catch(e){}
-    if(n>0) setTimeout(function(){ tenta(n-1); }, 4000);
-  };
-  setTimeout(function(){ tenta(3); }, 2500);
-  try{ setInterval(function(){ try{ mnBadge(); mnBloccoScadute(false); }catch(e){} }, MN_RIPROPONI_MS); }catch(e){}
-}
-/* Dopo la timbratura d'entrata: e' il momento in cui uno si siede e guarda
-   cosa c'e' da fare. Qui il blocco compare anche se era stato chiuso. */
-function mnDopoTimbratura(tipo){
-  if(tipo!=='entrata') return;
-  setTimeout(function(){ try{ _mnBloccoChiusoTs=0; mnBloccoScadute(true); }catch(e){} }, 2500);
-}
-
-/* =====================================================================
-   CHAT DI GRUPPO — dentro Mansioni
-   ---------------------------------------------------------------------
-   Una sola stanza, per il gruppo di lavoro. Messaggi di testo e vocali,
-   stile WhatsApp: i miei a destra, gli altri a sinistra, separatori per
-   giorno. Tabella Supabase 'chat_app' (id text, data jsonb). Si legge ogni
-   pochi secondi solo quello che manca (per ts), cosi' il traffico resta
-   leggero anche con migliaia di messaggi.
-   Notifiche: contatore sul menu, avviso nell'app, notifica del sistema
-   (quando il browser lo permette) e un suono breve.
-   ===================================================================== */
-var CH_TAB='chat_app', CH_KEY='ea_chat_v1', CH_LETTO_KEY='ea_chat_letto_ts', CH_POLL_MS=10000;
-var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it','no.reply.europaauto@gmail.com','rudy.scropetta@gmail.com','s.rudy@europaautosrl.it'];
-var _mnTab='bacheca', _chTimer=null, _chBusy=false, _chRec=null, _chPrimo=true;
-function chMembro(email){
-  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
-  return !!e && MN_CHAT_MEMBRI.indexOf(e)>=0;
-}
-function chLoad(){ try{ return JSON.parse(localStorage.getItem(CH_KEY)||'[]')||[]; }catch(e){ return []; } }
-function chSave(l){ try{ localStorage.setItem(CH_KEY, JSON.stringify(l.slice(-600))); }catch(e){} }
-function chLettoTs(){ try{ return parseInt(localStorage.getItem(CH_LETTO_KEY)||'0',10)||0; }catch(e){ return 0; } }
-function chSegnaLetto(){ try{ var l=chLoad(); var mx=l.reduce(function(m,x){ return Math.max(m,x.ts||0); },0); localStorage.setItem(CH_LETTO_KEY, String(mx)); }catch(e){} chBadge(); }
-function chNonLetti(){ var me=mnMe().email, t=chLettoTs(); return chLoad().filter(function(m){ return (m.ts||0)>t && String(m.email||'').toLowerCase()!==me; }); }
-function chBadge(){
-  try{
-    var n=chNonLetti().length;
-    var t=document.getElementById('mn-tab-chat'); if(t){ var b=t.querySelector('.ch-badge'); if(b){ b.textContent=n; b.style.display=n?'':'none'; } }
-    /* sul menu laterale il contatore somma mansioni aperte e messaggi non letti */
-    var btn=document.getElementById('si-task'); if(!btn) return;
-    var bd=btn.querySelector('.si-badge'); if(!bd) return;
-    var mans=0; try{ mans=(typeof mnAbilitato==='function'&&mnAbilitato())?mnMie().filter(function(c){ return !c.fatto; }).length:0; }catch(e){}
-    var tot=mans+n; bd.textContent=tot; bd.style.display=tot?'':'none';
-    if(n && !/dc2626/.test(bd.style.background)) bd.style.background='#16a34a';
-  }catch(e){}
-}
-function chSync(cb){
-  if(_chBusy){ if(cb) cb(); return; }
-  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ if(cb) cb(); return; }
-  _chBusy=true;
-  var loc=chLoad(); var ultimo=loc.reduce(function(m,x){ return Math.max(m,x.ts||0); },0);
-  /* ts a 13 cifre: il confronto testuale coincide con quello numerico */
-  var q=sb.from(CH_TAB).select('id,data');
-  if(ultimo) q=q.gt('data->>ts', String(ultimo));
-  q.order('created_at',{ascending:true}).limit(500).then(function(r){
-    _chBusy=false;
-    if(!r || r.error){ if(r&&r.error) console.log('chat:', r.error.message); if(cb) cb(); return; }
-    var nuovi=(r.data||[]).map(function(x){ return x&&x.data; }).filter(function(m){ return m&&m.id&&m.ts; });
-    if(nuovi.length){
-      var ids={}; loc.forEach(function(m){ ids[m.id]=1; });
-      var agg=nuovi.filter(function(m){ return !ids[m.id]; });
-      if(agg.length){
-        loc=loc.concat(agg).sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
-        chSave(loc);
-        var me=mnMe().email;
-        var altrui=agg.filter(function(m){ return String(m.email||'').toLowerCase()!==me; });
-        if(altrui.length && !_chPrimo) chNotifica(altrui);
-        if(_mnTab==='chat' && document.getElementById('ch-lista')){ chRenderLista(); if(document.visibilityState==='visible') chSegnaLetto(); }
-      }
-    }
-    _chPrimo=false;
-    chBadge();
-    if(cb) cb();
-  }, function(){ _chBusy=false; if(cb) cb(); });
-}
-function chAvvia(){
-  if(!chMembro()) return;
-  chBadge();
-  chSync();
-  if(_chTimer) clearInterval(_chTimer);
-  _chTimer=setInterval(function(){ try{ chSync(); }catch(e){} }, CH_POLL_MS);
-  try{ document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible'){ chSync(); if(_mnTab==='chat' && document.getElementById('ch-lista')) chSegnaLetto(); } }); }catch(e){}
-}
-function chSuono(){
-  try{
-    var ctx=new (window.AudioContext||window.webkitAudioContext)();
-    var o=ctx.createOscillator(), g=ctx.createGain();
-    o.type='sine'; o.frequency.value=880; g.gain.value=0.08;
-    o.connect(g); g.connect(ctx.destination); o.start();
-    setTimeout(function(){ o.frequency.value=1175; },90);
-    setTimeout(function(){ o.stop(); ctx.close(); },200);
-  }catch(e){}
-}
-function chNotifica(msgs){
-  var ultimo=msgs[msgs.length-1];
-  var anteprima=ultimo.testo?ultimo.testo:(ultimo.audioUrl?'🎙 Messaggio vocale':'Nuovo messaggio');
-  var vedoChat=(_mnTab==='chat' && document.getElementById('ch-lista') && document.visibilityState==='visible');
-  if(vedoChat) return;
-  chSuono();
-  try{ if(typeof tcToastNew==='function') tcToastNew('💬 '+(ultimo.da||'')+': '+anteprima.slice(0,80), true); }catch(e){}
-  try{
-    if('Notification' in window && Notification.permission==='granted' && document.visibilityState!=='visible'){
-      var n=new Notification('Europa Auto — '+(ultimo.da||'chat'), { body:anteprima.slice(0,160), tag:'ea-chat', renotify:true });
-      n.onclick=function(){ try{ window.focus(); mnApriChat(); }catch(e){} };
-    }
-  }catch(e){}
-}
-function chChiediPermesso(){
-  try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission().then(function(){ chRenderLista(); }); }catch(e){}
-}
-function mnApriChat(){
-  _mnTab='chat';
-  try{ if(typeof sidebarNav==='function' && !(document.getElementById('view-mansioni')||{}).classList.contains('active')) sidebarNav('mansioni', document.getElementById('si-task')); }catch(e){}
-  mnRender();
-}
-function mnTabsHTML(){
-  if(!chMembro()) return '';
-  var n=chNonLetti().length;
-  var t=function(id,lab,extra){ var on=(_mnTab===id); return '<button id="mn-tab-'+id+'" onclick="_mnTab=\''+id+'\';mnRender()" style="padding:10px 18px;border:none;border-bottom:3px solid '+(on?'#1a4fa0':'transparent')+';background:none;font-family:inherit;font-weight:800;font-size:14px;color:'+(on?'#1a4fa0':'#64748b')+';cursor:pointer;">'+lab+(extra||'')+'</button>'; };
-  return '<div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;">'
-    +(typeof mnAbilitato==='function'&&mnAbilitato()?t('bacheca','✅ Bacheca'):'')
-    +t('chat','💬 Chat di gruppo','<span class="ch-badge" style="display:'+(n?'':'none')+';background:#16a34a;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;">'+n+'</span>')
-    +'</div>';
-}
-function chRender(v){
-  var membri=MN_CHAT_MEMBRI.map(function(e){ var n=mnNome(e); return (n&&n.indexOf('@')<0)?n:String(e).split('@')[0]; }).filter(function(x,i,a){ return x && a.indexOf(x)===i; });
-  var permesso=('Notification' in window)?Notification.permission:'nd';
-  v.innerHTML=mnTabsHTML()
-    +'<div style="max-width:820px;margin:0 auto;background:#e5ddd5;border:1px solid #d1d5db;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;">'
-    +'<div style="background:#1a4fa0;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;">'
-    +'<div style="width:38px;height:38px;border-radius:50%;background:#fff;color:#1a4fa0;display:flex;align-items:center;justify-content:center;font-weight:800;">EA</div>'
-    +'<div style="flex:1;min-width:0;"><div style="font-weight:800;">Gruppo Europa Auto</div><div style="font-size:11.5px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mnEsc(membri.join(', '))+'</div></div>'
-    +(permesso==='default'?'<button onclick="chChiediPermesso()" title="Ricevi un avviso anche quando il gestionale è in un’altra scheda" style="padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">🔔 Attiva notifiche</button>':'')
-    +'</div>'
-    +'<div id="ch-lista" style="flex:1;overflow:auto;padding:12px 12px 4px;"></div>'
-    +'<div style="background:#f0f2f5;padding:8px 10px;display:flex;gap:8px;align-items:flex-end;">'
-    +'<button id="ch-rec-btn" onclick="chRecToggle()" title="Messaggio vocale" style="width:42px;height:42px;border-radius:50%;border:none;background:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">🎙</button>'
-    +'<textarea id="ch-testo" rows="1" placeholder="Scrivi un messaggio…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();chInvia();}" oninput="this.style.height=\'auto\';this.style.height=Math.min(this.scrollHeight,120)+\'px\';" style="flex:1;resize:none;padding:11px 12px;border:none;border-radius:20px;font-family:inherit;font-size:14px;box-sizing:border-box;max-height:120px;"></textarea>'
-    +'<button onclick="chInvia()" style="width:42px;height:42px;border-radius:50%;border:none;background:#1a4fa0;color:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">➤</button>'
-    +'</div>'
-    +'<div id="ch-rec-stato" style="display:none;background:#fff7ed;color:#9a3412;font-size:12.5px;padding:6px 12px;"></div>'
-    +'</div>';
-  chRenderLista(); chSegnaLetto(); chSync();
-}
-function chRenderLista(){
-  var box=document.getElementById('ch-lista'); if(!box) return;
-  var me=mnMe().email, msgs=chLoad(), h='', giorno='';
-  var oggi=mnOggi();
-  var ieri=(function(){ var d=new Date(); d.setDate(d.getDate()-1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })();
-  if(!msgs.length) h='<div style="text-align:center;color:#64748b;font-size:13px;margin-top:30px;">Nessun messaggio ancora. Scrivi il primo.</div>';
-  msgs.forEach(function(m){
-    var d=new Date(m.ts||0); var g=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    if(g!==giorno){ giorno=g; h+='<div style="text-align:center;margin:10px 0;"><span style="background:#fff;color:#64748b;font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;box-shadow:0 1px 1px rgba(0,0,0,.08);">'+(g===oggi?'Oggi':(g===ieri?'Ieri':mnDataIt(g)))+'</span></div>'; }
-    var mio=String(m.email||'').toLowerCase()===me;
-    h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin:3px 0;">'
-      +'<div style="max-width:78%;background:'+(mio?'#d9fdd3':'#fff')+';border-radius:10px;padding:6px 9px 4px;box-shadow:0 1px 1px rgba(0,0,0,.1);">'
-      +(mio?'':('<div style="font-size:11.5px;font-weight:800;color:#1a4fa0;">'+mnEsc(m.da||'')+'</div>'))
-      +(m.testo?('<div style="font-size:14px;color:#111;white-space:pre-wrap;word-break:break-word;">'+chLinkify(m.testo)+'</div>'):'')
-      +(m.audioUrl?('<audio controls preload="none" src="'+mnEsc(m.audioUrl)+'" style="width:230px;max-width:100%;height:34px;margin-top:2px;"></audio>'):'')
-      +'<div style="font-size:10.5px;color:#667781;text-align:right;margin-top:2px;">'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+(mio?' ✓✓':'')+'</div>'
-      +'</div></div>';
-  });
-  box.innerHTML=h;
-  box.scrollTop=box.scrollHeight;
-}
-function chLinkify(t){
-  var s=mnEsc(t);
-  return s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#1a4fa0;">$1</a>');
-}
-function chInvia(testo, audioUrl){
-  var ta=document.getElementById('ch-testo');
-  if(testo==null){ testo=ta?String(ta.value).trim():''; }
-  if(!testo && !audioUrl) return;
-  var me=mnMe();
-  var m={ id:'ch_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), ts:Date.now(), da:me.nome, email:me.email, testo:testo||'', audioUrl:audioUrl||'' };
-  var l=chLoad(); l.push(m); chSave(l);
-  if(ta){ ta.value=''; ta.style.height='auto'; }
-  chRenderLista(); chSegnaLetto();
-  try{ supaUpsert(CH_TAB, m); }catch(e){}
-}
-function chRecToggle(){
-  var btn=document.getElementById('ch-rec-btn'), st=document.getElementById('ch-rec-stato');
-  if(_chRec && _chRec.rec && _chRec.rec.state==='recording'){ _chRec.rec.stop(); return; }
-  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio.'); return; }
-  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
-    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
-    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
-    var chunks=[], t0=Date.now(), timer=null;
-    _chRec={ rec:rec, stream:stream };
-    rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
-    rec.onstop=function(){
-      clearInterval(timer);
-      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
-      if(btn){ btn.textContent='🎙'; btn.style.background='#fff'; }
-      var blob=new Blob(chunks,{type:mime||'audio/webm'});
-      if((Date.now()-t0)<700){ if(st){ st.style.display='none'; } return; }
-      if(st){ st.style.display='block'; st.textContent='⏳ Invio il vocale…'; }
-      var ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
-      var up=(typeof eaR2Upload==='function')?eaR2Upload(blob,'chat','vocale-'+Date.now()+'.'+ext):Promise.reject(new Error('archivio non configurato'));
-      up.then(function(url){ if(st) st.style.display='none'; chInvia('', url); },
-        function(err){ if(st){ st.textContent='Vocale non inviato: '+((err&&err.message)||err); setTimeout(function(){ st.style.display='none'; },4000); } });
-    };
-    rec.start();
-    if(btn){ btn.textContent='⏹'; btn.style.background='#fecaca'; }
-    if(st){ st.style.display='block'; st.textContent='⏺ Sto registrando… premi di nuovo per inviare'; }
-    timer=setInterval(function(){ if(st) st.textContent='⏺ Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s — premi di nuovo per inviare'; if(Date.now()-t0>300000){ try{ rec.stop(); }catch(e){} } },500);
-  }).catch(function(err){ alert('Microfono non disponibile: '+((err&&err.message)||err)); });
-}
-
 function eaBadgeBoot(){
   try{ eaSyncVivo(); }catch(e){}
-  try{ mnAvvio(); }catch(e){}
-  try{ chAvvia(); }catch(e){}
   /* Meglio avvisare quando manca poco che spiegare dopo perche' non salva. */
   setTimeout(function(){
     try{
@@ -42679,7 +42121,7 @@ function crmDefaultStato(l){
   if(l.ultimoPrevAperto && l.ultimoPrevAperto>(l.ultimoConsegna||0)) return 'nuovo';
   return l.consegnato?'chiuso vinto':'nuovo';
 }
-function crmInit(){ crmSupaLoad();
+function crmInit(){ crmSupaLoad(); try{ crmSocialScan(function(){ if(typeof crmRender==='function') crmRender(); }); }catch(e){}
   /* Le richieste in arrivo si leggono dal cloud all'apertura del CRM:
      non stanno nel browser, arrivano mentre il gestionale e' chiuso. */
   try{ crmLeadCarica(function(){ if(typeof crmRender==='function') crmRender(); }); }catch(e){} if(typeof cvSupaLoad==='function') cvSupaLoad(); crmRender(); }
@@ -43653,7 +43095,7 @@ function crmRender(){
      importato compreso: migliaia di schede da disegnare a ogni apertura,
      per un elenco che nessuno usava. La ricerca dei clienti sta gia' nella
      barra in alto e nella sezione Clienti. */
-  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['online','Lead online','\ud83d\udce5'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f'],['mail7','Mail 7 gg','\u2709\ufe0f']];
+  var tabs=[['dashboard','Dashboard','\ud83d\udcca'],['online','Lead online','\ud83d\udce5'],['pipeline','Pipeline','\ud83d\uddc2\ufe0f'],['consegnate','Consegnate','\ud83d\ude97'],['assicurazioni','Assicurazioni','\ud83d\udee1\ufe0f'],['mail7','Mail 7 gg','\u2709\ufe0f'],['provenienze','Provenienze','\ud83d\udcf1'],['archivio','Archivio','\ud83d\uddc4\ufe0f']];
   /* Sulla scheda dei lead il numero di quelli ancora da guardare. */
   try{
     var _nl=(_leadCache||[]).filter(function(x){ return (x.stato||'nuovo')==='nuovo'; }).length;
@@ -43661,7 +43103,7 @@ function crmRender(){
   }catch(e){}
   if(_crmTab==='lead') _crmTab='pipeline';   /* chi ci era rimasto dentro */
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='mail7' ? ml7Render() : crmRenderKanban()))));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='mail7' ? ml7Render() : (_crmTab==='provenienze' ? crmRenderProvenienze() : (_crmTab==='archivio' ? crmRenderArchivio() : crmRenderKanban()))))));
   wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
@@ -44120,7 +43562,7 @@ function crmLeadInserisci(id){
     c[key].email=cl.email||c[key].email||'';
     if(l.auto) c[key].auto=l.auto;
     c[key].leadTs=c[key].leadTs||Date.now();
-    c[key].fonte=c[key].fonte||(l.fonte||'');
+    if(!c[key].fonte && l.fonte) crmFonteApplica(c[key], l.fonte, 'lead', (+l.ricevutaTs)||Date.parse(l.ricevutaTs||'')||null);
     c[key].note=((c[key].note||'')+(c[key].note?'\n':'')+'Richiesta '+(l.fonte||'')+' del '+crmDMY(l.ricevutaTs)+(l.auto?(' \u00b7 '+l.auto):'')+(l.messaggio?('\n"'+l.messaggio+'"'):'')).slice(0,3000);
     c[key].updatedAt=Date.now();
     crmSave(c);
@@ -44825,11 +44267,10 @@ function crmRenderAssic(){
   return h;
 }
 
-var CRM_FONTI=['AutoScout','Subito','Facebook','Passaparola','Salone','Sito web','Altro'];
+var CRM_FONTI=['AutoScout','Social','Passaparola','Salone','Sito web','Subito','Altro'];
 var CRM_ATT_TIPI=['Chiamata','Email','WhatsApp','Appuntamento','Da fare'];
 function crmOggiISO(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
-function crmSetFonte(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].fonte=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
-function crmFonteSelect(key,cur){ return '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;"><span style="font-size:11px;color:#64748b;font-weight:700;">Provenienza:</span><select onchange="crmSetFonte(\''+key+'\',this.value)" style="flex:1;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:12px;"><option value="">\u2014</option>'+CRM_FONTI.map(function(f){return '<option'+((cur||'')===f?' selected':'')+'>'+f+'</option>';}).join('')+'</select></div>'; }
+/* crmSetFonte e crmFonteSelect: vedi PROVENIENZA DEL CLIENTE */
 function crmAttSalva(key,arr){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].attivita=arr; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmAddAttivita(key){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).slice(); arr.push({ id:'a'+Date.now(), tipo:'Da fare', scad:crmOggiISO(), nota:'', fatto:false }); crmAttSalva(key,arr); }
 function crmSetAtt(key,aid,campo,val){ var s=crmLoad(); var arr=((s[key]&&s[key].attivita)||[]).slice(); for(var i=0;i<arr.length;i++){ if(arr[i].id===aid){ arr[i][campo]=val; break; } } crmAttSalva(key,arr); }
@@ -44902,17 +44343,20 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   var _tot=leads.length;
   leads=leads.filter(function(l){
     if(l.contrattoAperto) return false;                                      /* ha gia' la proposta: sta in Vendite */
+    /* Chiuso perso: resta in colonna 30 giorni dal giorno in cui ci e'
+       finito, poi va in Archivio. Note e promemoria non lo tengono vivo. */
+    if(crmStatoEffettivo(l, store[l.key])==='chiuso perso') return crmStatoTs(store[l.key])>=_lim;
     if((l.ultimoPrevAperto||0)>=_lim) return true;                           /* preventivo aperto negli ultimi 30 giorni */
     if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
     return false;
   });
-  leads.forEach(function(l){ l._stato=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); });
+  leads.forEach(function(l){ l._stato=crmStatoEffettivo(l, store[l.key]); });
   leads=leads.filter(function(l){ return l._stato!=='chiuso vinto'; });   /* ha comprato: e' un cliente, non un contatto */
   var _esclusi=_tot-leads.length;
   var jq=function(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')+"'"; };
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var h='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
-    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti esclusi: proposta gi\u00e0 firmata, auto consegnata o nessun preventivo aperto negli ultimi '+CRM_GIORNI_CALDI+' giorni</span>'):'')+'<br>'
+    +'<b>'+leads.length+'</b> trattative in lavorazione'+(_esclusi?(' \u00b7 <span style="color:#94a3b8;">'+_esclusi+' contatti esclusi: proposta gi\u00e0 firmata, auto consegnata o fermi da oltre '+CRM_GIORNI_CALDI+' giorni (vedi <a href="#" onclick="crmTab(\'archivio\');return false;" style="color:#1a4fa0;font-weight:700;">Archivio</a>)</span>'):'')+'<br>'
     +'Usa le frecce \u25c0 \u25b6 per spostare un contatto tra le fasi. Sui preventivi aperti puoi inviare il messaggio WhatsApp direttamente da qui.</div>';
   h+=crmWaEditor('preventivi','Messaggio WhatsApp preventivo','{nome} {auto}');
   h+=crmWaEditor('offerta_prev','Messaggio Offerta 48h','{nome} {auto}');
@@ -44927,6 +44371,7 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
         +'<div style="font-weight:700;font-size:13px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div>'
         +'<div style="font-size:11px;color:#64748b;margin-top:2px;">\ud83d\ude97 '+crmEsc(l.auto||'\u2014')+'</div>'
         +(l.telefono?('<div style="font-size:11px;color:#94a3b8;">\ud83d\udcde '+crmEsc(l.telefono)+'</div>'):'')
+        +crmFonteChip(l.key)
         +waBtn
         +'<div style="display:flex;justify-content:space-between;margin-top:7px;">'
         /* La chiave passa da jq(): contiene nome e cognome, e un apostrofo
@@ -44941,10 +44386,456 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
     h+='</div>';
   });
   h+='</div>'; return h; }
-function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].stato=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
+function crmSetStato(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; if(s[key].stato!==val) s[key].statoTs=Date.now(); s[key].stato=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); crmRender(); }
 function crmSetNote(key,val){ var s=crmLoad(); if(!s[key])s[key]={}; s[key].note=val; s[key].id=key; s[key].updatedAt=Date.now(); crmSave(s); crmSupaUpsert(key,s[key]); }
 function crmSupaUpsert(key,rec){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ sb.from('crm').upsert({ id:String(key), data:rec }).then(function(res){ if(res&&res.error) console.log('crm upsert:',res.error.message); }); }catch(e){} }
 function crmSupaLoad(){ var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return; try{ supaSelectAll(sb,'crm',function(res){ if(!res||res.error) return; var s=crmLoad(); (res.data||[]).forEach(function(r){ var d=r&&r.data; if(typeof d==='string'){try{d=JSON.parse(d);}catch(e){d=null;}} if(d&&r.id){ s[r.id]=d; } }); crmSave(s); crmRender(); }); }catch(e){} }
+
+/* =====================================================================
+   PROVENIENZA DEL CLIENTE — UNA SOLA, REGISTRATA, NON MODIFICABILE
+   ---------------------------------------------------------------------
+   Da quando i social portano clienti, la provenienza decide chi ha
+   lavorato il contatto. Per questo non la sceglie piu' chi registra la
+   vendita: sta nella scheda CRM del cliente, una volta sola.
+   - Quando si puo' la scrive il gestionale da solo: richiesta arrivata da
+     AutoScout/sito (lead online) oppure messaggio WhatsApp con la frase dei
+     social (Parametri).
+   - Altrimenti la scrive a mano il primo che la conosce. Da li' resta con
+     data, ora e nome di chi l'ha inserita, e la cambia solo l'admin,
+     scrivendo il motivo. Ogni cambio resta nello storico.
+   - Vale come "Social" solo se e' stata registrata PRIMA del contratto.
+   - Una persona abilitata (admin o chi e' in Parametri) la conferma
+     chiedendo al cliente "come ci ha conosciuto?".
+   Campi sulla scheda CRM: fonte, fonteTs, fonteDa, fonteVia, fonteConf,
+   fonteLog.
+   ===================================================================== */
+var CRM_FONTI_INFO={
+  'AutoScout':  { ico:'\ud83c\udf10', col:'#854d0e', bg:'#fef9c3' },
+  'Social':     { ico:'\ud83d\udcf1', col:'#be185d', bg:'#fce7f3' },
+  'Passaparola':{ ico:'\ud83d\udc65', col:'#166534', bg:'#dcfce7' },
+  'Salone':     { ico:'\ud83d\udeb6', col:'#1e40af', bg:'#dbeafe' },
+  'Sito web':   { ico:'\ud83d\udcbb', col:'#0e7490', bg:'#cffafe' },
+  'Subito':     { ico:'\ud83d\udfe0', col:'#9a3412', bg:'#ffedd5' },
+  'Altro':      { ico:'\u2753',       col:'#475569', bg:'#f1f5f9' }
+};
+/* Le vecchie voci (Provvigioni e CRM) portate sulla lista unica. */
+function eaFonteNorm(v){
+  var s=String(v==null?'':v).trim(); if(!s) return '';
+  var l=s.toLowerCase();
+  if(l.indexOf('autoscout')===0) return 'AutoScout';
+  if(l==='social'||l.indexOf('facebook')>=0||l.indexOf('instagram')>=0||l.indexOf('tiktok')>=0||l.indexOf('social')>=0) return 'Social';
+  if(l.indexOf('conoscen')===0||l.indexOf('passaparola')===0||l.indexOf('client')===0) return 'Passaparola';
+  if(l.indexOf('passaggio')>=0||l==='salone') return 'Salone';
+  if(l.indexOf('sito')===0||l==='web') return 'Sito web';
+  if(l.indexOf('subito')===0) return 'Subito';
+  if(l==='non specificato') return '';
+  return 'Altro';
+}
+function eaChiSono(){
+  try{ if(typeof _currentUserName!=='undefined' && _currentUserName) return String(_currentUserName); }catch(e){}
+  try{ if(typeof _currentUserEmail!=='undefined' && _currentUserEmail) return String(_currentUserEmail); }catch(e){}
+  return 'gestionale';
+}
+function crmFontePuoCambiare(){ try{ return (typeof isAdmin==='function') && isAdmin(); }catch(e){ return false; } }
+function crmFontePuoConfermare(){
+  if(crmFontePuoCambiare()) return true;
+  try{
+    var me=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').trim().toLowerCase(); if(!me) return false;
+    var lista=String(((typeof parLoad==='function')?parLoad().fonteConfermano:'')||'').toLowerCase().split(/[\s,;]+/);
+    return lista.indexOf(me)>=0;
+  }catch(e){ return false; }
+}
+function eaTel9(t){ var d=String(t||'').replace(/\D/g,''); return d.length>=9?d.slice(-9):''; }
+
+/* Scrive la provenienza su una scheda (oggetto), senza salvare.
+   via: 'crm' | 'lead' | 'whatsapp' | 'provvigioni' | 'admin'
+   ts : quando il contatto e' avvenuto davvero, se si sa (messaggio, lead) */
+function crmFonteApplica(rec, val, via, ts, motivo){
+  val=eaFonteNorm(val); if(!rec || !val) return false;
+  var ora=Date.now(), chi=eaChiSono();
+  var prima=rec.fonte?eaFonteNorm(rec.fonte):'';
+  if(prima===val && rec.fonteTs) return false;
+  rec.fonteLog=(rec.fonteLog||[]).slice(-30);
+  rec.fonteLog.push({ ts:ora, da:chi, prima:prima||'', dopo:val, via:via||'crm', motivo:motivo||'' });
+  rec.fonte=val;
+  /* Se la provenienza cambia, la data e la conferma ripartono da zero:
+     conta da quando e' scritta quella giusta. */
+  rec.fonteTs=(ts && ts<ora)?ts:ora;
+  rec.fonteDa=(via==='whatsapp')?'WhatsApp (automatico)':((via==='lead')?'Lead online (automatico)':chi);
+  rec.fonteVia=via||'crm';
+  rec.fonteConf=null;
+  if(via==='whatsapp') rec.fonteConf={ ts:ora, da:'prova WhatsApp', auto:true };
+  if(via==='lead' && val!=='Social') rec.fonteConf={ ts:ora, da:'richiesta dal portale', auto:true };
+  return true;
+}
+function crmFonteRec(key){ var s=crmLoad(); return s[key]||null; }
+/* La provenienza di un cliente (anagrafica di un preventivo/contratto). */
+function crmFonteDiCliente(cl){
+  try{
+    var s=crmLoad(), k=crmKey(cl||{});
+    if(k && s[k] && s[k].fonte) return { key:k, rec:s[k] };
+    var t9=eaTel9((cl||{}).telefono); if(!t9) return k?{ key:k, rec:s[k]||null }:null;
+    for(var kk in s){ if(s[kk] && s[kk].fonte && eaTel9(s[kk].telefono)===t9) return { key:kk, rec:s[kk] }; }
+    return k?{ key:k, rec:s[k]||null }:null;
+  }catch(e){ return null; }
+}
+/* Data del primo contratto di quel cliente (per la regola del "prima"). */
+function crmContrattoTsDi(key){
+  var min=0;
+  try{
+    (typeof cvLoad==='function'?cvLoad():[]).forEach(function(cv){
+      if(!cv || cv.deleted || cv.annullato || !cv.isContratto) return;
+      if(crmKey(cv.cliente||{})!==key) return;
+      var t=+(cv.contrattoTs||cv.updatedAt||0); if(t && (!min || t<min)) min=t;
+    });
+  }catch(e){}
+  return min;
+}
+/* 'ok' registrata prima del contratto, 'dopo' registrata dopo,
+   'nodata' provenienza vecchia senza data, '' nessun contratto. */
+function crmFonteTempismo(rec, contrTs){
+  if(!rec || !rec.fonte || !contrTs) return '';
+  if(!rec.fonteTs) return 'nodata';
+  return (rec.fonteTs<contrTs)?'ok':'dopo';
+}
+
+/* Prima scrittura da CRM: chiunque. Cambio: solo admin, col motivo. */
+function crmFonteScegli(key, val){
+  val=eaFonteNorm(val); if(!val) return;
+  var s=crmLoad(); if(!s[key]) s[key]={ id:key };
+  var r=s[key];
+  if(r.fonte){
+    if(eaFonteNorm(r.fonte)===val) return;
+    if(!crmFontePuoCambiare()){ alert('La provenienza \u00e8 gi\u00e0 registrata ('+eaFonteNorm(r.fonte)+').\n\nPu\u00f2 cambiarla solo l\u2019amministratore.'); crmFonteApri(key); return; }
+    var mot=prompt('Stai cambiando la provenienza da "'+eaFonteNorm(r.fonte)+'" a "'+val+'".\n\nScrivi il motivo (resta nello storico):','');
+    if(mot===null) { crmFonteApri(key); return; }
+    if(!mot.trim()){ alert('Serve il motivo.'); crmFonteApri(key); return; }
+    crmFonteApplica(r, val, 'admin', null, mot.trim());
+  } else {
+    if(!confirm('Registrare la provenienza "'+val+'"?\n\nDopo il salvataggio la pu\u00f2 cambiare solo l\u2019amministratore.')) { crmFonteApri(key); return; }
+    crmFonteApplica(r, val, 'crm');
+  }
+  r.id=key; crmSave(s); crmSupaUpsert(key, r);
+  if(typeof tcToastNew==='function') tcToastNew('\u2705 Provenienza registrata: '+val, true);
+  crmFonteApri(key); crmRender();
+}
+/* Compatibilita': il vecchio menu a tendina passa dalla stessa porta. */
+function crmSetFonte(key,val){ crmFonteScegli(key,val); }
+function crmFonteConferma(key){
+  if(!crmFontePuoConfermare()){ alert('Non sei abilitato a confermare la provenienza.'); return; }
+  var s=crmLoad(), r=s[key]; if(!r || !r.fonte) return;
+  if(!confirm('Hai chiesto al cliente come ci ha conosciuto e ha risposto "'+eaFonteNorm(r.fonte)+'"?')) return;
+  r.fonteConf={ ts:Date.now(), da:eaChiSono() };
+  r.fonteLog=(r.fonteLog||[]).slice(-30); r.fonteLog.push({ ts:Date.now(), da:eaChiSono(), prima:r.fonte, dopo:r.fonte, via:'conferma', motivo:'confermata dal cliente' });
+  crmSave(s); crmSupaUpsert(key, r);
+  if(document.getElementById('crm-fonte-modal')) crmFonteApri(key);
+  crmRender();
+}
+
+/* Pastiglia sulla scheda della pipeline. */
+function crmFonteChip(key){
+  var r=crmFonteRec(key)||{}, f=eaFonteNorm(r.fonte);
+  var on='onclick="event.stopPropagation();crmFonteApri('+crmEsc(crmKeyJs(key))+')"';
+  if(!f) return '<button '+on+' style="margin-top:6px;border:1px dashed #cbd5e1;background:#fff;color:#64748b;border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:inherit;">\u2795 Provenienza</button>';
+  var i=CRM_FONTI_INFO[f]||CRM_FONTI_INFO.Altro;
+  var ok=r.fonteConf?' \u2714':'';
+  return '<button '+on+' title="Provenienza registrata '+(r.fonteTs?('il '+crmDMY(r.fonteTs)):'')+'" style="margin-top:6px;border:1px solid '+i.col+'33;background:'+i.bg+';color:'+i.col+';border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit;">'+i.ico+' '+f+ok+'</button>';
+}
+/* Scheda vecchia (elenco): ora mostra la stessa pastiglia. */
+function crmFonteSelect(key,cur){ return '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;"><span style="font-size:11px;color:#64748b;font-weight:700;">Provenienza:</span>'+crmFonteChip(key)+'</div>'; }
+
+function crmFonteChiudi(){ var m=document.getElementById('crm-fonte-modal'); if(m) m.remove(); }
+function crmFonteApri(key){
+  crmFonteChiudi();
+  var s=crmLoad(), r=s[key]||{}, f=eaFonteNorm(r.fonte);
+  var nome='';
+  try{ var l=crmLeads().filter(function(x){ return x.key===key; })[0]; if(l) nome=((l.cognome||'')+' '+(l.nome||'')).trim(); }catch(e){}
+  if(!nome) nome=((r.cognome||'')+' '+(r.nome||'')).trim()||'Contatto';
+  var contr=crmContrattoTsDi(key), tem=crmFonteTempismo(r, contr);
+  var h='<div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:2px;">Provenienza</div>'
+    +'<div style="font-size:13px;color:#64748b;margin-bottom:14px;">'+crmEsc(nome)+'</div>';
+  if(f){
+    var i=CRM_FONTI_INFO[f]||CRM_FONTI_INFO.Altro;
+    h+='<div style="background:'+i.bg+';border-radius:10px;padding:12px;margin-bottom:10px;">'
+      +'<div style="font-size:18px;font-weight:900;color:'+i.col+';">'+i.ico+' '+f+'</div>'
+      +'<div style="font-size:12px;color:#334155;margin-top:4px;line-height:1.5;">'
+      +(r.fonteTs?('Registrata il <b>'+crmDMY(r.fonteTs)+'</b> alle '+new Date(r.fonteTs).toTimeString().slice(0,5)+' da <b>'+crmEsc(r.fonteDa||'\u2014')+'</b>'):'Registrata prima del nuovo sistema (data non disponibile)')
+      +'</div></div>';
+    if(contr){
+      var tt={ ok:['#dcfce7','#166534','\u2705 Registrata prima del contratto ('+crmDMY(contr)+')'],
+               dopo:['#fee2e2','#991b1b','\u26a0\ufe0f Registrata DOPO il contratto ('+crmDMY(contr)+'): non vale come contatto social'],
+               nodata:['#fef9c3','#854d0e','\u2754 Contratto del '+crmDMY(contr)+': data della provenienza non disponibile'] }[tem];
+      if(tt) h+='<div style="background:'+tt[0]+';color:'+tt[1]+';border-radius:8px;padding:8px 10px;font-size:12px;font-weight:700;margin-bottom:10px;">'+tt[2]+'</div>';
+    }
+    if(r.fonteConf){
+      h+='<div style="font-size:12px;color:#166534;font-weight:700;margin-bottom:10px;">\u2714 Confermata'+(r.fonteConf.auto?(' in automatico ('+crmEsc(r.fonteConf.da)+')'):(' da '+crmEsc(r.fonteConf.da)+' il '+crmDMY(r.fonteConf.ts)))+'</div>';
+    } else {
+      h+='<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">\u23f3 Non ancora confermata</div>';
+      if(crmFontePuoConfermare()) h+='<button onclick="crmFonteConferma('+crmEsc(crmKeyJs(key))+')" style="width:100%;padding:10px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;margin-bottom:10px;">\u2714 Il cliente lo conferma</button>';
+    }
+  } else {
+    h+='<div style="font-size:12.5px;color:#475569;line-height:1.5;margin-bottom:10px;">Come ci ha conosciuto? Scegli una voce: dopo il salvataggio la pu\u00f2 cambiare solo l\u2019amministratore.</div>';
+  }
+  if(!f || crmFontePuoCambiare()){
+    if(f) h+='<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;margin:6px 0;">Cambia (solo admin, col motivo)</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+    CRM_FONTI.forEach(function(x){ var i=CRM_FONTI_INFO[x]||CRM_FONTI_INFO.Altro; var on=(x===f);
+      h+='<button onclick="crmFonteScegli('+crmEsc(crmKeyJs(key))+',\''+x+'\')" style="flex:1 1 30%;padding:9px 6px;border-radius:8px;border:2px solid '+(on?i.col:'#e2e8f0')+';background:'+(on?i.bg:'#fff')+';color:'+i.col+';font-weight:800;font-size:12px;font-family:inherit;cursor:pointer;">'+i.ico+' '+x+'</button>'; });
+    h+='</div>';
+  }
+  if((r.fonteLog||[]).length){
+    h+='<details style="margin-top:6px;"><summary style="font-size:12px;font-weight:700;color:#64748b;cursor:pointer;">Storico ('+r.fonteLog.length+')</summary><div style="margin-top:6px;">';
+    r.fonteLog.slice().reverse().forEach(function(x){
+      h+='<div style="font-size:11.5px;color:#475569;border-bottom:1px solid #f1f5f9;padding:5px 0;">'+crmDMY(x.ts)+' '+new Date(x.ts).toTimeString().slice(0,5)+' \u00b7 <b>'+crmEsc(x.da)+'</b>: '
+        +(x.via==='conferma'?'confermata':((x.prima?crmEsc(x.prima)+' \u2192 ':'')+crmEsc(x.dopo)))+(x.motivo?(' \u00b7 <i>'+crmEsc(x.motivo)+'</i>'):'')+'</div>';
+    });
+    h+='</div></details>';
+  }
+  h+='<button onclick="crmFonteChiudi()" style="width:100%;margin-top:12px;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Chiudi</button>';
+  var m=document.createElement('div'); m.id='crm-fonte-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  m.onclick=function(e){ if(e.target===m) crmFonteChiudi(); };
+  m.innerHTML='<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;max-height:88vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.25);">'+h+'</div>';
+  document.body.appendChild(m);
+}
+
+
+/* ===== PROVENIENZA DALL'APPUNTAMENTO =====
+   Cerca il cliente nel CRM per telefono, email o anagrafica scelta; se la
+   provenienza c'e' gia' il campo resta fermo, se no la si sceglie e al
+   salvataggio finisce nel CRM, bloccata. */
+function ccFonteTrova(tel, email, cli){
+  var s=crmLoad(), t9=eaTel9(tel), em=String(email||'').trim().toLowerCase();
+  if(cli){ var k0=crmKey(cli); if(k0 && s[k0] && s[k0].fonte) return { key:k0, rec:s[k0] }; }
+  for(var k in s){ var r=s[k]; if(!r || !r.fonte) continue;
+    if(t9 && eaTel9(r.telefono)===t9) return { key:k, rec:r };
+    if(em && String(r.email||'').trim().toLowerCase()===em) return { key:k, rec:r };
+  }
+  /* il contatto puo' esistere solo nei preventivi: si cerca il telefono li' */
+  var trovato=null;
+  try{
+    if(t9 || em) (typeof cvLoad==='function'?cvLoad():[]).some(function(cv){
+      var cl=cv&&cv.cliente; if(!cl) return false;
+      var stesso=(t9 && eaTel9(cl.telefono)===t9) || (em && String(cl.email||'').trim().toLowerCase()===em);
+      if(!stesso) return false;
+      var kk=crmKey(cl); if(kk && s[kk] && s[kk].fonte){ trovato={ key:kk, rec:s[kk] }; return true; }
+      return false;
+    });
+  }catch(e){}
+  return trovato;
+}
+function ccFonteUI(){
+  var wrap=document.getElementById('cc-fonte-wrap'), sel=document.getElementById('cc-fonte'), nota=document.getElementById('cc-fonte-nota');
+  if(!wrap || !sel) return;
+  var tipo=(document.getElementById('cc-tipo')||{}).value||'intervento';
+  window._ccFonteBloccata=null;
+  if(tipo!=='vendita'){ wrap.style.display='none'; return; }
+  wrap.style.display='';
+  var cur=sel.value;
+  if(!sel.options.length) sel.innerHTML='<option value="">— scegli —</option>'+CRM_FONTI.map(function(f){ var i=CRM_FONTI_INFO[f]||{}; return '<option value="'+f+'">'+(i.ico||'')+' '+f+'</option>'; }).join('');
+  var tel=(document.getElementById('cc-tel')||{}).value||'', em=(document.getElementById('cc-email')||{}).value||'';
+  var hit=ccFonteTrova(tel, em, window._ccFonteCli||null);
+  if(hit && hit.rec && hit.rec.fonte){
+    var f=eaFonteNorm(hit.rec.fonte); window._ccFonteBloccata=f;
+    sel.value=f; sel.disabled=true;
+    if(nota) nota.innerHTML='🔒 Già registrata nel CRM'+(hit.rec.fonteTs?(' il '+crmDMY(hit.rec.fonteTs)+' da '+crmEsc(hit.rec.fonteDa||'')):'')+': non si cambia da qui.';
+  } else {
+    sel.disabled=false; sel.value=cur||'';
+    if(nota) nota.innerHTML='Chiedilo al cliente adesso. Dopo il salvataggio la provenienza resta registrata e la cambia solo l’amministratore.';
+  }
+}
+function ccFonteRegistra(titolo, email, tel, fonte){
+  var hit=ccFonteTrova(tel, email, window._ccFonteCli||null);
+  if(hit && hit.rec && hit.rec.fonte) return;          /* gia' registrata: non si tocca */
+  var s=crmLoad(), cli=window._ccFonteCli||null, key='';
+  if(cli && (cli.cognome||cli.nome||cli.ragSociale)) key=crmKey({ cognome:cli.cognome, nome:cli.nome, ragSociale:cli.ragSociale, email:cli.email||email, telefono:cli.telefono||tel });
+  /* cliente nuovo: stessa chiave di un record senza fonte, se esiste, per telefono */
+  if(!key){ var t9=eaTel9(tel); for(var k in s){ if(s[k] && t9 && eaTel9(s[k].telefono)===t9){ key=k; break; } } }
+  if(!key) key=crmKey({ cognome:String(titolo||'').trim(), nome:'', email:email, telefono:tel });
+  if(!key) return;
+  if(!s[key]) s[key]={ id:key };
+  var r=s[key];
+  if(!r.cognome && !r.nome){ if(cli){ r.cognome=cli.cognome||''; r.nome=cli.nome||''; } else r.cognome=String(titolo||'').trim(); }
+  if(!r.telefono) r.telefono=tel||''; if(!r.email) r.email=email||'';
+  if(crmFonteApplica(r, fonte, 'appuntamento')){ r.id=key; crmSave(s); crmSupaUpsert(key, r); }
+}
+/* ===== PROVA WHATSAPP DEI SOCIAL =====
+   Nei reel e nella bio si mette il link WhatsApp col messaggio gia' scritto
+   (Parametri > Frase WhatsApp dei social). Chi scrive con quella frase
+   arriva dai social: lo dice il messaggio del cliente, che nessuno puo'
+   modificare. Il gestionale lo segna da solo come "Social", con la data
+   del messaggio, se la provenienza non e' gia' registrata. */
+var _crmSocialTel={};   /* ultime 9 cifre -> data del primo messaggio */
+function crmSocialFrase(){ try{ return String(((typeof parLoad==='function')?parLoad().waFraseSocial:'')||'').trim(); }catch(e){ return ''; } }
+function crmSocialLink(){
+  var fr=crmSocialFrase(); var n=(typeof eaTelWa==='function')?eaTelWa():'';
+  if(!fr||!n) return ''; return 'https://wa.me/'+n+'?text='+encodeURIComponent(fr);
+}
+function crmSocialScan(poi){
+  var fr=crmSocialFrase(); var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!fr || !sb){ if(poi) poi(); return; }
+  /* basta l'inizio della frase: il cliente a volte la accorcia */
+  var pezzo=fr.replace(/[%_]/g,' ').split(/\s+/).slice(0,4).join(' ').trim(); if(!pezzo){ if(poi) poi(); return; }
+  try{
+    sb.from('wa_messaggi').select('id,data').ilike('data->>testo','%'+pezzo+'%').limit(2000).then(function(res){
+      if(res && !res.error){
+        var m={};
+        (res.data||[]).forEach(function(r){ var d=r.data||{}; if(String(d.direzione)!=='in') return; var t=eaTel9(d.telefono); var ts=+(d.ts||0)||Date.parse(r.created_at||'')||0; if(!t) return; if(!m[t] || (ts && ts<m[t])) m[t]=ts||Date.now(); });
+        _crmSocialTel=m;
+        crmSocialApplica();
+      }
+      if(poi) poi();
+    }, function(){ if(poi) poi(); });
+  }catch(e){ if(poi) poi(); }
+}
+function crmSocialApplica(){
+  if(!Object.keys(_crmSocialTel).length) return 0;
+  var s=crmLoad(), cambiati=[];
+  var prova=function(key, tel, base){
+    var t=eaTel9(tel); if(!t || !_crmSocialTel[t]) return;
+    var r=s[key]; if(r && r.fonte) return;           /* gia' registrata: non si tocca */
+    if(!r){ r=s[key]={ id:key }; if(base){ r.nome=base.nome||''; r.cognome=base.cognome||''; } }
+    if(!r.telefono) r.telefono=tel;
+    if(crmFonteApplica(r, 'Social', 'whatsapp', _crmSocialTel[t])) cambiati.push(key);
+  };
+  try{ Object.keys(s).forEach(function(k){ prova(k, (s[k]||{}).telefono); }); }catch(e){}
+  try{ crmLeads().forEach(function(l){ prova(l.key, l.telefono, l); }); }catch(e){}
+  if(cambiati.length){
+    crmSave(s);
+    cambiati.forEach(function(k){ crmSupaUpsert(k, s[k]); });
+    if(typeof tcToastNew==='function') tcToastNew('\ud83d\udcf1 '+cambiati.length+' contatti segnati come Social (messaggio WhatsApp dai social)', true);
+  }
+  return cambiati.length;
+}
+
+/* ===== ARCHIVIO =====
+   La pipeline mostra solo quello che si lavora. Dopo 30 giorni:
+   - un "chiuso perso" esce dalla colonna e va in Archivio;
+   - una trattativa ferma (nessun preventivo e nessun movimento) idem.
+   Non si cancella niente: dall'Archivio si cerca e si ripristina.
+   Se un cliente archiviato fa un preventivo nuovo, torna da solo in
+   pipeline come "nuovo". */
+var CRM_GIORNI_ARCHIVIO=30;
+function crmStatoTs(rec){ rec=rec||{}; return +(rec.statoTs||rec.updatedAt||0); }
+/* Lo stato vero da mostrare: un perso con un preventivo piu' recente e'
+   una trattativa nuova. */
+function crmStatoEffettivo(l, rec){
+  var st=(rec&&rec.stato)||crmDefaultStato(l);
+  if(st==='chiuso perso' && (l.ultimoPrevAperto||0)>crmStatoTs(rec)) return 'nuovo';
+  return st;
+}
+var _crmArchQ='', _crmArchN=50;
+function crmArchivioElenco(){
+  var store=crmLoad(), lim=Date.now()-CRM_GIORNI_ARCHIVIO*24*3600000, out=[];
+  crmLeads().forEach(function(l){
+    var rec=store[l.key];
+    if(l.contrattoAperto) return;
+    var st=crmStatoEffettivo(l, rec);
+    if(st==='chiuso vinto') return;
+    if(st==='chiuso perso'){
+      var t=crmStatoTs(rec); if(t<lim) out.push({ l:l, st:st, ts:t+CRM_GIORNI_ARCHIVIO*24*3600000, perche:'chiuso perso da oltre '+CRM_GIORNI_ARCHIVIO+' giorni' });
+      return;
+    }
+    /* trattative ferme: solo quelle passate davvero dal CRM, non lo storico importato */
+    var toccato=(rec && rec.stato) || l.daLead || (l.ultimoPrevAperto||0)>0;
+    if(!toccato) return;
+    var ult=Math.max(+(l.ultimoPrevAperto||0), (rec&&rec.stato)?crmStatoTs(rec):0, +(l.ultimo&&l.daLead?l.ultimo:0));
+    if(ult && ult<lim) out.push({ l:l, st:st, ts:ult+CRM_GIORNI_ARCHIVIO*24*3600000, perche:'nessun movimento da oltre '+CRM_GIORNI_ARCHIVIO+' giorni' });
+  });
+  out.sort(function(a,b){ return b.ts-a.ts; });
+  return out;
+}
+function crmArchCerca(v){ _crmArchQ=String(v||''); _crmArchN=50; var el=document.getElementById('crm-arch-lista'); if(el) el.innerHTML=crmArchListaHTML(); }
+function crmArchAltri(){ _crmArchN+=50; var el=document.getElementById('crm-arch-lista'); if(el) el.innerHTML=crmArchListaHTML(); }
+function crmArchListaHTML(){
+  var tutti=crmArchivioElenco(), q=_crmArchQ.toLowerCase().trim();
+  var vis=q?tutti.filter(function(x){ var l=x.l; return ((l.nome||'')+' '+(l.cognome||'')+' '+(l.telefono||'')+' '+(l.email||'')+' '+(l.auto||'')).toLowerCase().indexOf(q)>=0; }):tutti;
+  var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso perso':'#dc2626'};
+  var h='<div style="font-size:12px;color:#64748b;margin:4px 0 10px;"><b>'+vis.length+'</b> '+(q?'trovati':'archiviati')+'</div>';
+  if(!vis.length) return h+'<div style="text-align:center;color:#94a3b8;padding:30px;">Niente in archivio.</div>';
+  vis.slice(0,_crmArchN).forEach(function(x){ var l=x.l;
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-left:4px solid '+(col[x.st]||'#94a3b8')+';border-radius:10px;padding:9px 11px;margin-bottom:7px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+      +'<div style="flex:1;min-width:170px;"><div style="font-weight:800;font-size:13px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;">\ud83d\ude97 '+crmEsc(l.auto||'\u2014')+(l.telefono?(' \u00b7 \ud83d\udcde '+crmEsc(l.telefono)):'')+'</div>'
+      +'<div style="font-size:11px;color:#94a3b8;">'+crmEsc(x.st)+' \u00b7 archiviato il '+crmDMY(x.ts)+' ('+x.perche+')</div>'+crmFonteChip(l.key)+'</div>'
+      +'<button onclick="crmArchRipristina('+crmEsc(crmKeyJs(l.key))+')" style="padding:7px 11px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:800;font-size:12px;font-family:inherit;cursor:pointer;">\u21a9 Ripristina</button></div>';
+  });
+  if(vis.length>_crmArchN) h+='<button onclick="crmArchAltri()" style="width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-weight:700;font-family:inherit;cursor:pointer;">Mostra altri ('+(vis.length-_crmArchN)+')</button>';
+  return h;
+}
+function crmRenderArchivio(){
+  return '<div style="font-size:12.5px;color:#64748b;line-height:1.55;margin-bottom:10px;">Qui finiscono da soli i <b>chiusi persi</b> dopo '+CRM_GIORNI_ARCHIVIO+' giorni e le trattative ferme da '+CRM_GIORNI_ARCHIVIO+' giorni, cos\u00ec la pipeline resta corta. Non si cancella niente: <b>Ripristina</b> lo rimette in pipeline come \u201cricontattare\u201d. Se il cliente fa un preventivo nuovo torna in pipeline da solo.</div>'
+    +'<input oninput="crmArchCerca(this.value)" value="'+crmEsc(_crmArchQ)+'" placeholder="\ud83d\udd0e Cerca nome, telefono, auto\u2026" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;">'
+    +'<div id="crm-arch-lista">'+crmArchListaHTML()+'</div>';
+}
+function crmArchRipristina(key){
+  var s=crmLoad(); if(!s[key]) s[key]={ id:key };
+  s[key].stato='ricontattare'; s[key].statoTs=Date.now(); s[key].updatedAt=Date.now(); s[key].id=key;
+  crmSave(s); crmSupaUpsert(key, s[key]);
+  if(typeof tcToastNew==='function') tcToastNew('\u21a9 Rimesso in pipeline come \u201cricontattare\u201d', true);
+  crmRender();
+}
+
+/* ===== REPORT PROVENIENZE =====
+   Per mese: contatti e vendite per provenienza, e l'elenco delle vendite
+   Social da controllare a campione (telefono a portata di mano). */
+var _crmRepMese='';
+function crmRepMeseSet(v){ _crmRepMese=v||''; crmRender(); }
+function crmRenderProvenienze(){
+  var d=new Date(); var mese=_crmRepMese||(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2));
+  var y=+mese.slice(0,4), mo=+mese.slice(5,7)-1;
+  var da=new Date(y,mo,1).getTime(), a=new Date(y,mo+1,1).getTime();
+  var store=crmLoad(), voci=CRM_FONTI.concat(['Non registrata']);
+  var cont={}, vend={}; voci.forEach(function(v){ cont[v]=0; vend[v]=0; });
+  Object.keys(store).forEach(function(k){ var r=store[k]||{}; if(!r.fonte||!r.fonteTs) return; if(r.fonteTs>=da && r.fonteTs<a){ var f=eaFonteNorm(r.fonte)||'Altro'; cont[f]=(cont[f]||0)+1; } });
+  var social=[], vistiCv={};
+  (typeof cvLoad==='function'?cvLoad():[]).forEach(function(cv){
+    if(!cv || cv.deleted || cv.annullato || !cv.isContratto) return;
+    if(typeof eaCvTest==='function' && eaCvTest(cv)) return;
+    var t=+(cv.contrattoTs||0); if(!(t>=da && t<a)) return;
+    if(vistiCv[cv.id]) return; vistiCv[cv.id]=1;
+    var cl=cv.cliente||{}, info=crmFonteDiCliente(cl), rec=info&&info.rec, f=rec&&rec.fonte?eaFonteNorm(rec.fonte):'Non registrata';
+    vend[f]=(vend[f]||0)+1;
+    if(f==='Social') social.push({ cv:cv, key:info.key, rec:rec, tem:crmFonteTempismo(rec, t) });
+  });
+  var h='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;"><span style="font-weight:800;color:#0f172a;">Mese</span><input type="month" value="'+mese+'" onchange="crmRepMeseSet(this.value)" style="padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"></div>';
+  h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:14px;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase;"><th style="text-align:left;padding:8px 10px;">Provenienza</th><th style="text-align:right;padding:8px 10px;">Contatti</th><th style="text-align:right;padding:8px 10px;">Contratti</th></tr></thead><tbody>';
+  voci.forEach(function(v){ if(!cont[v] && !vend[v]) return; var i=CRM_FONTI_INFO[v]||{ ico:'\u2014', col:'#94a3b8' };
+    h+='<tr style="border-top:1px solid #f1f5f9;"><td style="padding:8px 10px;font-weight:700;color:'+i.col+';">'+i.ico+' '+v+'</td><td style="text-align:right;padding:8px 10px;">'+(cont[v]||0)+'</td><td style="text-align:right;padding:8px 10px;font-weight:800;">'+(vend[v]||0)+'</td></tr>'; });
+  h+='</tbody></table></div>';
+  h+='<div style="font-weight:800;color:#be185d;margin-bottom:6px;">\ud83d\udcf1 Contratti da clienti Social ('+social.length+')</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:8px;">Valgono quelli con provenienza registrata <b>prima</b> del contratto. Chiama 2\u20133 clienti al mese per il controllo a campione.</div>';
+  if(!social.length) h+='<div style="color:#94a3b8;font-size:13px;padding:10px 0;">Nessuno in questo mese.</div>';
+  social.forEach(function(x){ var cl=x.cv.cliente||{}, r=x.rec||{};
+    var tt={ ok:['#166534','\u2705 valida'], dopo:['#991b1b','\u26a0\ufe0f registrata dopo il contratto'], nodata:['#854d0e','\u2754 data non disponibile'] }[x.tem]||['#64748b',''];
+    var tel=String(cl.telefono||'').trim();
+    h+='<div style="background:#fff;border:1px solid #fbcfe8;border-radius:10px;padding:10px;margin-bottom:7px;">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="color:#0f172a;">'+crmEsc((typeof cvNomeCliente==='function')?cvNomeCliente(cl):((cl.cognome||'')+' '+(cl.nome||'')))+'</b><span style="font-size:12px;font-weight:800;color:'+tt[0]+';">'+tt[1]+'</span></div>'
+      +'<div style="font-size:12px;color:#64748b;margin-top:3px;">Provenienza: '+(r.fonteTs?crmDMY(r.fonteTs):'\u2014')+' ('+crmEsc(r.fonteDa||'\u2014')+') \u00b7 Contratto: '+crmDMY(x.cv.contrattoTs)+'</div>'
+      +'<div style="font-size:12px;margin-top:3px;color:'+(r.fonteConf?'#166534':'#b45309')+';font-weight:700;">'+(r.fonteConf?('\u2714 confermata ('+crmEsc(r.fonteConf.da)+')'):'\u23f3 da confermare')+'</div>'
+      +'<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;">'
+      +(tel?('<a href="tel:'+crmEsc(tel.replace(/[^0-9+]/g,''))+'" style="padding:6px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:12px;font-weight:700;text-decoration:none;">\ud83d\udcde '+crmEsc(tel)+'</a>'):'')
+      +(x.key?('<button onclick="crmFonteApri('+crmEsc(crmKeyJs(x.key))+')" style="padding:6px 10px;border-radius:7px;border:1px solid #be185d;background:#fff;color:#be185d;font-size:12px;font-weight:800;font-family:inherit;cursor:pointer;">Apri provenienza</button>'):'')
+      +'</div></div>';
+  });
+  /* i cambi fatti a mano nel mese, perche' si vedano */
+  var cambi=[];
+  Object.keys(store).forEach(function(k){ (store[k].fonteLog||[]).forEach(function(x){ if(x.via==='admin' && x.ts>=da && x.ts<a) cambi.push({ k:k, x:x, r:store[k] }); }); });
+  if(cambi.length){
+    var _nomi={}; try{ crmLeads().forEach(function(l){ _nomi[l.key]=((l.cognome||'')+' '+(l.nome||'')).trim(); }); }catch(e){}
+    h+='<div style="font-weight:800;color:#0f172a;margin:14px 0 6px;">\u270f\ufe0f Provenienze cambiate a mano ('+cambi.length+')</div>';
+    cambi.sort(function(p,q){ return q.x.ts-p.x.ts; }).forEach(function(c){
+      h+='<div style="font-size:12px;color:#475569;padding:6px 0;border-bottom:1px solid #f1f5f9;">'+crmDMY(c.x.ts)+' \u00b7 <b>'+crmEsc(((c.r.cognome||'')+' '+(c.r.nome||'')).trim()||_nomi[c.k]||'contatto')+'</b>: '+crmEsc(c.x.prima||'\u2014')+' \u2192 '+crmEsc(c.x.dopo)+' ('+crmEsc(c.x.da)+': <i>'+crmEsc(c.x.motivo||'')+'</i>)</div>';
+    });
+  }
+  var link=crmSocialLink();
+  h+='<div style="margin-top:16px;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:10px;padding:11px;font-size:12px;color:#831843;line-height:1.55;">'
+    +'<b>Link WhatsApp per reel e bio</b><br>'
+    +(link?('Chi scrive da questo link viene segnato Social in automatico:<br><span style="word-break:break-all;font-weight:700;">'+crmEsc(link)+'</span><br><button onclick="try{navigator.clipboard.writeText(\''+link.replace(/'/g,"\\'")+'\');tcToastNew&&tcToastNew(\'Link copiato\',true);}catch(e){}" style="margin-top:6px;padding:6px 10px;border-radius:7px;border:1px solid #be185d;background:#fff;color:#be185d;font-weight:800;font-family:inherit;cursor:pointer;">\ud83d\udccb Copia link</button>')
+      :'Imposta in Parametri la \u201cFrase WhatsApp dei social\u201d per avere il link.')
+    +'</div>';
+  return h;
+}
 
 /* =====================================================================
    CONFERMA DI SALVATAGGIO IN TUTTA L'APP
