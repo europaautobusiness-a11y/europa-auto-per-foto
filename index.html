@@ -502,7 +502,7 @@ html, body{
     <button class="sidebar-group-hdr" onclick="sbGroup(this)"><span class="sidebar-section-label">Calendario</span><span class="sbg-chev">&#9662;</span></button>
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-appuntamenti" onclick="apriCalCat('appuntamento',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128197;</span><span class="si-label"> Appuntamenti</span><span class="si-badge" id="cc-badge" style="display:none;">0</span></button>
-    <button class="sidebar-item" id="si-task" onclick="apriCalCat('task',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Task</span></button>
+    <button class="sidebar-item" id="si-task" onclick="sidebarNav('mansioni',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#9989;</span><span class="si-label"> Mansioni</span><span class="si-badge" style="display:none;">0</span></button>
     </div>
   </div>
   <div class="sidebar-divider"></div>
@@ -1313,6 +1313,7 @@ html, body{
 
 <!-- PERMESSI -->
 <div class="view" id="view-noleggio" style="padding:22px 16px;"></div>
+<div class="view" id="view-mansioni" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-welfare" style="padding:22px 16px;"></div>
 
@@ -11412,7 +11413,8 @@ function applyRoleUI() {
        altri sparirebbero a tutti, amministratore compreso. */
     if(v==='online' || v==='simulatore') return;
     /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
-    if(v==='appuntamenti' || v==='task'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
+    if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnSezioneVisibile!=='function' || mnSezioneVisibile())) ? '' : 'none'; return; }
+    if(v==='appuntamenti'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
     btn.style.display = allowed.indexOf(v) !== -1 ? '' : 'none';
   });
   try{ eaSidebarGruppi(); }catch(e){}
@@ -14807,6 +14809,8 @@ function tcSalvaTimbrata(email,tipo,dataOverride,oraOverride,sede) {
       if(sub) sub.textContent = ok ? (nomi[tipo]+' · '+ora+' salvata') : (nomi[tipo]+' · '+ora+' salvata (sincronizzo…)');
       tcToastNew('✅ '+nomi[tipo]+': '+ora, true);
       tcRenderLog(); tcAggiornaPulsanti(); tcRenderMese();
+      /* appena timbrata l'entrata: le mansioni in ritardo si fanno vedere */
+      try{ if(typeof mnDopoTimbratura==='function') mnDopoTimbratura(tipo); }catch(e){}
       if(!ok){ try{ gsJsonp({action:'upsert',sheet:PRESENZE_SHEET,record:rec}); }catch(e){} } // ritenta in background
     }, wait);
   });
@@ -16113,6 +16117,7 @@ function presenzeEsportaExcel(){
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
+  'mansioni': 'Mansioni',
   'bmvalue': 'BM Value',
   'simulatore': 'Simulatore finanziamento',
   'editor':  'Nuovo Report',
@@ -16401,7 +16406,7 @@ function eaSezioniMie(){
 }
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
    servizio raggiungibili da tutti): non vanno bloccate. */
-var EA_SEZIONI_LIBERE=['impostazioni'];
+var EA_SEZIONI_LIBERE=['impostazioni','mansioni'];
 /* ===== DUE SEZIONI IN DUE SCHEDE =====
    Capita di dover guardare una cosa mentre se ne lavora un'altra. Finora
    serviva aprire il gestionale in una seconda scheda e ritrovare la sezione
@@ -16504,6 +16509,10 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
       return;
     }
+    if(view==='mansioni' && typeof mnSezioneVisibile==='function' && !mnSezioneVisibile()){
+      if(typeof tcToastNew==='function') tcToastNew('Sezione in prova: non ancora attiva per il tuo utente.', false);
+      return;
+    }
     if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && view!=='online' && mie.indexOf(view)<0){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata: chiedi all\u2019amministratore.', false);
       return;
@@ -16557,6 +16566,7 @@ function sidebarNav(view,btn){
   if(view==='editor'){ try{ repAutoPopola(); }catch(e){} }   /* elenco auto pronto per il report */
   if(view==='simulatore'){ if(typeof simInit==='function'){ _simTargetId='view-simulatore'; _simPagIdx=null; simInit(); } }
   if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
+  if(view==='mansioni'){ try{ mnRender(); if(typeof ccSupaLoad==='function') ccSupaLoad(function(){ try{ mnRender(); }catch(e){} }); }catch(e){} }
   if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); wfBuoniSupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
@@ -25751,7 +25761,8 @@ function cvRender(){
       +'<div style="display:flex;justify-content:space-between;gap:10px;"><div><div style="font-weight:800;font-size:15px;">'+cvEsc((c.cliente&&(c.cliente.nome||'')+' '+(c.cliente&&c.cliente.cognome||''))||'Cliente')+badge+'</div>'
       +'<div style="font-size:13px;color:#475569;margin-top:2px;">'+cvEsc(c.autoDesc||(c.autoSnapshot&&c.autoSnapshot.modello)||'—')+(cvAutoNum(c)?(' \u00b7 <b style="color:#3730a3;">N\u00b0 '+cvEsc(cvAutoNum(c))+'</b>'):'')+'</div>'
       +'<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+cvEsc(cvDataIt(c.data))+'</div></div>'
-      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div></div>';
+      +'<div style="text-align:right;"><div style="font-weight:800;font-size:16px;">'+cvEuro(tot.totaleScontato)+'</div><div style="font-size:11px;color:'+(tot.saldoDovuto<=0.01?'#16a34a':'#d97706')+';font-weight:700;margin-top:4px;">saldo '+cvEuro(tot.saldoDovuto)+'</div></div></div>'
+      +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(c,true):'')+'</div>';
   }).join('')+_piu;
 }
 
@@ -25841,6 +25852,7 @@ function cvVista(id){
    +'<button onclick="cvVistaChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:17px;cursor:pointer;">&times;</button>'
    +'</span></div>'
    +'<div style="padding:14px 16px;max-height:74vh;overflow:auto;">'
+   +((typeof cvMailStatoHTML==='function')?cvMailStatoHTML(cv,false).replace('margin-top:8px','margin:0 0 10px'):'')
    +vBox
    +tit('Cliente')
    +riga('Nominativo', cvEsc((cvNomeCliente(cl))||'\u2014'))
@@ -27294,6 +27306,59 @@ try{ setTimeout(function(){
   if(n) console.log('buste ripulite dai preventivi gia inviati:', n);
 }, 8000); }catch(e){}
 
+/* ===== LA MAIL AL CLIENTE SI PUO' FERMARE =====
+   Il preventivo parte via mail dopo un'ora. Se e' sbagliato, in quell'ora si
+   puo' bloccare: mailDaInviareAt torna vuoto (il cron non lo vede piu') e
+   resta il segno mailBloccata. Da li' si puo' riprogrammare o mandare subito. */
+function cvMailStatoHTML(c, compatto){
+  try{
+    if(!c || c.isContratto || c.annullato) return '';
+    var now=Date.now();
+    var box=function(bg,bd,fg,testo,bott){ return '<div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:'+bg+';border:1px solid '+bd+';color:'+fg+';border-radius:8px;padding:'+(compatto?'6px 9px':'9px 12px')+';margin-top:8px;font-size:12px;font-weight:700;">'+testo+(bott||'')+'</div>'; };
+    var b=function(txt,fn,col){ return '<button onclick="event.stopPropagation();'+fn+'(\''+c.id+'\')" style="padding:5px 10px;border-radius:7px;border:1px solid '+col+';background:#fff;color:'+col+';font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;">'+txt+'</button>'; };
+    if(c.emailInviata) return compatto?'':box('#f0fdf4','#bbf7d0','#166534','\ud83d\udce7 Mail inviata al cliente'+(c.emailInviataTs?(' il '+new Date(c.emailInviataTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):''));
+    if(c.mailBloccata) return box('#fef2f2','#fecaca','#991b1b','\u26d4 Mail al cliente BLOCCATA'+(c.mailBloccataDa?(' da '+cvEsc(c.mailBloccataDa)):''),'<span style="flex:1;"></span>'+b('\u21ba Riprogramma tra 1 ora','cvMailRiprogramma','#1a4fa0')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
+    if(c.mailDaInviareAt && c.mailDaInviareAt>now){
+      var m=Math.max(1,Math.round((c.mailDaInviareAt-now)/60000));
+      return box('#fffbeb','#fde68a','#92400e','\ud83d\udce7 Mail al cliente tra ~'+m+' min','<span style="flex:1;"></span>'+b('\u26d4 Blocca invio','cvMailBlocca','#dc2626')+b('\u2709 Invia ora','cvMailInviaOra','#15803d'));
+    }
+    return '';
+  }catch(e){ return ''; }
+}
+function cvMailAggiorna(id, fn){
+  var l=cvLoad(); var i=l.findIndex(function(x){ return x.id===id; }); if(i<0) return null;
+  fn(l[i]); l[i].updatedAt=Date.now(); cvSave(l);
+  try{ supaUpsert('preventivi', l[i]); }catch(e){}
+  try{ if(typeof _cv!=='undefined' && _cv && _cv.id===id) Object.assign(_cv, l[i]); }catch(e){}
+  try{ cvRender(); }catch(e){}
+  try{ var m=document.getElementById('cvVistaModal'); if(m && m.style.display!=='none' && m.innerHTML) cvVista(id); }catch(e){}
+  return l[i];
+}
+function cvMailBlocca(id){
+  var c=cvMailAggiorna(id, function(x){
+    x.mailDaInviareAt=null; x.mailBloccata=true; x.mailBloccataTs=Date.now();
+    x.mailBloccataDa=((typeof _currentUserName!=='undefined'&&_currentUserName)||(typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  });
+  if(c){ try{ tcToastNew('\u26d4 Mail al cliente bloccata: non partir\u00e0', true); }catch(e){} try{ cvLogRegistra(null, c, 'mail_bloccata'); }catch(e){} }
+}
+function cvMailRiprogramma(id){
+  var c=cvMailAggiorna(id, function(x){
+    x.mailBloccata=false; x.emailInviata=false; x.mailDaInviareAt=Date.now()+3600000;
+    try{ x.mailProg={ to:x.cliente.email, subject:'Il tuo preventivo \u2014 Europa Auto', html:cvMailArricchisci(x, cvMailPreventivoHtml(x)) }; }catch(e){}
+    try{ if(!x.mailPdfUrl) cvPreparaPdfPreventivo(x); }catch(e){}
+  });
+  if(c){ try{ tcToastNew('\u21ba Mail riprogrammata: parte tra 1 ora (puoi ancora bloccarla)', true); }catch(e){} }
+}
+function cvMailInviaOra(id){
+  var c=cvById(id); if(!c) return;
+  if(!(c.cliente&&c.cliente.email)){ alert('Il preventivo non ha l\u2019email del cliente.'); return; }
+  if(!confirm('Mandare ADESSO la mail del preventivo a '+c.cliente.email+'?')) return;
+  var r=cvMailAggiorna(id, function(x){
+    x.mailBloccata=false; x.emailInviata=true; x.emailInviataTs=Date.now(); x.mailDaInviareAt=null;
+    x.emailInviataDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  });
+  if(r){ try{ cvInviaMailCliente(r); }catch(e){} try{ tcToastNew('\u2709 Mail del preventivo inviata a '+r.cliente.email, true); }catch(e){} }
+}
 function cvProgrammaMailCliente(cv){
   if(!cv || !cv.cliente || !cv.cliente.email || cv.emailInviata || cv.mailDaInviareAt) return;
   cv.mailDaInviareAt = Date.now()+3600000;
@@ -36504,8 +36569,586 @@ function eaSyncVivo(){
 }
 try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVistaAttiva=eaVistaAttiva; }catch(e){}
 
+/* =====================================================================
+   MANSIONI — la bacheca dei compiti fra colleghi
+   ---------------------------------------------------------------------
+   Nasce per togliere le mansioni da WhatsApp. Chiunque assegna a chiunque,
+   anche con un messaggio vocale. Il destinatario le vede nella sua
+   bacheca (Da fare / In corso / Fatte) e riceve una mail. Se una mansione
+   scade e non e' stata fatta, il giorno dopo, appena timbra l'entrata (e
+   a ogni avvio del gestionale), gli compare a tutto schermo e ricompare
+   finche' non la segna fatta.
+   I dati stanno nella stessa tabella del calendario (compiti_app, categoria
+   'task'): niente migrazioni, e nel calendario restano visibili come prima.
+   ===================================================================== */
+var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
+/* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
+   tutti basta svuotare l'elenco (MN_BETA=[]). */
+var MN_BETA=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
+function mnAbilitato(email){
+  if(!MN_BETA.length) return true;
+  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
+  return MN_BETA.indexOf(e)>=0;
+}
+/* la sezione si apre a chi ha la bacheca O la chat */
+function mnSezioneVisibile(email){ return mnAbilitato(email) || (typeof chMembro==='function' && chMembro(email)); }
+var _mnFiltro='mie', _mnMostraFatte=false, _mnBloccoChiusoTs=0, _mnRec=null;
+var MN_RIPROPONI_MS=15*60*1000;   /* "lo faccio dopo" vale un quarto d'ora */
+
+function mnOggi(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function mnEsc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function mnDataIt(iso){ return iso?String(iso).split('-').reverse().join('/'):''; }
+function mnMe(){
+  var em=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+  var nome=(typeof eaNomeDaMail==='function')?eaNomeDaMail(em):em;
+  var ruolo=(typeof getCurrentRole==='function')?getCurrentRole():'dipendente';
+  return { email:em, nome:nome, ruolo:ruolo };
+}
+function mnNome(email){ try{ return eaNomeDaMail(email)||email; }catch(e){ return email||''; } }
+function mnLista(){
+  var l=(typeof window.ccLoad==='function')?window.ccLoad():[];
+  return l.filter(function(c){ return c && c.categoria==='task' && c.deleted!==true; });
+}
+function mnById(id){ return mnLista().filter(function(c){ return c.id===id; })[0]||null; }
+function mnStato(c){ if(!c) return 'todo'; if(c.fatto) return 'done'; return c.stato==='doing'?'doing':'todo'; }
+function mnScaduta(c){ return !!(c && !c.fatto && c.data && c.data<mnOggi()); }
+function mnMia(c){ var me=mnMe().email; return !!(c && me && String(c.dipEmail||'').toLowerCase()===me); }
+function mnMie(){ return mnLista().filter(mnMia); }
+function mnSalvaRec(c){
+  var l=window.ccLoad(); var i=l.findIndex(function(x){ return x.id===c.id; });
+  c.updatedAt=Date.now();
+  if(i>=0) l[i]=c; else l.push(c);
+  window.ccSave(l);
+  try{ ccSupaUpsert(c); }catch(e){}
+  try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
+  try{ mnBadge(); }catch(e){}
+}
+function mnPersone(){
+  var out=[];
+  var add=function(nome,email){ email=String(email||'').trim(); if(!email) return; if(out.some(function(p){ return p.email.toLowerCase()===email.toLowerCase(); })) return; out.push({ nome:(nome&&String(nome).indexOf('@')<0)?nome:mnNome(email), email:email }); };
+  var me=mnMe(); add(me.nome, me.email);
+  try{ (tcLoadDip()||[]).forEach(function(d){ add(d.nome,d.email); }); }catch(e){}
+  try{ (UTENTI_APP||[]).forEach(function(u){ add(u.nome,u.email); }); }catch(e){}
+  return out.filter(function(p){ return mnAbilitato(p.email); });
+}
+
+/* ------------------------------ bacheca ------------------------------ */
+function mnRender(){
+  var v=document.getElementById('view-mansioni'); if(!v) return;
+  var _soloChat=(!mnAbilitato() && typeof chMembro==='function' && chMembro());
+  if(_soloChat) _mnTab='chat';
+  if(typeof chMembro==='function' && chMembro() && _mnTab==='chat'){ chRender(v); return; }
+  if(!mnAbilitato()){ v.innerHTML='<div style="color:#64748b;">Sezione in prova: non ancora attiva per il tuo utente.</div>'; return; }
+  var me=mnMe();
+  var tutte=mnLista();
+  var lista=(_mnFiltro==='mie')?tutte.filter(mnMia):tutte;
+  var oggi=mnOggi();
+  var col={ todo:[], doing:[], done:[] };
+  lista.forEach(function(c){ col[mnStato(c)].push(c); });
+  var ord=function(a,b){ return String(a.data||'').localeCompare(String(b.data||'')) || (a.updatedAt||0)-(b.updatedAt||0); };
+  col.todo.sort(ord); col.doing.sort(ord);
+  col.done.sort(function(a,b){ return (b.fattoTs||b.updatedAt||0)-(a.fattoTs||a.updatedAt||0); });
+  var lim=Date.now()-14*86400000;
+  var doneVis=_mnMostraFatte?col.done:col.done.filter(function(c){ return (c.fattoTs||c.updatedAt||0)>lim; });
+  var scadMie=mnMie().filter(mnScaduta).length;
+
+  var h=(typeof mnTabsHTML==='function')?mnTabsHTML():'';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+    +'<button onclick="mnNuova()" style="padding:11px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">+ Nuova mansione</button>'
+    +'<div style="display:flex;border:1px solid #cbd5e1;border-radius:9px;overflow:hidden;">'
+    +'<button onclick="_mnFiltro=\'mie\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='mie'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='mie'?'#fff':'#334155')+';">Le mie</button>'
+    +'<button onclick="_mnFiltro=\'tutte\';mnRender()" style="padding:9px 14px;border:none;font-family:inherit;font-weight:700;cursor:pointer;background:'+(_mnFiltro==='tutte'?'#1a4fa0':'#fff')+';color:'+(_mnFiltro==='tutte'?'#fff':'#334155')+';">Tutte</button>'
+    +'</div>'
+    +(scadMie?('<span style="background:#fee2e2;color:#b91c1c;font-weight:800;font-size:12.5px;padding:7px 11px;border-radius:20px;">'+scadMie+' in ritardo '+(scadMie===1?'tua':'tue')+'</span>'):'')
+    +'<span style="flex:1;"></span>'
+    +'<label style="font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" '+(_mnMostraFatte?'checked':'')+' onchange="_mnMostraFatte=this.checked;mnRender()"> mostra tutte le fatte</label>'
+    +'</div>';
+  var colonna=function(tit,colore,arr,vuoto){
+    return '<div style="flex:1;min-width:260px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 4px 10px;"><div style="font-weight:800;color:'+colore+';">'+tit+'</div><div style="font-size:12px;color:#64748b;font-weight:700;">'+arr.length+'</div></div>'
+      +(arr.length?arr.map(mnCardHTML).join(''):('<div style="font-size:12.5px;color:#94a3b8;padding:12px 6px;">'+vuoto+'</div>'))
+      +'</div>';
+  };
+  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">'
+    +colonna('Da fare','#b45309',col.todo,'Niente da fare. Bene.')
+    +colonna('In corso','#1a4fa0',col.doing,'Nessuna mansione in corso.')
+    +colonna('Fatte','#15803d',doneVis,'Ancora nessuna mansione completata'+(_mnMostraFatte?'':' negli ultimi 14 giorni')+'.')
+    +'</div>';
+  v.innerHTML=h;
+  mnBadge();
+}
+function mnCardHTML(c){
+  var me=mnMe(), st=mnStato(c), scad=mnScaduta(c), oggi=mnOggi();
+  var mia=mnMia(c), creatore=(String(c.creatoDaEmail||'').toLowerCase()===me.email), admin=(me.ruolo==='admin');
+  var dataCol=scad?'#b91c1c':(c.data===oggi?'#b45309':'#475569');
+  var dataTxt=c.data===oggi?'oggi':(scad?('scaduta il '+mnDataIt(c.data)):('entro il '+mnDataIt(c.data)));
+  var h='<div style="background:#fff;border:1px solid '+(scad&&st!=='done'?'#fca5a5':'#e2e8f0')+';border-left:4px solid '+(st==='done'?'#16a34a':(scad?'#dc2626':(st==='doing'?'#1a4fa0':'#f59e0b')))+';border-radius:10px;padding:10px 12px;margin-bottom:8px;">'
+    +'<div style="font-weight:800;font-size:14px;color:#0f172a;'+(st==='done'?'text-decoration:line-through;color:#64748b;':'')+'">'+mnEsc(c.titolo||'(senza titolo)')+'</div>'
+    +(c.nota?('<div style="font-size:12.5px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
+    +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
+    +(c.rif?('<div style="font-size:12px;color:#1a4fa0;margin-top:4px;">🔗 '+mnEsc(c.rif)+'</div>'):'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px;color:#64748b;margin-top:6px;">'
+    +'<span>👤 <b style="color:#0f172a;">'+mnEsc(mnNome(c.dipEmail)||c.dipNome||'')+'</b></span>'
+    +'<span style="color:'+dataCol+';font-weight:700;">📅 '+mnEsc(dataTxt)+(c.ora?(' '+mnEsc(c.ora)):'')+'</span>'
+    +'<span>da '+mnEsc(c.creatoDa||'')+'</span>'
+    +(st==='done'&&c.fattoTs?('<span style="color:#15803d;">✓ '+new Date(c.fattoTs).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(c.fattoDa?(' '+mnEsc(c.fattoDa)):'')+'</span>'):'')
+    +'</div>';
+  if(c.commenti&&c.commenti.length){
+    h+='<div style="margin-top:7px;border-top:1px dashed #e2e8f0;padding-top:6px;">'+c.commenti.slice(-4).map(function(k){
+      return '<div style="font-size:12px;color:#334155;margin:2px 0;"><b>'+mnEsc(k.da||'')+'</b> <span style="color:#94a3b8;">'+new Date(k.ts||0).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span><br>'+mnEsc(k.testo||'')+'</div>';
+    }).join('')+'</div>';
+  }
+  var b=function(txt,on,bg,fg,bd){ return '<button onclick="'+on+'" style="padding:6px 10px;border-radius:7px;border:1px solid '+(bd||'#cbd5e1')+';background:'+(bg||'#fff')+';color:'+(fg||'#334155')+';font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">'+txt+'</button>'; };
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">';
+  if(st==='todo') h+=b('▶ Inizio','mnSegna(\''+c.id+'\',\'doing\')','#eff6ff','#1a4fa0','#1a4fa0');
+  if(st!=='done') h+=b('✓ Fatto','mnSegna(\''+c.id+'\',\'done\')','#16a34a','#fff','#16a34a');
+  if(st==='done') h+=b('↩ Riapri','mnSegna(\''+c.id+'\',\'todo\')');
+  h+=b('💬 Commenta','mnCommenta(\''+c.id+'\')');
+  if(creatore||admin) h+=b('✎ Modifica','mnNuova(\''+c.id+'\')')+b('🗑','mnElimina(\''+c.id+'\')','#fef2f2','#dc2626','#fecaca');
+  h+='</div></div>';
+  return h;
+}
+function mnBadge(){
+  try{
+    var btn=document.getElementById('si-task'); if(!btn) return;
+    if(!mnSezioneVisibile()){ btn.style.display='none'; return; }
+    if(!mnAbilitato()){ btn.style.display=''; try{ chBadge(); }catch(e){} return; }
+    var bd=btn.querySelector('.si-badge');
+    if(!bd){ bd=document.createElement('span'); bd.className='si-badge'; btn.appendChild(bd); }
+    var mie=mnMie().filter(function(c){ return !c.fatto; });
+    var sc=mie.filter(mnScaduta).length;
+    var nch=0; try{ if(typeof chNonLetti==='function' && chMembro()) nch=chNonLetti().length; }catch(e){}
+    bd.textContent=mie.length+nch; bd.style.display=(mie.length+nch)?'':'none';
+    bd.style.background=sc?'#dc2626':(nch?'#16a34a':'');
+  }catch(e){}
+}
+
+/* --------------------------- nuova / modifica --------------------------- */
+function mnNuova(id){
+  var c=id?mnById(id):null;
+  var me=mnMe();
+  var m=(typeof cvModModal==='function')?cvModModal():document.getElementById('cv-mod-modal'); if(!m) return;
+  mnRecReset();
+  var inp='width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;';
+  var lab=function(t){ return '<label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin:12px 0 4px;text-transform:uppercase;">'+t+'</label>'; };
+  var persone=mnPersone();
+  var sel=(c&&c.dipEmail)||me.email;
+  var h='<div style="max-width:520px;margin:4vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:14px 18px;font-weight:800;">'+(c?'✎ Modifica mansione':'➕ Nuova mansione')+'</div>'
+    +'<div style="padding:4px 18px 18px;max-height:80vh;overflow:auto;">'
+    +lab('Cosa va fatto *')+'<input id="mn_titolo" value="'+mnEsc(c?c.titolo:'')+'" placeholder="es. Portare la BMW 118 GP084RN dal gommista" style="'+inp+'font-weight:700;">'
+    +lab('Dettagli (facoltativo)')+'<textarea id="mn_nota" rows="3" style="'+inp+'" placeholder="indicazioni, orari, cosa controllare…">'+mnEsc(c?c.nota:'')+'</textarea>'
+    +lab('Messaggio vocale')
+    +'<div id="mn-audio-box" style="border:1px dashed #cbd5e1;border-radius:9px;padding:10px;background:#f8fafc;">'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    +'<button type="button" id="mn-rec-btn" onclick="mnRecToggle()" style="padding:9px 14px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">⏺ Registra</button>'
+    +'<span id="mn-rec-stato" style="font-size:12.5px;color:#64748b;">'+(c&&c.audioUrl?'C’è già un vocale: registrane uno nuovo per sostituirlo.':'Premi e parla: chi riceve la mansione lo ascolta dalla bacheca.')+'</span>'
+    +'</div>'
+    +'<div id="mn-rec-play" style="margin-top:8px;">'+(c&&c.audioUrl?('<audio controls src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;"></audio>'):'')+'</div>'
+    +'</div>'
+    +lab('Assegnata a *')+'<select id="mn_dip" style="'+inp+'">'+persone.map(function(p){ return '<option value="'+mnEsc(p.email)+'"'+(p.email.toLowerCase()===String(sel).toLowerCase()?' selected':'')+'>'+mnEsc(p.nome)+'</option>'; }).join('')+'</select>'
+    +'<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Entro il *')+'<input id="mn_data" type="date" value="'+mnEsc(c?c.data:mnOggi())+'" style="'+inp+'"></div>'
+    +'<div style="flex:1;">'+lab('Ora (facoltativa)')+'<input id="mn_ora" type="time" value="'+mnEsc(c?c.ora:'')+'" style="'+inp+'"></div></div>'
+    +lab('Riferimento (targa, cliente, pratica…)')+'<input id="mn_rif" value="'+mnEsc(c?c.rif:'')+'" placeholder="es. GP084RN · Rossi" style="'+inp+'">'
+    +'<button onclick="mnSalva(\''+(c?c.id:'')+'\')" id="mn-salva-btn" style="margin-top:18px;width:100%;padding:12px;border-radius:8px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">'+(c?'Salva modifiche':'Assegna la mansione')+'</button>'
+    +'<button onclick="mnRecReset();cvModChiudi()" style="margin-top:8px;width:100%;padding:10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;cursor:pointer;font-family:inherit;">Annulla</button>'
+    +'</div></div>';
+  m.innerHTML=h; m.style.display='block';
+  setTimeout(function(){ try{ document.getElementById('mn_titolo').focus(); }catch(e){} }, 50);
+}
+/* registrazione vocale: MediaRecorder del browser, niente librerie */
+function mnRecReset(){
+  try{ if(_mnRec && _mnRec.rec && _mnRec.rec.state!=='inactive') _mnRec.rec.stop(); }catch(e){}
+  try{ if(_mnRec && _mnRec.stream) _mnRec.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  _mnRec=null;
+}
+function mnRecToggle(){
+  var btn=document.getElementById('mn-rec-btn'), st=document.getElementById('mn-rec-stato'), play=document.getElementById('mn-rec-play');
+  if(_mnRec && _mnRec.rec && _mnRec.rec.state==='recording'){ _mnRec.rec.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio. Scrivi la mansione nei dettagli.'); return; }
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
+    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    var chunks=[]; var t0=Date.now(); var timer=null;
+    _mnRec={ rec:rec, stream:stream, blob:null, mime:mime||'audio/webm' };
+    rec.ondataavailable=function(e){ if(e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop=function(){
+      clearInterval(timer);
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+      var blob=new Blob(chunks,{type:_mnRec.mime}); _mnRec.blob=blob;
+      var url=URL.createObjectURL(blob);
+      if(play) play.innerHTML='<audio controls src="'+url+'" style="width:100%;height:34px;"></audio>';
+      if(btn){ btn.textContent='⏺ Registra di nuovo'; btn.style.background='#dc2626'; }
+      if(st) st.textContent='Vocale pronto ('+Math.round((Date.now()-t0)/1000)+' s). Si allega quando salvi.';
+    };
+    rec.start();
+    if(btn){ btn.textContent='⏹ Ferma'; btn.style.background='#0f172a'; }
+    if(st) st.textContent='Sto registrando… 0 s';
+    timer=setInterval(function(){ if(st) st.textContent='Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s'; if(Date.now()-t0>180000){ try{ rec.stop(); }catch(e){} } },500);
+  }).catch(function(err){
+    alert('Microfono non disponibile: '+((err&&err.message)||err)+'\n\nControlla che il browser abbia il permesso di usare il microfono.');
+  });
+}
+function mnAudioCarica(){
+  /* ritorna una Promise con l'URL del vocale (o '' se non c'e') */
+  if(!_mnRec || !_mnRec.blob) return Promise.resolve('');
+  var blob=_mnRec.blob, ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
+  var nome='mansione-'+Date.now()+'.'+ext;
+  var viaR2=(typeof eaR2Upload==='function')?eaR2Upload(blob,'mansioni',nome):Promise.reject(new Error('no r2'));
+  return viaR2.catch(function(){
+    /* senza R2: il vocale va dentro il record, se e' piccolo */
+    if(blob.size>1500000) throw new Error('Vocale troppo lungo per essere salvato senza archivio: riprova più breve.');
+    return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result)); }; r.onerror=function(){ rej(new Error('lettura audio')); }; r.readAsDataURL(blob); });
+  });
+}
+function mnSalva(id){
+  var g=function(k){ var el=document.getElementById('mn_'+k); return el?String(el.value).trim():''; };
+  var titolo=g('titolo'), dip=g('dip'), data=g('data');
+  if(!titolo){ alert('Scrivi cosa va fatto.'); return; }
+  if(!dip){ alert('Scegli a chi assegnarla.'); return; }
+  if(!data){ alert('Scegli entro quando va fatta.'); return; }
+  var btn=document.getElementById('mn-salva-btn'); if(btn){ btn.disabled=true; btn.textContent='⏳ Salvo…'; }
+  var me=mnMe();
+  mnAudioCarica().then(function(audioUrl){
+    var c=id?mnById(id):null, nuova=!c;
+    if(!c){
+      c={ id:'cmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), categoria:'task', tipo:'task',
+          creatoDa:me.nome, creatoDaEmail:me.email, createdAt:Date.now(), fatto:false, fattoDa:'', avvisato:false, stato:'todo', commenti:[] };
+    }
+    var dipPrima=c.dipEmail;
+    c.titolo=titolo; c.nota=g('nota'); c.dipEmail=dip; c.dipNome=mnNome(dip); c.data=data; c.ora=g('ora'); c.rif=g('rif');
+    if(audioUrl) c.audioUrl=audioUrl;
+    mnSalvaRec(c);
+    mnRecReset(); cvModChiudi(); mnRender();
+    try{ if(typeof tcToastNew==='function') tcToastNew(nuova?('✅ Mansione assegnata a '+c.dipNome):'✅ Mansione aggiornata', true); }catch(e){}
+    /* avviso al destinatario: nuova, o riassegnata a un altro */
+    if((nuova || (dipPrima && dipPrima!==dip)) && String(dip).toLowerCase()!==me.email) mnAvvisaAssegnazione(c);
+  }).catch(function(err){
+    if(btn){ btn.disabled=false; btn.textContent=id?'Salva modifiche':'Assegna la mansione'; }
+    alert('Non sono riuscito a salvare: '+((err&&err.message)||err));
+  });
+}
+function mnAvvisaAssegnazione(c){
+  try{
+    if(!c || !c.dipEmail || typeof eaInviaMessaggio!=='function') return;
+    var E=mnEsc, link='https://auto.europaautosrl.it/#mansioni';
+    var html='<p>Ciao '+E(mnNome(c.dipEmail))+',</p>'
+      +'<p><b>'+E(c.creatoDa||'un collega')+'</b> ti ha assegnato una mansione:</p>'
+      +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:12px 14px;">'
+      +'<div style="font-size:16px;font-weight:800;">'+E(c.titolo)+'</div>'
+      +(c.nota?('<div style="margin-top:6px;white-space:pre-wrap;">'+E(c.nota)+'</div>'):'')
+      +(c.rif?('<div style="margin-top:6px;color:#1a4fa0;">Rif. '+E(c.rif)+'</div>'):'')
+      +'<div style="margin-top:8px;color:#b45309;font-weight:700;">Entro il '+E(mnDataIt(c.data))+(c.ora?(' alle '+E(c.ora)):'')+'</div>'
+      +(c.audioUrl&&/^https?:/.test(c.audioUrl)?('<div style="margin-top:8px;">🎙 C’è un messaggio vocale: <a href="'+E(c.audioUrl)+'">ascoltalo</a> (o aprilo dalla bacheca).</div>'):(c.audioUrl?'<div style="margin-top:8px;">🎙 C’è un messaggio vocale: lo ascolti dalla bacheca Mansioni.</div>':''))
+      +'</div>'
+      +'<p style="margin-top:14px;">La trovi nella sezione <a href="'+link+'"><b>Mansioni</b></a> del gestionale: segnala <b>Fatto</b> quando l’hai completata. Se resta indietro, te la ripropongo all’apertura.</p>';
+    eaInviaMessaggio({ to:c.dipEmail, subject:'Mansione per te: '+c.titolo+' (entro il '+mnDataIt(c.data)+')', html:(typeof eaMailWrap==='function')?eaMailWrap(html):html }).then(function(){}, function(){});
+  }catch(e){}
+}
+function mnSegna(id, stato){
+  var c=mnById(id); if(!c) return;
+  var me=mnMe();
+  if(stato==='done'){ c.fatto=true; c.stato='done'; c.fattoDa=me.nome; c.fattoTs=Date.now(); }
+  else { c.fatto=false; c.stato=stato; c.fattoDa=''; c.fattoTs=null; }
+  mnSalvaRec(c); mnRender();
+  try{ if(typeof tcToastNew==='function') tcToastNew(stato==='done'?'✅ Mansione completata':(stato==='doing'?'▶ Mansione in corso':'↩ Mansione riaperta'), true); }catch(e){}
+  /* chi l'ha assegnata sa che e' stata fatta (se non e' lui stesso) */
+  if(stato==='done' && c.creatoDaEmail && c.creatoDaEmail!==me.email && typeof eaInviaMessaggio==='function'){
+    try{
+      var E=mnEsc;
+      eaInviaMessaggio({ to:c.creatoDaEmail, subject:'Fatto: '+c.titolo,
+        html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha segnato come fatta la mansione <b>'+E(c.titolo)+'</b>'+(c.rif?(' ('+E(c.rif)+')'):'')+'.</p>'+((c.commenti&&c.commenti.length)?('<p>Ultimo commento: '+E(c.commenti[c.commenti.length-1].testo)+'</p>'):'')) }).then(function(){}, function(){});
+    }catch(e){}
+  }
+  /* la finestra a tutto schermo si aggiorna, e sparisce quando non c'e' piu' niente in ritardo */
+  try{ var bl=document.getElementById('mn-blocco'); if(bl){ if(mnMie().filter(mnScaduta).length) mnBloccoScadute(true); else bl.remove(); } }catch(e){}
+}
+function mnCommenta(id){
+  var c=mnById(id); if(!c) return;
+  var t=prompt('Commento sulla mansione “'+c.titolo+'”:'); if(t===null) return; t=String(t).trim(); if(!t) return;
+  var me=mnMe();
+  c.commenti=(c.commenti||[]).concat([{ da:me.nome, email:me.email, ts:Date.now(), testo:t }]);
+  mnSalvaRec(c); mnRender();
+  /* il commento arriva all'altra parte: a chi l'ha assegnata se commenta l'assegnatario, e viceversa */
+  try{
+    var dest=(me.email===String(c.dipEmail||'').toLowerCase())?c.creatoDaEmail:c.dipEmail;
+    if(dest && dest!==me.email && typeof eaInviaMessaggio==='function'){
+      var E=mnEsc;
+      eaInviaMessaggio({ to:dest, subject:'Commento su: '+c.titolo, html:(typeof eaMailWrap==='function'?eaMailWrap:function(x){return x;})('<p><b>'+E(me.nome)+'</b> ha scritto sulla mansione <b>'+E(c.titolo)+'</b>:</p><blockquote style="border-left:3px solid #cbd5e1;margin:0;padding:6px 12px;color:#334155;">'+E(t)+'</blockquote>') }).then(function(){}, function(){});
+    }
+  }catch(e){}
+}
+function mnElimina(id){
+  var c=mnById(id); if(!c) return;
+  if(!confirm('Eliminare la mansione “'+c.titolo+'”?')) return;
+  try{ if(typeof ccAddTombstone==='function') ccAddTombstone(id); }catch(e){}
+  var l=window.ccLoad().filter(function(x){ return x.id!==id; }); window.ccSave(l);
+  try{ ccSupaUpsert({ id:id, deleted:true, updatedAt:Date.now() }); }catch(e){}
+  mnRender(); try{ if(typeof window.ccRedraw==='function') window.ccRedraw(); }catch(e){}
+}
+
+/* ----------------- la finestra che non si toglie finche' non fai ----------------- */
+function mnBloccoScadute(forza){
+  var me=mnMe(); if(!me.email || !mnAbilitato(me.email)) return false;
+  var scad=mnMie().filter(mnScaduta).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
+  var vecchio=document.getElementById('mn-blocco');
+  if(!scad.length){ if(vecchio) vecchio.remove(); return false; }
+  if(!forza && (Date.now()-_mnBloccoChiusoTs)<MN_RIPROPONI_MS) return false;
+  if(!vecchio){
+    vecchio=document.createElement('div'); vecchio.id='mn-blocco';
+    vecchio.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.78);z-index:20000;overflow:auto;padding:16px;';
+    document.body.appendChild(vecchio);
+  }
+  var h='<div style="max-width:620px;margin:4vh auto 0;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);">'
+    +'<div style="background:#b91c1c;color:#fff;padding:16px 20px;">'
+    +'<div style="font-size:19px;font-weight:800;">⚠️ '+scad.length+' mansion'+(scad.length===1?'e':'i')+' in ritardo</div>'
+    +'<div style="font-size:13px;opacity:.9;margin-top:3px;">'+mnEsc(me.nome)+', queste erano da fare e non risultano completate. Restano qui finché non le segni fatte.</div>'
+    +'</div>'
+    +'<div style="padding:14px 18px;max-height:62vh;overflow:auto;">'
+    +scad.map(function(c){
+      return '<div style="border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff7f7;">'
+        +'<div style="font-weight:800;font-size:15px;">'+mnEsc(c.titolo)+'</div>'
+        +(c.nota?('<div style="font-size:13px;color:#475569;margin-top:3px;white-space:pre-wrap;">'+mnEsc(c.nota)+'</div>'):'')
+        +(c.audioUrl?('<audio controls preload="none" src="'+mnEsc(c.audioUrl)+'" style="width:100%;height:34px;margin-top:6px;"></audio>'):'')
+        +'<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-top:5px;">Scadeva il '+mnEsc(mnDataIt(c.data))+(c.ora?(' alle '+mnEsc(c.ora)):'')+' · assegnata da '+mnEsc(c.creatoDa||'')+(c.rif?(' · '+mnEsc(c.rif)):'')+'</div>'
+        +'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">'
+        +'<button onclick="mnSegna(\''+c.id+'\',\'done\')" style="padding:9px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">✓ Fatta</button>'
+        +'<button onclick="mnCommenta(\''+c.id+'\')" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">💬 Spiega il ritardo</button>'
+        +'</div></div>';
+    }).join('')
+    +'</div>'
+    +'<div style="padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    +'<span style="flex:1;font-size:12px;color:#64748b;">Chi le ha assegnate viene avvisato quando le completi o commenti.</span>'
+    +'<button onclick="mnBloccoDopo()" style="padding:9px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">Le faccio adesso, chiudi (15 min)</button>'
+    +'</div></div>';
+  vecchio.innerHTML=h;
+  return true;
+}
+function mnBloccoDopo(){
+  _mnBloccoChiusoTs=Date.now();
+  try{ localStorage.setItem('ea_mn_blocco_chiuso', String(_mnBloccoChiusoTs)); }catch(e){}
+  var b=document.getElementById('mn-blocco'); if(b) b.remove();
+}
+/* All'avvio e poi ogni 15 minuti: se c'e' qualcosa in ritardo, si fa vedere.
+   Il primo controllo aspetta il caricamento delle mansioni dal cloud. */
+function mnAvvio(){
+  try{ _mnBloccoChiusoTs=parseInt(localStorage.getItem('ea_mn_blocco_chiuso')||'0',10)||0; }catch(e){}
+  var tenta=function(n){
+    try{ mnBadge(); if(mnBloccoScadute(false)) return; }catch(e){}
+    if(n>0) setTimeout(function(){ tenta(n-1); }, 4000);
+  };
+  setTimeout(function(){ tenta(3); }, 2500);
+  try{ setInterval(function(){ try{ mnBadge(); mnBloccoScadute(false); }catch(e){} }, MN_RIPROPONI_MS); }catch(e){}
+}
+/* Dopo la timbratura d'entrata: e' il momento in cui uno si siede e guarda
+   cosa c'e' da fare. Qui il blocco compare anche se era stato chiuso. */
+function mnDopoTimbratura(tipo){
+  if(tipo!=='entrata') return;
+  setTimeout(function(){ try{ _mnBloccoChiusoTs=0; mnBloccoScadute(true); }catch(e){} }, 2500);
+}
+
+/* =====================================================================
+   CHAT DI GRUPPO — dentro Mansioni
+   ---------------------------------------------------------------------
+   Una sola stanza, per il gruppo di lavoro. Messaggi di testo e vocali,
+   stile WhatsApp: i miei a destra, gli altri a sinistra, separatori per
+   giorno. Tabella Supabase 'chat_app' (id text, data jsonb). Si legge ogni
+   pochi secondi solo quello che manca (per ts), cosi' il traffico resta
+   leggero anche con migliaia di messaggi.
+   Notifiche: contatore sul menu, avviso nell'app, notifica del sistema
+   (quando il browser lo permette) e un suono breve.
+   ===================================================================== */
+var CH_TAB='chat_app', CH_KEY='ea_chat_v1', CH_LETTO_KEY='ea_chat_letto_ts', CH_POLL_MS=10000;
+var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it','no.reply.europaauto@gmail.com','rudy.scropetta@gmail.com','s.rudy@europaautosrl.it'];
+var _mnTab='bacheca', _chTimer=null, _chBusy=false, _chRec=null, _chPrimo=true;
+function chMembro(email){
+  var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
+  return !!e && MN_CHAT_MEMBRI.indexOf(e)>=0;
+}
+function chLoad(){ try{ return JSON.parse(localStorage.getItem(CH_KEY)||'[]')||[]; }catch(e){ return []; } }
+function chSave(l){ try{ localStorage.setItem(CH_KEY, JSON.stringify(l.slice(-600))); }catch(e){} }
+function chLettoTs(){ try{ return parseInt(localStorage.getItem(CH_LETTO_KEY)||'0',10)||0; }catch(e){ return 0; } }
+function chSegnaLetto(){ try{ var l=chLoad(); var mx=l.reduce(function(m,x){ return Math.max(m,x.ts||0); },0); localStorage.setItem(CH_LETTO_KEY, String(mx)); }catch(e){} chBadge(); }
+function chNonLetti(){ var me=mnMe().email, t=chLettoTs(); return chLoad().filter(function(m){ return (m.ts||0)>t && String(m.email||'').toLowerCase()!==me; }); }
+function chBadge(){
+  try{
+    var n=chNonLetti().length;
+    var t=document.getElementById('mn-tab-chat'); if(t){ var b=t.querySelector('.ch-badge'); if(b){ b.textContent=n; b.style.display=n?'':'none'; } }
+    /* sul menu laterale il contatore somma mansioni aperte e messaggi non letti */
+    var btn=document.getElementById('si-task'); if(!btn) return;
+    var bd=btn.querySelector('.si-badge'); if(!bd) return;
+    var mans=0; try{ mans=(typeof mnAbilitato==='function'&&mnAbilitato())?mnMie().filter(function(c){ return !c.fatto; }).length:0; }catch(e){}
+    var tot=mans+n; bd.textContent=tot; bd.style.display=tot?'':'none';
+    if(n && !/dc2626/.test(bd.style.background)) bd.style.background='#16a34a';
+  }catch(e){}
+}
+function chSync(cb){
+  if(_chBusy){ if(cb) cb(); return; }
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ if(cb) cb(); return; }
+  _chBusy=true;
+  var loc=chLoad(); var ultimo=loc.reduce(function(m,x){ return Math.max(m,x.ts||0); },0);
+  /* ts a 13 cifre: il confronto testuale coincide con quello numerico */
+  var q=sb.from(CH_TAB).select('id,data');
+  if(ultimo) q=q.gt('data->>ts', String(ultimo));
+  q.order('created_at',{ascending:true}).limit(500).then(function(r){
+    _chBusy=false;
+    if(!r || r.error){ if(r&&r.error) console.log('chat:', r.error.message); if(cb) cb(); return; }
+    var nuovi=(r.data||[]).map(function(x){ return x&&x.data; }).filter(function(m){ return m&&m.id&&m.ts; });
+    if(nuovi.length){
+      var ids={}; loc.forEach(function(m){ ids[m.id]=1; });
+      var agg=nuovi.filter(function(m){ return !ids[m.id]; });
+      if(agg.length){
+        loc=loc.concat(agg).sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+        chSave(loc);
+        var me=mnMe().email;
+        var altrui=agg.filter(function(m){ return String(m.email||'').toLowerCase()!==me; });
+        if(altrui.length && !_chPrimo) chNotifica(altrui);
+        if(_mnTab==='chat' && document.getElementById('ch-lista')){ chRenderLista(); if(document.visibilityState==='visible') chSegnaLetto(); }
+      }
+    }
+    _chPrimo=false;
+    chBadge();
+    if(cb) cb();
+  }, function(){ _chBusy=false; if(cb) cb(); });
+}
+function chAvvia(){
+  if(!chMembro()) return;
+  chBadge();
+  chSync();
+  if(_chTimer) clearInterval(_chTimer);
+  _chTimer=setInterval(function(){ try{ chSync(); }catch(e){} }, CH_POLL_MS);
+  try{ document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible'){ chSync(); if(_mnTab==='chat' && document.getElementById('ch-lista')) chSegnaLetto(); } }); }catch(e){}
+}
+function chSuono(){
+  try{
+    var ctx=new (window.AudioContext||window.webkitAudioContext)();
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type='sine'; o.frequency.value=880; g.gain.value=0.08;
+    o.connect(g); g.connect(ctx.destination); o.start();
+    setTimeout(function(){ o.frequency.value=1175; },90);
+    setTimeout(function(){ o.stop(); ctx.close(); },200);
+  }catch(e){}
+}
+function chNotifica(msgs){
+  var ultimo=msgs[msgs.length-1];
+  var anteprima=ultimo.testo?ultimo.testo:(ultimo.audioUrl?'🎙 Messaggio vocale':'Nuovo messaggio');
+  var vedoChat=(_mnTab==='chat' && document.getElementById('ch-lista') && document.visibilityState==='visible');
+  if(vedoChat) return;
+  chSuono();
+  try{ if(typeof tcToastNew==='function') tcToastNew('💬 '+(ultimo.da||'')+': '+anteprima.slice(0,80), true); }catch(e){}
+  try{
+    if('Notification' in window && Notification.permission==='granted' && document.visibilityState!=='visible'){
+      var n=new Notification('Europa Auto — '+(ultimo.da||'chat'), { body:anteprima.slice(0,160), tag:'ea-chat', renotify:true });
+      n.onclick=function(){ try{ window.focus(); mnApriChat(); }catch(e){} };
+    }
+  }catch(e){}
+}
+function chChiediPermesso(){
+  try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission().then(function(){ chRenderLista(); }); }catch(e){}
+}
+function mnApriChat(){
+  _mnTab='chat';
+  try{ if(typeof sidebarNav==='function' && !(document.getElementById('view-mansioni')||{}).classList.contains('active')) sidebarNav('mansioni', document.getElementById('si-task')); }catch(e){}
+  mnRender();
+}
+function mnTabsHTML(){
+  if(!chMembro()) return '';
+  var n=chNonLetti().length;
+  var t=function(id,lab,extra){ var on=(_mnTab===id); return '<button id="mn-tab-'+id+'" onclick="_mnTab=\''+id+'\';mnRender()" style="padding:10px 18px;border:none;border-bottom:3px solid '+(on?'#1a4fa0':'transparent')+';background:none;font-family:inherit;font-weight:800;font-size:14px;color:'+(on?'#1a4fa0':'#64748b')+';cursor:pointer;">'+lab+(extra||'')+'</button>'; };
+  return '<div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;">'
+    +(typeof mnAbilitato==='function'&&mnAbilitato()?t('bacheca','✅ Bacheca'):'')
+    +t('chat','💬 Chat di gruppo','<span class="ch-badge" style="display:'+(n?'':'none')+';background:#16a34a;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;">'+n+'</span>')
+    +'</div>';
+}
+function chRender(v){
+  var membri=MN_CHAT_MEMBRI.map(function(e){ var n=mnNome(e); return (n&&n.indexOf('@')<0)?n:String(e).split('@')[0]; }).filter(function(x,i,a){ return x && a.indexOf(x)===i; });
+  var permesso=('Notification' in window)?Notification.permission:'nd';
+  v.innerHTML=mnTabsHTML()
+    +'<div style="max-width:820px;margin:0 auto;background:#e5ddd5;border:1px solid #d1d5db;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;">'
+    +'<div style="width:38px;height:38px;border-radius:50%;background:#fff;color:#1a4fa0;display:flex;align-items:center;justify-content:center;font-weight:800;">EA</div>'
+    +'<div style="flex:1;min-width:0;"><div style="font-weight:800;">Gruppo Europa Auto</div><div style="font-size:11.5px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+mnEsc(membri.join(', '))+'</div></div>'
+    +(permesso==='default'?'<button onclick="chChiediPermesso()" title="Ricevi un avviso anche quando il gestionale è in un’altra scheda" style="padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;">🔔 Attiva notifiche</button>':'')
+    +'</div>'
+    +'<div id="ch-lista" style="flex:1;overflow:auto;padding:12px 12px 4px;"></div>'
+    +'<div style="background:#f0f2f5;padding:8px 10px;display:flex;gap:8px;align-items:flex-end;">'
+    +'<button id="ch-rec-btn" onclick="chRecToggle()" title="Messaggio vocale" style="width:42px;height:42px;border-radius:50%;border:none;background:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">🎙</button>'
+    +'<textarea id="ch-testo" rows="1" placeholder="Scrivi un messaggio…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();chInvia();}" oninput="this.style.height=\'auto\';this.style.height=Math.min(this.scrollHeight,120)+\'px\';" style="flex:1;resize:none;padding:11px 12px;border:none;border-radius:20px;font-family:inherit;font-size:14px;box-sizing:border-box;max-height:120px;"></textarea>'
+    +'<button onclick="chInvia()" style="width:42px;height:42px;border-radius:50%;border:none;background:#1a4fa0;color:#fff;font-size:18px;cursor:pointer;flex:0 0 auto;">➤</button>'
+    +'</div>'
+    +'<div id="ch-rec-stato" style="display:none;background:#fff7ed;color:#9a3412;font-size:12.5px;padding:6px 12px;"></div>'
+    +'</div>';
+  chRenderLista(); chSegnaLetto(); chSync();
+}
+function chRenderLista(){
+  var box=document.getElementById('ch-lista'); if(!box) return;
+  var me=mnMe().email, msgs=chLoad(), h='', giorno='';
+  var oggi=mnOggi();
+  var ieri=(function(){ var d=new Date(); d.setDate(d.getDate()-1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })();
+  if(!msgs.length) h='<div style="text-align:center;color:#64748b;font-size:13px;margin-top:30px;">Nessun messaggio ancora. Scrivi il primo.</div>';
+  msgs.forEach(function(m){
+    var d=new Date(m.ts||0); var g=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(g!==giorno){ giorno=g; h+='<div style="text-align:center;margin:10px 0;"><span style="background:#fff;color:#64748b;font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;box-shadow:0 1px 1px rgba(0,0,0,.08);">'+(g===oggi?'Oggi':(g===ieri?'Ieri':mnDataIt(g)))+'</span></div>'; }
+    var mio=String(m.email||'').toLowerCase()===me;
+    h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin:3px 0;">'
+      +'<div style="max-width:78%;background:'+(mio?'#d9fdd3':'#fff')+';border-radius:10px;padding:6px 9px 4px;box-shadow:0 1px 1px rgba(0,0,0,.1);">'
+      +(mio?'':('<div style="font-size:11.5px;font-weight:800;color:#1a4fa0;">'+mnEsc(m.da||'')+'</div>'))
+      +(m.testo?('<div style="font-size:14px;color:#111;white-space:pre-wrap;word-break:break-word;">'+chLinkify(m.testo)+'</div>'):'')
+      +(m.audioUrl?('<audio controls preload="none" src="'+mnEsc(m.audioUrl)+'" style="width:230px;max-width:100%;height:34px;margin-top:2px;"></audio>'):'')
+      +'<div style="font-size:10.5px;color:#667781;text-align:right;margin-top:2px;">'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+(mio?' ✓✓':'')+'</div>'
+      +'</div></div>';
+  });
+  box.innerHTML=h;
+  box.scrollTop=box.scrollHeight;
+}
+function chLinkify(t){
+  var s=mnEsc(t);
+  return s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#1a4fa0;">$1</a>');
+}
+function chInvia(testo, audioUrl){
+  var ta=document.getElementById('ch-testo');
+  if(testo==null){ testo=ta?String(ta.value).trim():''; }
+  if(!testo && !audioUrl) return;
+  var me=mnMe();
+  var m={ id:'ch_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), ts:Date.now(), da:me.nome, email:me.email, testo:testo||'', audioUrl:audioUrl||'' };
+  var l=chLoad(); l.push(m); chSave(l);
+  if(ta){ ta.value=''; ta.style.height='auto'; }
+  chRenderLista(); chSegnaLetto();
+  try{ supaUpsert(CH_TAB, m); }catch(e){}
+}
+function chRecToggle(){
+  var btn=document.getElementById('ch-rec-btn'), st=document.getElementById('ch-rec-stato');
+  if(_chRec && _chRec.rec && _chRec.rec.state==='recording'){ _chRec.rec.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Questo browser non permette di registrare l’audio.'); return; }
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    var mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].filter(function(t){ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } })[0]||'';
+    var rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    var chunks=[], t0=Date.now(), timer=null;
+    _chRec={ rec:rec, stream:stream };
+    rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
+    rec.onstop=function(){
+      clearInterval(timer);
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+      if(btn){ btn.textContent='🎙'; btn.style.background='#fff'; }
+      var blob=new Blob(chunks,{type:mime||'audio/webm'});
+      if((Date.now()-t0)<700){ if(st){ st.style.display='none'; } return; }
+      if(st){ st.style.display='block'; st.textContent='⏳ Invio il vocale…'; }
+      var ext=(/mp4/.test(blob.type)?'m4a':(/ogg/.test(blob.type)?'ogg':'webm'));
+      var up=(typeof eaR2Upload==='function')?eaR2Upload(blob,'chat','vocale-'+Date.now()+'.'+ext):Promise.reject(new Error('archivio non configurato'));
+      up.then(function(url){ if(st) st.style.display='none'; chInvia('', url); },
+        function(err){ if(st){ st.textContent='Vocale non inviato: '+((err&&err.message)||err); setTimeout(function(){ st.style.display='none'; },4000); } });
+    };
+    rec.start();
+    if(btn){ btn.textContent='⏹'; btn.style.background='#fecaca'; }
+    if(st){ st.style.display='block'; st.textContent='⏺ Sto registrando… premi di nuovo per inviare'; }
+    timer=setInterval(function(){ if(st) st.textContent='⏺ Sto registrando… '+Math.round((Date.now()-t0)/1000)+' s — premi di nuovo per inviare'; if(Date.now()-t0>300000){ try{ rec.stop(); }catch(e){} } },500);
+  }).catch(function(err){ alert('Microfono non disponibile: '+((err&&err.message)||err)); });
+}
+
 function eaBadgeBoot(){
   try{ eaSyncVivo(); }catch(e){}
+  try{ mnAvvio(); }catch(e){}
+  try{ chAvvia(); }catch(e){}
   /* Meglio avvisare quando manca poco che spiegare dopo perche' non salva. */
   setTimeout(function(){
     try{
@@ -43111,12 +43754,16 @@ function crmRenderLead(){
   var q=((document.getElementById('crm-cerca')||{}).value||'').toLowerCase().trim();
   var fil=(document.getElementById('crm-filtro')||{}).value||'tutti';
   var leads=crmLeads(); var cnt={}; CRM_STATI.forEach(function(s){cnt[s]=0;});
-  leads.forEach(function(l){ var st=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); l._stato=st; if(cnt[st]!=null)cnt[st]++; });
+  leads.forEach(function(l){ var st=(store[l.key]&&store[l.key].stato)||crmDefaultStato(l); l._stato=st; });
+  /* in lista (e nei contatori) solo chi e' davvero in pipeline: il resto e' in Archivio */
+  var _archiviati=0;
+  if(typeof crmInPipeline==='function'){ var _n0=leads.length; leads=leads.filter(function(l){ return crmInPipeline(l, store[l.key]); }); _archiviati=_n0-leads.length; }
+  leads.forEach(function(l){ if(cnt[l._stato]!=null)cnt[l._stato]++; });
   /* La temperatura vale per chi e' ancora in gioco: un chiuso non e' ne'
      caldo ne' freddo, e' chiuso. */
   var _aperto=function(l){ return l._stato!=='chiuso vinto' && l._stato!=='chiuso perso'; };
   leads.forEach(function(l){ l._temp=_aperto(l)?crmTemperatura(l):null; l._gg=crmGiorniPrev(l); });
-  var vis=leads.filter(function(l){ if(l._stato==='chiuso vinto') return false; if(fil!=='tutti'&&l._stato!==fil) return false; if(_crmTempFiltro && (!l._temp || l._temp.id!==_crmTempFiltro)) return false; if(q){ var blob=(l.nome+' '+l.cognome+' '+l.telefono+' '+l.email+' '+l.auto).toLowerCase(); if(blob.indexOf(q)<0) return false; } return true; });
+  var vis=leads.filter(function(l){ if(l._stato==='chiuso vinto') return false; if(typeof crmInPipeline==='function' && !crmInPipeline(l, store[l.key])) return false; if(fil!=='tutti'&&l._stato!==fil) return false; if(_crmTempFiltro && (!l._temp || l._temp.id!==_crmTempFiltro)) return false; if(q){ var blob=(l.nome+' '+l.cognome+' '+l.telefono+' '+l.email+' '+l.auto).toLowerCase(); if(blob.indexOf(q)<0) return false; } return true; });
   /* I caldi in cima: sono quelli da chiamare oggi. A parita' di
      temperatura, prima il piu' recente. */
   var _ordT={caldo:0,tiepido:1,freddo:2};
@@ -43129,7 +43776,7 @@ function crmRenderLead(){
   leads.forEach(function(l){ if(l._temp) _cntT[l._temp.id]++; });
   var col={'nuovo':'#0891b2','ricontattare':'#d97706','trattativa':'#1a4fa0','chiuso vinto':'#16a34a','chiuso perso':'#dc2626'};
   var h=crmDaFareBanner()+'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><input id="crm-cerca" oninput="crmRender()" placeholder="🔎 Cerca nome, telefono, email…" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;"><select id="crm-filtro" onchange="crmRender()" style="padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;"><option value="tutti">Tutti gli stati</option>'+CRM_STATI_BOARD.map(function(s){return '<option'+(fil===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>';
-  h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">👥 '+(leads.length-(cnt['chiuso vinto']||0))+' contatti · '+CRM_STATI_BOARD.map(function(s){return '<b style="color:'+col[s]+'">'+cnt[s]+'</b> '+s;}).join(' · ')+'</div>';
+  h+='<div style="font-size:12px;color:#64748b;margin-bottom:10px;">👥 '+(leads.length-(cnt['chiuso vinto']||0))+' contatti in pipeline'+(_archiviati?(' <span style="color:#94a3b8;">(+'+_archiviati+' in Archivio, oltre '+CRM_GIORNI_CALDI+' giorni)</span>'):'')+' · '+CRM_STATI_BOARD.map(function(s){return '<b style="color:'+col[s]+'">'+cnt[s]+'</b> '+s;}).join(' · ')+'</div>';
   /* Le tre temperature, da toccare per filtrare. Il numero e' quello che
      conta: a colpo d'occhio si vede quanti sono da chiamare oggi. */
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">';
@@ -44335,6 +44982,21 @@ function crmKeyJs(k){
 }
 function crmMoveStato(key,dir){ var s=crmLoad(); var cur=(s[key]&&s[key].stato)||'nuovo'; var i=CRM_STATI_BOARD.indexOf(cur); if(i<0)i=0; var ni=i+dir; if(ni<0||ni>=CRM_STATI_BOARD.length) return; crmSetStato(key,CRM_STATI_BOARD[ni]); }
 var CRM_GIORNI_CALDI=30;   /* finestra di lavorazione: un mese */
+/* La stessa regola per la lavagna e per la lista: dopo 30 giorni senza
+   movimento un contatto esce dalla pipeline e sta in Archivio. Prima la
+   lista ignorava la regola e mostrava tutto, da sempre. */
+function crmInPipeline(l, rec){
+  var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
+  if(!l || l.contrattoAperto) return false;
+  var st=crmStatoEffettivo(l, rec);
+  if(st==='chiuso vinto') return false;
+  if(st==='chiuso perso') return crmStatoTs(rec)>=_lim;
+  if((l.ultimoPrevAperto||0)>=_lim) return true;
+  if(rec && rec.stato && (rec.updatedAt||0)>=_lim) return true;
+  /* contatto appena arrivato (richiesta, lead) senza preventivo: resta un mese */
+  if(l.daLead && (l.ultimo||0)>=_lim) return true;
+  return false;
+}
 function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   /* Una pipeline con tutti i contatti non e' una pipeline: e' un archivio.
      Restano le trattative degli ultimi giorni, piu' quelle che hai gia'
