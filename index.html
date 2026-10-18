@@ -43798,6 +43798,8 @@ function crmRenderLead(){
         +'font-size:11.5px;font-weight:800;color:'+l._temp.col+';">'+l._temp.ico+' '+l._temp.eti.replace(/i$/,'o')+' \u00b7 '
         +(l._gg===0?'oggi':(l._gg===1?'ieri':(l._gg+' giorni fa')))+'</div>';
     }
+    /* perche' questo contatto e' ancora in pipeline: si vede subito, senza indovinare */
+    try{ var _pp=(typeof crmPercheInPipeline==='function')?crmPercheInPipeline(l, store[l.key]):''; if(_pp) _tb+='<div style="font-size:11px;color:#94a3b8;margin:'+(l._temp?'-4px':'0')+' 0 8px;">in pipeline per: '+crmEsc(_pp)+'</div>'; }catch(e){}
     h+='<div class="'+(_due2?'crm-due':'')+'" style="background:#fff;border:2px solid '+(col[l._stato]||'#cbd5e1')+';border-radius:12px;padding:14px;margin-bottom:10px;'+(_due2?('--pc:'+(col[l._stato]||'#cbd5e1')+'99;'):'')+'">'+_tb
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1;min-width:180px;display:flex;gap:10px;align-items:flex-start;">'+crmAvatar(l.nome,l.cognome)+'<div style="min-width:0;"><div style="font-weight:800;font-size:15px;color:#0f172a;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||'(senza nome)')+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.telefono?('📞 '+crmEsc(l.telefono)):'')+(l.email?('  ✉️ '+crmEsc(l.email)):'')+'</div><div style="font-size:12px;color:#94a3b8;margin-top:3px;">🚗 '+crmEsc(l.auto||'—')+' · '+l.nPrev+' preventivo/i</div></div></div>'
       +'<select onchange="crmSetStato('+crmEsc(crmKeyJs(l.key))+',this.value)" style="height:38px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-weight:700;color:'+(col[l._stato]||'#334155')+';">'+CRM_STATI_BOARD.map(function(s){return '<option'+(l._stato===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
@@ -44985,17 +44987,33 @@ var CRM_GIORNI_CALDI=30;   /* finestra di lavorazione: un mese */
 /* La stessa regola per la lavagna e per la lista: dopo 30 giorni senza
    movimento un contatto esce dalla pipeline e sta in Archivio. Prima la
    lista ignorava la regola e mostrava tutto, da sempre. */
+/* Cosa tiene vivo un contatto: SOLO un preventivo aperto, uno spostamento
+   di fase o l'arrivo del lead. Note, provenienza, attivita' e le
+   sincronizzazioni toccano updatedAt ma non sono lavoro sul cliente, e
+   prima bastavano a tenerlo in pipeline per sempre. */
+function crmUltimoMovimento(l, rec){
+  rec=rec||{};
+  var t=+(l&&l.ultimoPrevAperto||0);
+  if(rec.stato && rec.statoTs) t=Math.max(t, +rec.statoTs);
+  if(l && l.daLead) t=Math.max(t, +(rec.leadTs||0));
+  return t;
+}
 function crmInPipeline(l, rec){
   var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
   if(!l || l.contrattoAperto) return false;
   var st=crmStatoEffettivo(l, rec);
   if(st==='chiuso vinto') return false;
-  if(st==='chiuso perso') return crmStatoTs(rec)>=_lim;
-  if((l.ultimoPrevAperto||0)>=_lim) return true;
-  if(rec && rec.stato && (rec.updatedAt||0)>=_lim) return true;
-  /* contatto appena arrivato (richiesta, lead) senza preventivo: resta un mese */
-  if(l.daLead && (l.ultimo||0)>=_lim) return true;
-  return false;
+  if(st==='chiuso perso') return (+(rec&&rec.statoTs||0))>=_lim;
+  return crmUltimoMovimento(l, rec)>=_lim;
+}
+function crmPercheInPipeline(l, rec){
+  rec=rec||{}; var out=[];
+  var d=function(t){ return t?new Date(t).toLocaleDateString('it-IT'):''; };
+  if((l.ultimoPrevAperto||0)>0) out.push({ t:l.ultimoPrevAperto, s:'preventivo del '+d(l.ultimoPrevAperto) });
+  if(rec.stato && rec.statoTs) out.push({ t:+rec.statoTs, s:'fase \u201c'+rec.stato+'\u201d dal '+d(rec.statoTs) });
+  if(l.daLead && rec.leadTs) out.push({ t:+rec.leadTs, s:'lead del '+d(rec.leadTs) });
+  out.sort(function(a,b){ return b.t-a.t; });
+  return out.length?out[0].s:'';
 }
 function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
   /* Una pipeline con tutti i contatti non e' una pipeline: e' un archivio.
@@ -45003,15 +45021,7 @@ function crmRenderKanban(){ var store=crmLoad(); var leads=crmLeads();
      toccato (spostate di fase) e i contratti non ancora consegnati. */
   var _lim=Date.now()-CRM_GIORNI_CALDI*24*3600000;
   var _tot=leads.length;
-  leads=leads.filter(function(l){
-    if(l.contrattoAperto) return false;                                      /* ha gia' la proposta: sta in Vendite */
-    /* Chiuso perso: resta in colonna 30 giorni dal giorno in cui ci e'
-       finito, poi va in Archivio. Note e promemoria non lo tengono vivo. */
-    if(crmStatoEffettivo(l, store[l.key])==='chiuso perso') return crmStatoTs(store[l.key])>=_lim;
-    if((l.ultimoPrevAperto||0)>=_lim) return true;                           /* preventivo aperto negli ultimi 30 giorni */
-    if(store[l.key] && store[l.key].stato && (store[l.key].updatedAt||0)>=_lim) return true;  /* fase spostata di recente */
-    return false;
-  });
+  leads=leads.filter(function(l){ return crmInPipeline(l, store[l.key]); });
   leads.forEach(function(l){ l._stato=crmStatoEffettivo(l, store[l.key]); });
   leads=leads.filter(function(l){ return l._stato!=='chiuso vinto'; });   /* ha comprato: e' un cliente, non un contatto */
   var _esclusi=_tot-leads.length;
@@ -45388,21 +45398,19 @@ function crmStatoEffettivo(l, rec){
 }
 var _crmArchQ='', _crmArchN=50;
 function crmArchivioElenco(){
-  var store=crmLoad(), lim=Date.now()-CRM_GIORNI_ARCHIVIO*24*3600000, out=[];
+  var store=crmLoad(), out=[];
   crmLeads().forEach(function(l){
-    var rec=store[l.key];
+    var rec=store[l.key]||{};
     if(l.contrattoAperto) return;
     var st=crmStatoEffettivo(l, rec);
     if(st==='chiuso vinto') return;
-    if(st==='chiuso perso'){
-      var t=crmStatoTs(rec); if(t<lim) out.push({ l:l, st:st, ts:t+CRM_GIORNI_ARCHIVIO*24*3600000, perche:'chiuso perso da oltre '+CRM_GIORNI_ARCHIVIO+' giorni' });
-      return;
-    }
-    /* trattative ferme: solo quelle passate davvero dal CRM, non lo storico importato */
+    if(crmInPipeline(l, rec)) return;                 /* e' ancora in lavorazione */
+    /* solo chi e' passato davvero dal CRM: lo storico importato senza niente resta fuori */
     var toccato=(rec && rec.stato) || l.daLead || (l.ultimoPrevAperto||0)>0;
     if(!toccato) return;
-    var ult=Math.max(+(l.ultimoPrevAperto||0), (rec&&rec.stato)?crmStatoTs(rec):0, +(l.ultimo&&l.daLead?l.ultimo:0));
-    if(ult && ult<lim) out.push({ l:l, st:st, ts:ult+CRM_GIORNI_ARCHIVIO*24*3600000, perche:'nessun movimento da oltre '+CRM_GIORNI_ARCHIVIO+' giorni' });
+    var ult=(st==='chiuso perso')?(+(rec.statoTs||0)):crmUltimoMovimento(l, rec);
+    out.push({ l:l, st:st, ts:(ult||0)+CRM_GIORNI_ARCHIVIO*24*3600000,
+      perche:(st==='chiuso perso')?('chiuso perso da oltre '+CRM_GIORNI_ARCHIVIO+' giorni'):('nessun movimento da oltre '+CRM_GIORNI_ARCHIVIO+' giorni') });
   });
   out.sort(function(a,b){ return b.ts-a.ts; });
   return out;
