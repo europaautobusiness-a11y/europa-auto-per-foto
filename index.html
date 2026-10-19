@@ -18838,10 +18838,20 @@ var SIN_NEXT={ attesa_apertura:'aperto', aperto:'lavorazione', lavorazione:'conc
 
 function sinTombstones(){ try{ return JSON.parse(localStorage.getItem(SINISTRI_DEL_KEY)||'[]'); }catch(e){ return []; } }
 function sinAddTombstone(id){ if(!id) return;
-  /* via anche da Supabase, altrimenti alla prossima sync torna indietro */
-  try{ if(typeof supaDelete==='function') supaDelete('sinistri_app', id); }catch(e){}
-  var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} } }
-function sinLoad(){ try{ var t=sinTombstones(); return (JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]')).filter(function(s){ return s && t.indexOf(s.id)<0; }); }catch(e){ return []; } }
+  /* ===== LA LAPIDE STA SUL CLOUD, NON SOLO QUI =====
+     Prima si cancellava la riga da Supabase e si teneva la lapide nel browser.
+     Se la cancellazione non passava (permessi, rete) o il browser non riusciva
+     a scrivere la lapide (spazio esaurito), alla sincronizzazione seguente il
+     sinistro tornava. Ora si scrive sul cloud una riga {deleted:true}: chi
+     legge la tratta come lapide, e la copia locale di qualsiasi dispositivo
+     non puo' piu' risalire. */
+  var _lap={ id:String(id), deleted:true, deletedAt:Date.now(), updatedAt:Date.now()+1 };
+  try{ if(typeof supaUpsert==='function') supaUpsert('sinistri_app', _lap); }catch(e){}
+  var t=sinTombstones(); if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(SINISTRI_DEL_KEY,JSON.stringify(t));}catch(e){} }
+  /* la copia locale sparisce subito, anche se la lapide non si e' potuta scrivere */
+  try{ var _l=JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]').filter(function(x){ return x && x.id!==id; }); localStorage.setItem(SINISTRI_KEY, JSON.stringify(_l)); }catch(e){}
+}
+function sinLoad(){ try{ var t=sinTombstones(); return (JSON.parse(localStorage.getItem(SINISTRI_KEY)||'[]')).filter(function(s){ return s && s.deleted!==true && t.indexOf(s.id)<0; }); }catch(e){ return []; } }
 function sinSave(list){ try{ localStorage.setItem(SINISTRI_KEY, JSON.stringify(list)); }catch(e){} }
 function sinById(id){ return sinLoad().filter(function(s){return s.id===id;})[0]; }
 function sinEsc(v){ return (v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -23455,6 +23465,153 @@ function mzFotoRender(){
    piu' che sufficiente per il sito) e caricata al massimo MZ_FOTO_PARALLELE alla volta. */
 var MZ_FOTO_MAXPX = 2560;   // lato lungo in pixel (alza/abbassa qui la qualita')
 var MZ_FOTO_Q     = 0.85;   // qualita' JPEG (0-1)
+/* =====================================================================
+   VIDEO E GIRO A 360° DEL VEICOLO
+   ---------------------------------------------------------------------
+   Dalla scheda del veicolo si caricano:
+   - un VIDEO di presentazione (mp4/mov dal telefono), che finisce su R2 e
+     va sulla pagina pubblica dell'auto con il pulsante "Video";
+   - un GIRO A 360°: si gira intorno all'auto filmando per 30-40 secondi a
+     passo costante; qui il browser estrae 36 fotogrammi dal filmato, li
+     carica come immagini e la pagina li fa ruotare trascinando col dito.
+   Nessuna piattaforma girevole, nessun servizio esterno. */
+var _mzMedia={ video:null, giro360:null };
+var _mzMediaBusy=false;
+var MZ_GIRO_FRAMES=36, MZ_VIDEO_MAX=200*1024*1024;
+function mzMediaHtml(){
+  return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:14px 0 3px;text-transform:uppercase;">Video e giro a 360° (sito)</label>'
+    +'<div id="mz-media-box" style="border:1px solid #e2e8f0;border-radius:9px;padding:10px;background:#fff;">'
+    +'<div id="mz-media-list"></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">'
+    +'<input type="file" id="mz-video-input" accept="video/*" style="display:none;" onchange="mzVideoUpload(this.files)">'
+    +'<input type="file" id="mz-giro-input" accept="video/*" style="display:none;" onchange="mzGiroUpload(this.files)">'
+    +'<button type="button" onclick="document.getElementById(\'mz-video-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🎬 Carica video</button>'
+    +'<button type="button" onclick="document.getElementById(\'mz-giro-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🔄 Carica giro 360°</button>'
+    +'</div>'
+    +'<div id="mz-media-stato" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.5;">Video: un filmato di presentazione (anche 1 minuto). Giro 360°: cammina intorno all’auto filmando per 30–40 secondi a passo costante, partendo dal frontale; i fotogrammi li estrae il gestionale.</div>'
+    +'</div>';
+}
+function mzMediaInit(a){
+  _mzMedia={ video:(a&&a.video)?JSON.parse(JSON.stringify(a.video)):null, giro360:(a&&a.giro360)?JSON.parse(JSON.stringify(a.giro360)):null };
+  mzMediaRender();
+}
+function mzMediaRender(){
+  var el=document.getElementById('mz-media-list'); if(!el) return;
+  var h='';
+  if(_mzMedia.video && _mzMedia.video.url){
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f1f5f9;">'
+      +'<video src="'+mzEscA(_mzMedia.video.url)+'" preload="metadata" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;"></video>'
+      +'<div style="flex:1;font-size:12.5px;"><b>Video di presentazione</b><br><span style="color:#94a3b8;">'+(_mzMedia.video.ts?new Date(_mzMedia.video.ts).toLocaleDateString('it-IT'):'')+(_mzMedia.video.size?(' · '+mzFotoBytes(_mzMedia.video.size)):'')+'</span></div>'
+      +'<a href="'+mzEscA(_mzMedia.video.url)+'" target="_blank" style="font-size:12px;">apri</a>'
+      +'<button type="button" onclick="_mzMedia.video=null;mzMediaRender();" style="border:none;background:#fef2f2;color:#dc2626;border-radius:6px;width:30px;height:30px;cursor:pointer;">🗑</button></div>';
+  }
+  if(_mzMedia.giro360 && _mzMedia.giro360.frames && _mzMedia.giro360.frames.length){
+    var fr=_mzMedia.giro360.frames;
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:6px 0;">'
+      +'<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;">'
+      +'<div style="flex:1;font-size:12.5px;"><b>Giro a 360°</b> · '+fr.length+' fotogrammi<br><span style="color:#94a3b8;">'+(_mzMedia.giro360.ts?new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT'):'')+'</span></div>'
+      +'<button type="button" onclick="mzGiroAnteprima()" style="padding:6px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">anteprima</button>'
+      +'<button type="button" onclick="_mzMedia.giro360=null;mzMediaRender();" style="border:none;background:#fef2f2;color:#dc2626;border-radius:6px;width:30px;height:30px;cursor:pointer;">🗑</button></div>';
+  }
+  if(!h) h='<div style="font-size:12px;color:#94a3b8;">Nessun video caricato.</div>';
+  el.innerHTML=h;
+}
+function mzEscA(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function mzMediaStato(msg){ var st=document.getElementById('mz-media-stato'); if(st) st.innerHTML=msg; }
+function mzMediaUpload(blob, nome){
+  return fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(nome), {
+      method:'POST', headers:{'Content-Type':(blob.type||'application/octet-stream')}, body:blob })
+    .then(function(r){ return r.json(); })
+    .then(function(res){ if(res && res.ok && res.url) return res; throw new Error((res&&res.error)||'caricamento rifiutato'); });
+}
+function mzVideoUpload(files){
+  var f=files&&files[0]; var inp=document.getElementById('mz-video-input'); if(inp) inp.value='';
+  if(!f) return;
+  if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
+  if(f.size>MZ_VIDEO_MAX){ alert('Video troppo grande ('+mzFotoBytes(f.size)+'): massimo '+mzFotoBytes(MZ_VIDEO_MAX)+'. Dal telefono scegli una qualità più bassa o taglia il filmato.'); return; }
+  _mzMediaBusy=true;
+  mzMediaStato('⏳ Carico il video ('+mzFotoBytes(f.size)+')… <span style="color:#94a3b8;">non chiudere la scheda</span>');
+  var ext=(f.name.match(/\.(\w+)$/)||[])[1]||'mp4';
+  mzMediaUpload(f, 'video-'+Date.now()+'.'+ext.toLowerCase()).then(function(res){
+    _mzMedia.video={ url:res.url, key:res.key||'', size:f.size, tipo:f.type||'', ts:Date.now() };
+    mzMediaRender(); mzMediaStato('✅ Video caricato. <b>Ricordati di salvare l’auto.</b>');
+  }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Video non caricato: '+mzEscA((err&&err.message)||err)+'</span>'); })
+  .then(function(){ _mzMediaBusy=false; });
+}
+/* estrae N fotogrammi equidistanti dal filmato, ridimensionati a 1280px */
+function mzGiroEstrai(file, n, onProg){
+  return new Promise(function(resolve, reject){
+    var url=URL.createObjectURL(file);
+    var v=document.createElement('video'); v.preload='auto'; v.muted=true; v.playsInline=true; v.src=url;
+    var frames=[], i=0, W=1280;
+    var fine=function(err){ try{ URL.revokeObjectURL(url); }catch(e){} if(err) reject(err); else resolve(frames); };
+    v.onerror=function(){ fine(new Error('video non leggibile da questo browser (prova a esportarlo in mp4)')); };
+    v.onloadedmetadata=function(){
+      var dur=v.duration; if(!dur || !isFinite(dur) || dur<5){ fine(new Error('filmato troppo corto: servono almeno 5 secondi')); return; }
+      var cw=v.videoWidth, ch=v.videoHeight; if(!cw||!ch){ fine(new Error('video senza immagine')); return; }
+      var scala=Math.min(1, W/cw); var c=document.createElement('canvas'); c.width=Math.round(cw*scala); c.height=Math.round(ch*scala);
+      var ctx=c.getContext('2d');
+      /* si salta il primo e l'ultimo mezzo secondo: mano che parte e che si ferma */
+      var t0=0.5, t1=Math.max(t0+1, dur-0.5);
+      var passo=(t1-t0)/n;
+      var prendi=function(){
+        if(i>=n){ fine(); return; }
+        v.currentTime=Math.min(t1, t0+passo*i+passo/2);
+      };
+      v.onseeked=function(){
+        try{
+          ctx.drawImage(v,0,0,c.width,c.height);
+          c.toBlob(function(b){ frames.push(b); i++; if(onProg) onProg(i,n); prendi(); }, 'image/jpeg', 0.86);
+        }catch(e){ fine(new Error('impossibile leggere i fotogrammi: '+e.message)); }
+      };
+      prendi();
+    };
+  });
+}
+function mzGiroUpload(files){
+  var f=files&&files[0]; var inp=document.getElementById('mz-giro-input'); if(inp) inp.value='';
+  if(!f) return;
+  if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
+  _mzMediaBusy=true;
+  mzMediaStato('⏳ Estraggo i fotogrammi dal filmato…');
+  mzGiroEstrai(f, MZ_GIRO_FRAMES, function(i,n){ mzMediaStato('⏳ Fotogramma '+i+'/'+n+'…'); }).then(function(frames){
+    var urls=new Array(frames.length), idx=0, ok=0, ko=0, base='giro360-'+Date.now();
+    var uno=function(){
+      if(idx>=frames.length) return Promise.resolve();
+      var k=idx++;
+      return mzMediaUpload(frames[k], base+'-'+String(k+1).padStart(2,'0')+'.jpg')
+        .then(function(res){ urls[k]=res.url; ok++; }, function(){ ko++; })
+        .then(function(){ mzMediaStato('⏳ Carico i fotogrammi '+(ok+ko)+'/'+frames.length+'… <span style="color:#94a3b8;">non chiudere la scheda</span>'); return uno(); });
+    };
+    return Promise.all([uno(),uno(),uno()]).then(function(){
+      var buoni=urls.filter(Boolean);
+      if(buoni.length<frames.length*0.8) throw new Error(ko+' fotogrammi non caricati: riprova');
+      _mzMedia.giro360={ frames:buoni, n:buoni.length, ts:Date.now(), fonte:f.name||'' };
+      mzMediaRender(); mzMediaStato('✅ Giro a 360° pronto ('+buoni.length+' fotogrammi). <b>Ricordati di salvare l’auto.</b>');
+    });
+  }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Giro 360° non riuscito: '+mzEscA((err&&err.message)||err)+'</span>'); })
+  .then(function(){ _mzMediaBusy=false; });
+}
+function mzGiroAnteprima(){
+  var g=_mzMedia.giro360; if(!g||!g.frames||!g.frames.length) return;
+  var m=(typeof cvModModal==='function')?cvModModal():null; if(!m) return;
+  m.innerHTML='<div style="max-width:720px;margin:5vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
+    +'<div style="background:#1a4fa0;color:#fff;padding:12px 16px;font-weight:800;display:flex;justify-content:space-between;"><span>Giro a 360° — trascina per ruotare</span><button onclick="cvModChiudi()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;">×</button></div>'
+    +'<div id="mz-giro-view" style="position:relative;background:#111;user-select:none;touch-action:pan-y;"><img id="mz-giro-img" src="'+mzEscA(g.frames[0])+'" style="width:100%;display:block;aspect-ratio:16/9;object-fit:contain;" draggable="false"></div>'
+    +'</div>';
+  m.style.display='block';
+  var view=document.getElementById('mz-giro-view'), img=document.getElementById('mz-giro-img');
+  var n=g.frames.length, cur=0, down=false, x0=0, c0=0;
+  var set=function(k){ cur=((k%n)+n)%n; img.src=g.frames[cur]; };
+  var px=function(e){ return (e.touches&&e.touches[0])?e.touches[0].clientX:e.clientX; };
+  var start=function(e){ down=true; x0=px(e); c0=cur; };
+  var move=function(e){ if(!down) return; var dx=px(e)-x0; set(c0+Math.round(dx/(view.clientWidth/n))); };
+  var end=function(){ down=false; };
+  view.addEventListener('mousedown',start); view.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
+  view.addEventListener('touchstart',start,{passive:true}); view.addEventListener('touchmove',move,{passive:true}); view.addEventListener('touchend',end);
+  g.frames.forEach(function(u){ var im=new Image(); im.src=u; });
+}
+
 var MZ_FOTO_PARALLELE = 2;  // upload contemporanei
 var _mzFotoBusy = false;
 
@@ -23800,6 +23957,7 @@ function mzForm(id){
   h+='<div style="font-size:11px;color:#94a3b8;margin:2px 0 4px;">La lista generata contiene le dotazioni di serie tipiche dell\'allestimento: verificala e aggiungi gli optional effettivi. Compare sul sito nella sezione \u00abEquipaggiamento\u00bb.</div>';
   h+='<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:8px 0 3px;text-transform:uppercase;">Note</label><textarea id="mz_note" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:14px;min-height:54px;box-sizing:border-box;">'+v('note')+'</textarea>';
   h+=(typeof mzFotoHtml==='function'?mzFotoHtml():'');
+  h+=(typeof mzMediaHtml==='function'?mzMediaHtml():'');
   var perizHtml='';
   if(a && (a.origine==='permuta' || a.periziaId || a.permutaDifetti)){
     var per=(a.periziaId && typeof pmById==='function')?pmById(a.periziaId):null;
@@ -23936,6 +24094,7 @@ function mzForm(id){
   /* se e' stata chiamata da un'altra finestra, sale sopra quella */
   try{ if(document.getElementById('cv-modal') && document.getElementById('cv-modal').style.display==='block') eaPortaSopra(m); }catch(e){}
   try{ if(typeof mzFotoInit==='function') mzFotoInit(a); }catch(e){}
+  try{ if(typeof mzMediaInit==='function') mzMediaInit(a); }catch(e){}
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
   mzProvVenditore(_mzProvVend);
@@ -24103,6 +24262,7 @@ function mzControllaDuplicati(targa, telaio, idCorrente){
 
 function mzSalva(){
   if(typeof _mzFotoBusy!=='undefined' && _mzFotoBusy){ alert('Caricamento foto ancora in corso: attendi che finisca prima di salvare.'); return; }
+  if(typeof _mzMediaBusy!=='undefined' && _mzMediaBusy){ alert('Caricamento video ancora in corso: attendi che finisca prima di salvare.'); return; }
   /* Targa di partenza: serve a capire se con questo salvataggio un'auto estera
      sta ricevendo la sua targa italiana. Vedi in fondo alla funzione. */
   var _targaPrima='';
@@ -24168,6 +24328,7 @@ function mzSalva(){
   a.nlt = (function(){ var el=document.getElementById('mz_nlt'); return !!(el && el.checked); })();
   a.targa=(a.targa||'').toUpperCase(); a.updatedAt=Date.now();
   a.foto = (typeof _mzFoto!=='undefined' && Array.isArray(_mzFoto)) ? _mzFoto.slice() : (a.foto||[]);
+  try{ if(typeof _mzMedia!=='undefined'){ a.video=_mzMedia.video||null; a.giro360=_mzMedia.giro360||null; } }catch(e){}
   if(typeof mzAllineaImpegno==='function') mzAllineaImpegno(a);
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
@@ -32453,10 +32614,13 @@ function sinSupaLoad(done){
         return d;
       }).filter(function(d){ return d && d.id; });
 
-      /* i cancellati non tornano indietro, e spariscono anche dal remoto */
-      var daCancellare = remoti.filter(function(d){ return tomb.indexOf(d.id)>=0; });
-      remoti = remoti.filter(function(d){ return tomb.indexOf(d.id)<0; });
-      daCancellare.forEach(function(d){ try{ if(typeof supaDelete==='function') supaDelete('sinistri_app', d.id); }catch(e){} });
+      /* lapidi arrivate dal cloud (cancellazioni fatte altrove): valgono anche qui */
+      var _nuoveLapidi=false;
+      remoti.filter(function(d){ return d.deleted===true; }).forEach(function(d){
+        if(tomb.indexOf(d.id)<0){ tomb.push(d.id); _nuoveLapidi=true; }
+      });
+      if(_nuoveLapidi){ try{ localStorage.setItem(SINISTRI_DEL_KEY, JSON.stringify(tomb.slice(-800))); }catch(e){} }
+      remoti = remoti.filter(function(d){ return d.deleted!==true && tomb.indexOf(d.id)<0; });
 
       var locali = (typeof sinLoad==='function') ? sinLoad() : [];
       var byId = {}, daSpingere = [];
@@ -36585,10 +36749,19 @@ var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
 /* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
    tutti basta svuotare l'elenco (MN_BETA=[]). */
 var MN_BETA=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
+var MN_BETA_RUOLI=['admin','contabilita'];   /* in prova anche per ruolo, non solo per indirizzo */
 function mnAbilitato(email){
   if(!MN_BETA.length) return true;
   var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
-  return MN_BETA.indexOf(e)>=0;
+  if(MN_BETA.indexOf(e)>=0) return true;
+  /* l'utente corrente passa anche per ruolo (amministratore, contabilita') */
+  try{
+    var mio=String((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase();
+    if(e===mio && typeof getCurrentRole==='function' && MN_BETA_RUOLI.indexOf(getCurrentRole())>=0) return true;
+    var u=(UTENTI_APP||[]).filter(function(x){ return x && String(x.email||'').toLowerCase()===e; })[0];
+    if(u && MN_BETA_RUOLI.indexOf(u.ruolo)>=0) return true;
+  }catch(x){}
+  return false;
 }
 /* la sezione si apre a chi ha la bacheca O la chat */
 function mnSezioneVisibile(email){ return mnAbilitato(email) || (typeof chMembro==='function' && chMembro(email)); }
@@ -36888,8 +37061,20 @@ function mnElimina(id){
 }
 
 /* ----------------- la finestra che non si toglie finche' non fai ----------------- */
+/* Prima di tutto si timbra: il blocco delle mansioni in ritardo non deve
+   coprire la timbratura. Finche' oggi non c'e' l'entrata, non compare. */
+function mnHaTimbratoOggi(){
+  try{
+    var me=mnMe().email; if(!me) return false;
+    var oggi=(typeof tcGetOggi==='function')?tcGetOggi():mnOggi();
+    var reg=(typeof tcLoadReg==='function')?tcLoadReg():[];
+    var r=reg.filter(function(x){ return x && String(x.dipendente||'').toLowerCase()===me && x.data===oggi; })[0];
+    return !!(r && r.entrata);
+  }catch(e){ return true; }   /* senza registro timbrature non si blocca niente */
+}
 function mnBloccoScadute(forza){
   var me=mnMe(); if(!me.email || !mnAbilitato(me.email)) return false;
+  if(!mnHaTimbratoOggi()){ var _v=document.getElementById('mn-blocco'); if(_v) _v.remove(); return false; }
   var scad=mnMie().filter(mnScaduta).sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
   var vecchio=document.getElementById('mn-blocco');
   if(!scad.length){ if(vecchio) vecchio.remove(); return false; }
@@ -36963,7 +37148,9 @@ var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','
 var _mnTab='bacheca', _chTimer=null, _chBusy=false, _chRec=null, _chPrimo=true;
 function chMembro(email){
   var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
-  return !!e && MN_CHAT_MEMBRI.indexOf(e)>=0;
+  if(!e) return false;
+  if(MN_CHAT_MEMBRI.indexOf(e)>=0) return true;
+  return (typeof mnAbilitato==='function') && mnAbilitato(e);
 }
 function chLoad(){ try{ return JSON.parse(localStorage.getItem(CH_KEY)||'[]')||[]; }catch(e){ return []; } }
 function chSave(l){ try{ localStorage.setItem(CH_KEY, JSON.stringify(l.slice(-600))); }catch(e){} }
