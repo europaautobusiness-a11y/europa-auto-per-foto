@@ -248,14 +248,6 @@ function paginaAuto(a){
     +'<div id="pp-cash"'+(rata?' style="display:none"':'')+'><div class="pbig">'+esc(euro(prz))+'</div>'
     +'<div class="psub">'+(a.ivaEsposta?'IVA esposta · ideale per P.IVA e leasing':'prezzo in unica soluzione')
     +((lst&&prz&&lst>prz)?(' · da nuova <s>'+esc(euro(lst))+'</s> · <b style="color:#c81e1e;">risparmi '+esc(euro(lst-prz))+'</b>'):'')+'</div></div>'
-    +'<div class="specs">'
-    +'<div><span class="i">📅</span>'+esc(a.dataImm?dataIT(a.dataImm):(anno||'—'))+'</div>'
-    +'<div><span class="i">⛽</span>'+esc(a.alimentazione?cap(a.alimentazione):'—')+'</div>'
-    +'<div><span class="i">🛣</span>'+esc(kmFmt(a.km)||'—')+'</div>'
-    +'<div><span class="i">⚡</span>'+(num(a.potenza)!=null?(esc(a.potenza)+' kW ('+Math.round(num(a.potenza)*1.3596)+' CV)'):'—')+'</div>'
-    +'<div><span class="i">⚙</span>'+esc(a.cambio?cap(a.cambio):'—')+'</div>'
-    +'<div><span class="i">🔖</span>Rif. '+esc(rif(a))+'</div>'
-    +'</div>'
     +'<div class="badges">'+(opz?'<span class="badge o">Opzionata — chiedi disponibilità</span>':'<span class="badge" style="background:#f0fdf4;color:#166534;">Disponibile in sede</span>')
     +(kmN!=null && kmN<=100?'<span class="badge">Km 0</span>':'')+'<span class="badge">Garanzia inclusa</span><span class="badge">Permuta del tuo usato</span></div>'
     +'<div class="btns"><a class="btn p" href="#richiesta">Richiesta veicolo</a>'
