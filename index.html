@@ -4087,7 +4087,9 @@ async function welcomeLogin() {
    'contabilita', le fatture, la conferma dei pagamenti, i prezzi
    d'acquisto, il file Excel della finanziaria e il pulsante Contabilita'.
    Se un domani cambia la persona o l'indirizzo, si tocca solo questa riga. */
-var EA_CONTABILITA = ['ariannapresta80@gmail.com', 'contabilitaeuropaauto@gmail.com'];
+/* Arianna entra anche con l'indirizzo contabilita@: deve poter confermare i
+   pagamenti come l'amministrazione, qualunque dei suoi indirizzi usi. */
+var EA_CONTABILITA = ['ariannapresta80@gmail.com', 'contabilitaeuropaauto@gmail.com', 'contabilita@europaautosrl.it'];
 function eaIsContabilita(email){
   try{
     var e = String((email!=null ? email : ((typeof _currentUserEmail!=='undefined' && _currentUserEmail) || '')) || '').toLowerCase().trim();
@@ -7671,8 +7673,52 @@ function pProvvAuto(cv){
     if(tro) reg[tro.i]=e; else reg.unshift(e);
     pSaveReg(reg);
     try{ if(typeof pSupaUpsert==='function') pSupaUpsert(e); }catch(_e){}
-    try{ if(document.getElementById('pRegistro')) pRenderReg(); }catch(_e){}
+    try{ if(!window._pAutoSilenzioso && document.getElementById('pRegistro')) pRenderReg(); }catch(_e){}
   }catch(err){ console.error(err); }
+}
+/* ===== FINCHE' NON E' COMPLETATA VALE ZERO =====
+   La delibera calcola l'importo, ma la riga resta "da completare" finche'
+   Rudy non la conferma in "Calcola provvigione" (fonte, finanziaria...).
+   Rudy se ne dimentica spesso: la riga stava nel registro con l'importo
+   gia' scritto e sembrava chiusa. Ora, finche' e' in bozza, nel riepilogo
+   e nei totali conta 0: l'importo calcolato si vede solo come promemoria. */
+function pProvvMostrata(r){
+  try{
+    if(!r) return 0;
+    if(r.bozza===true) return 0;
+    var v=parseFloat(r.provvigione); if(isNaN(v)) v=parseFloat(r.provv);
+    if(isNaN(v)) v=(r.tipo==='noFin')?25:0;
+    return v||0;
+  }catch(e){ return 0; }
+}
+function pProvvCalcolata(r){
+  var v=parseFloat(r&&r.provvigione); if(isNaN(v)) v=parseFloat(r&&r.provv);
+  return isNaN(v)?0:v;
+}
+/* Le vendite che aspettano ancora la delibera non avevano nessuna riga nel
+   registro: comparivano solo nell'elenco "da completare" e nel riepilogo del
+   mese non c'erano. Qui si crea la riga (in attesa, a 0) a ogni apertura,
+   cosi' il riepilogo mostra tutto quello che manca. */
+function pProvvRigheMancanti(){
+  try{
+    if(typeof cvLoad!=='function') return 0;
+    var reg=pLoadReg()||[], limite=Date.now()-180*86400000, n=0;
+    window._pAutoSilenzioso=true;
+    cvLoad().forEach(function(cv){
+      try{
+        if(!cv || !cv.isContratto) return;
+        if(typeof cvIsStorico==='function' && cvIsStorico(cv)) return;
+        if(cv.origine==='sicom_ap' || cv.deleted || cv.provvIgnorata) return;
+        var t=+(cv.contrattoTs||cv.createdAt||0);
+        if(t<limite || t<P_INIZIO_PROVV) return;
+        if(pProvvDiCv(cv.id, reg)) return;
+        if(pProvvEsiste(cv, reg)) return;
+        pProvvAuto(cv); n++; reg=pLoadReg()||[];
+      }catch(_e){}
+    });
+    window._pAutoSilenzioso=false;
+    return n;
+  }catch(e){ window._pAutoSilenzioso=false; return 0; }
 }
 /* Riga decisa a mano: salvata dal modulo (manuale), in deroga alla delibera,
    col sottocosto forzato, oppure confermata senza venire dal calcolo
@@ -8931,7 +8977,7 @@ function _pRenderStoricoConDati(tutti) {
     var parts = r.mese.split('-');
     if (parseInt(parts[0]) !== anno) return;
     if (!perMese[r.mese]) perMese[r.mese] = { totale: 0 };
-    perMese[r.mese].totale += parseFloat(r.provvigione) || 0;
+    perMese[r.mese].totale += (typeof pProvvMostrata==='function') ? pProvvMostrata(r) : (parseFloat(r.provvigione) || 0);
   });
 
   if (!Object.keys(perMese).length) {
@@ -9161,7 +9207,7 @@ function pVerificaEsegui(){
   var eur=function(n){ return (typeof cvEuro==='function')?cvEuro(n):(Math.round(n)+' \u20ac'); };
   var totReg=0, totRic=0, diff=0, senza=0;
   var corpo=righe.map(function(r){
-    var reg1=parseFloat(r.provvigione)||0; totReg+=reg1;
+    var reg1=(typeof pProvvMostrata==='function')?pProvvMostrata(r):(parseFloat(r.provvigione)||0); totReg+=reg1;
     var res=(typeof pProvvDa==='function')?pProvvDa({
       valore:r.valore, acconto:r.acconto, comm:r.comm, tan:r.tan, rate:r.rate,
       fi:r.fi, fiMesi:r.fiMesi, cpi:r.cpi, gap:r.gap, eta:r.eta, sotto:r.sotto,
@@ -9298,6 +9344,7 @@ function pDettaglio(id){
 function pDettaglioChiudi(){ var m=document.getElementById('pDettModal'); if(m){ m.style.display='none'; m.innerHTML=''; } }
 
 function pRenderReg() {
+  try{ pProvvRigheMancanti(); }catch(e){}
   try{ pVenditeRender(); }catch(e){}
   /* Il controllo di fine mese lo fa il titolare: e' un'operazione di
      verifica dei conti, non parte del lavoro di chi vende. */
@@ -9363,7 +9410,7 @@ function pRenderReg() {
   h += TH('Data')+TH('Cliente / Auto')+TH('Tipo')+TH('TAN')+TH('Rate')+TH('Finanziaria')+TH('Polizza')+TH('Durata')+TH('CPI')+TH('Comm. Fin.')+TH('Provvigione')+TH('');
   h += '</tr></thead><tbody>';
   reg.forEach(function(r, idx) {
-    r._bad = r.bozza ? ('<span style="background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:20px;padding:1px 7px;font-size:10px;font-weight:800;margin-left:6px;">da completare: '+((r.manca||[]).join(', ')||'\u2014')+'</span>') : '';
+    r._bad = r.bozza ? ('<span '+(r.cvId?('onclick="pCaricaVendita(\''+r.cvId+'\')" title="Apri in Calcola provvigione" '):'')+'style="background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:20px;padding:1px 7px;font-size:10px;font-weight:800;margin-left:6px;'+(r.cvId?'cursor:pointer;':'')+'">\u26a0 da completare: '+((r.manca||[]).join(', ')||'\u2014')+'</span>') : '';
     if (idx === 0 || r.mese !== reg[idx-1].mese) {
       h += '<tr><td colspan="11" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
     }
@@ -9405,8 +9452,11 @@ function pRenderReg() {
     var tanC  = isFin?(r.tan ?r.tan +'%':'—'):'—';
     var rateC = isFin?(r.rate?r.rate+'m':'—'):'—';
     var finL  = r.finanziaria||'—';
-    var pv    = r.provvigione||r.provv||(r.tipo==='noFin'?25:0)||0;
-    var pvc   = '<strong style="font-size:14px;color:#27ae60;">&#8364;'+pv+'</strong>';
+    var pv    = pProvvMostrata(r);
+    var pvc   = r.bozza
+      ? ('<strong style="font-size:14px;color:#b45309;">&#8364;0</strong><br><span style="font-size:10px;color:#b45309;">'
+         +(pProvvCalcolata(r)>0?('calcolata '+pProvvCalcolata(r)+' \u20ac \u00b7 '):'')+'vale al completamento</span>')
+      : '<strong style="font-size:14px;color:#27ae60;">&#8364;'+pv+'</strong>';
     var cl    = r.cliente||r.auto||'—';
     var ve    = pAutoLabel(r)||'';
     var clCell= '<strong>'+cl+'</strong>'+(r._bad||'')+(ve?'<br><span style="font-size:11px;color:#6b6b6b;">'+ve+'</span>':'')
@@ -9430,13 +9480,16 @@ function pAggStats() {
   const regMese = reg.filter(r => r.mese === meseCorrente);
 
   // Calcola totale provvigioni mese corrente
-  const tot = regMese.reduce((s,r) => s + (r.provvigione || r.provv || 25), 0);
-  const med = regMese.length ? tot / regMese.length : 0;
+  /* le righe ancora da completare contano 0 (vedi pProvvMostrata) */
+  const tot = regMese.reduce((s,r) => s + pProvvMostrata(r), 0);
+  const nBozze = regMese.filter(r => r && r.bozza===true).length;
+  const med = (regMese.length-nBozze) ? tot / (regMese.length-nBozze) : 0;
 
   const sN = document.getElementById('pStatN');
   const sT = document.getElementById('pStatTot');
   const sM = document.getElementById('pStatMed');
-  if (sN) sN.textContent = regMese.length + ' (' + reg.length + ' tot)';
+  if (sN) sN.innerHTML = regMese.length + ' (' + reg.length + ' tot)'
+    + (nBozze ? '<div style="font-size:11px;color:#b45309;font-weight:800;margin-top:3px;">\u26a0 ' + nBozze + ' da completare \u00b7 a 0</div>' : '');
   if (sT) sT.textContent = '€ ' + Math.round(tot);
   if (sM) sM.textContent = '€ ' + Math.round(med);
 }
@@ -10704,6 +10757,7 @@ function eaSyncSuFoglio(silent) {
 
 // ── Ruolo utente ──────────────────────────────────────────────
 var _landingApplied = false;
+var EA_LANDING_PRESENZE=['ariannapresta80@gmail.com'];   /* all'apertura: subito la timbratura */
 function setCurrentUser(email) {
   /* ===== LA SCHERMATA INIZIALE SI APPLICA UNA VOLTA PER PERSONA =====
      Questa funzione viene richiamata anche a ogni rinnovo del permesso
@@ -11491,10 +11545,16 @@ function applyRoleUI() {
     var _accessoVero = false;
     try{ _accessoVero = (sessionStorage.getItem('ea_login_manuale')==='1'); }catch(e){}
     var _dove = landing;
+    /* Chi deve timbrare appena entra: si apre sempre sulle Presenze, senza
+       ripristinare l'ultima sezione ne' seguire l'indirizzo. */
+    var _sempreTimbra=false;
+    try{ _sempreTimbra=(EA_LANDING_PRESENZE.indexOf(String(_currentUserEmail||'').toLowerCase())>=0); }catch(e){}
+    if(_sempreTimbra && allowed.indexOf('presenze')!==-1) _dove='presenze';
     /* L'indirizzo comanda su tutto: se la scheda e' stata aperta con
        #vendite, si va li' anche se l'ultima sezione era un'altra. */
     var _daUrl=eaVistaDaUrl();
-    if(_daUrl && allowed.indexOf(_daUrl)!==-1) _dove=_daUrl;
+    if(_sempreTimbra){ /* niente da fare: resta presenze */ }
+    else if(_daUrl && allowed.indexOf(_daUrl)!==-1) _dove=_daUrl;
     else if (!_accessoVero) {
       var _ultima=''; try{ _ultima=localStorage.getItem('ea_ultima_vista')||''; }catch(e){}
       /* si ripristina solo se quella sezione e' ancora permessa a questa
@@ -26180,8 +26240,11 @@ function cvForm(id, fromVend){
      che si aggiorna mentre si scrive, agganciato durante lo scorrimento. */
   h+='<style>'
     +'.cvwrap{padding:20px 18px 70px;max-width:1280px;margin:0 auto;}'
-    +'@media(min-width:1000px){.cvwrap{display:grid;grid-template-columns:1.25fr 1fr;gap:22px;align-items:start;}'
-    +'.cvcol-dx{position:sticky;top:74px;max-height:calc(100vh - 92px);overflow-y:auto;}}'
+    +'@media(min-width:1000px){.cvwrap{display:grid;grid-template-columns:1.15fr 1fr;gap:44px;align-items:start;}'
+    /* La colonna destra scorre insieme alla sinistra: prima era fissa con
+       una sua barra di scorrimento, e si andava su e giu' due volte. */
+    +'.cvcol-dx{position:static;max-height:none;overflow:visible;}}'
+    +'#cv-riepilogo{font-size:14.5px;}#cv-riepilogo .cvr{font-size:14.5px !important;}'
     +'.cvsez{background:#fff;border:1px solid #e4e8ee;border-radius:12px;padding:14px 16px;margin-bottom:14px;}'
     +'.cvsez>h3{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:0 0 10px;}'
     +'</style>';
@@ -27240,18 +27303,18 @@ function cvLive(){
   var t=cvCalcola(_cv);
   cvAggiornaSaldo(t);
   cvPromoSync();
-  var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
+  var r=function(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px;'+(b?'font-weight:800;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;':'')+'"><span>'+l+'</span><span>'+cvEuro(v)+'</span></div>'; };
   var _vista=(typeof cvVistaValore==='function')?cvVistaValore():'C';
   var h='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">'
     +'<span style="font-weight:800;color:#1a4fa0;">'+((_cv&&_cv.isContratto)?'Valore contratto':'Riepilogo prezzo')+'</span>'
     +((typeof cvVistaBottoni==='function')?cvVistaBottoni():'')
     +'</div>';
-  var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
+  var neg=function(l,v){ return '<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px;color:#dc2626;"><span>'+l+'</span><span>-'+cvEuro(v)+'</span></div>'; };
   var _pagamenti=function(){
     /* Il saldo non compare qui: e' la riga "Saldo dovuto" in fondo. Elencarlo
        due volte faceva finire il riepilogo sempre a zero, che non diceva
        niente a nessuno. */
-    cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(/^saldo$/i.test(String(x.tipo||'').trim())) return; if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
+    cvPagIncasso(_cv.pagamenti).forEach(function(x){ if(/^saldo$/i.test(String(x.tipo||'').trim())) return; if(cvNum(x.importo)) h+='<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px;color:#dc2626;"><span>'+cvEsc(x.tipo||'Pagamento')+'</span><span>-'+cvEuro(x.importo)+'</span></div>'; });
   };
   var _extra=function(){
     if(t.gar) h+=r('Garanzia',t.gar);
@@ -27262,7 +27325,7 @@ function cvLive(){
   if(_vista==='A'){
     /* Contabile: prima si forma l'imponibile, poi cio' che si aggiunge al
        prezzo, e in fondo tutto quello che il cliente ha gia' dato. */
-    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
+    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
     h+=r(cvEtichettaPrezzo(_cv),t.prezzo);
     if(_cv.legge104On){ h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); }
     h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
@@ -27278,8 +27341,8 @@ function cvLive(){
     h+=r('Totale contratto',(t.totaleScontato||0)+(t.permVal||0),true);
 
     var _voce=function(etichetta, sotto, importo){
-      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px;color:#dc2626;">'
-        +'<span>'+etichetta+(sotto?('<span style="display:block;font-size:11px;color:#94a3b8;font-weight:400;margin-top:1px;">'+sotto+'</span>'):'')+'</span>'
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:14.5px;color:#dc2626;">'
+        +'<span>'+etichetta+(sotto?('<span style="display:block;font-size:12px;color:#94a3b8;font-weight:400;margin-top:1px;">'+sotto+'</span>'):'')+'</span>'
         +'<span style="white-space:nowrap;">-'+cvEuro(importo)+'</span></div>';
     };
     var _dataIt=function(iso){
@@ -27287,7 +27350,7 @@ function cvLive(){
       var p=String(iso).split('-');
       return (p.length===3)?(p[2]+'/'+p[1]+'/'+p[0]):String(iso);
     };
-    h+='<div style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:10px 0 2px;padding-top:6px;border-top:1px solid #e2e8f0;">Pagamenti ricevuti</div>';
+    h+='<div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:10px 0 2px;padding-top:6px;border-top:1px solid #e2e8f0;">Pagamenti ricevuti</div>';
     var _nessuno=true;
     if(_cv.permutaOn && t.permVal){
       var pm=_cv.permuta||{};
@@ -27309,9 +27372,9 @@ function cvLive(){
     h+=r('Saldo dovuto',t.saldoDovuto,true);
   } else {
     /* Commerciale: la lettura di sempre, invariata. */
-    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
+    (function(){ var _l=cvListinoDaMostrare(_cv,t.prezzo); if(_l) h+='<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px;color:#94a3b8;text-decoration:line-through;"><span>Prezzo di listino</span><span>'+cvEuro(_l)+'</span></div>'; })();
     h+=r(cvEtichettaPrezzo(_cv),t.prezzo);
-    if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
+    if(_cv.legge104On){ if(_cv.scontoOn && t.sconto) h+=neg(cvEsc(_cv.scontoDesc||'Sconto'),t.sconto); h+=r('Imponibile Legge 104', t.imponibile104); h+=r('IVA agevolata 4%', t.iva104); h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14.5px;font-weight:800;border-top:1px solid #e2e8f0;"><span>Totale (escluso passaggio)</span><span>'+cvEuro(t.veicolo)+'</span></div>'; }
     h+=r(cvPassaggioEtichetta(_cv),t.passaggio);
     _extra();
     if(_cv.permutaOn && t.permVal){ h+=neg('Permuta'+((_cv.permuta&&_cv.permuta.modello)?(' ('+cvEsc(_cv.permuta.modello)+')'):''), t.permVal); if(t.minivolt) h+=r('Minivoltura', t.minivolt); }
@@ -27357,11 +27420,11 @@ function cvLive(){
         if(_perGg) _perche.push('in stock da '+_ggSt+' giorni');
 
         h+='<div style="margin-top:8px;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:9px 11px;">'
-          +'<div style="font-size:12.5px;font-weight:800;color:#7c2d12;">\u26a0\ufe0f Vendita sottocosto</div>'
-          +'<div style="font-size:11.5px;color:#7c2d12;margin-top:2px;">'+cvEsc(_perche.join(' \u00b7 '))+'. '
+          +'<div style="font-size:13.5px;font-weight:800;color:#7c2d12;">\u26a0\ufe0f Vendita sottocosto</div>'
+          +'<div style="font-size:12.5px;color:#7c2d12;margin-top:2px;">'+cvEsc(_perche.join(' \u00b7 '))+'. '
           +'La provvigione su questa vendita \u00e8 dimezzata.</div>';
         if(_vedeTutto && _sotto){
-          h+='<div style="font-size:11.5px;color:#9a3412;margin-top:4px;">'
+          h+='<div style="font-size:12.5px;color:#9a3412;margin-top:4px;">'
             + (_sotto.come==='estera'
                 ? ('Prezzo a contratto '+cvEuro(_sotto.lordo)+' ivato \u2192 '+cvEuro(_sotto.netto)+' netti, acquistata '+cvEuro(_sotto.acquisto)+' (netta)')
                 : (_sotto.come==='iva_esposta'
@@ -31848,7 +31911,7 @@ function cvVendScadStato(v){
   }catch(e){ return null; }
 }
 function cvVendData(ts){ if(!ts) return ''; var d=new Date(ts); return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
-function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase(); return e==='europaautobusiness@gmail.com' || eaIsContabilita(e) || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
+function cvPuoConfermarePagamenti(){ var e=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'').toLowerCase().trim(); return e==='europaautobusiness@gmail.com' || e==='amministrazione@europaautosrl.it' || eaIsContabilita(e) || (typeof _currentUserRole!=='undefined' && (_currentUserRole==='admin'||_currentUserRole==='contabilita')); }
 function cvContratti(){ return cvLoad().filter(function(x){ return x.isContratto; }); }
 function cvVendGo(stato){ window._vLim=40; _cvVendStato=stato||'in_attesa_pagamento';
   if(_cvVendStato==='in_attesa_firma') _cvVendStato='in_attesa_delibera';   /* scheda unificata */
@@ -36748,11 +36811,14 @@ try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVist
 var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
 /* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
    tutti basta svuotare l'elenco (MN_BETA=[]). */
-var MN_BETA=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
+var MN_BETA=['europaautobusiness@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
+/* Chi NON deve vedere mansioni e chat, qualunque sia il ruolo: entra, timbra e basta. */
+var MN_ESCLUSI=['ariannapresta80@gmail.com'];
 var MN_BETA_RUOLI=['admin','contabilita'];   /* in prova anche per ruolo, non solo per indirizzo */
 function mnAbilitato(email){
-  if(!MN_BETA.length) return true;
   var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
+  if(MN_ESCLUSI.indexOf(e)>=0) return false;
+  if(!MN_BETA.length) return true;
   if(MN_BETA.indexOf(e)>=0) return true;
   /* l'utente corrente passa anche per ruolo (amministratore, contabilita') */
   try{
@@ -37144,11 +37210,12 @@ function mnDopoTimbratura(tipo){
    (quando il browser lo permette) e un suono breve.
    ===================================================================== */
 var CH_TAB='chat_app', CH_KEY='ea_chat_v1', CH_LETTO_KEY='ea_chat_letto_ts', CH_POLL_MS=10000;
-var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','ariannapresta80@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it','no.reply.europaauto@gmail.com','rudy.scropetta@gmail.com','s.rudy@europaautosrl.it'];
+var MN_CHAT_MEMBRI=['europaautobusiness@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it','no.reply.europaauto@gmail.com','rudy.scropetta@gmail.com','s.rudy@europaautosrl.it'];
 var _mnTab='bacheca', _chTimer=null, _chBusy=false, _chRec=null, _chPrimo=true;
 function chMembro(email){
   var e=String(email||((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'')).toLowerCase();
   if(!e) return false;
+  if(typeof MN_ESCLUSI!=='undefined' && MN_ESCLUSI.indexOf(e)>=0) return false;
   if(MN_CHAT_MEMBRI.indexOf(e)>=0) return true;
   return (typeof mnAbilitato==='function') && mnAbilitato(e);
 }
@@ -40260,15 +40327,21 @@ function cvVendNotificaMail(cv,p){
       + riga('Tipo', p.tipo||'')
       + riga('Metodo', p.metodo||'')
       + riga('Importo', cvEuro(p.importo))
-      + riga('Confermato da', chi)
+      + riga('Confermato da', ((typeof cvConfLabel==='function')?cvConfLabel():'')||chi)
       + riga('Stato pratica', cv.statoVendita||'')
       +'</table></div>';
 
     var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
     var ogg='Pagamento confermato \u2014 '+cli+(targa?(' \u00b7 '+targa):'');
 
-    ['amministrazione@europaautosrl.it','contabilita@europaautosrl.it'].forEach(function(dest){
-      try{ eaInviaMessaggio({ to:dest, subject:ogg, html:html }); }catch(e){}
+    /* La mail arriva sempre a Davide e ad Arianna, chiunque dei due abbia
+       confermato: cosi' ognuno vede quello che ha fatto l'altro. In piu' va a
+       chi ha confermato, se entra con un indirizzo diverso da questi. */
+    var dest=['amministrazione@europaautosrl.it','europaautobusiness@gmail.com','contabilita@europaautosrl.it'];
+    var _chi=String(chi||'').toLowerCase().trim();
+    if(_chi && dest.indexOf(_chi)<0 && _chi!=='no.reply.europaauto@gmail.com') dest.push(_chi);
+    dest.forEach(function(d){
+      try{ eaInviaMessaggio({ to:d, subject:ogg, html:html }); }catch(e){}
     });
   }catch(e){ try{ console.log('mail pagamento:', e && e.message || e); }catch(e2){} }
 }
@@ -41496,6 +41569,7 @@ function stProvvPeriodo(P){
       if(!t) return;
       if(P && P.da && t<P.da) return;
       if(P && P.a  && t>=P.a) return;   /* "a" e' l'inizio del periodo dopo */
+      if(r.bozza===true) return;         /* da completare: vale 0 finche' non e' confermata */
       tot+=stNum(r.provvigione)||0;
     });
     return tot;
