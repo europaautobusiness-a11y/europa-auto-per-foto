@@ -1387,7 +1387,10 @@ html, body{
 .tc-mese-table td{padding:9px 6px;border-bottom:1px solid #0f172a;color:#94a3b8;}
 .tc-mese-table td:first-child{color:#fff;font-weight:600;}
 .tc-mese-total{margin-top:10px;background:#0f172a;border-radius:10px;padding:12px;text-align:center;font-size:15px;font-weight:800;color:#22c55e;}
-.tc-admin-wrap{padding:20px;max-width:900px;margin:0 auto;}
+/* Il registro presenze usa tutta la larghezza dello schermo: con 4-5
+   dipendenti in colonna, a 900px si doveva scorrere a destra per vederli. */
+.tc-admin-wrap{padding:20px 24px;max-width:none;margin:0;}
+#view-presenze{max-width:none;}
 .tc-admin-title{font-size:22px;font-weight:800;color:#1a4fa0;margin-bottom:4px;}
 .tc-admin-sub{font-size:13px;color:#64748b;margin-bottom:20px;}
 .tc-admin-tabs{display:flex;gap:0;border-bottom:2px solid #e5e7eb;margin-bottom:20px;}
@@ -38415,10 +38418,12 @@ function cvDeliberaForm(id){
       calcolata, la scrive l'amministratore. Serve alle statistiche. */
    +((typeof getCurrentRole==='function' && getCurrentRole()==='admin')
       ? (function(){
-          var _fin=cvProvvAziendaFin(d);
+          var _fresca=(window._delibDaSimProvv!=null);
+          var _fin=_fresca?window._delibDaSimProvv:cvProvvAziendaFin(d);
+          var _finDi=_fresca?((fromSim&&fromSim.finanziaria)||''):cvProvvAziendaFinDi(d);
           return '<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:9px;">'
           +'<label style="'+lab+'color:#6d28d9;">Provvigione azienda \u20ac (solo amministratore)</label>'
-          +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" data-fin="'+(_fin!=null?_fin:'')+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="si calcola da sola" oninput="this._manuale=true">'
+          +'<input id="dl_provvAzienda" type="number" step="0.01" style="'+inp+'" data-fin="'+(_fin!=null?_fin:'')+'" data-fin-finanz="'+_esc(_finDi)+'" value="'+(d.provvAzienda!=null?_esc(d.provvAzienda):'')+'" placeholder="si calcola da sola" oninput="this._manuale=true">'
           +'<div id="dl_provvAziendaDett" style="font-size:10.5px;color:#7c3aed;margin-top:3px;line-height:1.5;"></div>'
           +'<div style="font-size:10.5px;color:#7c3aed;margin-top:2px;">Deutsche Bank dal simulatore + 38% del premio delle polizze fuori Deutsche (Zurich, Fit2You). Se scrivi un numero a mano vale quello. \u00c8 il numero che entra nelle statistiche.</div></div>';
         })()
@@ -38477,6 +38482,8 @@ function cvDeliberaFinCambia(){
     var nota=document.getElementById('dl_finNota');
     var _rf=cvFinRiconosci(f)||f;
     var haSim=CV_FIN_CON_SIMULATORE.some(function(x){ return cvFinNorm(x)===cvFinNorm(_rf); });
+    /* cambiando finanziaria cambia anche chi ha prodotto la provvigione azienda */
+    try{ cvDelibProvvAggiorna(); }catch(_p){}
     if(nota){
       nota.innerHTML = !f ? ''
         : (haSim
@@ -38540,13 +38547,32 @@ function cvProvvPolizzaAuto(tipo, premio){
   if(!tipo || PAZ_POLIZZE_DEUTSCHE[tipo] || premio<=0) return { pol:0, tipo:tipo, fuori:false };
   return { pol:Math.round(premio*PAZ_PCT_POLIZZA*100)/100, tipo:tipo, fuori:true };
 }
+/* La finanziaria di cui e' figlia la provvigione salvata: serve a non
+   riproporre il numero del simulatore Deutsche su una delibera Compass. */
+function cvProvvAziendaFinDi(d){
+  try{ return String((d && (d.provvAziendaFinDi || d.finanziaria)) || ''); }catch(e){ return ''; }
+}
+function cvStessaFin(a,b){
+  try{
+    var x=cvFinNorm(cvFinRiconosci(a)||a), y=cvFinNorm(cvFinRiconosci(b)||b);
+    return !x || !y || x===y;
+  }catch(e){ return true; }
+}
 function cvProvvAziendaFin(d){
   if(!d) return null;
+  /* Delibera Compass con la simulazione salvata: vale il totale azienda di
+     quella simulazione. Prima, se la pratica era passata prima dal
+     simulatore Deutsche, restava quel numero (es. 5.478 € al posto di 1.990). */
+  try{
+    if(d.compass && d.compass.ris && d.compass.ris.provvTot>0 && cvStessaFin(d.finanziaria,'Compass') && cvFinNorm(cvFinRiconosci(d.finanziaria)||d.finanziaria)===cvFinNorm('Compass'))
+      return Math.round(d.compass.ris.provvTot*100)/100;
+  }catch(e){}
   if(d.provvAziendaFin!=null) return d.provvAziendaFin;
   if(d.provvAzienda!=null && d.provvAziendaPol==null) return d.provvAzienda;
   return null;
 }
 /* riquadro viola della delibera: si aggiorna quando cambiano tipo o premio */
+function _esc0(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function cvDelibProvvAggiorna(){
   try{
     var box=document.getElementById('dl_provvAzienda'); if(!box) return;
@@ -38555,6 +38581,11 @@ function cvDelibProvvAggiorna(){
     var premio=parseFloat((document.getElementById('dl_polizze')||{}).value);
     var _fsel=(typeof cvDeliberaFinSelezionata==='function')?cvDeliberaFinSelezionata():'';
     var _isCmp=(cvFinNorm(cvFinRiconosci(_fsel)||_fsel)===cvFinNorm('Compass'));
+    /* Il numero salvato vale solo per la finanziaria che l'ha prodotto: la
+       provvigione del simulatore Deutsche non c'entra con una delibera Compass. */
+    var _finDi=box.getAttribute('data-fin-finanz')||'';
+    var _altraFin=(fin!=null && _finDi && _fsel && !cvStessaFin(_finDi,_fsel));
+    if(_altraFin) fin=null;
     var a=cvProvvPolizzaAuto(tipo, premio);
     var tot=Math.round(((fin||0)+a.pol)*100)/100;
     var nomi={zurich:'Zurich',fit2you:'Fit2You',altra:'altra polizza',compass_premium:'Premium Europ Assistance'};
@@ -38563,7 +38594,10 @@ function cvDelibProvvAggiorna(){
       (_isCmp?'Compass (simulatore, polizze Compass comprese): <b>':'Deutsche Bank (simulatore): <b>')+(fin!=null?('\u20ac '+fin):'non calcolata')+'</b>'
       +(a.fuori?(' \u00b7 Polizza '+(nomi[tipo]||tipo)+' 38% di \u20ac '+(isNaN(premio)?0:premio)+': <b>\u20ac '+a.pol+'</b>'):'')
       +' \u00b7 Totale: <b>\u20ac '+tot+'</b>'
-      +(fin==null?'<br>Manca la parte Deutsche: usa \u201cricalcola\u201d in Statistiche o scrivi qui il totale a mano.':'');
+      +(fin==null?(_altraFin
+          ? ('<br>\u26a0 La provvigione salvata (\u20ac '+box.getAttribute('data-fin')+') viene dal simulatore '+_esc0(_finDi)+', non da '+_esc0(_fsel)+': apri il simulatore '+_esc0(_fsel)+' da questa delibera, oppure scrivi qui il totale a mano.')
+          : (_isCmp?'<br>Manca la parte Compass: apri il simulatore Compass da questa delibera o scrivi qui il totale a mano.'
+                   :'<br>Manca la parte Deutsche: usa \u201cricalcola\u201d in Statistiche o scrivi qui il totale a mano.')):'');
     if(!box._manuale) box.value=(tot>0?tot:'');
   }catch(e){}
 }
@@ -38717,7 +38751,11 @@ function cvDeliberaSalva(id){
   /* provvigione azienda: Deutsche (simulatore, appena calcolata o gia'
      salvata) + 38% del premio se la polizza e' fuori Deutsche; se
      l'amministratore ha scritto un numero a mano, vale quello */
-  var _pFin=(window._delibDaSimProvv!=null)?window._delibDaSimProvv:cvProvvAziendaFin(list[i].finDelibera);
+  var _pFresca=(window._delibDaSimProvv!=null);
+  var _pFin=_pFresca?window._delibDaSimProvv:cvProvvAziendaFin(list[i].finDelibera);
+  var _pFinDi=_pFresca?_fin:cvProvvAziendaFinDi(list[i].finDelibera);
+  /* salvata con un'altra finanziaria: non vale per questa delibera */
+  if(!_pFresca && _pFin!=null && _pFinDi && !cvStessaFin(_pFinDi,_fin)){ _pFin=null; _pFinDi=''; }
   window._delibDaSimProvv=null;   /* usata una volta sola, per questa pratica */
   /* Il 38% sul premio vale per le polizze ESTERNE con qualunque
      finanziaria; quelle della finanziaria stessa sono gia' nel simulatore.
@@ -38745,6 +38783,7 @@ function cvDeliberaSalva(id){
     /* provvigione azienda: quella appena calcolata dal simulatore, oppure
        quella gia' salvata se la delibera viene solo ritoccata */
     provvAziendaFin:_pFin,
+    provvAziendaFinDi:(_pFin!=null?(_pFinDi||_fin):null),
     provvAziendaPol:_pAuto.pol,
     provvAziendaPolTipo:(_pAuto.fuori?_pAuto.tipo:null),
     provvAzienda:_pTot,
