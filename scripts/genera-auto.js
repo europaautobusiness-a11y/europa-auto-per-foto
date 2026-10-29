@@ -42,10 +42,13 @@ const CONFIG = {
      sono le diciture approvate dalla finanziaria, meglio niente. */
   MOSTRA_RATA: false,
 
-  /* Google vuole il telaio (VIN) su ogni riga del feed e lo vuole scritto
-     anche sulla pagina. Senza telaio la riga verrebbe bocciata: meglio
-     lasciarla fuori dal feed (la pagina resta, per il sito). */
-  FEED_RICHIEDE_TELAIO: true,
+  /* In Italia il telaio (VIN) e' FACOLTATIVO per gli annunci veicoli
+     (guida Google "vin": optional in France, Germany, Italy, Japan, Spain,
+     Netherlands, UK). Basta l'ID [id], che e' il riferimento (targa o codice
+     EA...) scritto anche sulla pagina. Con il telaio obbligatorio nel feed
+     entravano 5 auto su 60: sotto le 10 offerte minime la revisione
+     iniziale di Google non parte nemmeno. */
+  FEED_RICHIEDE_TELAIO: false,
 
   DIR_AUTO: 'auto',
   DIR_FEED: 'feed',
@@ -240,6 +243,17 @@ function paginaAuto(a){
   /* --- prezzo / rata --- */
   const prezzoCard='<div class="card b2">'
     +'<h1>'+esc(nome)+'</h1>'+(a.allestimento?('<div class="all">'+esc(a.allestimento)+'</div>'):'')
+    /* Riga sempre visibile, senza clic: prezzo, km, riferimento, telaio e
+       sede. Sono i dati che Google pretende "al caricamento della pagina"
+       per gli annunci veicoli; prima il prezzo in contanti stava dietro la
+       linguetta "Acquisto in contanti". */
+    +'<div class="idrow" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 10px;font-size:13px;color:#334155;">'
+      +(prz?('<span><b>Prezzo '+esc(euro(prz))+'</b></span>'):'')
+      +(kmN!=null?('<span>'+esc(kmFmt(a.km))+'</span>'):'')
+      +'<span>Rif. <b>'+esc(rif(a))+'</b></span>'
+      +(a.telaio?('<span>Telaio '+esc(a.telaio)+'</span>'):'')
+      +'<span>'+(opz?'Opzionata':'Disponibile')+' · '+esc(CONFIG.AZIENDA)+', Paderno Dugnano (MI)</span>'
+    +'</div>'
     +'<div class="ptabs">'+(rata?'<button class="on" id="pt-fin" onclick="pTab(\'fin\')">Finanziamento</button>':'')+'<button'+(rata?'':' class="on"')+' id="pt-cash" onclick="pTab(\'cash\')">Acquisto in contanti</button></div>'
     +(rata?('<div id="pp-fin"><div class="pbig">'+esc(euro(rata.rata))+' <small>/ mese</small></div>'
       +'<div class="psub">'+rata.mesi+' rate'+(rata.anticipo?(' · anticipo '+esc(euro(rata.anticipo))):' · senza anticipo')+' · TAN '+rata.tan.toFixed(2).replace('.',',')+'% · TAEG '+rata.taeg.toFixed(2).replace('.',',')+'% <a href="#" onclick="document.getElementById(\'pdet\').classList.toggle(\'on\');return false;">Dettagli</a></div>'
