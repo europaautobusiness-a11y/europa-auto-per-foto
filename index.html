@@ -22209,6 +22209,15 @@ function mzPropagaContratti(a){
   var list=cvLoad(); var changed=false;
   list.forEach(function(cv){
     if(cv && cv.autoId===a.id){
+      /* ===== CONSEGNATA = NON SI TOCCA DA QUI =====
+         Salvando la scheda di un veicolo si riscrivevano TUTTE le pratiche
+         collegate, comprese quelle consegnate, con data di modifica nuova e
+         partendo dalla copia locale di chi stava salvando l'auto. Se quella
+         copia era vecchia (es. telefono di Rudy non ancora allineato), la
+         pratica appena corretta dall'amministrazione tornava com'era prima.
+         La fotografia dell'auto su una pratica consegnata e' quella del
+         giorno della consegna: non va aggiornata. */
+      if(cv.statoVendita==='consegnato' || cv.consegnatoTs || cv.annullato || cv.deleted) return;
       cv.autoSnapshot={ modello:((a.marca||'')+' '+(a.modello||'')+' '+(a.allestimento||'')).trim(), alimentazione:a.alimentazione, cilindrata:a.cilindrata, potenza:a.potenza, cambio:a.cambio, telaio:a.telaio, targa:a.targa, numeroInterno:a.numero_interno, estera:a.estera, ivaEsposta:!!a.ivaEsposta, dataImm:a.dataImm, colore:a.colore, km:a.km };
       cv.autoDesc=(a.targa?('#'+a.targa+' - '):'')+(a.marca||'')+' '+(a.modello||'');
       /* Il passaggio di proprieta' NON si ricalcola sulle pratiche gia'
@@ -22222,8 +22231,10 @@ function mzPropagaContratti(a){
           if(pp!=='' && pp!=null) cv.passaggio=pp;
         }
       }
+      var _tsPrima=cv.updatedAt||0;
       cv.updatedAt=Date.now(); changed=true;
-      if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
+      if(typeof supaUpsertSeFresco==='function') supaUpsertSeFresco('preventivi', cv, _tsPrima);
+      else if(typeof supaUpsert==='function') supaUpsert('preventivi', cv);
     }
   });
   if(changed) cvSave(list);
@@ -24866,13 +24877,14 @@ function pmiSyncEntrate(){
       pm.magazzinoId=auto.id;
       pm.entrataTs=pm.entrataTs||auto.createdAt||Date.now();
       if(!pm.regimeIva) pm.regimeIva=auto.ivaEsposta?'esposta':'margine';
+      cv._tsPrimaAuto=cv.updatedAt||0;
       cv.updatedAt=Date.now();
       cambiati.push(cv);
       try{ if(typeof pmMarcaDaContratto==='function') pmMarcaDaContratto(pm.periziaId, 'entrata', auto.id); }catch(e){}
     });
     if(cambiati.length){
       cvSave(list);
-      if(typeof supaUpsert==='function') cambiati.forEach(function(cv){ try{ supaUpsert('preventivi', cv); }catch(e){} });
+      cambiati.forEach(function(cv){ try{ var _t=cv._tsPrimaAuto; delete cv._tsPrimaAuto; if(typeof supaUpsertSeFresco==='function') supaUpsertSeFresco('preventivi', cv, _t); else supaUpsert('preventivi', cv); }catch(e){} });
     }
     return cambiati.length;
   }catch(e){ return 0; }
@@ -25565,9 +25577,10 @@ function clPropagaAPratiche(key, dati){
         if(String(cv.cliente[c]||'')!==String(dati[c]||'')){ cv.cliente[c]=dati[c]; cambiato=true; }
       });
       if(cambiato){
+        var _tsPrima=cv.updatedAt||0;
         cv.updatedAt=Date.now();
         toccate++;
-        try{ if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
+        try{ if(typeof supaUpsertSeFresco==='function') supaUpsertSeFresco('preventivi', cv, _tsPrima); else if(typeof supaUpsert==='function') supaUpsert('preventivi', cv); }catch(e){}
       }
     });
     if(toccate) cvSave(list);
@@ -28957,6 +28970,7 @@ function cvSalva(){
     }
   }catch(e){}
   cvSave(list); supaUpsert('preventivi', _cv);
+  try{ window._cvSalvatiQui[_cv.id]={ ts:_cv.updatedAt, cliente:cvNomeCliente(_cv.cliente||{}) }; }catch(e){}
   /* Se il veicolo della pratica e' cambiato, il magazzino si allinea da solo:
      il vecchio torna disponibile, il nuovo diventa opzionato. */
   try{
@@ -32035,9 +32049,10 @@ function cvVendAutoAvanza(){
       if(!cv || !cv.isContratto) return;                       /* solo contratti */
       if(cv.origine==='sicom' || cv.origine==='sicom_prev') return;  /* storico: non si tocca */
       if((cv.statoVendita||'')==='consegnato') return;
-      if(cvVendAvanzaStato(cv)){ cv.updatedAt=Date.now(); changed.push(cv); }
+      var _tsPrima=cv.updatedAt||0;
+      if(cvVendAvanzaStato(cv)){ cv.updatedAt=Date.now(); cv._tsPrimaAuto=_tsPrima; changed.push(cv); }
     });
-    if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(cv){ supaUpsert('preventivi', cv); }); }
+    if(changed.length){ cvSave(list); changed.forEach(function(cv){ var _t=cv._tsPrimaAuto; delete cv._tsPrimaAuto; if(typeof supaUpsertSeFresco==='function') supaUpsertSeFresco('preventivi', cv, _t); else supaUpsert('preventivi', cv); }); }
     return changed.length>0;
   }catch(e){ return false; }
 }
@@ -40638,8 +40653,18 @@ function supaCodaRiprova(){
   if(n) console.log('Supabase: riprovo '+n+' salvataggi in coda');
 }
 try{ setInterval(supaCodaRiprova, 30000); setTimeout(supaCodaRiprova, 4000); }catch(e){}
+/* Chi ha scritto l'ultima versione di una pratica e da dove: serve a capire
+   da quale dispositivo arriva una sovrascrittura. */
+window._cvSalvatiQui = window._cvSalvatiQui || {};
 function supaUpsert(table, rec, dallaCoda){
   if(!rec||!rec.id) return;
+  try{
+    if(table==='preventivi' && !dallaCoda && rec.deleted!==true){
+      rec._salvatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+      rec._salvatoTs=Date.now();
+      try{ rec._salvatoDove=(new Error().stack||'').split('\n').slice(2,4).map(function(l){ return (l.match(/at ([A-Za-z0-9_$.]+)/)||[])[1]||''; }).filter(Boolean).join('<'); }catch(_s){}
+    }
+  }catch(_e){}
   var sb=sbClient();
   if(!sb){ supaCodaMetti(table, rec); supaSegnalaErrore(table, 'Supabase non raggiungibile'); return; }
   try{
@@ -40653,6 +40678,38 @@ function supaUpsert(table, rec, dallaCoda){
       }
     }, function(err){ supaCodaMetti(table, _rec); supaSegnalaErrore(table, (err&&err.message)||err); });
   }catch(e){ supaCodaMetti(table, rec); supaSegnalaErrore(table, (e&&e.message)||e); }
+}
+/* ===== SCRITTURE AUTOMATICHE: SOLO SE LA COPIA E' FRESCA =====
+   Le routine che sistemano le pratiche da sole (allineamento veicolo,
+   anagrafica, permute entrate, avanzamento di stato) partono dalla copia
+   locale del dispositivo su cui girano. Se quella copia e' vecchia, spingerla
+   sul cloud con data nuova cancella la modifica fatta nel frattempo da un
+   altro: era cosi' che le correzioni dell'amministrazione "tornavano
+   indietro". Qui, prima di scrivere, si rilegge la pratica dal cloud: se
+   lassu' c'e' una versione piu' recente di quella da cui si e' partiti, la
+   scrittura automatica si scarta e si tiene la versione del cloud (la
+   routine la rifara' al giro dopo, sui dati giusti). */
+function supaUpsertSeFresco(table, rec, tsPrima, seScartata){
+  try{
+    var sb=sbClient();
+    if(!sb || !rec || !rec.id){ supaUpsert(table, rec); return; }
+    sb.from(table).select('data').eq('id', String(rec.id)).then(function(res){
+      try{
+        var d=res && res.data && res.data[0] && res.data[0].data;
+        if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+        var tsCloud=+((d && (d.updatedAt||d.contrattoTs||d.createdAt))||0);
+        if(d && tsCloud > (+tsPrima||0)){
+          /* il cloud e' piu' avanti di noi: si prende quello, niente spinta */
+          if(table==='preventivi' && typeof cvLoad==='function' && typeof cvSave==='function'){
+            cvSave(cvLoad().map(function(x){ return (x && x.id===rec.id) ? d : x; }));
+          }
+          if(typeof seScartata==='function') seScartata(d);
+          return;
+        }
+        supaUpsert(table, rec);
+      }catch(e){ supaUpsert(table, rec); }
+    }, function(){ supaUpsert(table, rec); });
+  }catch(e){ try{ supaUpsert(table, rec); }catch(_){} }
 }
 function supaDelete(table, id){ var sb=sbClient(); if(!sb||!id) return; try{ sb.from(table).delete().eq('id',String(id)).then(function(){}); }catch(e){} }
 /* Lettura paginata generica: Supabase restituisce al massimo 1000 righe per
@@ -40694,6 +40751,23 @@ function supaLoadList(table, localLoad, localSave, done){
       var ex=byId[r.id];
       if(!ex){ byId[r.id]=r; toPush.push(r); return; }
       if(ts(r)>ts(ex)){ byId[r.id]=r; toPush.push(r); }
+      else if(table==='preventivi' && ts(ex)>ts(r)){
+        /* Una pratica salvata da questo dispositivo viene sostituita da una
+           versione piu' recente arrivata da un altro: lo si dice, con chi e
+           da dove, invece di far sparire la modifica in silenzio. */
+        try{
+          var q=window._cvSalvatiQui && window._cvSalvatiQui[r.id];
+          if(q && ts(ex)>q.ts && (Date.now()-q.ts)<6*3600000){
+            var _h=function(t){ var d=new Date(t); return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0'); };
+            var _msg='\u26a0\ufe0f La pratica di '+(q.cliente||r.id)+' salvata qui alle '+_h(q.ts)+' \u00e8 stata sovrascritta alle '+_h(ts(ex))
+              +' da '+(ex._salvatoDa||'un altro dispositivo')+(ex._salvatoDove?(' ('+ex._salvatoDove+')'):'')+'. Ricontrolla le modifiche.';
+            if(typeof notifPush==='function') notifPush(_msg,'\u26a0\ufe0f');
+            if(typeof tcToastNew==='function') tcToastNew(_msg,false);
+            console.warn(_msg, {locale:r, cloud:ex});
+            delete window._cvSalvatiQui[r.id];
+          }
+        }catch(_w){}
+      }
     });
     localSave(Object.keys(byId).map(function(k){return byId[k];}));
     toPush.forEach(function(r){ supaUpsert(table,r); });
@@ -41457,6 +41531,7 @@ function cvModSalva(){
   var _k=cvPropagaAnagrafica(list[idx]);
   if(_k && !list[idx].clienteKey) list[idx].clienteKey=_k;
   cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', list[idx]);
+  try{ window._cvSalvatiQui[list[idx].id]={ ts:list[idx].updatedAt, cliente:cvNomeCliente(list[idx].cliente||{}) }; }catch(e){}
   cvNotificaModifica(list[idx], cvDiffModifica(_cvModOrig, list[idx]));
   cvModChiudi(); if(typeof cvVendRender==='function') cvVendRender();
   if(typeof tcToastNew==='function') tcToastNew('💾 Modifiche salvate',true);
