@@ -19776,6 +19776,21 @@ function pvVernice(id){
   for(var i=0;i<PV_VERNICI.length;i++) if(PV_VERNICI[i].id===id) return PV_VERNICI[i];
   return null;
 }
+/* Strati di verniciatura e maggiorazione sulle ore VE: doppio strato
+   (base + trasparente) 15%, triplo strato 30%, pastello nessuna. */
+var PV_STRATI=[
+  { id:'singolo', nome:'Singolo strato (pastello)', pct:0 },
+  { id:'doppio',  nome:'Doppio strato',             pct:15 },
+  { id:'triplo',  nome:'Triplo strato',             pct:30 }
+];
+var PV_STRATI_DA_VERNICE={ pastello:'singolo', metal:'doppio', mica:'doppio', triplo:'triplo' };
+function pvStratiScelta(ricalcola){
+  var sel=document.getElementById('pv_strati'), campo=document.getElementById('pv_doppio');
+  if(!sel || !campo) return;
+  var x=null; PV_STRATI.forEach(function(k){ if(k.id===sel.value) x=k; });
+  if(x) campo.value=x.pct;
+  if(ricalcola!==false) pvCalc();
+}
 
 /* Scelto il tipo si scrive il costo e si spiega da dove viene. Il campo
    resta libero: chi ha un accordo diverso lo cambia e la scritta lo segue. */
@@ -19788,6 +19803,11 @@ function pvVerniceScelta(){
   var _conv=null; try{ var _cp=String(pvVal('pv_comp')||''); (PV_CONVENZIONI||[]).forEach(function(x){ if(!_conv && x.match.test(_cp)) _conv=x; }); }catch(e){}
   if(_conv){ if(campo) campo.value=_conv.materiale; if(nota) nota.textContent='Convenzione '+_conv.nome+': materiale fissato a \u20ac '+_conv.materiale+'/h (il tipo di vernice non lo cambia).'; pvCalc(); return; }
   if(v && campo) campo.value=v.eur;
+  /* il tipo di vernice dice anche quanti strati: si propone, resta cambiabile */
+  try{
+    var _st=document.getElementById('pv_strati');
+    if(v && _st && PV_STRATI_DA_VERNICE[v.id]){ _st.value=PV_STRATI_DA_VERNICE[v.id]; pvStratiScelta(false); }
+  }catch(_e){}
   if(nota){
     nota.innerHTML = v
       ? ('<b>'+v.nome+'</b> \u2014 '+(v.da===v.a ? ('circa \u20ac '+v.da) : ('da \u20ac '+v.da+' a \u20ac '+v.a))
@@ -19897,6 +19917,13 @@ function sinPreventivo(id, versione){
     +'</select>'
     +'<div id="pv_vernice_nota" style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5;">'
     +'Scegli il tipo di vernice e il costo orario del materiale si compila da solo.</div></div>';
+  /* Strati di verniciatura: la scelta scrive da sola la maggiorazione
+     (doppio 15%, triplo 30%); la percentuale resta modificabile a mano. */
+  html+='<div style="margin-bottom:8px;">'
+    +'<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;text-transform:uppercase;">Strati di verniciatura</label>'
+    +'<select id="pv_strati" onchange="pvStratiScelta(true)" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;background:#fff;">'
+    + PV_STRATI.map(function(x){ return '<option value="'+x.id+'"'+((p.strati||'doppio')===x.id?' selected':'')+'>'+x.nome+' \u2014 +'+x.pct+'%</option>'; }).join('')
+    +'</select></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Suppl. doppio/triplo strato %','pv_doppio', p.doppio!=null?p.doppio:15,'number')+'</div><div style="flex:1;">'+fld('Suppl. finitura %','pv_finitura', p.finitura!=null?p.finitura:10,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Max ore finitura','pv_finmax', p.finmax!=null?p.finmax:3,'number')+'</div><div style="flex:1;">'+fld('Tempo agg. vern. (ore)','pv_tagg', p.tagg!=null?p.tagg:0,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Levabolli € (a corpo, manodopera)','pv_levabolli', p.levabolli!=null?p.levabolli:0,'number')+'</div><div style="flex:1;"></div></div>';
@@ -19906,7 +19933,7 @@ function sinPreventivo(id, versione){
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('Smaltimento rifiuti % imponibile','pv_smaltPct', p.smaltPct!=null?p.smaltPct:5,'number')+'</div><div style="flex:1;">'+fld('Smaltimento rifiuti max €','pv_smaltMax', p.smaltMax!=null?p.smaltMax:65,'number')+'</div></div>';
   html+='<div style="display:flex;gap:8px;"><div style="flex:1;">'+fld('IVA %','pv_iva', p.iva!=null?p.iva:22,'number')+'</div><div style="flex:1;"></div></div>';
   html+='<div style="font-size:11px;color:#64748b;margin-bottom:6px;">Lo smaltimento rifiuti si calcola da solo: percentuale sull\u2019imponibile (manodopera, materiale di consumo e ricambi), fino al massimale.</div>';
-  html+='<div style="font-size:11px;color:#64748b;">Normalmente doppio strato 15% e finitura 10%. Per triplo strato metti 30%.</div>';
+  html+='<div style="font-size:11px;color:#64748b;">Scegli gli strati e la maggiorazione si compila da sola: doppio strato 15%, triplo strato 30% (singolo 0%). Il tipo di vernice la propone: metallizzato e micalizzato = doppio, triplo strato = triplo, pastello = singolo. Finitura normalmente 10%.</div>';
   html+='</div>';
   html+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;text-transform:uppercase;">Lavorazioni</div>';
   html+='<div style="font-size:10px;color:#64748b;margin-bottom:8px;">Tempi in ore (es. 0,20). Ricambio in € IVA esclusa. SR=stacco/riattacco, LA=lattoneria, VE=verniciatura, ME=meccanica.</div>';
@@ -20072,7 +20099,7 @@ function pvCalc(){
   var rows=[
     ['Totale tempi SR', pvOr2(t.sumSR)+' h'],['Totale tempi LA', pvOr2(t.sumLA)+' h'],
     ['Totale VE operativo', pvOr2(t.sumVE)+' h'],['Totale tempi ME', pvOr2(t.sumME)+' h'],
-    ['Suppl. doppio/triplo strato ('+pvOr2(t.pctDoppio)+'%)', pvOr2(t.supplDoppio)+' h'],
+    ['Suppl. '+(function(){ var _s=pvVal('pv_strati'), _n='doppio/triplo strato'; PV_STRATI.forEach(function(k){ if(k.id===_s) _n=k.nome.replace(/ \(.*\)$/,'').toLowerCase(); }); return _n; })()+' ('+pvOr2(t.pctDoppio)+'%)', pvOr2(t.supplDoppio)+' h'],
     ['Suppl. finitura (max '+pvOr2(t.finMax)+')', pvOr2(t.supplFin)+' h'],
     ['Tempo agg. verniciatura', pvOr2(t.tagg)+' h'],
     ['<b>Totale tempi VE</b>', '<b>'+pvOr2(t.veTot)+' h</b>'],
@@ -20090,7 +20117,7 @@ function pvCalc(){
 }
 function pvCollect(){
   return { cliente:pvVal('pv_cliente'), indirizzo:pvVal('pv_indirizzo'), veicolo:pvVal('pv_veicolo'), targa:pvVal('pv_targa'), comp:pvVal('pv_comp'), nsin:pvVal('pv_nsin'),
-    params:{ vernice:pvVal('pv_vernice'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), iva:pvVal('pv_iva'), smaltPct:pvVal('pv_smaltPct'), smaltMax:pvVal('pv_smaltMax') },
+    params:{ vernice:pvVal('pv_vernice'), strati:pvVal('pv_strati'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), iva:pvVal('pv_iva'), smaltPct:pvVal('pv_smaltPct'), smaltMax:pvVal('pv_smaltMax') },
     righe:_pvRighe.map(function(r){return {cr:r.cr,descr:r.descr,sr:r.sr,la:r.la,ve:r.ve,me:r.me,ric:r.ric};}) };
 }
 function pvSalva(){
@@ -22662,7 +22689,32 @@ function mzScaricaBlob(blob,nome){
 function mzInvDataCambia(){
   var el=document.getElementById('mz-inv-data'), n=document.getElementById('mz-inv-nota');
   if(!n) return;
-  n.textContent=(el&&el.value)?('\u23f3 inventario ricostruito al '+el.value.split('-').reverse().join('/')):'';
+  if(!(el&&el.value)){ n.innerHTML=''; return; }
+  var lbl='\u23f3 inventario ricostruito al '+el.value.split('-').reverse().join('/');
+  /* Accanto alla data si riporta il valore delle rimanenze a quel giorno
+     (costo d'acquisto), diviso per categoria come gli export. Solo per chi
+     puo' vedere i prezzi d'acquisto. */
+  try{
+    if(typeof mzPuoPrezzoAcq==='function' && !mzPuoPrezzoAcq()){ n.textContent=lbl; return; }
+    var giorno=mzDataIso(el.value); var oggi0=new Date(); oggi0.setHours(0,0,0,0);
+    if(!giorno || giorno>oggi0.getTime()){ n.textContent=lbl; return; }
+    var all=(typeof mzLoad==='function')?mzLoad():[];
+    var base=mzInventarioAllaData(all, giorno);
+    var eu=function(x){ return Math.round(x).toLocaleString('it-IT')+' \u20ac'; };
+    var cat={aziendali:{n:0,v:0,lbl:'aziendali I.E.'}, estere:{n:0,v:0,lbl:'estere'}, art36:{n:0,v:0,lbl:'art. 36'}};
+    var tot=0, senza=0;
+    base.forEach(function(a){
+      if(!a || a.nlt) return;
+      var k=(a.estera===true)?'estere':((a.ivaEsposta===true)?'aziendali':'art36');
+      var pz=parseFloat(String((a.prezzoAcq!=null?a.prezzoAcq:a.prezzoAcquisto)||'').replace(',','.'));
+      if(isNaN(pz)||!pz){ senza++; pz=0; }
+      cat[k].n++; cat[k].v+=pz; tot+=pz;
+    });
+    n.innerHTML=lbl+' \u00b7 <b>'+base.length+' veicoli</b>, valore <b>'+eu(tot)+'</b>'
+      +' <span style="color:#64748b;font-weight:600;">('+['aziendali','estere','art36'].map(function(k){ return cat[k].n+' '+cat[k].lbl+' '+eu(cat[k].v); }).join(' \u00b7 ')+')</span>'
+      +(senza?(' <span style="color:#dc2626;">\u2014 '+senza+' senza prezzo d\u2019acquisto</span>'):'')
+      +(base._stimate?(' <span style="color:#b45309;">\u2014 '+base._stimate+' con data di uscita stimata</span>'):'');
+  }catch(e){ n.textContent=lbl; }
 }
 function mzDataIso(v){
   if(!v) return 0;
@@ -22754,14 +22806,19 @@ function mzExportInventario(cat){
   aoa.push(['RIMANENZE FINALI AL '+dataIt+' '+(titoli[cat]||'')+(_storico?' (ricostruite dal registro di carico/scarico)':'')]);
   aoa.push(['']);
   aoa.push(['']);
-  aoa.push(['Quantità','Merce - Materia Prima - Servizi in corso di esecuzione','Costo Unitario','Totale Costo in €']);
-  rows.forEach(function(a){ aoa.push([1, desc(a), '', prezzo(a)]); });
+  /* Aziendali I.E.: il costo d'acquisto e' ivato, e allo studio serve anche
+     il netto. Seconda colonna con il prezzo scorporato dell'IVA al 22%. */
+  var _netto=(cat==='aziendali');
+  var netto=function(a){ return Math.round(prezzo(a)/1.22*100)/100; };
+  var totNetto=Math.round(rows.reduce(function(s,a){ return s+netto(a); },0)*100)/100;
+  aoa.push(['Quantità','Merce - Materia Prima - Servizi in corso di esecuzione','Costo Unitario','Totale Costo in €'].concat(_netto?['Costo netto IVA (22%) in €']:[]));
+  rows.forEach(function(a){ aoa.push([1, desc(a), '', prezzo(a)].concat(_netto?[netto(a)]:[])); });
   aoa.push(['']);
-  aoa.push(['','Totale Rimanenze al '+dataIt,'',tot]);
+  aoa.push(['','Totale Rimanenze al '+dataIt,'',tot].concat(_netto?[totNetto]:[]));
 
   var fine=function(){
     if(typeof tcToastNew==='function')
-      tcToastNew('⬇️ Rimanenze '+(titoli[cat]||cat)+' · '+rows.length+' veicoli · '+tot.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €',true);
+      tcToastNew('⬇️ Rimanenze '+(titoli[cat]||cat)+' · '+rows.length+' veicoli · '+tot.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'+(_netto?(' (netto IVA '+totNetto.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €)'):''),true);
   };
   /* Ripiego se la libreria non si carica (offline): stesso identico foglio in CSV. */
   var salvaCsv=function(){
@@ -22782,14 +22839,16 @@ function mzExportInventario(cat){
     if(!ok){ salvaCsv(); return; }
     try{
       var ws=XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols']=[{wch:10},{wch:58},{wch:14},{wch:18}];
-      ws['!merges']=[{s:{r:1,c:0},e:{r:1,c:3}}];
+      ws['!cols']=[{wch:10},{wch:58},{wch:14},{wch:18}].concat(_netto?[{wch:24}]:[]);
+      ws['!merges']=[{s:{r:1,c:0},e:{r:1,c:_netto?4:3}}];
       var rng=XLSX.utils.decode_range(ws['!ref']);
       for(var R=5;R<=rng.e.r;R++){
         var cq=ws[XLSX.utils.encode_cell({r:R,c:0})];
         if(cq && typeof cq.v==='number') cq.z='0.00';
         var cp=ws[XLSX.utils.encode_cell({r:R,c:3})];
         if(cp && typeof cp.v==='number') cp.z='#,##0.00\\ "€"';
+        var cn=ws[XLSX.utils.encode_cell({r:R,c:4})];
+        if(cn && typeof cn.v==='number') cn.z='#,##0.00\\ "€"';
       }
       var wb=XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb,ws,'RIMANENZE_FINALI');
