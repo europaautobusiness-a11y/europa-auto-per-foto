@@ -493,6 +493,7 @@ html, body{
     <div class="sidebar-group-body">
     <button class="sidebar-item" id="si-magazzino" onclick="sidebarNav('magazzino',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Magazzino</span></button>
     <button class="sidebar-item" id="si-online" onclick="sidebarNav('online',this)" style="color:rgba(255,255,255,.6);display:none;"><span class="si-icon">&#127760;</span><span class="si-label"> Auto online</span></button>
+    <button class="sidebar-item" id="si-rcl" onclick="sidebarNav('rcl',this)" style="color:rgba(255,255,255,.6);display:none;"><span class="si-icon">&#128241;</span><span class="si-label"> Richieste clienti</span></button>
     <button class="sidebar-item" id="si-permute" onclick="sidebarNav('permute',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128273;</span><span class="si-label"> Perizie permute</span></button>
     <!-- BM Value tolto dal menu su richiesta: non veniva usato. Il codice resta piu' sotto, spento. -->
     </div>
@@ -941,6 +942,7 @@ html, body{
 </div>
 
 <div class="view" id="view-online" style="padding:22px 16px;"><div id="online-wrap"></div></div>
+<div class="view" id="view-rcl" style="padding:22px 16px;"><div id="rcl-wrap"></div></div>
 <div class="view" id="view-magazzino" style="padding:22px 16px;">
   <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
     <button id="mz-tab-auto" onclick="mzTab('auto')" style="flex:1;min-width:110px;padding:11px;border-radius:9px;border:2px solid #1a4fa0;background:#1a4fa0;color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">🚙 Auto</button><button id="mz-tab-reg" onclick="mzTab('reg')" style="flex:1;min-width:110px;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;display:none;">📋 Registro carico/scarico</button>
@@ -16192,6 +16194,7 @@ function presenzeEsportaExcel(){
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
   'mansioni': 'Mansioni',
+  'rcl': 'Richieste clienti',
   'bmvalue': 'BM Value',
   'simulatore': 'Simulatore finanziamento',
   'editor':  'Nuovo Report',
@@ -16480,7 +16483,7 @@ function eaSezioniMie(){
 }
 /* Sezioni che esistono ma non stanno nella matrice permessi (viste di
    servizio raggiungibili da tutti): non vanno bloccate. */
-var EA_SEZIONI_LIBERE=['impostazioni','mansioni'];
+var EA_SEZIONI_LIBERE=['impostazioni','mansioni','rcl'];
 /* ===== DUE SEZIONI IN DUE SCHEDE =====
    Capita di dover guardare una cosa mentre se ne lavora un'altra. Finora
    serviva aprire il gestionale in una seconda scheda e ritrovare la sezione
@@ -16581,6 +16584,10 @@ function sidebarNav(view,btn){
     /* Auto online: riservata al titolare, non passa dalle sezioni assegnate */
     if(view==='online' && !(typeof getCurrentRole==='function' && getCurrentRole()==='admin')){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
+      return;
+    }
+    if(view==='rcl' && typeof rclVisibile==='function' && !rclVisibile()){
+      if(typeof tcToastNew==='function') tcToastNew('Sezione riservata.', false);
       return;
     }
     if(view==='mansioni' && typeof mnSezioneVisibile==='function' && !mnSezioneVisibile()){
@@ -16704,10 +16711,13 @@ function sidebarNav(view,btn){
   if(view==='crm'){ crmInit(); }
   if(view==='magazzino'){ mzInit(); }
   if(view==='online'){ onInit(); }
+  if(view==='rcl'){ if(typeof rclInit==='function') rclInit(); }
   /* La voce compare solo al titolare: e' lui che decide prezzi e vetrina. */
   try{
     var _ob=document.getElementById('si-online');
     if(_ob) _ob.style.display=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')?'':'none';
+    var _rb=document.getElementById('si-rcl');
+    if(_rb) _rb.style.display=(typeof rclVisibile==='function' && rclVisibile())?'':'none';
   }catch(e){}
 }
 
@@ -36836,7 +36846,8 @@ var EA_SYNC_VISTE = {
   provv:      function(){ if(typeof pSupaLoad==='function') pSupaLoad(); },
   presenze:   function(){ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); },
   permessi:   function(){ if(typeof riSupaLoad==='function') riSupaLoad(); },
-  whatsapp:   function(){ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); }
+  whatsapp:   function(){ if(typeof waMsgSupaLoad==='function') waMsgSupaLoad(); },
+  rcl:        function(){ if(typeof rclLoad==='function') rclLoad(function(){ rclRender(); }); }
 };
 /* ===== I DATI CHE SERVONO A TUTTI =====
    Ogni sezione carica i propri dati quando la si apre. Il guaio e' che alcune
@@ -36854,7 +36865,8 @@ function eaCaricaBase(){
   var passi = [
     function(){ if(typeof mzSupaLoad==='function') mzSupaLoad(); },
     function(){ if(typeof clSupaLoad==='function') clSupaLoad(); },
-    function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); }
+    function(){ if(typeof cvSupaLoad==='function') cvSupaLoad(); },
+    function(){ if(typeof rclLoad==='function' && typeof rclVisibile==='function' && rclVisibile()) rclLoad(function(){ try{ rclBadge(); }catch(e){} }); }
   ];
   /* uno alla volta e distanziati: partendo tutti insieme all'avvio
      rallentano la prima schermata proprio mentre la si sta guardando */
@@ -36905,6 +36917,152 @@ try{ window.eaSyncVista=eaSyncVista; window.eaSyncVivo=eaSyncVivo; window.eaVist
 var MN_ADMIN_MAIL='europaautobusiness@gmail.com';
 /* FASE DI PROVA: la sezione e' attiva solo per queste persone. Per aprirla a
    tutti basta svuotare l'elenco (MN_BETA=[]). */
+
+/* ===================== RICHIESTE CLIENTI (app "La mia auto") =====================
+   Il cliente, dall'app area-clienti, manda richieste (assistenza, tagliando,
+   carrozzeria...) che finiscono nella tabella richieste_cliente su Supabase.
+   Qui si leggono, si rispondono e si chiudono. Le nuove fanno partire una
+   mail a vendita@ e amministrazione@ (una volta sola, dalla sessione admin). */
+var RCL_TAB='richieste_cliente';
+var RCL_MAIL_DEST=['vendita@europaautosrl.it','amministrazione@europaautosrl.it'];
+var RCL_TIPI={ assistenza:['🔧','Assistenza / officina'], tagliando:['🛢️','Tagliando'], carrozzeria:['🌩️','Carrozzeria / grandine'],
+  gomme:['🛞','Pneumatici'], finanziamento:['🏦','Finanziamento / polizza'], cambio_auto:['🔁','Cambio auto'], altro:['💬','Altro'] };
+var _rcl=[], _rclFiltro='aperte', _rclErr='', _rclLetto=false;
+function rclVisibile(){
+  try{ var r=(typeof getCurrentRole==='function')?getCurrentRole():''; return r==='admin'||r==='staff'||r==='contabilita'||r==='manager'; }catch(e){ return false; }
+}
+function rclInit(){ rclRender(); rclLoad(function(){ rclRender(); }); }
+function rclLoad(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ _rclErr='Database non raggiungibile.'; if(cb) cb(); return; }
+  try{
+    sb.from(RCL_TAB).select('*').order('created_at',{ascending:false}).limit(500).then(function(res){
+      if(res && !res.error){ _rcl=res.data||[]; _rclErr=''; _rclLetto=true; try{ rclAvvisaNuove(); }catch(e){} try{ rclBadge(); }catch(e){} }
+      else _rclErr=(res&&res.error&&res.error.message)||'errore di lettura';
+      if(cb) cb();
+    }, function(e){ _rclErr=String((e&&e.message)||e); if(cb) cb(); });
+  }catch(e){ _rclErr=String(e); if(cb) cb(); }
+}
+function rclBadge(){
+  try{
+    var btn=document.getElementById('si-rcl'); if(!btn) return;
+    btn.style.display=rclVisibile()?'':'none';
+    var n=_rcl.filter(function(r){ return r.stato==='ricevuta'; }).length;
+    var bd=btn.querySelector('.si-badge');
+    if(!n){ if(bd) bd.remove(); return; }
+    if(!bd){ bd=document.createElement('span'); bd.className='si-badge'; btn.appendChild(bd); }
+    bd.textContent=n;
+  }catch(e){}
+}
+/* Mail per le richieste appena arrivate: solo l'amministratore, una volta. */
+function rclAvvisaNuove(){
+  if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+  if(typeof eaInviaMessaggio!=='function') return;
+  var sb=sbClient(); if(!sb) return;
+  _rcl.filter(function(r){ return r && r.avvisata===false; }).slice(0,10).forEach(function(r){
+    var t=RCL_TIPI[r.tipo]||['💬',r.tipo];
+    var F='font-family:Arial,Helvetica,sans-serif;';
+    var riga=function(k,v){ return v?('<tr><td style="'+F+'font-size:13px;color:#64748b;padding:4px 16px 4px 0;white-space:nowrap;">'+k+'</td><td style="'+F+'font-size:14px;color:#0f172a;font-weight:700;padding:4px 0;">'+docEsc(v)+'</td></tr>'):''; };
+    var corpo='<div style="'+F+'"><div style="font-size:15px;font-weight:800;color:#1a4fa0;margin-bottom:12px;">'+t[0]+' Nuova richiesta dall’app cliente: '+docEsc(t[1])+'</div>'
+      +'<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+      +riga('Cliente', r.nome||r.email)+riga('Email', r.email)+riga('Telefono', r.telefono)+riga('Auto', (r.auto||'')+(r.targa?(' · '+r.targa):''))
+      +riga('Giorno preferito', r.data_pref?rclData(r.data_pref):'')+'</table>'
+      +(r.testo?('<div style="margin-top:12px;padding:12px;background:#f8fafc;border-left:3px solid #1a4fa0;font-size:14px;white-space:pre-wrap;">'+docEsc(r.testo)+'</div>'):'')
+      +((r.foto&&r.foto.length)?('<div style="margin-top:8px;font-size:12px;color:#64748b;">'+r.foto.length+' foto allegate: si vedono nel gestionale, sezione Richieste clienti.</div>'):'')
+      +'<div style="margin-top:14px;font-size:12.5px;color:#64748b;">Rispondi dal gestionale → Richieste clienti: il cliente vede la risposta nell’app.</div></div>';
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    RCL_MAIL_DEST.forEach(function(d){ try{ eaInviaMessaggio({ to:d, subject:'App cliente — '+t[1]+' — '+(r.nome||r.email)+(r.targa?(' · '+r.targa):''), html:html }); }catch(e){} });
+    r.avvisata=true;
+    try{ sb.from(RCL_TAB).update({ avvisata:true }).eq('id', r.id).then(function(){}); }catch(e){}
+    try{ if(typeof notifPush==='function') notifPush('Nuova richiesta dall’app: '+t[1]+' — '+(r.nome||r.email), t[0]); }catch(e){}
+  });
+}
+function rclData(v){ try{ var d=new Date(v); if(isNaN(d)) return String(v||''); return d.toLocaleDateString('it-IT')+(String(v).length>10?(' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')):''); }catch(e){ return ''; } }
+function rclFiltro(v){ _rclFiltro=v; rclRender(); }
+function rclRender(){
+  var w=document.getElementById('rcl-wrap'); if(!w) return;
+  if(!rclVisibile()){ w.innerHTML='<div style="color:#94a3b8;font-size:14px;">Sezione riservata.</div>'; return; }
+  var ap=_rcl.filter(function(r){ return r.stato!=='chiusa'; }), ch=_rcl.filter(function(r){ return r.stato==='chiusa'; });
+  var list=_rclFiltro==='aperte'?ap:(_rclFiltro==='chiuse'?ch:_rcl);
+  var chip=function(k,t,n){ var on=(_rclFiltro===k); return '<button onclick="rclFiltro(\''+k+'\')" style="padding:8px 13px;border-radius:20px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">'+t+' '+n+'</button>'; };
+  var h='<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">'
+    +'<div><div style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:3px;">📱 Richieste clienti</div>'
+    +'<div style="font-size:12.5px;color:#64748b;line-height:1.5;">Arrivano dall’app <b>La mia auto</b>. Rispondi qui: il cliente legge la risposta nell’app. Le nuove fanno partire una mail a vendita@ e amministrazione@.</div></div>'
+    +'<div style="display:flex;gap:8px;"><button onclick="rclLoad(function(){rclRender();})" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">↻ Aggiorna</button>'
+    +((typeof getCurrentRole==='function'&&getCurrentRole()==='admin')?'<button onclick="rclCollega()" style="padding:8px 12px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;">🔗 Collega pratica a un’email</button>':'')
+    +'</div></div>';
+  if(_rclErr) h+='<div style="margin-top:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:9px 11px;font-size:12.5px;">'+docEsc(_rclErr)+(/relation|does not exist|permission|policy/i.test(_rclErr)?'<br>Probabilmente va ancora eseguito lo script SQL <b>supabase_area_clienti.sql</b> su Supabase.':'')+'</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;">'+chip('aperte','Aperte',ap.length)+chip('chiuse','Chiuse',ch.length)+chip('tutte','Tutte',_rcl.length)+'</div>';
+  if(!list.length){ h+='<div style="text-align:center;color:#94a3b8;padding:30px 10px;font-size:14px;">'+(_rclLetto?'Nessuna richiesta in questa scheda.':'Carico…')+'</div>'; w.innerHTML=h; return; }
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;">';
+  list.forEach(function(r){
+    var t=RCL_TIPI[r.tipo]||['💬',r.tipo];
+    var st={ricevuta:['#fff7ed','#9a3412','Ricevuta'],in_lavorazione:['#eff6ff','#1e40af','In lavorazione'],chiusa:['#f0fdf4','#166534','Chiusa']}[r.stato]||['#f1f5f9','#334155',r.stato];
+    var cv=(r.cv_id&&typeof cvById==='function')?cvById(r.cv_id):null;
+    h+='<div style="background:#fff;border:1px solid '+(r.stato==='ricevuta'?'#fed7aa':'#e2e8f0')+';border-radius:12px;padding:14px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div style="font-weight:800;font-size:14px;">'+t[0]+' '+docEsc(t[1])+'</div><span style="background:'+st[0]+';color:'+st[1]+';border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">'+st[2]+'</span></div>'
+      +'<div style="font-size:12px;color:#64748b;margin-top:3px;">'+rclData(r.created_at)+(r.data_pref?(' · preferito: <b>'+rclData(r.data_pref)+'</b>'):'')+'</div>'
+      +'<div style="margin-top:8px;font-size:13.5px;"><b>'+docEsc(r.nome||r.email)+'</b>'+(r.telefono?(' · <a href="tel:'+docEsc(r.telefono)+'" style="color:#1a4fa0;">'+docEsc(r.telefono)+'</a>'):'')+'<br><span style="color:#64748b;font-size:12px;">'+docEsc(r.email)+'</span></div>'
+      +'<div style="font-size:13px;margin-top:4px;color:#334155;">'+docEsc(r.auto||'')+(r.targa?(' · <b>'+docEsc(r.targa)+'</b>'):'')+(cv?(' · <a href="#" onclick="event.preventDefault();cvVendModifica(\''+cv.id+'\')" style="color:#1a4fa0;font-size:12px;">apri pratica</a>'):'')+'</div>'
+      +(r.testo?('<div style="margin-top:8px;padding:9px 11px;background:#f8fafc;border-radius:8px;font-size:13px;white-space:pre-wrap;">'+docEsc(r.testo)+'</div>'):'')
+      +((r.foto&&r.foto.length)?('<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'+r.foto.map(function(f){ return '<a href="'+f+'" target="_blank" rel="noopener"><img src="'+f+'" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;"></a>'; }).join('')+'</div>'):'')
+      +(r.risposta?('<div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border-left:3px solid #16a34a;border-radius:0 8px 8px 0;font-size:13px;"><b>Risposta'+(r.gestita_da?(' di '+docEsc(r.gestita_da)):'')+':</b> '+docEsc(r.risposta)+'</div>'):'')
+      +(r.stato!=='chiusa'?('<textarea id="rcl-r-'+r.id+'" placeholder="Scrivi la risposta al cliente…" style="width:100%;margin-top:10px;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:56px;box-sizing:border-box;">'+docEsc(r.risposta||'')+'</textarea>'
+        +'<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">'
+        +'<button onclick="rclAggiorna(\''+r.id+'\',\'in_lavorazione\')" style="flex:1;padding:9px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">✉️ Rispondi / in lavorazione</button>'
+        +'<button onclick="rclAggiorna(\''+r.id+'\',\'chiusa\')" style="flex:1;padding:9px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">✓ Chiudi</button>'
+        +'</div>'):('<div style="margin-top:8px;"><button onclick="rclAggiorna(\''+r.id+'\',\'in_lavorazione\')" style="padding:7px 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;color:#475569;">Riapri</button></div>'))
+      +'</div>';
+  });
+  w.innerHTML=h+'</div>';
+}
+function rclAggiorna(id, stato){
+  var sb=sbClient(); if(!sb){ alert('Database non raggiungibile.'); return; }
+  var ta=document.getElementById('rcl-r-'+id); var risposta=ta?ta.value.trim():null;
+  var r=_rcl.filter(function(x){ return x.id===id; })[0];
+  var upd={ stato:stato, updated_at:new Date().toISOString(), gestita_da:((typeof _currentUserName!=='undefined'&&_currentUserName)||'') };
+  if(risposta!==null && risposta!==(r&&r.risposta||'')){ upd.risposta=risposta; upd.risposta_ts=new Date().toISOString(); }
+  sb.from(RCL_TAB).update(upd).eq('id', id).then(function(res){
+    if(res && res.error){ alert('Non salvato: '+res.error.message); return; }
+    if(r) Object.assign(r, upd);
+    rclRender(); rclBadge();
+    if(typeof tcToastNew==='function') tcToastNew(stato==='chiusa'?'✓ Richiesta chiusa':'💾 Risposta salvata: il cliente la vede nell’app', true);
+    /* al cliente arriva anche una mail, se abbiamo la risposta */
+    try{
+      if(upd.risposta && r && r.email && typeof eaInviaMessaggio==='function'){
+        var corpo='<div style="font-family:Arial,Helvetica,sans-serif;"><div style="font-size:15px;font-weight:800;color:#1a4fa0;margin-bottom:10px;">Abbiamo risposto alla tua richiesta</div>'
+          +'<div style="font-size:14px;line-height:1.6;white-space:pre-wrap;">'+docEsc(upd.risposta)+'</div>'
+          +'<div style="margin-top:14px;font-size:12.5px;color:#64748b;">Apri l’app <b>La mia auto</b> per vedere lo stato e scriverci di nuovo.</div></div>';
+        eaInviaMessaggio({ to:r.email, subject:'Europa Auto — risposta alla tua richiesta', html:(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo });
+      }
+    }catch(e){}
+  });
+}
+/* Collega una pratica consegnata a un'email diversa da quella del contratto
+   (prova, familiare, indirizzo cambiato): il cliente la vede nell'app. */
+function rclCollega(){
+  var q=prompt('Cognome, nome o targa della pratica da collegare:'); if(!q) return;
+  q=q.toLowerCase().trim();
+  var list=((typeof cvLoad==='function')?cvLoad():[]).filter(function(c){
+    if(!c||!c.isContratto||c.deleted||c.annullato) return false;
+    var blob=(cvNomeCliente(c.cliente||{})+' '+(c.nuovaTarga||'')+' '+((c.autoSnapshot||{}).targa||'')+' '+((c.autoSnapshot||{}).modello||'')).toLowerCase();
+    return blob.indexOf(q)>=0;
+  }).slice(0,8);
+  if(!list.length){ alert('Nessuna pratica trovata.'); return; }
+  var scelta=list.length===1?list[0]:null;
+  if(!scelta){
+    var n=prompt(list.map(function(c,i){ return (i+1)+') '+cvNomeCliente(c.cliente||{})+' — '+((c.autoSnapshot||{}).modello||c.autoDesc||'')+' '+(c.nuovaTarga||(c.autoSnapshot||{}).targa||''); }).join('\n')+'\n\nNumero della pratica:');
+    scelta=list[parseInt(n,10)-1]; if(!scelta) return;
+  }
+  var email=prompt('Email con cui il cliente entra nell’app:', ((scelta.cliente||{}).email||'')); if(!email) return;
+  email=email.trim().toLowerCase();
+  var sb=sbClient(); if(!sb){ alert('Database non raggiungibile.'); return; }
+  sb.from('app_cliente_link').upsert({ email:email, cv_id:scelta.id, creato_da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'') }).then(function(res){
+    if(res && res.error){ alert('Non collegata: '+res.error.message+'\n\nSe la tabella non esiste, esegui prima lo script SQL su Supabase.'); return; }
+    if(typeof tcToastNew==='function') tcToastNew('🔗 Pratica collegata a '+email, true);
+  });
+}
+
 var MN_BETA=['europaautobusiness@gmail.com','contabilita@europaautosrl.it','amministrazione@europaautosrl.it'];
 /* Chi NON deve vedere mansioni e chat, qualunque sia il ruolo: entra, timbra e basta. */
 var MN_ESCLUSI=['ariannapresta80@gmail.com'];
