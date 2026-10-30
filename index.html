@@ -22439,8 +22439,19 @@ function onRender(){
   var list=mzLoad().filter(function(a){
     return a && !a.nlt && (a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata');
   });
-  /* le piu' ferme in cima: sono quelle che hanno piu' bisogno di andare online */
-  list.sort(function(x,y){ return (onGiacenza(y)||0)-(onGiacenza(x)||0); });
+  /* Ordine di lavoro: prima le auto PRONTE da pubblicare (prezzo e foto ma
+     interruttore spento), poi quelle gia' in vetrina, poi quelle a cui manca
+     solo il prezzo (un minuto di lavoro), in fondo quelle senza foto. Dentro
+     ogni gruppo le piu' ferme in cima. */
+  var _rango=function(a){
+    var pr=onNum(a.prezzoVen)>0, f=!!onFoto1(a), on=(a.online===true);
+    if(pr && f && !on) return 0;
+    if(on) return 1;
+    if(f && !pr) return 2;
+    if(!f && pr) return 3;
+    return 4;
+  };
+  list.sort(function(x,y){ var rx=_rango(x), ry=_rango(y); if(rx!==ry) return rx-ry; return (onGiacenza(y)||0)-(onGiacenza(x)||0); });
 
   var nOnline=list.filter(function(a){ return a.online===true; }).length;
   var nPronte=list.filter(function(a){ return onNum(a.prezzoVen)>0 && onFoto1(a); }).length;
@@ -22465,6 +22476,12 @@ function onRender(){
     + chip('manca','Manca qualcosa', nSenzaFoto+nSenzaPrezzo>0?list.length&&0||(mzLoad().filter(function(a){ return a && !a.nlt && (a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata') && (!onFoto1(a)||!(onNum(a.prezzoVen)>0)); }).length):0, '#991b1b')
     +'</div>';
 
+  var _nPronte=Math.max(0, nPronte-nOnline);
+  h+='<div style="background:'+(_nPronte?'#ecfdf5':'#f8fafc')+';border:1px solid '+(_nPronte?'#86efac':'#e2e8f0')+';border-radius:10px;padding:11px 13px;margin-bottom:10px;font-size:13px;color:#0f172a;line-height:1.5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+    +'<div style="flex:1;min-width:200px;"><b style="font-size:15px;">'+_nPronte+(_nPronte===1?' auto pronta':' auto pronte')+' per Google</b> — hanno prezzo e foto, manca solo l\u2019interruttore. '
+    +'In vetrina ora: <b>'+nOnline+'</b>. Nell\u2019elenco qui sotto le pronte sono in cima, poi quelle gi\u00e0 pubblicate, poi quelle senza prezzo, in fondo quelle senza foto.</div>'
+    +(_nPronte?('<button onclick="onPubblicaTutte()" style="padding:9px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\uD83C\uDF10 Pubblica tutte le '+_nPronte+' pronte</button>'):'')
+    +'</div>';
   if(nSenzaFoto){
     h+='<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:11px 13px;margin-bottom:14px;font-size:12.5px;color:#9a3412;line-height:1.5;">'
       +'\u26a0\ufe0f <b>'+nSenzaFoto+' auto senza nemmeno una foto.</b> Un annuncio senza foto non lo guarda nessuno: conviene fotografarle prima di pubblicarle.</div>';
@@ -22476,7 +22493,11 @@ function onRender(){
   list.forEach(function(a){
     var foto=onFoto1(a), pr=onNum(a.prezzoVen), gg=onGiacenza(a), on=(a.online===true);
     var pronta=(pr>0 && foto);
-    h+='<div style="background:#fff;border:1px solid '+(on?'#86efac':'#e2e8f0')+';border-radius:12px;overflow:hidden;'+(on?'box-shadow:0 0 0 1px #86efac;':'')+'">'
+    var _tag = (pronta && !on) ? '<span style="position:absolute;top:8px;left:8px;background:#16a34a;color:#fff;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Pronta per Google</span>'
+             : (!foto ? '<span style="position:absolute;top:8px;left:8px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Manca la foto</span>'
+             : (!(pr>0) ? '<span style="position:absolute;top:8px;left:8px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Manca il prezzo</span>' : ''));
+    h+='<div style="position:relative;background:#fff;border:1px solid '+(on?'#86efac':(pronta?'#16a34a':'#e2e8f0'))+';border-radius:12px;overflow:hidden;'+(on?'box-shadow:0 0 0 1px #86efac;':'')+'">'+_tag
+      +'<button onclick="mzForm(\''+a.id+'\')" title="Apri la scheda del veicolo" style="position:absolute;top:8px;right:8px;padding:5px 10px;border-radius:20px;border:1px solid #cbd5e1;background:rgba(255,255,255,.95);color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;">\u270e Apri scheda</button>'
       + (foto
          ? '<div style="height:150px;background:#f1f5f9 url(\''+foto+'\') center/cover no-repeat;"></div>'
          : '<div style="height:150px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px;font-weight:700;">nessuna foto</div>')
@@ -22502,6 +22523,26 @@ function onRender(){
 }
 
 function onFiltro(k){ window._onFiltro=k; onRender(); }
+/* Accende la pubblicazione su tutte le auto complete (prezzo + foto) ancora
+   spente: e' il modo piu' rapido per mandare su Google tutto il piazzale. */
+function onPubblicaTutte(){
+  if(!onSoloTitolare()) return;
+  try{
+    var l=mzLoad(), n=0, toccate=[];
+    l.forEach(function(a){
+      if(!a || a.nlt) return;
+      if(!(a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata')) return;
+      if(a.online===true) return;
+      if(!(onNum(a.prezzoVen)>0) || !onFoto1(a)) return;
+      a.online=true; a.onlineTs=Date.now(); a.updatedAt=Date.now(); n++; toccate.push(a);
+    });
+    if(!n){ alert('Nessuna auto pronta da pubblicare.'); return; }
+    if(!confirm('Pubblicare in vetrina e su Google '+n+' auto?\n\nSono quelle con prezzo e almeno una foto. Il feed si aggiorna alla prossima generazione (ogni notte, o lanciando il workflow).')){ return; }
+    mzSave(l); toccate.forEach(function(a){ try{ mzSupaUpsert(a); }catch(e){} });
+    onRender();
+    if(typeof tcToastNew==='function') tcToastNew('\ud83c\udf10 '+n+' auto pubblicate', true);
+  }catch(e){ alert('Non riuscito: '+(e&&e.message||e)); }
+}
 
 function onPrezzo(id, val){
   if(!onSoloTitolare()) return;
@@ -24305,6 +24346,8 @@ function mzPromoCambio(){
 }
 try{ window.mzPromoAttiva=mzPromoAttiva; window.mzPromoBadge=mzPromoBadge; window.mzPromoCambio=mzPromoCambio; window.mzPromoSync=mzPromoSync; }catch(e){}
 function mzChiudi(){ try{ eaPostoPulisci('mz'); }catch(e){} var m=document.getElementById('mz-modal'); if(m){ m.style.display='none'; m.innerHTML=''; m.style.zIndex='9999'; /* rimessa al suo posto */ }
+  /* tornando da una scheda aperta da "Auto online", l'elenco si rifa' con i dati nuovi */
+  try{ var _vo=document.getElementById('view-online'); if(_vo && _vo.classList.contains('active') && typeof onRender==='function') onRender(); }catch(e){}
   try{ var c=document.getElementById('cv-modal'); if(!c || c.style.display!=='block') _eaLivello=10050; }catch(e){} }
 /* "Disponibile" e "impegnata" sono due cose distinte, e il filtro dei
    disponibili le guarda entrambe: mettere lo stato a mano senza spegnere
