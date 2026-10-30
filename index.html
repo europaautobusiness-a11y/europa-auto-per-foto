@@ -22483,8 +22483,51 @@ function onTipHTML(a){
   else t='Per andare su Google manca: '+m.blocca.join(', ')+'.'+(m.consigli.length?(' Consigliato anche: '+m.consigli.join(', ')+'.'):'');
   return '<span class="st-info on-tip" tabindex="0" data-tip="'+mzEsc(t)+'" style="position:absolute;bottom:8px;left:8px;width:22px;height:22px;font-size:13px;background:'+(m.blocca.length?'#fff7ed':'#ecfdf5')+';color:'+(m.blocca.length?'#9a3412':'#166534')+';border:1px solid '+(m.blocca.length?'#fed7aa':'#86efac')+';">i</span>';
 }
+/* ===== STATO SU GOOGLE =====
+   Due fonti, lette dal sito auto.europaautosrl.it (stesso dominio):
+   - feed/veicoli.tsv: il feed davvero inviato a Google (rigenerato ogni notte);
+   - feed/stato-google.json: lo stato di approvazione letto da Merchant Center
+     dallo script stato-google.js (se configurato). Senza questo file si sa
+     solo se l'auto e' nel feed, non se Google l'ha approvata. */
+var _onFeedIds=null, _onStato=null, _onStatoTs=0;
+function onRif(a){
+  var t=String(a.targa||'').replace(/[^A-Za-z0-9]/g,'').toUpperCase(); if(t) return t;
+  var n=String(a.id||'').replace(/[^0-9]/g,'').slice(-6); return 'EA'+(n||'0');
+}
+function onStatoCarica(cb){
+  if(_onFeedIds && (Date.now()-_onStatoTs)<5*60000){ if(cb) cb(); return; }
+  var base='https://auto.europaautosrl.it/feed/';
+  var fatti=0, fine=function(){ if(++fatti>=2){ _onStatoTs=Date.now(); if(cb) cb(); } };
+  fetch(base+'veicoli.tsv?v='+Date.now(),{cache:'no-store'}).then(function(r){ return r.ok?r.text():''; }).then(function(t){
+    var ids={}; String(t||'').split(/\r?\n/).slice(1).forEach(function(l){ var id=l.split('\t')[0]; if(id) ids[id.trim().toUpperCase()]=true; });
+    _onFeedIds=ids; fine();
+  }).catch(function(){ _onFeedIds=_onFeedIds||{}; fine(); });
+  fetch(base+'stato-google.json?v='+Date.now(),{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(j){ _onStato=j||null; fine(); }).catch(function(){ _onStato=null; fine(); });
+}
+/* { cls: 'ok'|'rev'|'ko'|'feed'|'no', testo } */
+function onStatoGoogle(a){
+  var rif=onRif(a);
+  var st=(_onStato && _onStato.prodotti) ? (_onStato.prodotti[rif] || _onStato.prodotti[rif.toLowerCase()]) : null;
+  if(st){
+    var v=String(st.stato||'').toLowerCase();
+    if(v==='approved'||v==='approvato') return { cls:'ok', testo:'Su Google: approvata e pubblicata'+(_onStato.aggiornato?(' (controllo del '+new Date(_onStato.aggiornato).toLocaleString('it-IT')+')'):'') };
+    if(v==='pending'||v==='in revisione') return { cls:'rev', testo:'Su Google: in corso di revisione' };
+    if(v==='disapproved'||v==='non approvato') return { cls:'ko', testo:'Su Google: NON approvata'+(st.motivo?(' \u2014 '+st.motivo):'') };
+  }
+  if(_onFeedIds && _onFeedIds[rif]) return { cls:'feed', testo:'Nel feed inviato a Google'+(_onStato?'':' (stato di approvazione non ancora collegato)') };
+  if(a.online===true) return { cls:'rev', testo:'Accesa, ma non ancora nel feed: entra alla prossima generazione (ogni notte, o lanciando il workflow)' };
+  return { cls:'no', testo:'Non su Google: pubblicazione spenta o scheda incompleta' };
+}
+function onStatoBadge(a){
+  var s=onStatoGoogle(a);
+  var map={ ok:['#16a34a','#fff','\u2713'], feed:['#1a4fa0','#fff','\u2713'], rev:['#d97706','#fff','\u23f3'], ko:['#dc2626','#fff','\u2715'], no:['#dc2626','#fff','\u2715'] };
+  var m=map[s.cls]||map.no;
+  return '<span title="'+mzEsc(s.testo)+'" style="position:absolute;bottom:8px;left:38px;width:22px;height:22px;border-radius:50%;background:'+m[0]+';color:'+m[1]+';display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:help;">'+m[2]+'</span>';
+}
 function onRender(){
   var w=document.getElementById('online-wrap'); if(!w) return;
+  /* lo stato Google si legge una volta e poi si ridisegna */
+  if(!_onFeedIds){ onStatoCarica(function(){ try{ onRender(); }catch(e){} }); }
   var filtro=window._onFiltro||'tutte';
   var list=mzLoad().filter(onVendibile);
   /* Ordine di lavoro: prima le auto PRONTE da pubblicare (prezzo e foto ma
@@ -22516,7 +22559,7 @@ function onRender(){
   };
 
   var h='<div style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:3px;">\ud83c\udf10 Auto online</div>'
-    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">Qui ci sono solo le auto disponibili e non impegnate: le opzionate e le prenotate restano fuori. Metti il prezzo, accendi la pubblicazione, e passa col mouse sulla <b>i</b> di ogni foto per vedere cosa manca per Google.</div>'
+    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">Qui ci sono solo le auto disponibili e non impegnate: le opzionate e le prenotate restano fuori. Metti il prezzo, accendi la pubblicazione, e passa col mouse sulla <b>i</b> di ogni foto per vedere cosa manca per Google. Il pallino accanto: <span style="color:#16a34a;font-weight:800;">\u2713 verde</span> approvata e pubblica su Google, <span style="color:#1a4fa0;font-weight:800;">\u2713 blu</span> nel feed inviato (approvazione non ancora letta), <span style="color:#d97706;font-weight:800;">\u23f3 arancio</span> in revisione o in attesa del feed, <span style="color:#dc2626;font-weight:800;">\u2715 rossa</span> non su Google.</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">'
     + chip('tutte','Tutte le disponibili', mzLoad().filter(onVendibile).length, '#1a4fa0')
     + chip('online','\u2713 In vetrina', nOnline, '#166534')
@@ -22547,8 +22590,8 @@ function onRender(){
     h+='<div style="position:relative;background:#fff;border:1px solid '+(on?'#86efac':(pronta?'#16a34a':'#e2e8f0'))+';border-radius:12px;'+(on?'box-shadow:0 0 0 1px #86efac;':'')+'">'+_tag
       +'<button onclick="mzForm(\''+a.id+'\')" title="Apri la scheda del veicolo" style="position:absolute;z-index:2;top:8px;right:8px;padding:5px 10px;border-radius:20px;border:1px solid #cbd5e1;background:rgba(255,255,255,.95);color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;">\u270e Apri scheda</button>'
       + (foto
-         ? '<div style="height:150px;background:#f1f5f9 url(\''+foto+'\') center/cover no-repeat;position:relative;border-radius:12px 12px 0 0;">'+onTipHTML(a)+'</div>'
-         : '<div style="height:150px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px;font-weight:700;position:relative;border-radius:12px 12px 0 0;">nessuna foto'+onTipHTML(a)+'</div>')
+         ? '<div style="height:150px;background:#f1f5f9 url(\''+foto+'\') center/cover no-repeat;position:relative;border-radius:12px 12px 0 0;">'+onTipHTML(a)+onStatoBadge(a)+'</div>'
+         : '<div style="height:150px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px;font-weight:700;position:relative;border-radius:12px 12px 0 0;">nessuna foto'+onTipHTML(a)+onStatoBadge(a)+'</div>')
       +'<div style="padding:12px 13px;">'
       +'<div style="font-weight:800;font-size:14.5px;color:#0f172a;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'\u2014')+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:1px;">'
