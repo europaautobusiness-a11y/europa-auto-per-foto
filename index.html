@@ -44336,6 +44336,7 @@ function crmRenderDashboard(){
   Object.keys(store).forEach(function(k){ var arr=(store[k]&&store[k].attivita)||[]; arr.forEach(function(a){ if(a.fatto) return; if(a.scad&&a.scad<oggi) rit++; else if(a.scad&&a.scad===oggi) ogg++; if(a.scad) prossime.push({key:k,a:a}); }); });
   prossime.sort(function(x,y){ return (x.a.scad||'').localeCompare(y.a.scad||''); });
   var nameByKey={}; leads.forEach(function(l){ nameByKey[l.key]=((l.cognome||'')+' '+(l.nome||'')).trim()||l.key; });
+  var daFare=[]; try{ daFare=crmPromemoriaPipeline(leads, store); }catch(e){}
 
   // KPI cards con icona
   var kpi=function(icon,bg,val,lab){ return '<div style="flex:1;min-width:146px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="width:38px;height:38px;border-radius:10px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:12px;">'+icon+'</div><div style="font-size:25px;font-weight:800;color:#0f172a;line-height:1;">'+val+'</div><div style="font-size:12px;color:#94a3b8;margin-top:5px;">'+lab+'</div></div>'; };
@@ -44348,7 +44349,7 @@ function crmRenderDashboard(){
     +kpi('\uD83D\uDE97','#ecfdf5',contratti.length,'Auto vendute')
     +kpi('\uD83D\uDCB6','#fefce8',cvEuro(_vendutoAnno),'Venduto '+_anno)
     +kpi('\u2705','#f0fdf4',tasso+'%','Chiusura '+_anno+' \u00b7 '+_nVend+' su '+_nPrev+' preventivi')
-    +kpi('\u23F0','#fff7ed',(ogg+rit),'Promemoria')
+    +kpi('\u23F0','#fff7ed',(ogg+rit+daFare.length),'Promemoria')
     +'</div>';
 
   // Riga: grafico barre (vendite/mese) + ciambella pipeline
@@ -44368,7 +44369,9 @@ function crmRenderDashboard(){
   var legend=CRM_STATI.filter(function(s){return cnt[s];}).map(function(s){ return '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#475569;"><span style="width:9px;height:9px;border-radius:50%;background:'+col[s]+';"></span><span style="text-transform:capitalize;">'+s+'</span><b style="margin-left:auto;">'+cnt[s]+'</b></div>'; }).join('');
   var donutCard='<div style="flex:1;min-width:220px;background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);"><div style="font-weight:800;font-size:14px;color:#0f172a;margin-bottom:8px;">Pipeline per fase</div>'+donutSvg+'<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px;">'+legend+'</div></div>';
 
-  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">'+barCard+donutCard+'</div>';
+  /* La ciambella "Pipeline per fase" e la lista "Trattative aperte" sono
+     state tolte su richiesta: dicevano cose che la Pipeline dice meglio. */
+  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">'+barCard+'</div>';
 
   // Riga: trattative in corso + prossimi promemoria
   var prob={'nuovo':20,'ricontattare':45,'trattativa':75};
@@ -44405,8 +44408,72 @@ function crmRenderDashboard(){
   });
   promCard+='</div>';
 
-  h+='<div style="display:flex;gap:16px;flex-wrap:wrap;">'+oppCard+promCard+'</div>';
+  /* ===== PROMEMORIA DALLA PIPELINE =====
+     Oltre alle attivita' segnate a mano, qui compaiono le cose da fare che
+     nascono dal tempo che passa: il preventivo mandato da piu' di 48 ore
+     senza che il cliente sia stato risentito, il lead nuovo di ieri ancora
+     senza primo contatto, il "ricontattare" fermo da tre giorni, la
+     trattativa che non si muove da una settimana. Prima la casella diceva
+     "nessun promemoria" mentre la pipeline era piena di cose scadute. */
+  var promCard2='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;"><div style="font-weight:800;font-size:14px;color:#0f172a;">Prossimi promemoria</div>'
+    +'<div style="font-size:12px;color:#64748b;">'+daFare.length+' da fare'+(prossime.length?(' \u00b7 '+prossime.length+' con data'):'')+'</div></div>';
+  if(!daFare.length && !prossime.length){ promCard2+='<div style="font-size:13px;color:#94a3b8;">Niente in sospeso: tutti i contatti in pipeline sono stati sentiti di recente.</div>'; }
+  daFare.slice(0,12).forEach(function(x){
+    var l=x.lead, chiave=crmKeyJs(l.key);
+    var c=(x.urg>=2)?'#dc2626':((x.urg===1)?'#d97706':'#64748b');
+    promCard2+='<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9;">'
+      +'<div style="width:9px;height:9px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div>'
+      +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(((l.cognome||'')+' '+(l.nome||'')).trim()||l.key)+(l.auto?(' <span style="color:#94a3b8;font-weight:500;">\u00b7 '+crmEsc(l.auto)+'</span>'):'')+'</div>'
+      +'<div style="font-size:12px;color:'+c+';font-weight:600;">'+crmEsc(x.testo)+'</div></div>'
+      +(l.telefono?('<button onclick="crmWaSend('+crmEsc(crmKeyJs(l.telefono))+',\'preventivi\','+crmEsc(crmKeyJs(l.nome))+','+crmEsc(crmKeyJs(l.auto||''))+')" title="Scrivi su WhatsApp" style="border:none;background:#25D366;color:#fff;border-radius:7px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">WhatsApp</button>'):'')
+      +'<button onclick="crmTab(\'pipeline\')" title="Apri in pipeline" style="border:1px solid #cbd5e1;background:#fff;color:#1a4fa0;border-radius:7px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">Pipeline</button>'
+      +'</div>';
+  });
+  if(daFare.length>12) promCard2+='<div style="font-size:12px;color:#64748b;margin-top:8px;">\u2026 e altri '+(daFare.length-12)+' nella Pipeline.</div>';
+  /* le attivita' con data segnate a mano restano, sotto */
+  if(prossime.length){
+    promCard2+='<div style="font-weight:800;font-size:12.5px;color:#475569;margin:14px 0 6px;">Con data</div>';
+    prossime.slice(0,6).forEach(function(pp){
+      var stt=crmAttStato(pp.a);
+      var c=(stt==='ritardo')?'#dc2626':((stt==='oggi')?'#d97706':'#64748b');
+      var nome=nameByKey[pp.key] || pp.key;
+      var chiave=crmKeyJs(pp.key);
+      promCard2+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;">'
+        +'<div style="width:8px;height:8px;border-radius:50%;background:'+c+';flex:0 0 auto;"></div>'
+        +'<div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+crmEsc(nome)+'</div>'
+        +'<div style="font-size:11px;color:#94a3b8;">'+crmEsc(pp.a.tipo||'')+' \u00b7 <span onclick="crmChiudiProm('+crmEsc(chiave)+',&quot;'+crmEsc(pp.a.id||'')+'&quot;)" style="color:#1a4fa0;font-weight:700;cursor:pointer;text-decoration:underline;">segna fatto</span></div></div>'
+        +'<div style="font-size:11px;font-weight:700;color:'+c+';white-space:nowrap;">'+crmEsc(crmDMYfromISO(pp.a.scad))+'</div></div>';
+    });
+  }
+  promCard2+='</div>';
+  h+=promCard2;
   return h;
+}
+/* Le cose da fare che nascono dal tempo trascorso, per i contatti ancora in
+   pipeline. Ogni voce: lead, testo, urgenza (0 normale, 1 oggi, 2 ritardo). */
+function crmPromemoriaPipeline(leads, store){
+  var out=[], now=Date.now(), gg=function(t){ return Math.floor((now-t)/86400000); };
+  var cvs=(typeof cvLoad==='function')?cvLoad():[];
+  (leads||[]).forEach(function(l){
+    try{
+      var rec=(store&&store[l.key])||{};
+      if(!crmInPipeline(l, rec)) return;
+      var st=crmStatoEffettivo(l, rec);
+      if(st==='chiuso vinto'||st==='chiuso perso') return;
+      /* preventivo aperto da 48 ore senza richiamo (stesso criterio del WhatsApp) */
+      var prevAperti=cvs.filter(function(p){ return p && !p.isContratto && !p.annullato && !p.deleted && !eaCvTest(p) && crmKey(p.cliente||{})===l.key; });
+      var daRichiamare=prevAperti.filter(function(p){ return !p.waFatto && (now-(p.createdAt||0))>=48*3600000; })
+        .sort(function(a,b){ return (a.createdAt||0)-(b.createdAt||0); })[0];
+      if(daRichiamare){ var g=gg(daRichiamare.createdAt||now); out.push({ lead:l, testo:'Preventivo di '+g+' giorni fa senza risentire il cliente: richiama o WhatsApp', urg:(g>=5?2:1), t:daRichiamare.createdAt||0 }); return; }
+      var mov=crmUltimoMovimento(l, rec)||0, g2=mov?gg(mov):0;
+      if(st==='nuovo' && mov && g2>=1){ out.push({ lead:l, testo:'Contatto nuovo da '+g2+(g2===1?' giorno':' giorni')+': primo contatto da fare', urg:(g2>=3?2:1), t:mov }); return; }
+      if(st==='ricontattare' && mov && g2>=3){ out.push({ lead:l, testo:'Da ricontattare, fermo da '+g2+' giorni', urg:(g2>=7?2:1), t:mov }); return; }
+      if(st==='trattativa' && mov && g2>=7){ out.push({ lead:l, testo:'Trattativa ferma da '+g2+' giorni: chiudi o riapri il discorso', urg:(g2>=14?2:1), t:mov }); return; }
+    }catch(e){}
+  });
+  out.sort(function(a,b){ return (b.urg-a.urg) || (a.t-b.t); });
+  return out;
 }
 var _crmTab='dashboard';
 function crmTab(t){ _crmTab=t; crmRender(); }
