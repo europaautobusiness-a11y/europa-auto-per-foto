@@ -1403,6 +1403,7 @@ html, body{
 .st-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800;font-style:normal;cursor:help;position:relative;vertical-align:middle;margin-left:6px;outline:none;}
 .st-info::after{content:attr(data-tip);position:absolute;left:0;top:22px;z-index:50;width:min(340px,80vw);background:#0f172a;color:#fff;font-size:12px;font-weight:500;line-height:1.5;padding:10px 12px;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.25);white-space:normal;text-align:left;opacity:0;pointer-events:none;transition:opacity .12s;}
 .st-info:hover::after,.st-info:focus::after{opacity:1;}
+.on-tip::after{top:auto;bottom:30px;left:0;}
 </style>
 
 <div id="tc-vista-dip" style="display:none;">
@@ -22433,12 +22434,38 @@ function onInit(){
   onRender();
 }
 
+/* In "Auto online" stanno SOLO le auto vendibili adesso: disponibili e non
+   impegnate. Le opzionate/prenotate aspettano una consegna e non vanno su
+   Google (Google le rifiuterebbe comunque). */
+function onVendibile(a){ return !!(a && !a.nlt && a.stato==='disponibile' && !a.impegnata); }
+/* Cosa manca a un'auto per l'annuncio Google: i blocchi veri (senza non
+   parte) e i dati consigliati (l'annuncio esce ma povero). */
+function onMancanze(a){
+  var blocca=[], consigli=[];
+  if(!(onNum(a.prezzoVen)>0)) blocca.push('prezzo di vendita');
+  if(!onFoto1(a)) blocca.push('almeno una foto');
+  if(!(a.marca&&a.modello)) blocca.push('marca e modello');
+  if(a.online!==true) blocca.push('interruttore "Pubblica" acceso');
+  if(!(onNum(a.km)>=0 && String(a.km||'').trim()!=='')) consigli.push('chilometri');
+  if(!(a.anno||a.dataImm)) consigli.push('anno o data di immatricolazione');
+  if(!a.colore) consigli.push('colore');
+  if(!a.alimentazione) consigli.push('alimentazione');
+  if(!a.cambio) consigli.push('cambio');
+  if(!a.allestimento) consigli.push('allestimento');
+  if(!a.telaio) consigli.push('telaio (facoltativo in Italia, ma Google lo apprezza)');
+  var _f=(a.foto||[]).length; if(_f>0 && _f<4) consigli.push('pi\u00f9 foto (ora '+_f+', meglio 6-10)');
+  return { blocca:blocca, consigli:consigli };
+}
+function onTipHTML(a){
+  var m=onMancanze(a), t;
+  if(!m.blocca.length) t='\u2713 Pronta per Google'+(a.online===true?' e pubblicata':'')+'. '+(m.consigli.length?('Per un annuncio migliore aggiungi: '+m.consigli.join(', ')+'.'):'Scheda completa.');
+  else t='Per andare su Google manca: '+m.blocca.join(', ')+'.'+(m.consigli.length?(' Consigliato anche: '+m.consigli.join(', ')+'.'):'');
+  return '<span class="st-info on-tip" tabindex="0" data-tip="'+mzEsc(t)+'" style="position:absolute;bottom:8px;left:8px;width:22px;height:22px;font-size:13px;background:'+(m.blocca.length?'#fff7ed':'#ecfdf5')+';color:'+(m.blocca.length?'#9a3412':'#166534')+';border:1px solid '+(m.blocca.length?'#fed7aa':'#86efac')+';">i</span>';
+}
 function onRender(){
   var w=document.getElementById('online-wrap'); if(!w) return;
   var filtro=window._onFiltro||'tutte';
-  var list=mzLoad().filter(function(a){
-    return a && !a.nlt && (a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata');
-  });
+  var list=mzLoad().filter(onVendibile);
   /* Ordine di lavoro: prima le auto PRONTE da pubblicare (prezzo e foto ma
      interruttore spento), poi quelle gia' in vetrina, poi quelle a cui manca
      solo il prezzo (un minuto di lavoro), in fondo quelle senza foto. Dentro
@@ -22468,12 +22495,12 @@ function onRender(){
   };
 
   var h='<div style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:3px;">\ud83c\udf10 Auto online</div>'
-    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">Metti il prezzo e accendi la pubblicazione. In vetrina finiscono solo le auto con prezzo, almeno una foto e l\u2019interruttore acceso.</div>'
+    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">Qui ci sono solo le auto disponibili e non impegnate: le opzionate e le prenotate restano fuori. Metti il prezzo, accendi la pubblicazione, e passa col mouse sulla <b>i</b> di ogni foto per vedere cosa manca per Google.</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">'
-    + chip('tutte','Tutte', (mzLoad().filter(function(a){ return a && !a.nlt && (a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata'); }).length), '#1a4fa0')
+    + chip('tutte','Tutte le disponibili', mzLoad().filter(onVendibile).length, '#1a4fa0')
     + chip('online','\u2713 In vetrina', nOnline, '#166534')
     + chip('pronte','Pronte da pubblicare', nPronte-nOnline>0?(nPronte-nOnline):0, '#b45309')
-    + chip('manca','Manca qualcosa', nSenzaFoto+nSenzaPrezzo>0?list.length&&0||(mzLoad().filter(function(a){ return a && !a.nlt && (a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata') && (!onFoto1(a)||!(onNum(a.prezzoVen)>0)); }).length):0, '#991b1b')
+    + chip('manca','Manca qualcosa', mzLoad().filter(function(a){ return onVendibile(a) && (!onFoto1(a)||!(onNum(a.prezzoVen)>0)); }).length, '#64748b')
     +'</div>';
 
   var _nPronte=Math.max(0, nPronte-nOnline);
@@ -22496,11 +22523,11 @@ function onRender(){
     var _tag = (pronta && !on) ? '<span style="position:absolute;top:8px;left:8px;background:#16a34a;color:#fff;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Pronta per Google</span>'
              : (!foto ? '<span style="position:absolute;top:8px;left:8px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Manca la foto</span>'
              : (!(pr>0) ? '<span style="position:absolute;top:8px;left:8px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:800;">Manca il prezzo</span>' : ''));
-    h+='<div style="position:relative;background:#fff;border:1px solid '+(on?'#86efac':(pronta?'#16a34a':'#e2e8f0'))+';border-radius:12px;overflow:hidden;'+(on?'box-shadow:0 0 0 1px #86efac;':'')+'">'+_tag
+    h+='<div style="position:relative;background:#fff;border:1px solid '+(on?'#86efac':(pronta?'#16a34a':'#e2e8f0'))+';border-radius:12px;'+(on?'box-shadow:0 0 0 1px #86efac;':'')+'">'+_tag
       +'<button onclick="mzForm(\''+a.id+'\')" title="Apri la scheda del veicolo" style="position:absolute;top:8px;right:8px;padding:5px 10px;border-radius:20px;border:1px solid #cbd5e1;background:rgba(255,255,255,.95);color:#1a4fa0;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;">\u270e Apri scheda</button>'
       + (foto
-         ? '<div style="height:150px;background:#f1f5f9 url(\''+foto+'\') center/cover no-repeat;"></div>'
-         : '<div style="height:150px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px;font-weight:700;">nessuna foto</div>')
+         ? '<div style="height:150px;background:#f1f5f9 url(\''+foto+'\') center/cover no-repeat;position:relative;border-radius:12px 12px 0 0;">'+onTipHTML(a)+'</div>'
+         : '<div style="height:150px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px;font-weight:700;position:relative;border-radius:12px 12px 0 0;">nessuna foto'+onTipHTML(a)+'</div>')
       +'<div style="padding:12px 13px;">'
       +'<div style="font-weight:800;font-size:14.5px;color:#0f172a;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim()||'\u2014')+'</div>'
       +'<div style="font-size:11.5px;color:#94a3b8;margin-top:1px;">'
@@ -22530,8 +22557,7 @@ function onPubblicaTutte(){
   try{
     var l=mzLoad(), n=0, toccate=[];
     l.forEach(function(a){
-      if(!a || a.nlt) return;
-      if(!(a.stato==='disponibile'||a.stato==='prenotata'||a.stato==='opzionata')) return;
+      if(!onVendibile(a)) return;
       if(a.online===true) return;
       if(!(onNum(a.prezzoVen)>0) || !onFoto1(a)) return;
       a.online=true; a.onlineTs=Date.now(); a.updatedAt=Date.now(); n++; toccate.push(a);
