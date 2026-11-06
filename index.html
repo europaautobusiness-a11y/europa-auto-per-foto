@@ -7580,7 +7580,7 @@ function pProvvAuto(cv){
       e.modello=(_mm&&_mm.modello)||pModelloSenzaMarca(e.marca, a.modello||String(cv.autoDesc||''));
     })();
     if(!fin){
-      e.tipo='noFin'; e.provv=25; e.provvigione=25; e.finanziaria='Senza Finanziamento';
+      e.tipo='noFin'; e.provv=25+(parseFloat(e.bonusGaranzia)||0); e.provvigione=e.provv; e.finanziaria='Senza Finanziamento';
       e.manca=e.fonte?[]:['fonte'];
       if(!e.manca.length) e.bozza=false;
     } else if(d){
@@ -7647,6 +7647,7 @@ function pProvvAuto(cv){
       }):null;
       var _imp=(typeof pImportoPerFinanziaria==='function')?pImportoPerFinanziaria(_res, d.finanziaria):null;
       if(_imp!=null){
+        if(e.bonusGaranzia) _imp=_imp+(parseFloat(e.bonusGaranzia)||0);   /* la garanzia motore resta */
         e.provvigione=_imp; e.provv=_imp;
         e.finanziaria=cvFinRiconosci(d.finanziaria)||d.finanziaria||'';
         e.calcolataDaDelibera=true;
@@ -7703,6 +7704,27 @@ function pProvvMostrata(r){
     if(isNaN(v)) v=(r.tipo==='noFin')?25:0;
     return v||0;
   }catch(e){ return 0; }
+}
+/* +10 euro al venditore quando il cliente compra la Garanzia Motore alla
+   consegna. Si aggiunge alla riga provvigione della pratica (se c'e') e
+   resta anche quando la riga viene ricalcolata dalla delibera. */
+function pBonusGaranziaMotore(cv){
+  try{
+    if(!cv || !cv.garanziaMotore || !cv.garanziaMotore.acquistata) return;
+    var reg=pLoadReg()||[], r=null;
+    for(var i=0;i<reg.length;i++){ if(reg[i] && reg[i].cvId===cv.id){ r=reg[i]; break; } }
+    if(!r && typeof pProvvAuto==='function'){ pProvvAuto(cv); reg=pLoadReg()||[]; for(var j=0;j<reg.length;j++){ if(reg[j] && reg[j].cvId===cv.id){ r=reg[j]; break; } } }
+    if(!r) return;
+    if(r.bonusGaranzia) return;   /* gia' messo */
+    var b=(typeof CV_GAR_MOTORE!=='undefined')?CV_GAR_MOTORE.provv:10;
+    r.bonusGaranzia=b;
+    r.provvigione=(parseFloat(r.provvigione)||parseFloat(r.provv)||0)+b; r.provv=r.provvigione;
+    r.note=((r.note||'')+' Garanzia Motore +'+b+' \u20ac').trim();
+    r.updatedAt=Date.now();
+    pSaveReg(reg);
+    try{ if(typeof pSupaUpsert==='function') pSupaUpsert(r); }catch(e){}
+    try{ if(typeof tcToastNew==='function') tcToastNew('+'+b+' \u20ac di provvigione al venditore (Garanzia Motore)', true); }catch(e){}
+  }catch(e){ console.warn('pBonusGaranziaMotore', e); }
 }
 function pProvvCalcolata(r){
   var v=parseFloat(r&&r.provvigione); if(isNaN(v)) v=parseFloat(r&&r.provv);
@@ -23291,12 +23313,32 @@ function gsLibCarica(cb){
       .then(function(r){
         if(!r || r.error){ if(cb)cb(); return; }
         var m={};
+        /* Il libretto NUOVO ha la precedenza: se dopo di lui viene caricato
+           un altro documento della stessa famiglia (es. il libretto estero
+           rimesso a posto), prima "vinceva" quello e la targhetta "Libretto"
+           in Vendite spariva pur essendo l'auto immatricolata. */
         (r.data||[]).forEach(function(d){
           if(!d || !d.entita_id) return;
-          if(!m[d.entita_id]) m[d.entita_id]={ path:d.storage_path, nome:d.nome_file, cat:d.categoria };  /* il piu' recente */
+          var cur=m[d.entita_id];
+          if(!cur || (d.categoria==='libretto_nuovo' && cur.cat!=='libretto_nuovo'))
+            m[d.entita_id]={ path:d.storage_path, nome:d.nome_file, cat:d.categoria };
         });
         _gsLib=m;
-        if(cb)cb();
+        /* Libretto nuovo allegato alla PRATICA invece che al veicolo: vale lo
+           stesso, e si aggancia all'auto del contratto. */
+        try{
+          sb.from('documenti').select('entita_id,categoria,nome_file,storage_path,created_at')
+            .eq('entita_tipo','pratica').eq('categoria','libretto_nuovo').order('created_at',{ascending:false})
+            .then(function(r2){
+              if(!r2 || r2.error) { if(cb)cb(); return; }
+              (r2.data||[]).forEach(function(d){
+                var cv=(typeof cvById==='function')?cvById(d.entita_id):null;
+                var aid=cv&&cv.autoId; if(!aid) return;
+                if(!_gsLib[aid] || _gsLib[aid].cat!=='libretto_nuovo') _gsLib[aid]={ path:d.storage_path, nome:d.nome_file, cat:'libretto_nuovo' };
+              });
+              if(cb)cb();
+            }, function(){ if(cb)cb(); });
+        }catch(e){ if(cb)cb(); }
       }, function(){ if(cb)cb(); });
   }catch(e){ if(cb)cb(); }
 }
@@ -24685,16 +24727,21 @@ function mzSalva(){
   }catch(e){}
   try{
     var _targaOra=String(a.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-    if(a.estera && _targaOra && _targaOra!==_targaPrima && typeof cvLoad==='function'){
+    /* Auto estere: Arianna scrive la targa nella scheda del veicolo, e la
+       pratica in Vendite restava "in attesa di immatricolazione". Prima
+       scattava solo se la targa cambiava in QUESTO salvataggio: se era gia'
+       stata scritta (magari da un altro dispositivo) non succedeva niente.
+       Ora basta che la targa ci sia e la pratica sia rimasta indietro. */
+    if(a.estera && _targaOra && typeof cvLoad==='function'){
       var _prat=cvLoad().filter(function(c){
         return c && c.autoId===a.id && !c.annullato && !c.deleted
             && c.statoVendita==='in_attesa_immatricolazione';
       });
       if(_prat.length && typeof cvVendImmatConferma==='function'){
         var _n=(cvNomeCliente(_prat[0].cliente)).trim();
-        if(confirm('Hai inserito la targa '+a.targa+' su un\u2019auto estera.\n\n'
-          +'Segno l\u2019immatricolazione come completata sulla pratica di '+(_n||'vendita')+'?\n\n'
-          +'La pratica passa allo stato successivo e sparisce il pulsante \u00abImmatricolazione completata\u00bb.')){
+        if(confirm('Questa auto ha la targa '+a.targa+' ma la pratica di '+(_n||'vendita')+' \u00e8 ancora \u00abin attesa di immatricolazione\u00bb.\n\n'
+          +'Segno l\u2019immatricolazione come completata?\n\n'
+          +'La pratica passa allo stato successivo (da consegnare o in attesa del saldo) e sparisce il pulsante \u00abImmatricolazione completata\u00bb.')){
           _prat.forEach(function(c){ try{ cvVendImmatConferma(c.id, a.targa); }catch(e){} });
         }
       }
@@ -29801,12 +29848,21 @@ function cvBuildHTML(c, tipo){
      al gestionale (la trovi nella scheda della vendita). */
   var _chiaveOk = (c.doppiaChiaveConsegnata===true);
   var _cort = (c.pacchettoCortesia && c.pacchettoCortesia.acquistato);
-  if(_chiaveOk || c.librettoModalita || _cort){
+  var _gar = (c.garanziaMotore && c.garanziaMotore.acquistata);
+  if(_chiaveOk || c.librettoModalita || _cort || _gar){
     var _cons='';
     if(_chiaveOk) _cons+='<b>Doppia chiave:</b> consegnata al cliente';
     if(c.librettoModalita) _cons+=(_cons?'<br>':'')+'<b>Libretto:</b> '+(c.librettoModalita==='spedito'?'da spedire al cliente':'ritirato fisicamente dal cliente');
     if(_cort) _cons+=(_cons?'<br>':'')+'<b>Pacchetto Auto di Cortesia (\u20ac 60):</b> vettura sostitutiva gratuita per l\u2019intera durata della riparazione in caso di fermo tecnico del veicolo, alla prima disponibilit\u00e0.';
     doc+='<div class="cvh">Consegna</div><div class="cvbox">'+_cons+'</div>';
+    if(_gar){
+      var _g=c.garanziaMotore, _gm=(typeof CV_GAR_MOTORE!=='undefined')?CV_GAR_MOTORE:{prezzo:200,mesi:24,km:40000,titolo:'Garanzia Motore 24 mesi / 40.000 km',testo:''};
+      doc+='<div class="cvh">'+(_gm.titolo)+'</div><div class="cvbox">'
+        +'<b>Il cliente acquista la '+_gm.titolo+'</b> al prezzo di <b>'+cvEuro(_g.prezzo||_gm.prezzo)+'</b> IVA inclusa, corrisposto il giorno della consegna'+(_g.metodo?(' ('+cvEsc(_g.metodo).toLowerCase()+')'):'')+'.<br>'
+        +_gm.testo
+        +'<br><span style="font-size:11px;color:#475569;">Decorrenza: data di consegna '+(c.consegnatoTs?new Date(c.consegnatoTs).toLocaleDateString('it-IT'):'')+(c.kmConsegna?(' \u00b7 km alla consegna '+cvEsc(String(c.kmConsegna))):'')+'. La garanzia \u00e8 prestata da Europa Auto S.r.l. e si aggiunge alla garanzia legale di conformit\u00e0, che resta impregiudicata.</span>'
+        +'</div>';
+    }
   }
   /* Pacchetto manutenzione: se fra i costi extra c'e' la riga, il cliente
      legge cosa comprende e cosa no. Vale sul preventivo e sul contratto. */
@@ -30764,6 +30820,21 @@ function docAvvisaLibrettoNuovo(tipo, id, files){
     if(!cv && tipo==='pratica' && typeof cvById==='function') cv=cvById(id);
     if(!autoId && cv) autoId=cv.autoId||null;
     if(autoId && typeof mzById==='function') a=mzById(autoId);
+    /* Libretto nuovo = immatricolazione fatta. Se la pratica dell'auto e'
+       ancora "in attesa di immatricolazione", si propone di avanzarla qui,
+       senza dover tornare in Vendite a premere il pulsante. */
+    try{
+      if(autoId && typeof cvLoad==='function' && typeof cvVendImmatConferma==='function'){
+        var _inAtt=cvLoad().filter(function(c){ return c && c.autoId===autoId && !c.annullato && !c.deleted && c.statoVendita==='in_attesa_immatricolazione'; });
+        if(_inAtt.length){
+          var _tg=(a&&a.targa)||'';
+          if(!_tg){ _tg=prompt('Libretto nuovo caricato: qual \u00e8 la targa assegnata? (serve per segnare l\u2019immatricolazione sulla pratica di '+(cvNomeCliente(_inAtt[0].cliente)||'vendita')+')','')||''; _tg=String(_tg).toUpperCase().replace(/[^A-Z0-9]/g,''); }
+          if(_tg && confirm('Segno l\u2019immatricolazione come completata sulla pratica di '+(cvNomeCliente(_inAtt[0].cliente)||'vendita')+' con targa '+_tg+'?')){
+            _inAtt.forEach(function(c){ try{ cvVendImmatConferma(c.id, _tg); }catch(e){} });
+          }
+        }
+      }
+    }catch(_e){}
     var snap=(cv&&cv.autoSnapshot)||{};
     var marca=(a&&a.marca)||snap.marca||'', modello=(a&&a.modello)||snap.modello||'';
     var targa=(cv&&cv.nuovaTarga)||(a&&a.targa)||snap.targa||'';
@@ -40688,6 +40759,13 @@ function cvRecMail(id, tipo){
 }
 
 
+/* ===== GARANZIA MOTORE 2 ANNI / 40.000 KM =====
+   Si propone alla consegna (ha preso il posto del pacchetto auto di
+   cortesia). Copre SOLO la rottura del motore, non gli organi esterni.
+   200 euro, pagati il giorno della consegna; al venditore 10 euro. */
+var CV_GAR_MOTORE={ prezzo:200, mesi:24, km:40000, provv:10,
+  titolo:'Garanzia Motore 24 mesi / 40.000 km',
+  testo:'Copre esclusivamente la rottura meccanica del motore (basamento, testata, alberi, pistoni, bielle, valvole e relativa distribuzione interna). Sono esclusi gli organi esterni e ausiliari (turbina, iniezione, frizione, cambio, impianto elettrico, raffreddamento, scarico, accessori) e ogni componente soggetto a usura. Validit\u00e0: 24 mesi dalla consegna o 40.000 km percorsi dalla consegna, al primo dei due termini. La garanzia vale a condizione che la manutenzione programmata sia eseguita nei termini prescritti dal costruttore e documentata.' };
 function cvVendConsegna(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
@@ -40702,12 +40780,14 @@ function cvVendConsegna(id){
     +'<div style="display:flex;gap:8px;margin-bottom:16px;"><button type="button" id="cvk-si" onclick="cvConsKey(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">S\u00EC</button><button type="button" id="cvk-no" onclick="cvConsKey(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">No</button></div>'
     +'<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:8px;">Il libretto va spedito o ritirato fisicamente?</div>'
     +'<div style="display:flex;gap:8px;margin-bottom:18px;"><button type="button" id="cvl-sped" onclick="cvConsLib(\'spedito\')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Spedito</button><button type="button" id="cvl-rit" onclick="cvConsLib(\'ritirato\')" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Ritirato</button></div>'
-    /* ── l'ultima proposta, quella che conta: il pacchetto cortesia ── */
+    /* ── l'ultima proposta, quella che conta: la garanzia motore ── */
     +'<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:2px solid #1a4fa0;border-radius:12px;padding:14px;margin-bottom:16px;">'
     +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">\u2b50 Da proporre al cliente</div>'
-    +'<div style="font-size:15px;font-weight:800;color:#0f172a;">Pacchetto Auto di Cortesia \u2014 60 \u20ac</div>'
-    +'<div style="font-size:13px;color:#334155;margin-top:5px;line-height:1.5;">In caso di guasto che ferma l\u2019auto, <b>vettura sostitutiva gratuita per tutta la durata della riparazione</b>. Una volta sola, vale per sempre.</div>'
-    +'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Consegna del mezzo sostitutivo alla prima disponibilit\u00e0.</div>'
+    +'<div style="font-size:15px;font-weight:800;color:#0f172a;">'+CV_GAR_MOTORE.titolo+' \u2014 '+CV_GAR_MOTORE.prezzo+' \u20ac</div>'
+    +'<div style="font-size:13px;color:#334155;margin-top:5px;line-height:1.5;"><b>Solo rottura del motore</b>, organi esterni esclusi. 2 anni o 40.000 km dalla consegna. Si paga oggi, alla consegna.</div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Al venditore: '+CV_GAR_MOTORE.provv+' \u20ac di provvigione.</div>'
+    +'<div id="cvc-pag" style="display:none;margin-top:10px;"><label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:3px;">Pagata con</label>'
+    +'<select id="cvc-metodo" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;"><option>Contanti</option><option>Bancomat / carta</option><option>Bonifico</option><option>Assegno</option></select></div>'
     +'<div style="display:flex;gap:8px;margin-top:10px;">'
     +'<button type="button" id="cvc-si" onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistato \u2014 60 \u20ac</button>'
     +'<button type="button" id="cvc-no" onclick="cvConsCortesia(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#64748b;">Non lo vuole</button>'
@@ -40720,6 +40800,7 @@ var _cvCons={doppiaChiave:null, libretto:null, cortesia:null, id:null};
 function cvConsKey(v){ _cvCons.doppiaChiave=v; var si=document.getElementById('cvk-si'), no=document.getElementById('cvk-no'); if(si){ si.style.border=v?'2px solid #16a34a':'2px solid #cbd5e1'; si.style.background=v?'#f0fdf4':'#fff'; si.style.color=v?'#15803d':'#334155'; } if(no){ no.style.border=(v===false)?'2px solid #dc2626':'2px solid #cbd5e1'; no.style.background=(v===false)?'#fef2f2':'#fff'; no.style.color=(v===false)?'#dc2626':'#334155'; } }
 function cvConsCortesia(v){
   _cvCons.cortesia=v;
+  try{ var _pg=document.getElementById('cvc-pag'); if(_pg) _pg.style.display=v?'block':'none'; }catch(e){}
   var si=document.getElementById('cvc-si'), no=document.getElementById('cvc-no');
   if(si) si.style.border = v ? '2px solid #16a34a' : '2px solid #cbd5e1';
   if(si) si.style.background = v ? '#f0fdf4' : '#fff';
@@ -40731,11 +40812,15 @@ function cvVendConsegnaFinale(){
   var id=_cvCons.id; if(!id) return;
   if(_cvCons.doppiaChiave===null){ alert('Indica se stai consegnando la doppia chiave.'); return; }
   if(!_cvCons.libretto){ alert('Indica se il libretto va spedito o ritirato.'); return; }
-  if(_cvCons.cortesia===null){ alert('Hai proposto il Pacchetto Auto di Cortesia? Indica la risposta del cliente.'); return; }
+  if(_cvCons.cortesia===null){ alert('Hai proposto la '+CV_GAR_MOTORE.titolo+'? Indica la risposta del cliente.'); return; }
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ cvModChiudi(); return; }
   list[idx].doppiaChiaveConsegnata=_cvCons.doppiaChiave; list[idx].librettoModalita=_cvCons.libretto;
-  if(_cvCons.cortesia){ list[idx].pacchettoCortesia={ acquistato:true, prezzo:60, ts:Date.now() }; }
-  else { list[idx].pacchettoCortesia={ acquistato:false, ts:Date.now() }; }
+  if(_cvCons.cortesia){
+    var _met=(document.getElementById('cvc-metodo')||{}).value||'Contanti';
+    list[idx].garanziaMotore={ acquistata:true, prezzo:CV_GAR_MOTORE.prezzo, mesi:CV_GAR_MOTORE.mesi, km:CV_GAR_MOTORE.km, metodo:_met, ts:Date.now(), venditore:list[idx].venditore||'' };
+    /* al venditore i 10 euro, sulla riga provvigione di questa pratica */
+    try{ if(typeof pBonusGaranziaMotore==='function') pBonusGaranziaMotore(list[idx]); }catch(e){}
+  } else { list[idx].garanziaMotore={ acquistata:false, ts:Date.now() }; }
   list[idx].consegnatoTs=Date.now(); list[idx].statoVendita='consegnato'; list[idx].updatedAt=Date.now();
   if(list[idx].autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===list[idx].autoId;});
     if(_mi<0){ var _tg=((list[idx].nuovaTarga||(list[idx].autoSnapshot&&list[idx].autoSnapshot.targa)||'')+'').toUpperCase().replace(/\s/g,''); if(_tg) _mi=_ml.findIndex(function(x){return ((x.targa||'')+'').toUpperCase().replace(/\s/g,'')===_tg;}); }
