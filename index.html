@@ -17924,14 +17924,10 @@ document.addEventListener('DOMContentLoaded',function(){
         c.promClienteAt=Date.now(); c.promClienteSoppresso=true;
       }
     }catch(e){}
-    /* Solo sui nuovi: in modifica un campo svuotato apposta resta svuotato. */
-    try{
-      if(!(typeof _ccEditId!=='undefined' && _ccEditId) && categoria!=='task'
-         && !c.veicolo && typeof tgVeicoloAcquistato==='function'){
-        var _va=tgVeicoloAcquistato(c);
-        if(_va.daAcquisto) c.veicolo=tgVeicoloTesto(_va);
-      }
-    }catch(e){}
+    /* Il veicolo NON si indovina piu' dagli acquisti del cliente: il
+       collegamento per nome/email prendeva l'auto sbagliata (omonimi, clienti
+       con piu' auto) e finiva nella mail di promemoria. Si scrive solo se lo
+       mette chi fissa l'appuntamento; altrimenti la mail non lo cita. */
     var list = ccLoad();
     if(typeof _ccEditId!=='undefined' && _ccEditId){ var _ei=-1; for(var _k=0;_k<list.length;_k++){ if(list[_k].id===_ccEditId){ _ei=_k; break; } } if(_ei>=0){ c.id=_ccEditId; c.avvisato=list[_ei].avvisato; c.solleciti=list[_ei].solleciti; list[_ei]=c; } else { list.push(c); } _ccEditId=null; } else { list.push(c); }
     ccSave(list); ccSync(c);
@@ -18442,7 +18438,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var r=function(l,v){ if(!v) return;
       righe+='<tr><td style="padding:5px 18px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;">'+l+'</td>'
             +'<td style="padding:5px 0;color:#0f172a;font-size:14px;font-weight:700;">'+ccEsc(v)+'</td></tr>'; };
-    r('Giorno', dataIt); r('Orario', c.ora||''); r('Veicolo', c.veicolo||'');
+    r('Giorno', dataIt); r('Orario', c.ora||'');
     var corpo='<p>Gentile '+ccEsc(c.titolo||'Cliente')+',</p>'
       +'<p>le ricordiamo il suo appuntamento in concessionaria <b>'+quando+'</b>.</p>'
       +'<table style="border-collapse:collapse;margin:16px 0;">'+righe+'</table>'
@@ -18574,7 +18570,6 @@ document.addEventListener('DOMContentLoaded',function(){
                   +'<p>le ricordiamo il suo appuntamento'
                   +(c.data?(' del <b>'+ccEsc(c.data)+'</b>'):'')
                   +(c.ora?(' alle <b>'+ccEsc(c.ora)+'</b>'):'')+'.</p>'
-                  +(c.veicolo?('<p><b>Veicolo:</b> '+ccEsc(c.veicolo)+'</p>'):'')
                   +'<p>La aspettiamo in Via Nigra 4, Paderno Dugnano.<br>'
                   +'Non riesce a venire? Ci avvisi con un messaggio al '+eaTel()+' e spostiamo l\u2019appuntamento.</p>'
                   +'<p><b>Europa Auto</b></p></div>',
@@ -28488,7 +28483,62 @@ function cvCheckPromemoriaWa(){
     if(changed.length){ cvSave(list); if(typeof supaUpsert==='function') changed.forEach(function(p){ supaUpsert('preventivi', p); }); }
   }catch(e){}
 }
-try{ setInterval(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); }, 60000); setTimeout(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); }, 5000); }catch(e){}
+/* ===== PROMEMORIA TAGLIANDO GARANZIA MOTORE (11 MESI DAL RITIRO) =====
+   Il cliente che ha comprato la Garanzia Motore deve fare il tagliando da
+   noi entro 12 mesi. A 11 mesi dalla consegna parte un WhatsApp dal
+   numero aziendale (modello Meta "tagliando_garanzia"); se Meta lo rifiuta
+   (modello non approvato o numero non valido) resta un promemoria alla
+   vendita per mandarlo a mano, con il messaggio gia' pronto. Gira solo
+   dalla sessione dell'amministratore, in orario di apertura, una volta. */
+var GAR_WA_MOD={ nome:'tagliando_garanzia', lingua:'it' };
+var GAR_PROM_MESI=11;
+function cvGarTestoPromemoria(cv){
+  var nome=(typeof eaNomeBello==='function')?eaNomeBello((cv.cliente||{}).nome||''):((cv.cliente||{}).nome||'');
+  var auto=((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'la sua auto');
+  var scad=cv.consegnatoTs?new Date(cv.consegnatoTs):null; if(scad) scad.setMonth(scad.getMonth()+12);
+  return 'Buongiorno '+(nome||'')+', siamo Europa Auto. Fra un mese scade il primo anno dal ritiro della sua '+auto+': per mantenere valida la Garanzia Motore il tagliando va eseguito nella nostra officina entro il '+(scad?scad.toLocaleDateString('it-IT'):'dodicesimo mese')+'. Ci scriva qui o ci chiami allo 02 9181820 per fissare il giorno. A presto!';
+}
+function cvGarLog(cv, voce){ try{ cv.automazioniLog=(cv.automazioniLog||[]).concat([voce]).slice(-20); }catch(e){} }
+function cvCheckGaranziaTagliando(){
+  try{
+    if(typeof cvLoad!=='function') return;
+    if(!(typeof getCurrentRole==='function' && getCurrentRole()==='admin')) return;
+    try{ if(typeof window.eaIsOpen==='function' && !window.eaIsOpen(new Date())) return; }catch(e){}
+    var list=cvLoad(), now=Date.now(), changed=[];
+    list.forEach(function(cv){
+      if(!cv || !cv.isContratto || cv.annullato || cv.deleted) return;
+      var g=cv.garanziaMotore; if(!g || !g.acquistata || !cv.consegnatoTs) return;
+      if(g.promemoriaTs) return;
+      var d=new Date(cv.consegnatoTs); d.setMonth(d.getMonth()+GAR_PROM_MESI);
+      if(d.getTime()>now) return;
+      if(g.promemoriaTentativoTs && (now-g.promemoriaTentativoTs)<24*3600000) return;   /* un tentativo al giorno */
+      g.promemoriaTentativoTs=now; changed.push(cv);
+      var tel=(cv.cliente&&cv.cliente.telefono)||'';
+      var nome=cvNomeCliente(cv.cliente||{});
+      var aMano=function(motivo){
+        g.promemoriaTs=now; g.promemoriaVia='manuale'; g.promemoriaMotivo=motivo||'';
+        cvGarLog(cv,{ ts:now, tipo:'garanzia_tagliando', via:'manuale', esito:motivo||'da inviare a mano' });
+        cvSave(list); try{ supaUpsert('preventivi', cv); }catch(e){}
+        try{ if(typeof notifPush==='function') notifPush('Garanzia Motore: promemoria tagliando da mandare a '+nome+' (WhatsApp automatico non riuscito: '+(motivo||'')+')', '\uD83D\uDD27', {tipo:'wa_prom', refId:cv.id, ruoli:['admin','staff','manager']}); }catch(e){}
+      };
+      if(!tel || typeof waValido!=='function' || !waValido(tel) || typeof waApiInvia!=='function'){ aMano('numero non valido'); return; }
+      var scad=new Date(cv.consegnatoTs); scad.setMonth(scad.getMonth()+12);
+      var dati={ to:waNumero(tel), template:GAR_WA_MOD.nome, lingua:GAR_WA_MOD.lingua,
+        variabili:[ (typeof eaNomeBello==='function'?eaNomeBello((cv.cliente||{}).nome||''):'')||'cliente', ((cv.autoSnapshot&&cv.autoSnapshot.modello)||cv.autoDesc||'auto'), scad.toLocaleDateString('it-IT') ],
+        vero:(typeof waNumVero==='function')?waNumVero():true };
+      waApiInvia(dati).then(function(r){
+        if(r && (r.ok===true || r.messages)){
+          g.promemoriaTs=Date.now(); g.promemoriaVia='whatsapp';
+          cvGarLog(cv,{ ts:Date.now(), tipo:'garanzia_tagliando', via:'whatsapp', esito:'inviato' });
+          cvSave(list); try{ supaUpsert('preventivi', cv); }catch(e){}
+          try{ if(typeof notifPush==='function') notifPush('Promemoria tagliando Garanzia Motore inviato su WhatsApp a '+nome, '\u2705', {tipo:'auto', refId:cv.id, ruoli:['admin','staff','manager']}); }catch(e){}
+        } else aMano((r&&(r.errore||r.error))?String(r.errore||r.error).slice(0,80):'rifiutato da Meta');
+      }, function(e){ aMano(String((e&&e.message)||e).slice(0,80)); });
+    });
+    if(changed.length){ cvSave(list); }
+  }catch(e){ console.warn('cvCheckGaranziaTagliando', e); }
+}
+try{ setInterval(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); cvCheckGaranziaTagliando(); }, 60000); setTimeout(function(){ cvCheckMailPreventivi(); cvCheckPromemoriaWa(); cvCheckGaranziaTagliando(); }, 5000); }catch(e){}
 function cvTrasformaContratto(){
   /* Da qui in poi la permuta va compilata per intero. Si rimette a false in
      ogni uscita, altrimenti resterebbe alzato e il preventivo successivo
@@ -40765,7 +40815,7 @@ function cvRecMail(id, tipo){
    200 euro, pagati il giorno della consegna; al venditore 10 euro. */
 var CV_GAR_MOTORE={ prezzo:200, mesi:24, km:40000, provv:10,
   titolo:'Garanzia Motore 24 mesi / 40.000 km',
-  testo:'Copre esclusivamente la rottura meccanica del motore (basamento, testata, alberi, pistoni, bielle, valvole e relativa distribuzione interna). Sono esclusi gli organi esterni e ausiliari (turbina, iniezione, frizione, cambio, impianto elettrico, raffreddamento, scarico, accessori) e ogni componente soggetto a usura. Validit\u00e0: 24 mesi dalla consegna o 40.000 km percorsi dalla consegna, al primo dei due termini. La garanzia vale a condizione che la manutenzione programmata sia eseguita nei termini prescritti dal costruttore e documentata.' };
+  testo:'Copre esclusivamente la rottura meccanica del motore (basamento, testata, alberi, pistoni, bielle, valvole e relativa distribuzione interna). Sono esclusi gli organi esterni e ausiliari (turbina, iniezione, frizione, cambio, impianto elettrico, raffreddamento, scarico, accessori) e ogni componente soggetto a usura. Validit\u00e0: 24 mesi dalla consegna o 40.000 km percorsi dalla consegna, al primo dei due termini. La garanzia \u00e8 valida a condizione che il cliente esegua presso l\u2019officina di Europa Auto S.r.l. il tagliando di manutenzione entro 12 mesi dalla consegna (o entro i chilometri previsti dal costruttore, se raggiunti prima): il mancato tagliando nei termini fa decadere la garanzia. Il costo del tagliando non \u00e8 compreso nel prezzo della garanzia.' };
 function cvVendConsegna(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
@@ -40789,7 +40839,7 @@ function cvVendConsegna(id){
     +'<div id="cvc-pag" style="display:none;margin-top:10px;"><label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:3px;">Pagata con</label>'
     +'<select id="cvc-metodo" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;"><option>Contanti</option><option>Bancomat / carta</option><option>Bonifico</option><option>Assegno</option></select></div>'
     +'<div style="display:flex;gap:8px;margin-top:10px;">'
-    +'<button type="button" id="cvc-si" onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistato \u2014 60 \u20ac</button>'
+    +'<button type="button" id="cvc-si" onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistata \u2014 '+CV_GAR_MOTORE.prezzo+' \u20ac</button>'
     +'<button type="button" id="cvc-no" onclick="cvConsCortesia(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#64748b;">Non lo vuole</button>'
     +'</div></div>'
     +'<div style="display:flex;gap:8px;"><button type="button" onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvVendConsegnaFinale()" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">\u2705 Conferma consegna</button></div>'
@@ -41522,6 +41572,14 @@ function notifAutomazioniAttive(){
     cvs.forEach(function(p){ if(!p||p.isContratto||p.annullato) return; if(!(p.cliente&&p.cliente.telefono)) return; var eta=now-(p.createdAt||now); var nome=(((p.cliente.cognome||'')+' '+(p.cliente.nome||'')).trim())||'cliente';
       if(!p.waPromemoria48 && eta<48*3600000){ var h=Math.max(0,Math.round((48*3600000-eta)/3600000)); out.push({icon:'\ud83d\udcac',testo:'Promemoria WhatsApp per '+nome+' tra ~'+h+'h'}); }
       else if(!p.waOfferta96 && eta<96*3600000){ var h2=Math.max(0,Math.round((96*3600000-eta)/3600000)); out.push({icon:'\ud83c\udff7\ufe0f',testo:'Offerta 48h per '+nome+' tra ~'+h2+'h (se non confermato)'}); }
+    });
+    cvs.forEach(function(p){
+      try{
+        var g=p&&p.garanziaMotore; if(!g||!g.acquistata||!p.consegnatoTs||g.promemoriaTs) return;
+        var d=new Date(p.consegnatoTs); d.setMonth(d.getMonth()+GAR_PROM_MESI);
+        var gg=Math.ceil((d.getTime()-now)/86400000);
+        out.push({icon:'\ud83d\udd27',testo:'Garanzia Motore: WhatsApp tagliando a '+(cvNomeCliente(p.cliente||{})||'cliente')+(gg>0?(' il '+d.toLocaleDateString('it-IT')+' (tra '+gg+' gg)'):' in partenza')});
+      }catch(e){}
     });
     cvs.forEach(function(p){ if(p&&!p.isContratto&&!p.annullato&&!p.emailInviata&&p.mailDaInviareAt&&p.mailDaInviareAt>now){ var nome=(cvNomeCliente(p.cliente)).trim()||'cliente'; var m=Math.max(0,Math.round((p.mailDaInviareAt-now)/60000)); out.push({icon:'\ud83d\udce7',testo:'Email preventivo a '+nome+' tra ~'+m+' min'}); } });
   }catch(e){}
@@ -44660,6 +44718,49 @@ function crmArchCercaVecchia(){
       }).join('')+(list.length>=400?'<div style="font-size:12px;color:#94a3b8;">Mostro i primi 400 risultati: restringi la ricerca.</div>':'');
     });
 }
+/* ===== AUTOMAZIONI: COSA PARTE DA SOLO E COSA E' GIA' PARTITO =====
+   Le regole sono scritte qui perche' si vedano: nessuno deve ricordarle. */
+function crmRenderAutomazioni(){
+  var now=Date.now(), E=function(x){ return String(x==null?'':x).replace(/</g,'&lt;'); };
+  var regole=[
+    ['\ud83d\udcac','Promemoria WhatsApp preventivo','48 ore dopo un preventivo senza risposta: avviso alla vendita di scrivere al cliente (si ripete, max '+(typeof WA_RIP_MAX!=='undefined'?WA_RIP_MAX:3)+' volte, in orario di apertura).'],
+    ['\ud83c\udff7\ufe0f','Offerta 48h','96 ore dopo il preventivo, se non confermato: proposta dell\u2019offerta a tempo.'],
+    ['\u2709\ufe0f','Mail del preventivo','Parte da sola all\u2019ora programmata, se non \u00e8 stata bloccata o inviata prima.'],
+    ['\ud83d\udd27','Garanzia Motore: tagliando','11 mesi dopo la consegna: WhatsApp automatico dal numero aziendale (modello Meta \u201ctagliando_garanzia\u201d). Se Meta lo rifiuta, promemoria alla vendita con il testo pronto.'],
+    ['\u2b50','Richiesta recensione','Dalla scheda consegnate, a mano, via WhatsApp o mail.'],
+    ['\ud83d\udcc5','Promemoria pipeline','Contatti nuovi, da ricontattare o trattative ferme: li vedi in Dashboard, calcolati sul tempo trascorso.']
+  ];
+  var h='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;margin-bottom:14px;"><div style="font-weight:800;font-size:15px;margin-bottom:8px;">\u2699\ufe0f Regole attive</div>'
+    +regole.map(function(r){ return '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="font-size:18px;">'+r[0]+'</span><div><b>'+r[1]+'</b><div style="color:#64748b;">'+r[2]+'</div></div></div>'; }).join('')
+    +'<div style="font-size:11.5px;color:#94a3b8;margin-top:8px;">Gli invii automatici partono dal gestionale aperto sul PC dell\u2019amministratore, negli orari di apertura.</div></div>';
+  var att=(typeof notifAutomazioniAttive==='function')?notifAutomazioniAttive():[];
+  h+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;margin-bottom:14px;"><div style="font-weight:800;font-size:15px;margin-bottom:8px;">\u23f3 In attesa ('+att.length+')</div>'
+    +(att.length?att.map(function(a){ return '<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;"><span>'+a.icon+'</span><span>'+E(a.testo)+'</span></div>'; }).join(''):'<div style="font-size:13px;color:#94a3b8;">Niente in attesa.</div>')+'</div>';
+  var log=[];
+  try{
+    (cvLoad()||[]).forEach(function(cv){
+      if(!cv) return;
+      (cv.automazioniLog||[]).forEach(function(v){ log.push({ ts:v.ts, cv:cv, tipo:v.tipo, via:v.via, esito:v.esito }); });
+      if(cv.waFatto && cv.waFattoTs) log.push({ ts:cv.waFattoTs, cv:cv, tipo:'wa_preventivo', via:'whatsapp', esito:'inviato' });
+      if(cv.emailInviata && cv.emailInviataTs) log.push({ ts:cv.emailInviataTs, cv:cv, tipo:'mail_preventivo', via:'mail', esito:'inviata' });
+      if(cv.recensione && cv.recensione.richiestaTs) log.push({ ts:cv.recensione.richiestaTs, cv:cv, tipo:'recensione', via:cv.recensione.via||'', esito:'richiesta' });
+    });
+  }catch(e){}
+  log.sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+  var nomi={ garanzia_tagliando:'Garanzia Motore \u2014 tagliando', wa_preventivo:'WhatsApp preventivo', mail_preventivo:'Mail preventivo', recensione:'Richiesta recensione' };
+  h+='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;"><div style="font-weight:800;font-size:15px;margin-bottom:8px;">\ud83d\udce4 Invii ('+log.length+')</div>';
+  if(!log.length) h+='<div style="font-size:13px;color:#94a3b8;">Ancora nessun invio registrato.</div>';
+  log.slice(0,80).forEach(function(v){
+    var manuale=(v.via==='manuale'), cl=v.cv.cliente||{}, tel=cl.telefono||'';
+    h+='<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">'
+      +'<div style="width:9px;height:9px;border-radius:50%;background:'+(manuale?'#d97706':'#16a34a')+';flex:0 0 auto;"></div>'
+      +'<div style="flex:1;min-width:0;"><b>'+E(nomi[v.tipo]||v.tipo)+'</b> \u2014 '+E(cvNomeCliente(cl)||'')+'<div style="color:#64748b;font-size:12px;">'+new Date(v.ts||0).toLocaleString('it-IT')+' \u00b7 '+E(v.via||'')+' \u00b7 '+E(v.esito||'')+'</div></div>'
+      +((manuale && v.tipo==='garanzia_tagliando' && tel)?('<button onclick="waOpen('+JSON.stringify(tel).replace(/"/g,'&quot;')+','+JSON.stringify(cvGarTestoPromemoria(v.cv)).replace(/"/g,'&quot;')+')" style="border:none;background:#25D366;color:#fff;border-radius:7px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">Manda ora</button>'):'')
+      +'</div>';
+  });
+  h+='</div>';
+  return h;
+}
 function crmRender(){
   var wrap=document.getElementById('view-crm'); if(!wrap) return;
   /* La scheda Contatti ripescava ogni cliente mai passato di qui, storico
@@ -44672,9 +44773,10 @@ function crmRender(){
     var _nl=(_leadCache||[]).filter(function(x){ return (x.stato||'nuovo')==='nuovo'; }).length;
     if(_nl) tabs[1][1]='Lead online ('+_nl+')';
   }catch(e){}
+  tabs.push(['automazioni','Automazioni','\u2699\ufe0f']);
   if(_crmTab==='lead') _crmTab='pipeline';   /* chi ci era rimasto dentro */
   var tb='<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;-webkit-overflow-scrolling:touch;">'+tabs.map(function(t){ var on=_crmTab===t[0]; return '<button onclick="crmTab(\''+t[0]+'\')" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#475569')+';font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?'0 2px 6px rgba(26,79,160,.25)':'none')+';">'+t[2]+' '+t[1]+'</button>'; }).join('')+'</div>';
-  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='mail7' ? ml7Render() : (_crmTab==='provenienze' ? crmRenderProvenienze() : (_crmTab==='archivio' ? crmRenderArchivio() : crmRenderKanban()))))));
+  var body = _crmTab==='dashboard' ? crmRenderDashboard() : (_crmTab==='online' ? crmRenderLeadOnline() : (_crmTab==='consegnate' ? crmRenderConsegnate() : (_crmTab==='assicurazioni' ? crmRenderAssic() : (_crmTab==='mail7' ? ml7Render() : (_crmTab==='provenienze' ? crmRenderProvenienze() : (_crmTab==='archivio' ? crmRenderArchivio() : (_crmTab==='automazioni' ? crmRenderAutomazioni() : crmRenderKanban())))))));
   wrap.innerHTML='<div style="max-width:1400px;margin:0 auto;"><div style="font-size:22px;font-weight:800;color:#0f172a;">CRM</div><div style="font-size:13px;color:#94a3b8;margin-bottom:16px;">Contatti, trattative e follow-up</div>'+tb+body+'</div>';
 }
 function crmRenderLead(){
