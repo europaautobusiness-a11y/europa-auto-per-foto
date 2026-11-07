@@ -7706,24 +7706,32 @@ function pProvvMostrata(r){
   }catch(e){ return 0; }
 }
 /* +10 euro al venditore quando il cliente compra la Garanzia Motore alla
-   consegna. Si aggiunge alla riga provvigione della pratica (se c'e') e
-   resta anche quando la riga viene ricalcolata dalla delibera. */
+   consegna. E' una RIGA A PARTE nel registro, nel mese della CONSEGNA:
+   l'auto venduta a ottobre e consegnata a novembre porta la provvigione
+   della vendita su ottobre e i 10 euro della garanzia su novembre. */
 function pBonusGaranziaMotore(cv){
   try{
     if(!cv || !cv.garanziaMotore || !cv.garanziaMotore.acquistata) return;
-    var reg=pLoadReg()||[], r=null;
-    for(var i=0;i<reg.length;i++){ if(reg[i] && reg[i].cvId===cv.id){ r=reg[i]; break; } }
-    if(!r && typeof pProvvAuto==='function'){ pProvvAuto(cv); reg=pLoadReg()||[]; for(var j=0;j<reg.length;j++){ if(reg[j] && reg[j].cvId===cv.id){ r=reg[j]; break; } } }
-    if(!r) return;
-    if(r.bonusGaranzia) return;   /* gia' messo */
+    var reg=pLoadReg()||[], idGar=String(cv.id)+'#garanzia';
+    for(var i=0;i<reg.length;i++){ if(reg[i] && reg[i].cvId===idGar) return; }   /* gia' segnata */
     var b=(typeof CV_GAR_MOTORE!=='undefined')?CV_GAR_MOTORE.provv:10;
-    r.bonusGaranzia=b;
-    r.provvigione=(parseFloat(r.provvigione)||parseFloat(r.provv)||0)+b; r.provv=r.provvigione;
-    r.note=((r.note||'')+' Garanzia Motore +'+b+' \u20ac').trim();
-    r.updatedAt=Date.now();
-    pSaveReg(reg);
-    try{ if(typeof pSupaUpsert==='function') pSupaUpsert(r); }catch(e){}
-    try{ if(typeof tcToastNew==='function') tcToastNew('+'+b+' \u20ac di provvigione al venditore (Garanzia Motore)', true); }catch(e){}
+    var ts=cv.consegnatoTs||cv.garanziaMotore.ts||Date.now(), d=new Date(ts);
+    var mese=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    var base=null; for(var j=0;j<reg.length;j++){ if(reg[j] && reg[j].cvId===cv.id){ base=reg[j]; break; } }
+    var a=cv.autoSnapshot||{};
+    var _mm=(typeof pMarcaModelloDaCv==='function')?pMarcaModelloDaCv(cv):null;
+    var e={ id:Date.now()+Math.floor(Math.random()*1000), cvId:idGar, cvRif:cv.id,
+      data:d.toLocaleDateString('it-IT'), mese:mese,
+      cliente:cvNomeCliente(cv.cliente||{}),
+      marca:(base&&base.marca)||(_mm&&_mm.marca)||a.marca||'',
+      modello:(base&&base.modello)||(_mm&&_mm.modello)||a.modello||'',
+      fonte:(base&&base.fonte)||'', finanziaria:'Garanzia Motore',
+      tipo:'garanzia', provv:b, provvigione:b, bozza:false, manuale:true,
+      note:'Garanzia Motore venduta alla consegna del '+d.toLocaleDateString('it-IT'),
+      updatedAt:Date.now() };
+    reg.push(e); pSaveReg(reg);
+    try{ if(typeof pSupaUpsert==='function') pSupaUpsert(e); }catch(_e){}
+    try{ if(typeof tcToastNew==='function') tcToastNew('+'+b+' \u20ac di provvigione al venditore su '+pGetMeseLabel(mese)+' (Garanzia Motore)', true); }catch(_e){}
   }catch(e){ console.warn('pBonusGaranziaMotore', e); }
 }
 function pProvvCalcolata(r){
@@ -9482,7 +9490,7 @@ function pRenderReg() {
         }
       }catch(e){}
     }
-    var tipoLabel = r.tipo==='attesa'?'In attesa delibera':(r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato'));
+    var tipoLabel = r.tipo==='garanzia'?'Garanzia Motore':(r.tipo==='attesa'?'In attesa delibera':(r.tipo==='noFin'?'Senza fin.':(r.sotto==='SI'?'Sottocosto':'Finanziato')));
     if(_sotto) tipoLabel = '<span style="color:#9a3412;font-weight:800;">\u26a0 Sottocosto</span><br><span style="font-size:10px;color:#b45309;">'+_sottoCome+'</span>';
     var tanC  = isFin?(r.tan ?r.tan +'%':'—'):'—';
     var rateC = isFin?(r.rate?r.rate+'m':'—'):'—';
@@ -29906,7 +29914,7 @@ function cvBuildHTML(c, tipo){
     if(_cort) _cons+=(_cons?'<br>':'')+'<b>Pacchetto Auto di Cortesia (\u20ac 60):</b> vettura sostitutiva gratuita per l\u2019intera durata della riparazione in caso di fermo tecnico del veicolo, alla prima disponibilit\u00e0.';
     doc+='<div class="cvh">Consegna</div><div class="cvbox">'+_cons+'</div>';
     if(_gar){
-      var _g=c.garanziaMotore, _gm=(typeof CV_GAR_MOTORE!=='undefined')?CV_GAR_MOTORE:{prezzo:200,mesi:24,km:40000,titolo:'Garanzia Motore 24 mesi / 40.000 km',testo:''};
+      var _g=c.garanziaMotore, _gm=(typeof CV_GAR_MOTORE!=='undefined')?CV_GAR_MOTORE:{prezzo:200,mesi:24,kmMax:50000,titolo:'Garanzia Motore 24 mesi',testo:''};
       doc+='<div class="cvh">'+(_gm.titolo)+'</div><div class="cvbox">'
         +'<b>Il cliente acquista la '+_gm.titolo+'</b> al prezzo di <b>'+cvEuro(_g.prezzo||_gm.prezzo)+'</b> IVA inclusa, corrisposto il giorno della consegna'+(_g.metodo?(' ('+cvEsc(_g.metodo).toLowerCase()+')'):'')+'.<br>'
         +_gm.testo
@@ -40813,11 +40821,19 @@ function cvRecMail(id, tipo){
    Si propone alla consegna (ha preso il posto del pacchetto auto di
    cortesia). Copre SOLO la rottura del motore, non gli organi esterni.
    200 euro, pagati il giorno della consegna; al venditore 10 euro. */
-var CV_GAR_MOTORE={ prezzo:200, mesi:24, km:40000, provv:10,
-  titolo:'Garanzia Motore 24 mesi / 40.000 km',
-  testo:'Copre esclusivamente la rottura meccanica del motore (basamento, testata, alberi, pistoni, bielle, valvole e relativa distribuzione interna). Sono esclusi gli organi esterni e ausiliari (turbina, iniezione, frizione, cambio, impianto elettrico, raffreddamento, scarico, accessori) e ogni componente soggetto a usura. Validit\u00e0: 24 mesi dalla consegna o 40.000 km percorsi dalla consegna, al primo dei due termini. La garanzia \u00e8 valida a condizione che il cliente esegua presso l\u2019officina di Europa Auto S.r.l. il tagliando di manutenzione entro 12 mesi dalla consegna (o entro i chilometri previsti dal costruttore, se raggiunti prima): il mancato tagliando nei termini fa decadere la garanzia. Il costo del tagliando non \u00e8 compreso nel prezzo della garanzia.' };
+var CV_GAR_MOTORE={ prezzo:200, mesi:24, kmMax:50000, provv:10,
+  titolo:'Garanzia Motore 24 mesi',
+  testo:'Copre esclusivamente la rottura meccanica del motore (basamento, testata, alberi, pistoni, bielle e valvole). Sono esclusi gli organi esterni e ausiliari (turbina, iniezione, frizione, cambio, impianto elettrico, raffreddamento, scarico, accessori) e ogni componente soggetto a usura. Validit\u00e0: 24 mesi dalla data di consegna. Attivabile solo su veicoli con percorrenza non superiore a 50.000 km al momento della consegna. La garanzia \u00e8 valida a condizione che il cliente esegua presso l\u2019officina di Europa Auto S.r.l. il tagliando di manutenzione entro 12 mesi dalla consegna (o entro i chilometri previsti dal costruttore, se raggiunti prima): il mancato tagliando nei termini fa decadere la garanzia. Il costo del tagliando non \u00e8 compreso nel prezzo della garanzia.' };
 function cvVendConsegna(id){
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
+  /* chilometri dell'auto: la garanzia si puo' attivare solo fino a 50.000 */
+  var _kmAuto=null;
+  try{
+    var _mzA=(cv.autoId && typeof mzById==='function')?mzById(cv.autoId):null;
+    var _kv=cv.kmConsegna||(_mzA&&_mzA.km)||((cv.autoSnapshot||{}).km)||'';
+    _kv=parseInt(String(_kv).replace(/[^0-9]/g,''),10); if(!isNaN(_kv)) _kmAuto=_kv;
+  }catch(e){}
+  var _garOk=(_kmAuto==null)||(_kmAuto<=CV_GAR_MOTORE.kmMax);
   var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
   var tuttiConf = pags.length>0 && pags.every(function(p){return p.confermato;});
   if(!tuttiConf){ alert('Non puoi segnare come CONSEGNATO: il saldo non risulta ancora confermato.\n\nConferma tutti i pagamenti (caparra e saldo/finanziamento) prima di procedere alla consegna.'); return; }
@@ -40834,12 +40850,13 @@ function cvVendConsegna(id){
     +'<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:2px solid #1a4fa0;border-radius:12px;padding:14px;margin-bottom:16px;">'
     +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">\u2b50 Da proporre al cliente</div>'
     +'<div style="font-size:15px;font-weight:800;color:#0f172a;">'+CV_GAR_MOTORE.titolo+' \u2014 '+CV_GAR_MOTORE.prezzo+' \u20ac</div>'
-    +'<div style="font-size:13px;color:#334155;margin-top:5px;line-height:1.5;"><b>Solo rottura del motore</b>, organi esterni esclusi. 2 anni o 40.000 km dalla consegna. Si paga oggi, alla consegna.</div>'
+    +'<div style="font-size:13px;color:#334155;margin-top:5px;line-height:1.5;"><b>Solo rottura del motore</b>, organi esterni esclusi. 2 anni dalla consegna; attivabile solo fino a 50.000 km. Si paga oggi, alla consegna.</div>'
     +'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Al venditore: '+CV_GAR_MOTORE.provv+' \u20ac di provvigione.</div>'
+    +(_garOk?'':('<div style="margin-top:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:8px 10px;font-size:12.5px;font-weight:700;">\u26a0 Auto con '+_kmAuto.toLocaleString('it-IT')+' km: oltre i '+CV_GAR_MOTORE.kmMax.toLocaleString('it-IT')+' km, la garanzia non si pu\u00f2 attivare.</div>'))
     +'<div id="cvc-pag" style="display:none;margin-top:10px;"><label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:3px;">Pagata con</label>'
     +'<select id="cvc-metodo" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;"><option>Contanti</option><option>Bancomat / carta</option><option>Bonifico</option><option>Assegno</option></select></div>'
     +'<div style="display:flex;gap:8px;margin-top:10px;">'
-    +'<button type="button" id="cvc-si" onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistata \u2014 '+CV_GAR_MOTORE.prezzo+' \u20ac</button>'
+    +'<button type="button" id="cvc-si" '+(_garOk?'':'disabled title="Oltre 50.000 km: non attivabile" ')+'onclick="cvConsCortesia(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2705 Acquistata \u2014 '+CV_GAR_MOTORE.prezzo+' \u20ac</button>'
     +'<button type="button" id="cvc-no" onclick="cvConsCortesia(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#64748b;">Non lo vuole</button>'
     +'</div></div>'
     +'<div style="display:flex;gap:8px;"><button type="button" onclick="cvModChiudi()" style="flex:1;padding:12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">Annulla</button><button type="button" onclick="cvVendConsegnaFinale()" style="flex:1;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">\u2705 Conferma consegna</button></div>'
@@ -40867,7 +40884,7 @@ function cvVendConsegnaFinale(){
   list[idx].doppiaChiaveConsegnata=_cvCons.doppiaChiave; list[idx].librettoModalita=_cvCons.libretto;
   if(_cvCons.cortesia){
     var _met=(document.getElementById('cvc-metodo')||{}).value||'Contanti';
-    list[idx].garanziaMotore={ acquistata:true, prezzo:CV_GAR_MOTORE.prezzo, mesi:CV_GAR_MOTORE.mesi, km:CV_GAR_MOTORE.km, metodo:_met, ts:Date.now(), venditore:list[idx].venditore||'' };
+    list[idx].garanziaMotore={ acquistata:true, prezzo:CV_GAR_MOTORE.prezzo, mesi:CV_GAR_MOTORE.mesi, kmMax:CV_GAR_MOTORE.kmMax, metodo:_met, ts:Date.now(), venditore:list[idx].venditore||'' };
     /* al venditore i 10 euro, sulla riga provvigione di questa pratica */
     try{ if(typeof pBonusGaranziaMotore==='function') pBonusGaranziaMotore(list[idx]); }catch(e){}
   } else { list[idx].garanziaMotore={ acquistata:false, ts:Date.now() }; }
