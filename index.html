@@ -26789,6 +26789,11 @@ function cvForm(id, fromVend){
     h+='<button onclick="cvStampaESalva()" style="margin-top:14px;width:100%;padding:13px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">🖨️ Stampa preventivo</button>';
     if(c){
       h+='<button onclick="cvTrasformaContratto()" style="margin-top:8px;width:100%;padding:12px;border-radius:9px;border:2px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">\ud83d\udcc4 Trasforma in proposta d’acquisto</button>';
+      /* Stesso cliente, altra auto: nasce un SECONDO preventivo, il primo
+         resta in archivio. Prima si cambiava l'auto dentro lo stesso
+         preventivo e il precedente spariva. */
+      h+='<button onclick="cvNuovoStessoCliente(\''+c.id+'\')" style="margin-top:8px;width:100%;padding:11px;border-radius:9px;border:1px solid #0ea5e9;background:#f0f9ff;color:#0369a1;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">\u2795 Altro preventivo per questo cliente (altra auto)</button>';
+      h+='<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;">Tiene questo preventivo e ne apre uno nuovo con gli stessi dati del cliente.</div>';
       h+='<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;">Trasformandolo in proposta d’acquisto entra nelle Vendite (in attesa pagamento).</div>';
       h+='<button onclick="cvElimina(\''+c.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
     } else {
@@ -29213,8 +29218,46 @@ function cvLogChiudi(){ var m=document.getElementById('cvLogModal'); if(m){ m.st
    cvPropagaAnagrafica, scritta per la scheda ridotta. Ne avevo aggiunta una
    quasi uguale con un nome quasi uguale: in questo file i doppioni si
    sovrascrivono in silenzio ed e' come nascono i guai. Si usa quella. */
+/* Nuovo preventivo per lo stesso cliente: anagrafica copiata, auto e
+   importi da scegliere. Quello di partenza resta com'e'. */
+function cvNuovoStessoCliente(id){
+  try{
+    var src=cvById(id); if(!src){ alert('Preventivo non trovato.'); return; }
+    var cl=JSON.parse(JSON.stringify(src.cliente||{}));
+    cvForm(null);
+    _cv.cliente=cl; if(src.clienteKey) _cv.clienteKey=src.clienteKey;
+    if(src.venditore) _cv.venditore=src.venditore;
+    if(src.fonte) _cv.fonte=src.fonte;
+    _cv.derivatoDa=src.id;
+    ['cv_nome','cv_cognome','cv_telefono','cv_email','cv_email2','cv_ragSociale','cv_cf','cv_piva','cv_indirizzo','cv_cap','cv_citta','cv_prov'].forEach(function(k){
+      var e=document.getElementById(k); if(!e) return; var f=k.replace('cv_',''); if(cl[f]!=null) e.value=cl[f];
+    });
+    try{ cvLive(); }catch(e){}
+    if(typeof tcToastNew==='function') tcToastNew('Nuovo preventivo per '+cvNomeCliente(cl)+': scegli l\u2019auto', true);
+  }catch(e){ alert('Non riuscito: '+(e&&e.message||e)); }
+}
 function cvSalva(){
   cvSync();
+  /* ===== AUTO CAMBIATA SU UN PREVENTIVO GIA' SALVATO =====
+     Se non e' ancora un contratto e l'auto e' diversa da quella salvata, si
+     chiede: nuovo preventivo (quello vecchio resta) oppure sostituzione.
+     E' cosi' che "spariva" l'archivio: il secondo preventivo scriveva sopra
+     al primo. */
+  try{
+    if(_cv && _cv.id && !_cv.isContratto && !window._cvSostituisciAuto){
+      var _old=cvById(_cv.id);
+      if(_old && !_old.isContratto && _old.autoId && _cv.autoId && _old.autoId!==_cv.autoId){
+        var _oldDesc=((_old.autoSnapshot||{}).modello||_old.autoDesc||'auto precedente');
+        var _newDesc=((_cv.autoSnapshot||{}).modello||_cv.autoDesc||'nuova auto');
+        if(confirm('Hai cambiato l\u2019auto del preventivo: da '+_oldDesc+' a '+_newDesc+'.\n\nOK = crea un NUOVO preventivo per '+_newDesc+' e tieni quello di '+_oldDesc+' in archivio.\nAnnulla = sostituisci l\u2019auto in questo preventivo (quello vecchio non resta).')){
+          var nuovoId='cv_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+          _cv.id=nuovoId; _cv.createdAt=Date.now(); _cv.derivatoDa=_old.id;
+          delete _cv.numero; delete _cv.emailInviata; delete _cv.emailInviataTs; delete _cv.mailDaInviareAt; delete _cv.waFatto; delete _cv.waFattoTs; delete _cv.storico; delete _cv.versioni;
+        } else { window._cvSostituisciAuto=true; }
+      }
+    }
+  }catch(e){}
+  setTimeout(function(){ window._cvSostituisciAuto=false; }, 0);
   if(!_cv.cliente.nome && !_cv.cliente.cognome){ alert('Inserisci almeno nome o cognome del cliente.'); return; }
   if(!_cv.cliente.telefono || !_cv.cliente.telefono.trim()){ alert('Il telefono del cliente è obbligatorio.'); return; }
   if(!_cv.cliente.email || !/.+@.+\..+/.test(_cv.cliente.email)){ alert('Inserisci un\'email valida del cliente (obbligatoria).'); return; }
