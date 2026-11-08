@@ -16923,7 +16923,7 @@ document.addEventListener('DOMContentLoaded',function(){
   +       '<div class="cc-addtitle">➕ Nuovo appuntamento</div>'
   +       '<div class="cc-field" style="display:none"><label>Categoria</label><select id="cc-cat"><option value="appuntamento">📅 Appuntamento cliente</option><option value="task">✅ Task interno</option></select></div>'
   +       '<div class="cc-row2"><div class="cc-field"><label>Tipo appuntamento</label><select id="cc-tipo" onchange="ccDurataDefault();ccTipoUI();"><option value="intervento">🔧 Intervento su auto</option><option value="vendita">🤝 Appuntamento vendita</option></select></div>'
-  +       '<div class="cc-field" id="cc-veicolo-wrap"><label id="cc-veicolo-lab">Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist></div></div>'
+  +       '<div class="cc-field" id="cc-veicolo-wrap"><label id="cc-veicolo-lab">Veicolo (magazzino)</label><input type="text" id="cc-veicolo" list="cc-veicoli-list" placeholder="Targa / modello / n°…" autocomplete="off"><datalist id="cc-veicoli-list"></datalist><div id="cc-veicolo-hint" style="display:none;font-size:11.5px;color:#64748b;margin-top:4px;line-height:1.35;">Facoltativo: se non sai che auto ha il cliente lascialo vuoto, nelle mail e nei promemoria il veicolo non comparir\u00e0.</div></div></div>'
   +       '<div class="cc-field" id="cc-testdrive-wrap" style="display:none;">'
   +         '<label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;">'
   +           '<input type="checkbox" id="cc-testdrive" style="width:17px;height:17px;">'
@@ -17694,9 +17694,10 @@ document.addEventListener('DOMContentLoaded',function(){
             }
             /* Una sola auto: si compila da sola. Piu' di una: si lascia
                scegliere, senza sovrascrivere quello che e' gia' scritto. */
+            /* Non si compila piu' da sola: l'auto va scelta a mano dall'elenco
+               (le sue sono in cima), oppure si lascia vuoto. */
             if(ve && !String(ve.value||'').trim()){
-              if(auto.length===1) ve.value=ccEtichettaAuto(auto[0]);
-              else ve.placeholder=auto.length+' auto del cliente \u2014 tocca qui';
+              ve.placeholder=(auto.length===1?'1 auto del cliente':auto.length+' auto del cliente')+' \u2014 tocca per scegliere, o lascia vuoto';
             }
           }
           }
@@ -18858,10 +18859,16 @@ document.addEventListener('DOMContentLoaded',function(){
          cercarla in magazzino non ha senso, il campo sparisce e si compila
          da solo scegliendo il cliente. Sulla vendita invece l'auto e'
          quella che si vuole vendere, e li' serve il magazzino. */
+      /* Dal 08/11/2026 il campo resta visibile anche sull'intervento, ma e'
+         facoltativo: Davide vuole poter lasciare l'auto vuota (cliente non
+         nostro, o non si sa cosa ha preso) e in quel caso il promemoria non
+         la nomina. Niente piu' compilazione automatica silenziosa. */
       var vb=document.getElementById('cc-veicolo-wrap');
-      if(vb) vb.style.display=(t==='vendita')?'':'none';
+      if(vb) vb.style.display='';
       var vlab=document.getElementById('cc-veicolo-lab');
-      if(vlab) vlab.textContent=(t==='vendita')?'Veicolo da proporre (solo magazzino)':'Veicolo (magazzino)';
+      if(vlab) vlab.textContent=(t==='vendita')?'Veicolo da proporre (solo magazzino)':'Veicolo del cliente (facoltativo)';
+      var vh=document.getElementById('cc-veicolo-hint');
+      if(vh) vh.style.display=(t==='vendita')?'none':'';
       var ti=document.getElementById('cc-titolo');
       if(ti) ti.placeholder=(t==='vendita')?'Cliente esistente o descrizione':'Cognome del cliente\u2026';
       ccPopolaSuggerimenti();
@@ -22025,18 +22032,10 @@ function prnConferma(id){
     creatoDa:(u.nome||''), fatto:false, fattoDa:'', avvisato:false,
     daPrenotazione:rec.id
   };
-  /* La targa dice gia' qual e' l'auto; se il cliente l'ha comprata da noi il
-     veicolo si completa da solo con modello, telaio e immatricolazione. */
+  /* Sull'appuntamento resta solo la targa scritta dal cliente: l'auto
+     indovinata dalle pratiche di vendita finiva nel promemoria al cliente
+     anche quando non era quella giusta (Davide, 08/11/2026). */
   c.veicolo=String(rec.targa||'');
-  try{
-    if(typeof tgVeicoloAcquistato==='function'){
-      var _va=tgVeicoloAcquistato(c);
-      if(_va.daAcquisto && typeof tgVeicoloTesto==='function'){
-        var _t=tgVeicoloTesto(_va);
-        if(_t) c.veicolo=_t;
-      }
-    }
-  }catch(e){}
 
   var list=ccLoad(); list.push(c); ccSave(list);
   try{ if(typeof ccSync==='function') ccSync(c); }catch(e){}
@@ -33804,24 +33803,11 @@ function tgApri(id){
   if(!(f.righe && f.righe.length) && c.nota && _tgRighe[0] && !_tgRighe[0].cod){
     _tgRighe[0].desc = String(c.nota).toUpperCase().slice(0,60);
   }
-  /* Veicolo mancante sull'appuntamento: lo si prende dalla pratica di
-     vendita e lo si scrive sull'evento, cosi' compare anche sul calendario
-     e non va ricercato la volta dopo. */
-  try{
-    if(!String(c.veicolo||'').trim() && String(c.categoria||'')!=='task'){
-      var _va=tgVeicoloAcquistato(c), _vt=tgVeicoloTesto(_va);
-      if(_va.daAcquisto && _vt){
-        var _fo=tgListaFonte(), _li=_fo.list;
-        var _ix=_li.findIndex(function(x){ return x.id===id; });
-        if(_ix>=0){
-          _li[_ix].veicolo=_vt; _li[_ix].updatedAt=Date.now();
-          _fo.salva(_li); if(_fo.upsert) try{ _fo.upsert(_li[_ix]); }catch(e2){}
-          try{ if(typeof ccSync==='function') ccSync(_li[_ix]); }catch(e2){}
-          c=_li[_ix];
-        } else { c.veicolo=_vt; }
-      }
-    }
-  }catch(e){}
+  /* Veicolo mancante sull'appuntamento: la pratica di vendita lo suggerisce
+     solo dentro la fattura (tgVeicoloDa lo completa al volo), ma NON si
+     scrive piu' sull'appuntamento: da li' finiva nel promemoria al cliente
+     anche quando l'auto indovinata non era quella giusta. Il veicolo
+     sull'appuntamento e' solo quello scritto a mano. */
   var m=document.getElementById('tg-modal');
   if(!m){
     m=document.createElement('div'); m.id='tg-modal';
