@@ -25728,14 +25728,14 @@ function clRenderDettaglio(){
             +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(_sub)+'</div></div>'
             +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 9px;white-space:nowrap;">'+clEsc(_st)+'</div>'
             /* La fattura della riparazione, come sugli interventi qui sopra. */
-            +'<div id="'+sinDocPfx(x.id)+'-wrap" onclick="event.stopPropagation()" style="flex:0 0 auto;max-width:270px;cursor:default;"></div>'
+            +'<div id="'+sinDocPfx(x.id)+'-wrap" onclick="event.stopPropagation()" style="flex:0 0 auto;max-width:360px;cursor:default;"></div>'
             +'</div>';
         }).join('')
         +'</div>';
       try{
         var _sinIds=_sin.map(function(y){ return y.id; });
         setTimeout(function(){ _sinIds.forEach(function(_id){
-          try{ sinDocRiquadro(_id, !!_sinDocAperti[_id]); }catch(e){}
+          try{ sinDocRiquadro(_id); }catch(e){}
         }); }, 0);
       }catch(e){}
     }
@@ -25772,9 +25772,14 @@ function clRenderDettaglio(){
          officina: il tagliando, la fattura del sinistro e la proforma. Se si
          filtrasse solo il tagliando, le altre due finirebbero fra i documenti
          generici del cliente \u2014 dove nessuno le cerca. */
-      docListaRender('cliente', c.key, _tk,
-        ['tagliando','fattura_sinistro','proforma_intervento'],
-        'Fatture e documenti officina');
+      sinDocMigra(c, function(resto){
+        /* La fattura del sinistro sta in riga con il suo sinistro (vedi
+           sinDocRiquadro). Qui compare solo se non si e' capito a quale
+           sinistro appartiene (cliente con piu' sinistri). */
+        docListaRender('cliente', c.key, _tk,
+          resto ? ['tagliando','fattura_sinistro','proforma_intervento'] : ['tagliando','proforma_intervento'],
+          'Fatture e documenti officina');
+      });
   }catch(e){}
   try{ if(typeof clDocPratiche==='function') clDocPratiche(c); }catch(e){}
   var b=document.getElementById('cl_business'); if(b){ b.addEventListener('change',function(){ var r=document.getElementById('cl-rag'); if(r) r.style.display=b.checked?'block':'none'; }); }
@@ -31228,7 +31233,7 @@ function docCarica(tipo, id, pfx){
       try{ if(tipo==='auto' && /libretto/.test(cat) && typeof gsLibCarica==='function') gsLibCarica(); }catch(e){}
       /* libretto nuovo intestato = auto immatricolata: la vendita deve saperlo */
       try{ if(cat==='libretto_nuovo' && typeof docAvvisaLibrettoNuovo==='function') docAvvisaLibrettoNuovo(tipo, id, files); }catch(e){}
-      docListaRender(tipo,id,pfx, (tipo==='auto'&&typeof docSoloVendita==='function')?docSoloVendita():null); return;
+      docListaRender(tipo,id,pfx, (tipo==='auto'&&typeof docSoloVendita==='function')?docSoloVendita():((_docAuto[pfx]&&_docAuto[pfx].soloCat)||null), (_docAuto[pfx]&&_docAuto[pfx].titolo)||undefined); return;
     }
     var file=files[i++];
     var safe=(file.name||'file').replace(/[^\w.\-]/g,'_');
@@ -33576,30 +33581,47 @@ var _ivDocAperti={};
 /* ===== FATTURA DEL SINISTRO, DALLA SCHEDA CLIENTE =====
    Stesso meccanismo degli interventi: "Allega fattura" sulla riga del
    sinistro, il file parte appena scelto e resta elencato li' sotto. */
-var _sinDocAperti={};
+/* Le fatture sinistro archiviate sul CLIENTE (caricate prima che esistesse
+   il link in riga) si agganciano al suo sinistro, se e' uno solo: cosi' si
+   vedono accanto a lui e non piu' in fondo. cb(true) = ne restano di non
+   assegnabili (piu' sinistri), da mostrare ancora nell'elenco del cliente. */
+function sinDocMigra(c, cb){
+  var fine=function(resto){ try{ cb(!!resto); }catch(e){} };
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(!sb || !c || !c.key){ fine(true); return; }
+    var _nv=(c.business&&c.ragSociale)?c.ragSociale:(((c.cognome||'')+' '+(c.nome||'')).trim()||'');
+    var sin=(typeof clSinistriDi==='function')?clSinistriDi(c.key, _nv):[];
+    sb.from('documenti').select('id').eq('entita_tipo','cliente').eq('entita_id',String(c.key)).eq('categoria','fattura_sinistro').then(function(r){
+      var ids=((r&&r.data)||[]).map(function(d){ return d.id; });
+      if(!ids.length){ fine(false); return; }
+      if(sin.length!==1){ fine(true); return; }
+      sb.from('documenti').update({entita_tipo:'sinistro', entita_id:String(sin[0].id)}).in('id',ids).then(function(r2){
+        if(r2 && r2.error){ fine(true); return; }
+        fine(false);
+        try{ sinDocRiquadro(sin[0].id); }catch(e){}
+      }, function(){ fine(true); });
+    }, function(){ fine(true); });
+  }catch(e){ fine(true); }
+}
 function sinDocPfx(id){ return 'sindocC_'+String(id==null?'':id).replace(/[^A-Za-z0-9_]/g,''); }
-function sinDocRiquadro(id, aperto){
+function sinDocRiquadro(id){
   var pfx=sinDocPfx(id);
   var wrap=document.getElementById(pfx+'-wrap'); if(!wrap) return;
-  if(aperto) _sinDocAperti[id]=true; else delete _sinDocAperti[id];
-  try{
-    wrap.style.flex     = aperto ? '1 1 100%' : '0 0 auto';
-    wrap.style.maxWidth = aperto ? 'none' : '270px';
-  }catch(e){}
-  if(aperto){
-    if(typeof docPannelloHTML!=='function'){ return; }
-    wrap.innerHTML='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:6px;background:#f8fafc;">'
-      +docPannelloHTML('sinistro', id, pfx, ['fattura_sinistro'],
-         'La fattura emessa per la riparazione di questo sinistro.', false, true)
-      +'<div style="margin-top:6px;text-align:right;"><a onclick="event.stopPropagation();sinDocRiquadro(\''+String(id).replace(/'/g,'')+'\',false)" '
-      +'style="font-size:11.5px;color:#64748b;cursor:pointer;text-decoration:underline;">Chiudi</a></div>'
-      +'</div>';
-  } else {
-    wrap.innerHTML='<div id="'+pfx+'-list"></div>'
-      +'<a onclick="event.stopPropagation();sinDocRiquadro(\''+String(id).replace(/'/g,'')+'\',true)" '
-      +'style="display:inline-block;font-size:11.5px;color:#1a4fa0;cursor:pointer;text-decoration:underline;white-space:nowrap;">'
-      +'\uD83D\uDCCE Allega fattura</a>';
-  }
+  var q=String(id).replace(/'/g,'');
+  /* Tutto in riga: la fattura gia' caricata (nome + Apri) e il link per
+     allegarne una. Niente riquadro che si apre sotto: il file si sceglie
+     direttamente e parte da solo. Categoria fissa, nessuna tendina. */
+  _docAuto[pfx]={tipo:'sinistro', id:id, soloCat:['fattura_sinistro'], titolo:'Fattura'};
+  wrap.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">'
+    +'<div id="'+pfx+'-list" style="min-width:0;"></div>'
+    +'<a onclick="event.stopPropagation();docPick(\''+pfx+'\')" '
+    +'style="display:inline-block;font-size:11.5px;color:#1a4fa0;cursor:pointer;text-decoration:underline;white-space:nowrap;">\uD83D\uDCCE Allega fattura</a>'
+    +'<span id="'+pfx+'-stato" style="font-size:11px;color:#64748b;white-space:nowrap;"></span>'
+    +'</div>'
+    +'<select id="'+pfx+'-cat" style="display:none;"><option value="fattura_sinistro" selected>Fattura sinistro</option></select>'
+    +'<input type="file" id="'+pfx+'-file" multiple accept="image/*,application/pdf" style="display:none;" onchange="docFileScelti(\''+pfx+'\')">'
+    +'<div id="'+pfx+'-sel" style="display:none;"></div><input type="hidden" id="'+pfx+'-btn">';
   try{ if(typeof docListaRender==='function') docListaRender('sinistro', id, pfx, ['fattura_sinistro'], 'Fattura'); }catch(e){}
 }
 function ivDocRiquadro(id, aperto){
