@@ -23337,13 +23337,14 @@ function gsLibCarica(cb){
            stesso, e si aggancia all'auto del contratto. */
         try{
           sb.from('documenti').select('entita_id,categoria,nome_file,storage_path,created_at')
-            .eq('entita_tipo','pratica').eq('categoria','libretto_nuovo').order('created_at',{ascending:false})
+            .eq('entita_tipo','pratica').in('categoria',LIB_CATS).order('created_at',{ascending:false})
             .then(function(r2){
               if(!r2 || r2.error) { if(cb)cb(); return; }
               (r2.data||[]).forEach(function(d){
                 var cv=(typeof cvById==='function')?cvById(d.entita_id):null;
                 var aid=cv&&cv.autoId; if(!aid) return;
-                if(!_gsLib[aid] || _gsLib[aid].cat!=='libretto_nuovo') _gsLib[aid]={ path:d.storage_path, nome:d.nome_file, cat:'libretto_nuovo' };
+                var cur=_gsLib[aid];
+                if(!cur || (d.categoria==='libretto_nuovo' && cur.cat!=='libretto_nuovo')) _gsLib[aid]={ path:d.storage_path, nome:d.nome_file, cat:d.categoria };
               });
               if(cb)cb();
             }, function(){ if(cb)cb(); });
@@ -25722,12 +25723,21 @@ function clRenderDettaglio(){
           var _veic=[(x.targa||'').toUpperCase(), x.modello||''].filter(function(v){ return v; }).join(' \u2014 ');
           var _tit=(_veic||'Sinistro')+(x.tipoSinistro?(' \u00b7 '+x.tipoSinistro):'');
           var _sub=[_dIt, x.numeroSinistro?('n. '+x.numeroSinistro):'', x.compagnia||''].filter(function(v){ return v; }).join(' \u00b7 ');
-          return '<div onclick="sinApri(\''+x.id+'\')" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;">'
-            +'<div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;color:#0f172a;">'+_ic+' '+clEsc(_tit)+'</div>'
+          return '<div onclick="sinApri(\''+x.id+'\')" style="padding:9px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">'
+            +'<div style="min-width:0;flex:1;"><div style="font-size:13.5px;font-weight:700;color:#0f172a;">'+_ic+' '+clEsc(_tit)+'</div>'
             +'<div style="font-size:11.5px;color:#94a3b8;">'+clEsc(_sub)+'</div></div>'
-            +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 9px;white-space:nowrap;">'+clEsc(_st)+'</div></div>';
+            +'<div style="font-size:11px;font-weight:800;color:#1a4fa0;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 9px;white-space:nowrap;">'+clEsc(_st)+'</div>'
+            /* La fattura della riparazione, come sugli interventi qui sopra. */
+            +'<div id="'+sinDocPfx(x.id)+'-wrap" onclick="event.stopPropagation()" style="flex:0 0 auto;max-width:270px;cursor:default;"></div>'
+            +'</div>';
         }).join('')
         +'</div>';
+      try{
+        var _sinIds=_sin.map(function(y){ return y.id; });
+        setTimeout(function(){ _sinIds.forEach(function(_id){
+          try{ sinDocRiquadro(_id, !!_sinDocAperti[_id]); }catch(e){}
+        }); }, 0);
+      }catch(e){}
     }
     /* L'elenco degli interventi lo disegna gia' il blocco qui sopra, con
        data, veicolo, numero di proforma, importo e pulsanti. Qui sotto ce
@@ -25905,7 +25915,10 @@ function clDocPratiche(c){
     var autoIds=[], autoCv={};
     ids.forEach(function(id){ var cv=byId[id]; if(cv && cv.autoId){ var a=String(cv.autoId); if(autoIds.indexOf(a)<0) autoIds.push(a); autoCv[a]=cv; } });
     var q1=sb.from('documenti').select('*').eq('entita_tipo','pratica').in('entita_id', ids).order('created_at',{ascending:false});
-    var q2=autoIds.length ? sb.from('documenti').select('*').eq('entita_tipo','veicolo').in('entita_id', autoIds).in('categoria', DOC_CAT_PONTE).order('created_at',{ascending:false}) : Promise.resolve({data:[]});
+    /* I documenti del veicolo stanno in archivio come entita_tipo 'auto':
+       con 'veicolo' la ricerca tornava sempre vuota e i libretti caricati
+       dalla pratica (che finiscono sul veicolo) in anagrafica non c'erano. */
+    var q2=autoIds.length ? sb.from('documenti').select('*').in('entita_tipo',['auto','veicolo']).in('entita_id', autoIds).in('categoria', DOC_CAT_PONTE.concat(['libretto','libretto_estero'])).order('created_at',{ascending:false}) : Promise.resolve({data:[]});
     Promise.all([q1,q2]).then(function(rr){
       var r={ data:[].concat((rr[0]&&rr[0].data)||[], ((rr[1]&&rr[1].data)||[]).map(function(d){ d._daVeicolo=true; return d; })) };
       if(!r.data.length){ el.innerHTML=''; return; }
@@ -25922,7 +25935,7 @@ function clDocPratiche(c){
         var cv=d._daVeicolo ? autoCv[String(d.entita_id)] : byId[String(d.entita_id)];
         h2+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;background:#fff;">'
           +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(d.nome_file||'documento')+'</div>'
-          +'<div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(docCatLabel?docCatLabel(d._daVeicolo?'veicolo':'pratica',d.categoria):(d.categoria||''))+(cv?(' \u00b7 '+docEsc(etich(cv))):'')+(d._daVeicolo?' \u00b7 dalla scheda veicolo':'')+'</div></div>'
+          +'<div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+docEsc(docCatLabel?docCatLabel(d._daVeicolo?'auto':'pratica',d.categoria):(d.categoria||''))+(cv?(' \u00b7 '+docEsc(etich(cv))):'')+(d._daVeicolo?' \u00b7 dalla scheda veicolo':'')+'</div></div>'
           +'<button type="button" onclick="docApri(\''+docEsc(d.storage_path)+'\')" style="flex:0 0 auto;padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">Apri</button>'
           +'</div>';
       });
@@ -30937,6 +30950,11 @@ function docSmista(tipo, id, cat){
   try{
     var voluta=DOC_DEST[cat];
     if(!voluta || voluta===tipo) return {tipo:tipo, id:id, spostato:false};
+    /* La fattura allegata dalla riga del sinistro resta su QUEL sinistro, come
+       la fattura dell'intervento resta sull'intervento: cosi' si legge sotto
+       la sua pratica e non in un elenco unico dove non si capisce di quale
+       sinistro e'. Caricata da altrove continua a seguire il cliente. */
+    if(tipo==='sinistro' && cat==='fattura_sinistro') return {tipo:tipo, id:id, spostato:false};
     var ctx=docContesto(tipo, id);
     if(ctx[voluta]) return {tipo:voluta, id:ctx[voluta], spostato:true};
   }catch(e){}
@@ -33555,6 +33573,35 @@ function ivDocPfx(id){ return 'ivdocC_'+String(id==null?'':id).replace(/[^A-Za-z
    _docSel e vengono ridisegnati da soli. */
 var _ivDocAperti={};
 
+/* ===== FATTURA DEL SINISTRO, DALLA SCHEDA CLIENTE =====
+   Stesso meccanismo degli interventi: "Allega fattura" sulla riga del
+   sinistro, il file parte appena scelto e resta elencato li' sotto. */
+var _sinDocAperti={};
+function sinDocPfx(id){ return 'sindocC_'+String(id==null?'':id).replace(/[^A-Za-z0-9_]/g,''); }
+function sinDocRiquadro(id, aperto){
+  var pfx=sinDocPfx(id);
+  var wrap=document.getElementById(pfx+'-wrap'); if(!wrap) return;
+  if(aperto) _sinDocAperti[id]=true; else delete _sinDocAperti[id];
+  try{
+    wrap.style.flex     = aperto ? '1 1 100%' : '0 0 auto';
+    wrap.style.maxWidth = aperto ? 'none' : '270px';
+  }catch(e){}
+  if(aperto){
+    if(typeof docPannelloHTML!=='function'){ return; }
+    wrap.innerHTML='<div style="border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;margin-top:6px;background:#f8fafc;">'
+      +docPannelloHTML('sinistro', id, pfx, ['fattura_sinistro'],
+         'La fattura emessa per la riparazione di questo sinistro.', false, true)
+      +'<div style="margin-top:6px;text-align:right;"><a onclick="event.stopPropagation();sinDocRiquadro(\''+String(id).replace(/'/g,'')+'\',false)" '
+      +'style="font-size:11.5px;color:#64748b;cursor:pointer;text-decoration:underline;">Chiudi</a></div>'
+      +'</div>';
+  } else {
+    wrap.innerHTML='<div id="'+pfx+'-list"></div>'
+      +'<a onclick="event.stopPropagation();sinDocRiquadro(\''+String(id).replace(/'/g,'')+'\',true)" '
+      +'style="display:inline-block;font-size:11.5px;color:#1a4fa0;cursor:pointer;text-decoration:underline;white-space:nowrap;">'
+      +'\uD83D\uDCCE Allega fattura</a>';
+  }
+  try{ if(typeof docListaRender==='function') docListaRender('sinistro', id, pfx, ['fattura_sinistro'], 'Fattura'); }catch(e){}
+}
 function ivDocRiquadro(id, aperto){
   var pfx=ivDocPfx(id);
   var wrap=document.getElementById(pfx+'-wrap'); if(!wrap) return;
@@ -39978,8 +40025,12 @@ function cvVeicoloLink(cv){
        faceva credere che l'auto fosse gia' immatricolata quando non lo era,
        e chi premeva si trovava davanti il documento sbagliato. La targhetta
        vale quindi anche come segnale: se c'e', l'immatricolazione e' fatta. */
-    if(estera && autoId && typeof _gsLib!=='undefined' && _gsLib && _gsLib[autoId]
-       && _gsLib[autoId].cat==='libretto_nuovo'){
+    /* Dal 10/11/2026 anche per le ITALIANE: li' il libretto c'e' da subito
+       e la targhetta serve solo ad aprirlo al volo, quindi vale qualunque
+       libretto caricato. Per le estere resta solo quello nuovo (segnale di
+       immatricolazione avvenuta). */
+    var _lib=(autoId && typeof _gsLib!=='undefined' && _gsLib) ? _gsLib[autoId] : null;
+    if(_lib && (estera ? _lib.cat==='libretto_nuovo' : true)){
       idHtml += '<span onclick="event.stopPropagation();gsLibApri(event,\''+autoId+'\')" '
         + 'title="Apri il libretto di circolazione" '
         + 'style="display:inline-block;margin-left:7px;padding:1px 8px;border-radius:5px;'
