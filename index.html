@@ -5366,6 +5366,24 @@ function eaChiediMailEInvia(cfg){
    Finche' il numero e' quello di prova (+1 555 633 0390) si puo'
    scrivere solo ai destinatari autorizzati in Meta. */
 var EA_WA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-invia';
+/* I file arrivati su WhatsApp (vocali, foto, documenti) si aprono passando
+   dalla funzione wa-media, che li scarica da Meta con il token. */
+var EA_WA_MEDIA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-media';
+function waMediaSrc(m){ return EA_WA_MEDIA_URL+'?id='+encodeURIComponent(m.mediaId||'')+'&apikey='+encodeURIComponent(typeof SB_KEY!=='undefined'?SB_KEY:''); }
+function waMediaHtml(m){
+  if(!m || !m.mediaId) return '';
+  var src=waMediaSrc(m), mime=String(m.mediaMime||''), tipo=String(m.tipo||'');
+  if(tipo==='audio' || /^audio\//.test(mime)){
+    return '<audio controls preload="none" src="'+eaEscq(src)+'" style="display:block;width:240px;max-width:100%;margin-top:4px;height:36px;"></audio>';
+  }
+  if(tipo==='image' || tipo==='sticker' || /^image\//.test(mime)){
+    return '<a href="'+eaEscq(src)+'" target="_blank" rel="noopener"><img src="'+eaEscq(src)+'" alt="" loading="lazy" style="display:block;max-width:240px;max-height:240px;border-radius:7px;margin-top:4px;"></a>';
+  }
+  if(tipo==='video' || /^video\//.test(mime)){
+    return '<video controls preload="metadata" src="'+eaEscq(src)+'" style="display:block;max-width:240px;border-radius:7px;margin-top:4px;"></video>';
+  }
+  return '<a href="'+eaEscq(src)+'" target="_blank" rel="noopener" style="display:inline-block;margin-top:4px;font-size:12.5px;color:#1a4fa0;font-weight:700;">\u2B07 Apri '+eaEscq(m.mediaNome||'il file')+'</a>';
+}
 
 function waApiInvia(dati){
   if(!dati || !dati.to) return Promise.reject(new Error('manca il numero'));
@@ -5537,6 +5555,7 @@ function waChatDisegna(msgs){
       h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin-bottom:7px;">'
         +'<div style="max-width:76%;background:'+(mio?'#dcf8c6':'#fff')+';border-radius:9px;padding:7px 10px;box-shadow:0 1px 1px rgba(0,0,0,.13);">'
         +'<div style="font-size:13.5px;color:#111b21;line-height:1.45;white-space:pre-wrap;word-break:break-word;">'+eaEscq(m.testo||'')+'</div>'
+        +(m.mediaId?waMediaHtml(m):(m.media&&/^https?:/.test(m.media)?('<a href="'+eaEscq(m.media)+'" target="_blank" rel="noopener" style="display:inline-block;margin-top:4px;font-size:12.5px;color:#1a4fa0;font-weight:700;">\u25B6 Apri il video</a>'):''))
         +'<div style="font-size:10.5px;color:'+(mio&&m.stato==='read'?'#53bdeb':'#667781')+';text-align:right;margin-top:3px;">'+ora+spunta+'</div>'
         +'</div></div>';
     });
@@ -22008,10 +22027,35 @@ function prnCarica(poi){
         if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
         return d;
       }).filter(function(d){ return d && d.id && d.stato==='nuova'; });
+      /* Appuntamenti fissati dal cliente sulla pagina appuntamento.html:
+         l'ora l'ha scelta lui, non c'e' niente da confermare. Se la pagina
+         non e' riuscita a scriverli direttamente in calendario, lo si fa
+         qui, in silenzio. */
+      try{ prnAutoFissa(); }catch(e){}
       if(poi) poi();
       try{ prnRichiesteRender(); }catch(e){}
     }, function(){ if(poi) poi(); });
   }catch(e){ if(poi) poi(); }
+}
+function prnAutoFissa(){
+  if(typeof ccLoad!=='function' || typeof ccSave!=='function') return;
+  var list=ccLoad(), cambiato=false;
+  _prnCache.slice().forEach(function(rec){
+    if(!rec || !rec.autoFissa || !rec.ora) return;
+    var idC=rec.calId||('cmp_'+rec.id);
+    if(list.some(function(c){ return c && (c.id===idC || c.daPrenotazione===rec.id); })){ prnStato(rec.id,'confermata',rec.ora); return; }
+    var ricorda='';
+    try{ var pp=String(rec.data).split('-'); var dprev=new Date(+pp[0],+pp[1]-1,+pp[2]-1,18,0,0); var z=function(n){ return String(n).padStart(2,'0'); }; ricorda=dprev.getFullYear()+'-'+z(dprev.getMonth()+1)+'-'+z(dprev.getDate())+'T18:00'; }catch(e){}
+    var c={ id:idC, data:rec.data, titolo:rec.nome, tipo:'vendita', categoria:'appuntamento', email:rec.email||'', tel:rec.tel||'',
+      dipEmail:'', dipNome:'', ora:rec.ora, veicolo:String(rec.veicolo||rec.targa||''), durata:45, ricorda:ricorda,
+      nota:'Visita auto fissata dal cliente'+(rec.note?(' \u2014 '+rec.note):''), creatoDa:'sito', fatto:false, fattoDa:'', avvisato:false,
+      daPrenotazione:rec.id, origine:'appuntamento' };
+    list.push(c); cambiato=true;
+    try{ if(typeof ccSync==='function') ccSync(c); }catch(e){}
+    prnStato(rec.id,'confermata',rec.ora);
+    try{ if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCC5 '+rec.nome+': visita auto fissata dal sito, '+prnDataIt(rec.data)+' alle '+rec.ora, true); }catch(e){}
+  });
+  if(cambiato){ ccSave(list); try{ if(typeof ccRender==='function') ccRender(); }catch(e){} }
 }
 function prnStato(id, stato){
   try{
@@ -23904,7 +23948,7 @@ function mzMediaHtml(){
     +'<button type="button" onclick="document.getElementById(\'mz-video-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🎬 Carica video</button>'
     +'<button type="button" onclick="document.getElementById(\'mz-giro-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🔄 Carica giro 360°</button>'
     +'</div>'
-    +'<div id="mz-media-stato" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.5;">Video: un filmato di presentazione (anche 1 minuto). Giro 360°: cammina intorno all’auto filmando per 30–40 secondi a passo costante, partendo dal frontale; i fotogrammi li estrae il gestionale.</div>'
+    +'<div id="mz-media-stato" style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;">Video: filmato di presentazione, anche 1 minuto; la versione WhatsApp si crea da sola. Giro 360\u00b0: un giro completo intorno all\u2019auto, 30\u201340 secondi.</div>'
     +'</div>';
 }
 function mzMediaInit(a){
@@ -23914,7 +23958,35 @@ function mzMediaInit(a){
 function mzMediaRender(){
   var el=document.getElementById('mz-media-list'); if(!el) return;
   var h='';
+  var _riga=function(anteprima, titolo, sotto, azioni){
+    return '<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f1f5f9;">'
+      +anteprima
+      +'<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#0f172a;">'+titolo+'</div><div style="font-size:12px;color:#64748b;margin-top:2px;line-height:1.45;">'+sotto+'</div></div>'
+      +'<div style="display:flex;gap:6px;flex:0 0 auto;align-items:center;">'+azioni+'</div></div>';
+  };
+  var _bt=function(txt, onclick, tipo){
+    var st=(tipo==='del')?'border:none;background:#fef2f2;color:#dc2626;width:32px;height:32px;'
+          :(tipo==='link')?'border:1px solid #cbd5e1;background:#fff;color:#1a4fa0;padding:0 10px;height:32px;'
+          :'border:1px solid #cbd5e1;background:#fff;color:#334155;padding:0 10px;height:32px;';
+    return '<button type="button" onclick="'+onclick+'" style="'+st+'border-radius:7px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">'+txt+'</button>';
+  };
   if(_mzMedia.video && _mzMedia.video.url){
+    var vw=_mzMedia.videoWa, v=_mzMedia.video;
+    var stato = (vw&&vw.url)
+      ? '<span style="color:#166534;font-weight:700;">\u2705 WhatsApp pronta</span> <span style="color:#94a3b8;">'+mzFotoBytes(vw.size||0)+(vw.sec?(' \u00b7 '+Math.round(vw.sec)+' s'):'')+'</span>'
+      : '<span style="color:#b45309;font-weight:700;">\u26a0 Manca la versione WhatsApp</span>';
+    h+=_riga(
+      '<video src="'+mzEscA(v.url)+'" preload="metadata" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto;"></video>',
+      'Video di presentazione',
+      (v.ts?new Date(v.ts).toLocaleDateString('it-IT'):'')+(v.size?(' \u00b7 '+mzFotoBytes(v.size)):'')+'<br>'+stato,
+      '<input type="file" id="mz-videowa-input" accept="video/*" style="display:none;" onchange="mzVideoWaDaFile(this.files)">'
+      +_bt('\u25B6 Apri', "window.open('"+mzEscA(v.url)+"','_blank')", 'link')
+      +((vw&&vw.url)?_bt('\u25B6 WhatsApp', "window.open('"+mzEscA(vw.url)+"','_blank')", 'link'):'')
+      +_bt((vw&&vw.url)?'Rifai WA':'Crea WA', "document.getElementById('mz-videowa-input').click()", '')
+      +_bt('\uD83D\uDDD1', "_mzMedia.video=null;_mzMedia.videoWa=null;mzMediaRender();", 'del')
+    );
+  }
+  if(false){
     h+='<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f1f5f9;">'
       +'<video src="'+mzEscA(_mzMedia.video.url)+'" preload="metadata" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;"></video>'
       +'<div style="flex:1;font-size:12.5px;"><b>Video di presentazione</b><br><span style="color:#94a3b8;">'+(_mzMedia.video.ts?new Date(_mzMedia.video.ts).toLocaleDateString('it-IT'):'')+(_mzMedia.video.size?(' · '+mzFotoBytes(_mzMedia.video.size)):'')+'</span></div>'
@@ -23934,13 +24006,19 @@ function mzMediaRender(){
   }
   if(_mzMedia.giro360 && _mzMedia.giro360.frames && _mzMedia.giro360.frames.length){
     var fr=_mzMedia.giro360.frames;
+    h+=_riga('<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto;">',
+      'Giro a 360\u00b0', fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
+      _bt('\u21BB Anteprima','mzGiroAnteprima()','link')+_bt('\uD83D\uDDD1',"_mzMedia.giro360=null;mzMediaRender();",'del'));
+  }
+  if(false){
+    var fr=_mzMedia.giro360.frames;
     h+='<div style="display:flex;align-items:center;gap:10px;padding:6px 0;">'
       +'<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;">'
       +'<div style="flex:1;font-size:12.5px;"><b>Giro a 360°</b> · '+fr.length+' fotogrammi<br><span style="color:#94a3b8;">'+(_mzMedia.giro360.ts?new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT'):'')+'</span></div>'
       +'<button type="button" onclick="mzGiroAnteprima()" style="padding:6px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">anteprima</button>'
       +'<button type="button" onclick="_mzMedia.giro360=null;mzMediaRender();" style="border:none;background:#fef2f2;color:#dc2626;border-radius:6px;width:30px;height:30px;cursor:pointer;">🗑</button></div>';
   }
-  if(!h) h='<div style="font-size:12px;color:#94a3b8;">Nessun video caricato.</div>';
+  if(!h) h='<div style="font-size:12px;color:#94a3b8;padding:4px 0 8px;">Nessun video caricato.</div>';
   el.innerHTML=h;
 }
 function mzEscA(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -24602,6 +24680,14 @@ function mzForm(id){
      sparisce da disponibili, vendute, inventario, elenco vendibili e
      soprattutto dal registro di carico e scarico, dove per legge vanno
      solo i veicoli acquistati per la rivendita. */
+  /* Solo l'amministratore la vede (Davide, 11/11/2026): per gli altri il
+     riquadro resta nascosto, e se l'auto e' gia' a noleggio compare solo
+     la targhetta, senza possibilita' di toglierla. */
+  var _isAdm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin');
+  if(!_isAdm && a && a.nlt){
+    h+='<div style="margin-top:16px;padding:8px 12px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:10px;font-size:13px;font-weight:800;color:#3730a3;">\ud83d\udd11 Noleggio a lungo termine</div>';
+  }
+  if(_isAdm)
   h+='<div style="margin-top:16px;padding:12px 14px;border:1px solid '+((a&&a.nlt)?'#c7d2fe':'#e2e8f0')+';background:'+((a&&a.nlt)?'#eef2ff':'#f8fafc')+';border-radius:10px;">'
     +'<label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;">'
     +'<input type="checkbox" id="mz_nlt" '+((a&&a.nlt)?'checked':'')+' onchange="mzNltCambio()" style="margin-top:2px;width:17px;height:17px;cursor:pointer;">'
@@ -24620,11 +24706,9 @@ function mzForm(id){
         +'\uD83D\uDCC4 Apri il contratto'
         +(_cl.trim()?('<span style="display:block;font-weight:600;font-size:11.5px;color:#64748b;margin-top:2px;">'+mzEsc(_cl.trim())+'</span>'):'')
         +'</button>';
-    } else if(a.stato!=='venduta' && !a.nlt){
-      /* Auto ancora in vendita: il pulsante grande fa un preventivo NUOVO.
-         Prima riapriva quello di un cliente vecchio, e per un cliente nuovo
-         bisognava uscire e ripartire dal magazzino. Il vecchio resta a
-         portata di mano, ma in piccolo. */
+    } else if(false){
+      /* Tolto su richiesta di Davide (11/11/2026): il preventivo si fa dal
+         pulsante verde della card in Magazzino, non da dentro la scheda. */
       h+='<button onclick="mzNuovoPreventivo(\''+a.id+'\')" style="margin-top:14px;width:100%;padding:12px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">'
         +'\u2795 Nuovo preventivo con questa auto</button>'
         +'<div style="text-align:center;margin-top:8px;font-size:12px;color:#64748b;">'
