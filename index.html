@@ -14594,12 +14594,18 @@ function tcAssegnaFerie(email, date){
   ov=document.createElement('div'); ov.id='tc-ferie-modal';
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
   var cats=['Ferie','Permesso','Congedo','ROL'];
-  var btns=cats.map(function(c){ return '<button onclick="tcAssegnaFerieSet(\''+email+'\',\''+date+'\',\''+c+'\')" style="background:#16a34a;color:#fff;border:none;padding:12px;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">'+c+'</button>'; }).join('');
+  var btns=cats.map(function(c){ return '<button onclick="tcAssegnaFerieSet(\''+email+'\',\''+date+'\',\''+c+'\',document.getElementById(\'tc-ferie-ore\').value)" style="background:#16a34a;color:#fff;border:none;padding:12px;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;">'+c+'</button>'; }).join('');
   var rimuovi = esistente ? '<button onclick="tcAssegnaFerieRimuovi(\''+email+'\',\''+date+'\')" style="width:100%;background:#fff;color:#dc2626;border:1px solid #dc2626;padding:11px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Rimuovi '+esistente.categoria+'</button>' : '';
   ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:20px;max-width:340px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3);">'
     +'<div style="font-weight:800;font-size:16px;color:#0f172a;">'+nome+'</div>'
     +'<div style="color:#64748b;font-size:13px;margin-bottom:14px;text-transform:capitalize;">'+giorno+'</div>'
     +(esistente?'<div style="background:#fef3c7;color:#b45309;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:12px;">Attualmente: <strong>'+esistente.categoria+'</strong>'+(esistente.dataInizio!==esistente.dataFine?(' (dal '+riData(esistente.dataInizio)+' al '+riData(esistente.dataFine)+')'):'')+'</div>':'')
+    /* Ore: vuoto = giornata intera. Con le ore (es. 3) il giorno resta
+       timbrabile e nel riepilogo la voce esce come "Permesso 3h". */
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">'
+    +'<label for="tc-ferie-ore" style="font-size:12px;font-weight:700;color:#475569;flex:1;">Ore <span style="font-weight:600;color:#94a3b8;">(vuoto = giornata intera)</span></label>'
+    +'<input id="tc-ferie-ore" type="number" min="0.5" max="12" step="0.5" inputmode="decimal" placeholder="es. 3" value="'+(esistente&&esistente.ore?String(esistente.ore).replace(',','.'):'')+'" style="width:74px;padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;text-align:center;">'
+    +'<span style="font-size:12px;color:#64748b;">h</span></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'+btns+'</div>'
     +rimuovi
     +'<button onclick="tcAssegnaFerieClose()" style="width:100%;background:none;color:#64748b;border:1px solid #cbd5e1;padding:10px;border-radius:8px;font-family:inherit;font-size:13px;cursor:pointer;margin-top:8px;">Annulla</button>'
@@ -14607,19 +14613,21 @@ function tcAssegnaFerie(email, date){
   ov.addEventListener('click',function(e){ if(e.target===ov) tcAssegnaFerieClose(); });
   document.body.appendChild(ov);
 }
-function tcAssegnaFerieSet(email,date,cat){
+function tcAssegnaFerieSet(email,date,cat,ore){
   var nome=(typeof tcGetNome==='function')?tcGetNome(email):email;
+  var oreN=parseFloat(String(ore||'').replace(',','.'));
+  if(!(oreN>0) || oreN>12) oreN=''; else oreN=Math.round(oreN*2)/2;
   // togli QUALSIASI voce approvata che copre quel giorno (no duplicati) ed elimina dal foglio
   var daTogliere=[];
   riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ daTogliere.push(r.id); } });
   var l=riLoad().filter(function(r){ return daTogliere.indexOf(r.id)<0; });
   if(typeof GS_URL!=='undefined'&&GS_URL){ daTogliere.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
-  var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:date, dataFine:date, ore:'', nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
+  var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:date, dataFine:date, ore:oreN, nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
   l.push(r); riSaveLocal(l); riPush(r);
   tcAssegnaFerieClose();
   if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
   if(typeof riRenderAdmin==='function') riRenderAdmin(); if(typeof riAggiornaBadge==='function') riAggiornaBadge();
-  tcToastNew('✅ '+cat+' · '+nome,true);
+  tcToastNew('✅ '+cat+(oreN?(' '+oreN+'h'):' (giornata intera)')+' · '+nome,true);
 }
 function tcAssegnaFerieRimuovi(email,date){
   var target=null; riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ target=r; } });
@@ -23931,11 +23939,52 @@ function mzMediaRender(){
 }
 function mzEscA(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function mzMediaStato(msg){ var st=document.getElementById('mz-media-stato'); if(st) st.innerHTML=msg; }
-function mzMediaUpload(blob, nome){
+/* Sopra i 40 MB si va a pezzi: Cloudflare rifiuta le richieste da 100 MB
+   in su e un video da 98 "MB" di Windows sono 102 milioni di byte. Le parti
+   da 10 MB passano sempre; se il Worker non ha ancora le rotte /mpu si
+   ripiega sull'invio unico. */
+var MZ_MPU_SOGLIA=40*1024*1024, MZ_MPU_PARTE=10*1024*1024;
+function mzMediaUpload(blob, nome, onProg){
+  if(blob && blob.size>MZ_MPU_SOGLIA) return mzMediaUploadPezzi(blob, nome, onProg);
   return fetch(WORKER_FOTO+'/upload?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(nome), {
       method:'POST', headers:{'Content-Type':(blob.type||'application/octet-stream')}, body:blob })
-    .then(function(r){ return r.json(); })
+    .then(function(r){ if(r.status===413) throw new Error('file troppo grande per un invio unico (413)'); return r.json(); })
     .then(function(res){ if(res && res.ok && res.url) return res; throw new Error((res&&res.error)||'caricamento rifiutato'); });
+}
+function mzMediaUploadPezzi(blob, nome, onProg){
+  var ct=blob.type||'video/mp4', tot=blob.size, nParti=Math.ceil(tot/MZ_MPU_PARTE), parts=[], key='', uploadId='';
+  var j=function(r){ return r.json().catch(function(){ throw new Error('risposta del Worker non leggibile (HTTP '+r.status+')'); }); };
+  return fetch(WORKER_FOTO+'/mpu/create?auto='+encodeURIComponent(_mzId)+'&nome='+encodeURIComponent(nome)+'&ct='+encodeURIComponent(ct),{method:'POST'})
+    .then(function(r){
+      if(r.status===404) throw new Error('il Worker Cloudflare va aggiornato (manca il caricamento a pezzi)');
+      return j(r);
+    })
+    .then(function(res){
+      if(!(res&&res.ok&&res.key&&res.uploadId)) throw new Error((res&&res.error)||'apertura caricamento rifiutata');
+      key=res.key; uploadId=res.uploadId;
+      var i=0;
+      var prossima=function(){
+        if(i>=nParti) return Promise.resolve();
+        var n=i+1, da=i*MZ_MPU_PARTE, a=Math.min(tot, da+MZ_MPU_PARTE), pezzo=blob.slice(da,a,ct);
+        var tenta=function(volta){
+          return fetch(WORKER_FOTO+'/mpu/part?key='+encodeURIComponent(key)+'&uploadId='+encodeURIComponent(uploadId)+'&n='+n,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:pezzo})
+            .then(j).then(function(pr){
+              if(!(pr&&pr.ok&&pr.etag)) throw new Error((pr&&pr.error)||('parte '+n+' rifiutata'));
+              parts.push({partNumber:n, etag:pr.etag});
+            }).catch(function(e){ if(volta<3) return tenta(volta+1); throw e; });
+        };
+        return tenta(1).then(function(){ i++; if(onProg) onProg(a/tot); return prossima(); });
+      };
+      return prossima();
+    })
+    .then(function(){
+      return fetch(WORKER_FOTO+'/mpu/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key, uploadId:uploadId, parts:parts})}).then(j);
+    })
+    .then(function(res){ if(res && res.ok && res.url) return res; throw new Error((res&&res.error)||'chiusura caricamento rifiutata'); })
+    .catch(function(e){
+      if(key && uploadId){ try{ fetch(WORKER_FOTO+'/mpu/abort',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key, uploadId:uploadId})}); }catch(_e){} }
+      throw e;
+    });
 }
 function mzVideoUpload(files){
   var f=files&&files[0]; var inp=document.getElementById('mz-video-input'); if(inp) inp.value='';
@@ -23945,7 +23994,9 @@ function mzVideoUpload(files){
   _mzMediaBusy=true;
   mzMediaStato('⏳ Carico il video ('+mzFotoBytes(f.size)+')… <span style="color:#94a3b8;">non chiudere la scheda</span>');
   var ext=(f.name.match(/\.(\w+)$/)||[])[1]||'mp4';
-  mzMediaUpload(f, 'video-'+Date.now()+'.'+ext.toLowerCase()).then(function(res){
+  mzMediaUpload(f, 'video-'+Date.now()+'.'+ext.toLowerCase(), function(p){
+    mzMediaStato('⏳ Carico il video ('+mzFotoBytes(f.size)+')… '+Math.round(p*100)+'% <span style="color:#94a3b8;">non chiudere la scheda</span>');
+  }).then(function(res){
     _mzMedia.video={ url:res.url, key:res.key||'', size:f.size, tipo:f.type||'', ts:Date.now() };
     _mzMedia.videoWa=null;
     mzMediaRender(); mzMediaStato('✅ Video caricato. Ora preparo la versione per WhatsApp…');
