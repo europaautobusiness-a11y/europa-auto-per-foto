@@ -22043,7 +22043,7 @@ function prnConferma(id){
   for(var i=0;i<_prnCache.length;i++){ if(_prnCache[i].id===id){ rec=_prnCache[i]; break; } }
   if(!rec) return;
   if(typeof ccLoad!=='function' || typeof ccSave!=='function'){ alert('Calendario non disponibile.'); return; }
-  var _sug=(rec.fascia==='pomeriggio')?'14:30':'09:00';
+  var _sug=(rec.ora && /^\d{1,2}:\d{2}$/.test(rec.ora))?rec.ora:((rec.fascia==='pomeriggio')?'14:30':'09:00');
   var ora=prompt('A che ora fissiamo l\u2019appuntamento di '+rec.nome+'?\n\n'
     +'Chiesto per il '+prnDataIt(rec.data)+', '+rec.fasciaEt+'.\n'
     +'Orari: 9:00\u201312:00 e 14:30\u201319:00.', _sug);
@@ -22186,6 +22186,7 @@ function prnRichiesteRender(){
       return '<div style="background:#fff;border:1px solid #fde68a;border-radius:9px;padding:10px 12px;margin-bottom:7px;">'
         +'<div style="font-size:14px;font-weight:800;color:#0f172a;">'+prnEsc(r.nome)
         +(r.origine==='sito'?' <span style="font-size:10.5px;font-weight:800;color:#1a4fa0;background:#eaf1fb;padding:2px 7px;border-radius:999px;vertical-align:middle;">dal sito</span>':'')
+        +(r.origine==='appuntamento'?' <span style="font-size:10.5px;font-weight:800;color:#166534;background:#dcfce7;padding:2px 7px;border-radius:999px;vertical-align:middle;">vendita \u00b7 da WhatsApp</span>':'')
         +(r.sinistro?' <span style="font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;padding:2px 7px;border-radius:999px;vertical-align:middle;">sinistro</span>':'')+'</div>'
         +'<div style="font-size:12.5px;color:#475569;margin-top:1px;">'
         +prnEsc(r.lavoro)+' \u00b7 '+prnEsc(r.targa)+(r.veicolo?(' \u00b7 '+prnEsc(r.veicolo)):'')+'</div>'
@@ -28435,6 +28436,24 @@ function cvMailPreventivoHtml(p){
       +'</td></tr></table></td></tr>';
   }
 
+  /* ===== IL VIDEO DELL'AUTO, prima del pulsante WhatsApp =====
+     Ogni auto ha il suo video: nella mail del preventivo c'e' il pulsante
+     per guardarlo subito (Davide, 11/11/2026). */
+  try{
+    var _av=cvAutoDelPreventivo(p);
+    var _vurl=_av && ((_av.video&&_av.video.url) || (_av.videoWa&&_av.videoWa.url));
+    if(_vurl){
+      h+='<tr><td style="padding:22px 24px 0;">'
+        +'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;">'
+        +'<tr><td align="center" style="padding:18px 16px;'+F+'">'
+        +'<div style="font-size:28px;line-height:1;">\uD83C\uDFAC</div>'
+        +'<div style="font-size:19px;font-weight:bold;color:#92400e;line-height:1.3;margin:8px 0 4px;">Effettuiamo un video ad ogni veicolo</div>'
+        +'<div style="font-size:13.5px;color:#92400e;line-height:1.5;margin-bottom:12px;">Quella che vedi nel video \u00e8 esattamente l\u2019auto del tuo preventivo, per trasparenza.</div>'
+        +'<a href="'+_vurl+'" style="display:inline-block;background:#d97706;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:13px 26px;border-radius:9px;">\u25B6 Guardalo ora!</a>'
+        +'</td></tr></table></td></tr>';
+    }
+  }catch(e){}
+
   /* una sola azione */
   var msg=encodeURIComponent('Ciao, ho ricevuto il preventivo per la '+a.nome+(a.targa?(' ('+a.targa+')'):'')+' e vorrei saperne di piu\u2019.');
   h+='<tr><td style="padding:26px 24px 6px;">'+eamBtn('\uD83D\uDCAC Scrivici su WhatsApp','https://wa.me/'+eaTelWa()+'?text='+msg,'#25D366')+'</td></tr>';
@@ -28584,23 +28603,6 @@ function cvMailArricchisci(p, html){
       var mark='</table>'; var pos=html.lastIndexOf(mark);
       if(pos>0) html=html.slice(0,pos)+repBlocco+html.slice(pos);
     }
-    /* ===== IL VIDEO DELL'AUTO =====
-       Ogni auto ha il suo video: nella mail del preventivo c'e' il pulsante
-       per vederlo. Si apre il file dal nostro archivio, nessuna piattaforma. */
-    try{
-      var _av=cvAutoDelPreventivo(p);
-      var _vurl=_av && ((_av.video&&_av.video.url) || (_av.videoWa&&_av.videoWa.url));
-      if(_vurl && html.indexOf(_vurl)<0){
-        var vidBlocco='<tr><td style="padding:8px 24px 0;">'
-          +'<div style="border:1px solid #fde68a;background:#fffbeb;border-radius:10px;padding:14px 16px;font-family:Segoe UI,Arial,sans-serif;">'
-          +'<div style="font-weight:800;color:#92400e;font-size:14px;">\uD83C\uDFAC Il video di questa auto</div>'
-          +'<div style="font-size:12.5px;color:#92400e;margin:3px 0 10px;">In Europa Auto ogni vettura ha il suo video: quella che vedi \u00e8 esattamente quella del preventivo, per trasparenza.</div>'
-          +'<a href="'+_vurl+'" style="display:inline-block;background:#d97706;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;">Guarda il video</a>'
-          +'</div></td></tr>';
-        var mkv='</table>'; var pv=html.lastIndexOf(mkv);
-        if(pv>0) html=html.slice(0,pv)+vidBlocco+html.slice(pv);
-      }
-    }catch(e){}
     var _pdf=(p && (p.mailPdfUrl || (p.mailProg && p.mailProg.pdfUrl))) || '';
     if(_pdf){
       var pdfBlocco='<tr><td style="padding:8px 24px 0;">'
@@ -28866,7 +28868,7 @@ function cvCheckVideoPreventivi(){
               l2[k].updatedAt=Date.now(); cvSave(l2); if(typeof supaUpsert==='function') supaUpsert('preventivi', l2[k]);
             }
           }catch(e){}
-        });
+        }, WA_VIDEO_TEMPLATE_PREV);
       })(cv,a,tel);
       break;   /* uno al giro: niente raffiche */
     }
@@ -29558,8 +29560,30 @@ function cvNuovoStessoCliente(id){
     if(typeof tcToastNew==='function') tcToastNew('Nuovo preventivo per '+cvNomeCliente(cl)+': scegli l\u2019auto', true);
   }catch(e){ alert('Non riuscito: '+(e&&e.message||e)); }
 }
+/* ===== UN SOLO PAGAMENTO = SALDO, NON CAPARRA =====
+   Il contratto nasce con tre righe (Caparra, integrazione, Saldo). Quando
+   il cliente paga tutto in una volta Rudy scrive l'importo nella prima riga
+   e lascia vuote le altre: il contratto, la conferma incasso, lo storico e
+   la causale dicevano "Caparra" per un pagamento che e' il saldo intero.
+   Qui, se l'unica riga con un importo copre tutto il prezzo, diventa
+   "Saldo" (e le righe vuote spariscono). Una caparra parziale resta caparra. */
+function cvPagNormalizza(cv){
+  try{
+    if(!cv || !Array.isArray(cv.pagamenti) || !cv.pagamenti.length) return false;
+    var conImp=cv.pagamenti.filter(function(x){ return cvNum(x.importo)>0; });
+    if(conImp.length!==1) return false;
+    var p=conImp[0]; if(p.confermato) return false;
+    if(!/caparra|acconto|anticipo/i.test(String(p.tipo||''))) return false;
+    var t=(typeof cvCalcola==='function')?cvCalcola(cv):null; var tot=t?(+t.totaleScontato||0):0;
+    if(!(tot>0) || cvNum(p.importo) < tot-1) return false;
+    p.tipo='Saldo';
+    cv.pagamenti=cv.pagamenti.filter(function(x){ return cvNum(x.importo)>0 || x.confermato; });
+    return true;
+  }catch(e){ return false; }
+}
 function cvSalva(){
   cvSync();
+  try{ if(_cv.isContratto && cvPagNormalizza(_cv) && typeof tcToastNew==='function') tcToastNew('Unico pagamento a copertura del prezzo: registrato come Saldo, non come caparra.', true); }catch(e){}
   /* ===== AUTO CAMBIATA SU UN PREVENTIVO GIA' SALVATO =====
      Se non e' ancora un contratto e l'auto e' diversa da quella salvata, si
      chiede: nuovo preventivo (quello vecchio resta) oppure sostituzione.
@@ -40966,8 +40990,9 @@ function cvVendConfermaPag(id, ri){
   try{ var _mm=document.getElementById('cv-mod-modal'); if(_mm && _mm.style.display==='block' && typeof cvVendDettagli==='function') cvVendDettagli(id); }catch(e){}
   var msg='✓ Pagamento confermato';
   if(dopo!==prima){
-    if(dopo==='in_attesa_firma') msg='✓ Caparra confermata → in attesa firma digitale';
-    else if(dopo==='in_attesa_immatricolazione') msg='✓ Caparra confermata → in attesa immatricolazione';
+    var _tp=/^saldo$/i.test(String(p.tipo||'').trim())?'Saldo confermato':'Caparra confermata';
+    if(dopo==='in_attesa_firma') msg='✓ '+_tp+' → in attesa firma digitale';
+    else if(dopo==='in_attesa_immatricolazione') msg='✓ '+_tp+' → in attesa immatricolazione';
     else if(dopo==='da_consegnare') msg='✓ Saldo completato → da consegnare';
   }
   if(typeof tcToastNew==='function') tcToastNew(msg,true);
@@ -42406,6 +42431,7 @@ function cvModSalva(){
   var _adm=(typeof getCurrentRole==='function' && getCurrentRole()==='admin')
         || (typeof eaIsContabilita==='function' && eaIsContabilita());
   if(!(_cons && !_adm)){
+    try{ cvPagNormalizza(_cvMod); }catch(e){}
     list[idx].pagamenti=_cvMod.pagamenti; list[idx].assicOn=_cvMod.assicOn; list[idx].assicImporto=_cvMod.assicImporto; list[idx].assicDettaglio=_cvMod.assicDettaglio;
   }
   /* Solo i campi anagrafici: indirizzo, codice fiscale e dati di fatturazione
@@ -45218,7 +45244,7 @@ function crmArchCercaVecchia(){
 /* Risposta automatica ai messaggi in arrivo: SPENTA (Davide, 10/11/2026).
    Il video parte solo col preventivo, dove l'auto e' certa. Il motore resta
    qui per riaccenderlo (WA_VIDEO_ON=true) se servisse. */
-var WA_VIDEO_TEMPLATE='video_auto', _waVideoBusy=false, _waVideoUltimo=0;
+var WA_VIDEO_TEMPLATE='video_auto', WA_VIDEO_TEMPLATE_PREV='video_preventivo', _waVideoBusy=false, _waVideoUltimo=0;
 /* Interruttore della risposta automatica ai messaggi in arrivo: si accende
    e spegne da CRM → Automazioni (vale per questo PC). */
 function waVideoAttivo(){ try{ return localStorage.getItem('ea_wa_video_in')!=='off'; }catch(e){ return true; } }
@@ -45307,14 +45333,17 @@ function waVideoInviaLibero(tel, nome, a){
 }
 /* fuori dalle 24 ore (lead Autoscout, lead a mano): modello Meta "video_auto"
    con il video in testata, nome e auto nel corpo, pulsante alla scheda. */
-function waVideoInviaTemplate(tel, nome, a, cb){
+function waVideoInviaTemplate(tel, nome, a, cb, modello){
   if(!a || !(a.videoWa&&a.videoWa.url)){ if(cb) cb({ok:false, errore:'manca la versione WhatsApp del video'}); return; }
   var t=String(tel||'').replace(/\D/g,''); if(!t){ if(cb) cb({ok:false, errore:'manca il numero'}); return; }
-  waApiInvia({ to:t, template:WA_VIDEO_TEMPLATE, lingua:'it', headerVideo:a.videoWa.url,
-    params:[String(nome||'').trim()||'cliente', waVideoNomeAuto(a)], bottoneUrl:waVideoSlug(a)+'.html' }).then(function(r){
+  waApiInvia({ to:t, template:(modello||WA_VIDEO_TEMPLATE), lingua:'it', headerVideo:a.videoWa.url,
+    params:[String(nome||'').trim()||'cliente', waVideoNomeAuto(a)],
+    /* pulsante 0 "Scheda completa" → auto/<slug>.html ; pulsante 1 "Fissa un
+       appuntamento" → appuntamento.html?a=<slug> (la pagina ricava l'auto) */
+    bottoniUrl:[waVideoSlug(a)+'.html', waVideoSlug(a)] }).then(function(r){
     try{
       var sb=(typeof sbClient==='function')?sbClient():null;
-      if(sb) sb.from('wa_messaggi').upsert({ id:'autovideo_'+t+'_'+String(a.id).replace(/[^A-Za-z0-9_]/g,'')+'_t'+Date.now(), data:{ telefono:t, nome:nome, direzione:'out', tipo:'template', testo:'\ud83c\udfac Modello video_auto: '+waVideoNomeAuto(a), media:a.videoWa.url, ts:Date.now(), stato:(r&&r.ok)?'sent':'errore', errore:(r&&r.ok)?'':((r&&r.errore)||''), da:(typeof _currentUserEmail!=='undefined'?_currentUserEmail:''), autoId:a.id } }).then(function(){});
+      if(sb) sb.from('wa_messaggi').upsert({ id:'autovideo_'+t+'_'+String(a.id).replace(/[^A-Za-z0-9_]/g,'')+'_t'+Date.now(), data:{ telefono:t, nome:nome, direzione:'out', tipo:'template', testo:'\ud83c\udfac Modello '+(modello||WA_VIDEO_TEMPLATE)+': '+waVideoNomeAuto(a), media:a.videoWa.url, ts:Date.now(), stato:(r&&r.ok)?'sent':'errore', errore:(r&&r.ok)?'':((r&&r.errore)||''), da:(typeof _currentUserEmail!=='undefined'?_currentUserEmail:''), autoId:a.id } }).then(function(){});
     }catch(e){}
     if(r&&r.ok){ try{ waVideoLog(a, t, nome, 'template'); }catch(e){} }
     if(cb) cb(r);
@@ -45325,6 +45354,42 @@ function waVideoLog(a, tel, nome, via){
   try{ var l=JSON.parse(localStorage.getItem(WA_VIDEO_LOG_KEY)||'[]'); l.unshift({ts:Date.now(), auto:waVideoNomeAuto(a), targa:a.targa||'', tel:tel, nome:nome||'', via:via}); localStorage.setItem(WA_VIDEO_LOG_KEY, JSON.stringify(l.slice(0,200))); }catch(e){}
 }
 /* pulsante nel CRM: manda il video al lead col modello */
+/* ===== VIDEO AI LEAD ONLINE (Autoscout / sito) =====
+   Quando arriva una richiesta con il NUMERO di telefono e dal testo si
+   riconosce l'auto (marca+modello, colore se serve) ed e' disponibile con
+   la versione WhatsApp del video, parte il modello Meta "video_auto". Una
+   volta sola per lead; il lead viene marcato (videoWa) cosi' non si ripete
+   da un altro PC. Interruttore in CRM → Automazioni. */
+function leadVideoAttivo(){ try{ return localStorage.getItem('ea_lead_video')!=='off'; }catch(e){ return true; } }
+function leadVideoToggle(){ try{ localStorage.setItem('ea_lead_video', leadVideoAttivo()?'off':'on'); }catch(e){} try{ crmTab('automazioni'); }catch(e){} }
+var _leadVideoBusy=false;
+function leadVideoAuto(){
+  if(!leadVideoAttivo() || _leadVideoBusy) return;
+  if(typeof _currentUserEmail==='undefined' || !_currentUserEmail) return;
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  var now=Date.now();
+  for(var i=0;i<_leadCache.length;i++){
+    var l=_leadCache[i];
+    if(!l || l.videoWa || l.stato==='scartato') continue;
+    var ts=+(l.ts||l.ricevutaTs||0); if(!ts || now-ts>3*86400000) continue;   /* solo richieste fresche */
+    var tel=String(l.telefono||'').replace(/\D/g,''); if(!tel || tel.length<9) continue;
+    var a=waVideoTrovaAuto([l.auto||'', l.messaggio||''].join(' \n ')); if(!a || !(a.videoWa&&a.videoWa.url)) continue;
+    _leadVideoBusy=true;
+    (function(l,a,tel){
+      l.videoWa={ ts:now, autoId:a.id, stato:'in corso' };
+      /* prima si marca, poi si manda: due PC aperti non raddoppiano */
+      sb.from('contatti_in').update({ data:l }).eq('id', l.id).then(function(r){
+        if(r && r.error){ _leadVideoBusy=false; return; }
+        waVideoInviaTemplate(tel, String(l.nome||'').trim().split(' ')[0], a, function(res){
+          l.videoWa.stato=(res&&res.ok)?'inviato':('errore: '+((res&&res.errore)||''));
+          sb.from('contatti_in').update({ data:l }).eq('id', l.id).then(function(){ _leadVideoBusy=false; }, function(){ _leadVideoBusy=false; });
+          try{ if(typeof tcToastNew==='function') tcToastNew(((res&&res.ok)?'\ud83c\udfac Video inviato a ':'Video NON inviato a ')+(l.nome||tel)+' \u00b7 '+waVideoNomeAuto(a), !!(res&&res.ok)); }catch(e){}
+        });
+      }, function(){ _leadVideoBusy=false; });
+    })(l,a,tel);
+    break;   /* uno alla volta */
+  }
+}
 function crmVideoInvia(tel, nome, autoTesto){
   var a=waVideoTrovaAuto(autoTesto||'');
   if(!a){ alert('Non capisco quale auto: scrivi marca e modello (o la targa) nel campo auto del lead.'); return; }
@@ -45345,7 +45410,8 @@ function crmRenderAutomazioni(){
     ['\ud83d\udd27','Garanzia Motore: tagliando','11 mesi dopo la consegna: WhatsApp automatico dal numero aziendale (modello Meta \u201ctagliando_garanzia\u201d). Se Meta lo rifiuta, promemoria alla vendita con il testo pronto.'],
     ['\u2b50','Richiesta recensione','Dalla scheda consegnate, a mano, via WhatsApp o mail.'],
     ['\ud83d\udcc5','Promemoria pipeline','Contatti nuovi, da ricontattare o trattative ferme: li vedi in Dashboard, calcolati sul tempo trascorso.'],
-    ['\ud83c\udfac','Video dell\u2019auto col preventivo','Un\u2019ora dopo il preventivo (insieme alla mail, che ha il pulsante \u201cGuarda il video\u201d): se il cliente ha il cellulare e l\u2019auto ha la versione WhatsApp del video, parte il modello Meta \u201cvideo_auto\u201d. Una volta sola per preventivo.'],
+    ['\ud83c\udfac','Video dell\u2019auto col preventivo','Un\u2019ora dopo il preventivo (insieme alla mail, che ha il pulsante \u201cGuarda il video\u201d): se il cliente ha il cellulare e l\u2019auto ha la versione WhatsApp del video, parte il modello Meta \u201cvideo_preventivo\u201d. Una volta sola per preventivo.'],
+    ['\ud83d\udce9','Video ai lead Autoscout / sito \u2014 '+(leadVideoAttivo()?'<span style="color:#16a34a;">ATTIVA</span>':'<span style="color:#dc2626;">SPENTA</span>')+' <button onclick="leadVideoToggle()" style="margin-left:6px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">'+(leadVideoAttivo()?'Spegni':'Accendi')+'</button>','Richiesta online con il numero di telefono: se dal testo si riconosce l\u2019auto (marca+modello, colore se ce ne sono pi\u00f9 d\u2019una), \u00e8 disponibile e ha la versione WhatsApp del video, parte il modello Meta \u201cvideo_auto\u201d. Una volta sola per richiesta. Senza numero non parte nulla.'],
     ['\ud83d\udcf2','Video a chi scrive su WhatsApp \u2014 '+(waVideoAttivo()?'<span style="color:#16a34a;">ATTIVA</span>':'<span style="color:#dc2626;">SPENTA</span>')+' <button onclick="waVideoToggle()" style="margin-left:6px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">'+(waVideoAttivo()?'Spegni':'Accendi')+'</button>','Se un cliente scrive sul numero aziendale e dal testo si capisce l\u2019auto (targa, oppure marca+modello+colore se univoca), entro 24 ore parte da sola la risposta con il video, senza modello Meta. Una volta sola per numero e auto, mai se un collaboratore ha gi\u00e0 risposto.']
   ];
   var h='<div style="background:#fff;border:1px solid #e8ecf1;border-radius:16px;padding:18px;margin-bottom:14px;"><div style="font-weight:800;font-size:15px;margin-bottom:8px;">\u2699\ufe0f Regole attive</div>'
@@ -45744,6 +45810,7 @@ function crmLeadCarica(cb){
             _leadLetto=true;
             _leadRiconnProvato=false;
             try{ crmLeadScadenza(); }catch(e){}
+            try{ leadVideoAuto(); }catch(e){}
           } else if(res && res.error){
             /* Un elenco vuoto senza spiegazione fa perdere tempo: qui si dice
                cosa e' successo. Quasi sempre e' l'accesso al database non
