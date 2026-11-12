@@ -5368,7 +5368,7 @@ function eaChiediMailEInvia(cfg){
 var EA_WA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-invia';
 /* I file arrivati su WhatsApp (vocali, foto, documenti) si aprono passando
    dalla funzione wa-media, che li scarica da Meta con il token. */
-var EA_WA_MEDIA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-media';
+var EA_WA_MEDIA_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-media-ts'; /* la funzione su Supabase e' stata creata con questo nome */
 function waMediaSrc(m){ return EA_WA_MEDIA_URL+'?id='+encodeURIComponent(m.mediaId||'')+'&apikey='+encodeURIComponent(typeof SB_KEY!=='undefined'?SB_KEY:''); }
 function waMediaHtml(m){
   if(!m || !m.mediaId) return '';
@@ -19954,7 +19954,23 @@ function pvN(v){ var x=parseFloat(String(v==null?'':v).replace(',','.')); return
 function pvEu(x){ try{ return Number(x).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }catch(e){ return x; } }
 function pvOr2(x){ return (Math.round(x*100)/100).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function pvVal(id){ var e=document.getElementById(id); return e?e.value:''; }
-function pvUpd(i,k,v){ if(_pvRighe[i]) _pvRighe[i][k]=v; pvCalc(); }
+function pvUpd(i,k,v){ if(_pvRighe[i]) _pvRighe[i][k]=v; if(k==='degrado'||k==='ric') pvDegradoAgg(i); pvCalc(); }
+/* ===== DEGRADO SUL RICAMBIO =====
+   In sede di accordo col perito, su una singola voce si applica una
+   percentuale di degrado (usura) al ricambio: il richiesto resta scritto,
+   in preventivo entra il netto. Solo sul ricambio, mai sulla manodopera. */
+function pvRicNetto(r){ var ric=pvN(r.ric), d=pvN(r.degrado); if(!(d>0)) return ric; d=Math.min(100,d); return Math.round(ric*(1-d/100)*100)/100; }
+function pvDegradoAgg(i){
+  try{ var r=_pvRighe[i], el=document.getElementById('pv-deg-'+i); if(!r||!el) return;
+    var d=pvN(r.degrado), ric=pvN(r.ric);
+    el.innerHTML=(d>0&&ric>0)?('<span style="color:#991b1b;">richiesto '+pvEu(ric)+' \u2212 '+pvOr2(d)+'% = <b>'+pvEu(pvRicNetto(r))+'</b></span>'):'';
+  }catch(e){}
+}
+function pvDegradoToggle(i){
+  var r=_pvRighe[i]; if(!r) return;
+  if(pvN(r.degrado)>0){ r.degrado=''; } else { var v=prompt('Degrado sul ricambio di \u201c'+(r.descr||'questa voce')+'\u201d (%):','40'); if(v===null) return; r.degrado=String(pvN(v)||''); }
+  pvRenderRighe(); pvCalc();
+}
 function pvDel(i){ _pvRighe.splice(i,1); pvRenderRighe(); pvCalc(); }
 function pvAdd(){ _pvRighe.push({cr:'',descr:'',sr:'',la:'',ve:'',me:'',ric:''}); pvRenderRighe(); pvCalc(); }
 
@@ -20021,7 +20037,7 @@ function sinPreventivo(id, versione){
   var _ver=(_pvVersioneVista!=null)?((s.preventivoVersioni||[])[_pvVersioneVista]||null):null;
   if(_pvVersioneVista!=null && !_ver){ _pvVersioneVista=null; }
   var pv=_ver?(_ver.preventivo||{}):(s.preventivo||{}); var p=pv.params||{};
-  _pvRighe=(pv.righe&&pv.righe.length)?pv.righe.map(function(r){return {cr:r.cr||'',descr:r.descr||'',sr:r.sr||'',la:r.la||'',ve:r.ve||'',me:r.me||'',ric:r.ric||''};}):[{cr:'',descr:'',sr:'',la:'',ve:'',me:'',ric:''}];
+  _pvRighe=(pv.righe&&pv.righe.length)?pv.righe.map(function(r){return {cr:r.cr||'',descr:r.descr||'',sr:r.sr||'',la:r.la||'',ve:r.ve||'',me:r.me||'',ric:r.ric||'',degrado:r.degrado||''};}):[{cr:'',descr:'',sr:'',la:'',ve:'',me:'',ric:''}];
   var o=new Date(); var dataIt=p.data||(String(o.getDate()).padStart(2,'0')+'/'+String(o.getMonth()+1).padStart(2,'0')+'/'+o.getFullYear());
   function fld(lab,fid,val,type){ return '<div style="margin-bottom:8px;"><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;text-transform:uppercase;">'+lab+'</label><input id="'+fid+'" type="'+(type||'text')+'" value="'+sinEsc(val==null?'':val)+'" oninput="pvCalc()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'; }
   var m=document.getElementById('sin-modal');
@@ -20198,15 +20214,24 @@ function pvRenderRighe(){
     h+='</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;"><div style="display:flex;gap:5px;">'
       +'<button onclick="pvSu('+i+')" title="Sposta su"'+(i===0?' disabled':'')+' style="background:#eff6ff;color:#1a4fa0;border:1px solid #bfdbfe;padding:5px 11px;border-radius:6px;font-weight:700;cursor:'+(i===0?'not-allowed':'pointer')+';font-size:14px;opacity:'+(i===0?'.4':'1')+';">↑</button>'
       +'<button onclick="pvGiu('+i+')" title="Sposta giù"'+(i===_pvRighe.length-1?' disabled':'')+' style="background:#eff6ff;color:#1a4fa0;border:1px solid #bfdbfe;padding:5px 11px;border-radius:6px;font-weight:700;cursor:'+(i===_pvRighe.length-1?'not-allowed':'pointer')+';font-size:14px;opacity:'+(i===_pvRighe.length-1?'.4':'1')+';">↓</button>'
-      +'</div><button onclick="pvDel('+i+')" style="background:#fee2e2;color:#dc2626;border:1px solid #ef4444;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Rimuovi</button></div>';
+      +'</div><div style="display:flex;gap:6px;align-items:center;">'
+      +'<span id="pv-deg-'+i+'" style="font-size:11.5px;"></span>'
+      +(pvN(r.degrado)>0
+        ? '<input value="'+sinEsc(r.degrado)+'" oninput="pvUpd('+i+',\'degrado\',this.value)" title="Percentuale di degrado sul ricambio" style="width:52px;padding:5px 4px;border:1px solid #fca5a5;background:#fff5f5;border-radius:6px;font-size:12px;text-align:center;box-sizing:border-box;">'
+          +'<span style="font-size:11px;color:#991b1b;font-weight:700;">% degrado</span>'
+          +'<button onclick="pvDegradoToggle('+i+')" title="Togli il degrado" style="background:#fff;color:#991b1b;border:1px solid #fca5a5;padding:5px 8px;border-radius:6px;font-weight:700;cursor:pointer;font-size:11px;">\u2715</button>'
+        : '<button onclick="pvDegradoToggle('+i+')" title="Applica una percentuale di degrado al ricambio di questa voce" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Degrado %</button>')
+      +'<button onclick="pvDel('+i+')" style="background:#fee2e2;color:#dc2626;border:1px solid #ef4444;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Rimuovi</button></div></div>';
     h+='</div>';
   });
   c.innerHTML=h;
+  _pvRighe.forEach(function(r,i){ pvDegradoAgg(i); });
 }
 
 function pvCompute(){
   var t={sumSR:0,sumLA:0,sumVE:0,sumME:0,sumRic:0};
-  _pvRighe.forEach(function(r){ t.sumSR+=pvN(r.sr); t.sumLA+=pvN(r.la); t.sumVE+=pvN(r.ve); t.sumME+=pvN(r.me); t.sumRic+=pvN(r.ric); });
+  t.sumRicLordo=0; t.degradoTot=0;
+  _pvRighe.forEach(function(r){ t.sumSR+=pvN(r.sr); t.sumLA+=pvN(r.la); t.sumVE+=pvN(r.ve); t.sumME+=pvN(r.me); var _l=pvN(r.ric), _n=pvRicNetto(r); t.sumRicLordo+=_l; t.sumRic+=_n; t.degradoTot+=(_l-_n); });
   t.orario=pvN(pvVal('pv_orario')); t.materialeH=pvN(pvVal('pv_materiale'));
   t.pctDoppio=pvN(pvVal('pv_doppio')); t.pctFin=pvN(pvVal('pv_finitura')); t.finMax=pvN(pvVal('pv_finmax'));
   t.tagg=pvN(pvVal('pv_tagg')); t.ivaPct=pvN(pvVal('pv_iva'));
@@ -20238,13 +20263,14 @@ function pvCalc(){
     ['Tempo agg. verniciatura', pvOr2(t.tagg)+' h'],
     ['<b>Totale tempi VE</b>', '<b>'+pvOr2(t.veTot)+' h</b>'],
     ['<b>Ore manodopera totali</b>', '<b>'+pvOr2(t.oreMan)+' h</b>'],
+  ].concat(t.degradoTot>0?[['Ricambi richiesti', pvEu(t.sumRicLordo)],['<span style="color:#991b1b;">Degrado sui ricambi</span>', '<span style="color:#991b1b;">\u2212 '+pvEu(t.degradoTot)+'</span>']]:[]).concat([
     ['Manodopera ('+pvOr2(t.oreMan)+' x € '+pvEu(t.orario)+')', '€ '+pvEu(t.oreMan*t.orario)],
     ['Levabolli (manodopera a corpo)', '€ '+pvEu(t.levabolli)],
     ['Materiale consumo ('+pvOr2(t.veTot)+' x € '+pvEu(t.materialeH)+')', '€ '+pvEu(t.materiale)],
-    ['Ricambi', '€ '+pvEu(t.sumRic)],
+    ['Ricambi'+(t.degradoTot>0?' (netto degrado)':''), '€ '+pvEu(t.sumRic)],
     ['Smaltimento rifiuti ('+pvOr2(t.smaltPct)+'% imponibile, max € '+pvEu(t.smaltMax)+')', '€ '+pvEu(t.smalt)],
     ['<b>Imponibile</b>', '<b>€ '+pvEu(t.imponibile)+'</b>'],['IVA '+pvOr2(t.ivaPct)+'%', '€ '+pvEu(t.iva)]
-  ];
+  ]);
   var h=''; rows.forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px dashed #e2e8f0;"><span>'+x[0]+'</span><span style="font-weight:700;">'+x[1]+'</span></div>'; });
   h+='<div style="display:flex;justify-content:space-between;padding-top:10px;font-size:17px;font-weight:800;color:#1a4fa0;"><span>TOTALE DOCUMENTO</span><span>€ '+pvEu(t.totale)+'</span></div>';
   el.innerHTML=h;
@@ -20252,7 +20278,7 @@ function pvCalc(){
 function pvCollect(){
   return { cliente:pvVal('pv_cliente'), indirizzo:pvVal('pv_indirizzo'), veicolo:pvVal('pv_veicolo'), targa:pvVal('pv_targa'), comp:pvVal('pv_comp'), nsin:pvVal('pv_nsin'),
     params:{ vernice:pvVal('pv_vernice'), strati:pvVal('pv_strati'), telaio:pvVal('pv_telaio'), imm:pvVal('pv_imm'), smalto:pvVal('pv_smalto'), num:pvVal('pv_num'), data:pvVal('pv_data'), orario:pvVal('pv_orario'), materiale:pvVal('pv_materiale'), doppio:pvVal('pv_doppio'), finitura:pvVal('pv_finitura'), finmax:pvVal('pv_finmax'), tagg:pvVal('pv_tagg'), levabolli:pvVal('pv_levabolli'), iva:pvVal('pv_iva'), smaltPct:pvVal('pv_smaltPct'), smaltMax:pvVal('pv_smaltMax') },
-    righe:_pvRighe.map(function(r){return {cr:r.cr,descr:r.descr,sr:r.sr,la:r.la,ve:r.ve,me:r.me,ric:r.ric};}) };
+    righe:_pvRighe.map(function(r){return {cr:r.cr,descr:r.descr,sr:r.sr,la:r.la,ve:r.ve,me:r.me,ric:r.ric,degrado:r.degrado||''};}) };
 }
 function pvSalva(){
   if(!_pvId) return; var list=sinLoad(); var idx=list.findIndex(function(x){return x.id===_pvId;}); if(idx<0) return;
@@ -20280,7 +20306,7 @@ function pvConferma(){
 }
 function pvDocHtml(){
   var t=pvCompute(); var rh='';
-  _pvRighe.forEach(function(r){ rh+='<tr><td class="c">'+sinEsc(r.cr)+'</td><td>'+sinEsc(r.descr)+'</td><td class="c">'+(r.sr?sinEsc(r.sr):'')+'</td><td class="c">'+(r.la?sinEsc(r.la):'')+'</td><td class="c">'+(r.ve?sinEsc(r.ve):'')+'</td><td class="c">'+(r.me?sinEsc(r.me):'')+'</td><td class="r">'+(r.ric?pvEu(pvN(r.ric)):'')+'</td></tr>'; });
+  _pvRighe.forEach(function(r){ rh+='<tr><td class="c">'+sinEsc(r.cr)+'</td><td>'+sinEsc(r.descr)+'</td><td class="c">'+(r.sr?sinEsc(r.sr):'')+'</td><td class="c">'+(r.la?sinEsc(r.la):'')+'</td><td class="c">'+(r.ve?sinEsc(r.ve):'')+'</td><td class="c">'+(r.me?sinEsc(r.me):'')+'</td><td class="r">'+(r.ric?(pvN(r.degrado)>0?('<span style="font-size:9px;color:#64748b;">rich. '+pvEu(pvN(r.ric))+' \u2212 '+pvOr2(pvN(r.degrado))+'% degrado</span><br>'+pvEu(pvRicNetto(r))):pvEu(pvN(r.ric))):'')+'</td></tr>'; });
   /* righe vuote di riempimento: bastano per arrivare a 16, col carattere
      piu' grande la pagina e' gia' piena */
   for(var k=_pvRighe.length;k<16;k++){ rh+='<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; }
@@ -22667,6 +22693,15 @@ function onRender(){
   if(filtro==='online')      list=list.filter(function(a){ return a.online===true; });
   else if(filtro==='pronte') list=list.filter(function(a){ return onNum(a.prezzoVen)>0 && onFoto1(a) && a.online!==true; });
   else if(filtro==='manca')  list=list.filter(function(a){ return !onFoto1(a) || !(onNum(a.prezzoVen)>0); });
+  /* ricerca locale: solo fra le auto di questa sezione */
+  var q=String(window._onCerca||'').trim().toLowerCase();
+  if(q){
+    var parole=q.split(/\s+/).filter(Boolean);
+    list=list.filter(function(a){
+      var t=[a.marca,a.modello,a.allestimento,a.targa,a.telaio,a.colore,a.numeroInterno||a.numero_interno,(typeof onRif==='function'?onRif(a):'')].join(' ').toLowerCase();
+      return parole.every(function(w){ return t.indexOf(w)>=0; });
+    });
+  }
 
   var chip=function(k,t,n,col){
     var att=(filtro===k);
@@ -22680,7 +22715,13 @@ function onRender(){
     + chip('online','\u2713 In vetrina', nOnline, '#166534')
     + chip('pronte','Pronte da pubblicare', nPronte-nOnline>0?(nPronte-nOnline):0, '#b45309')
     + chip('manca','Manca qualcosa', mzLoad().filter(function(a){ return onVendibile(a) && (!onFoto1(a)||!(onNum(a.prezzoVen)>0)); }).length, '#64748b')
-    +'</div>';
+    +'<div style="flex:1;min-width:220px;display:flex;align-items:center;gap:6px;">'
+    +'<input id="on-cerca" type="search" value="'+String(window._onCerca||'').replace(/"/g,'&quot;')+'" placeholder="\uD83D\uDD0D Cerca qui: marca, modello, targa, n\u00b0\u2026" oninput="onCercaCambia(this.value)" '
+    +'style="flex:1;padding:8px 12px;border:1px solid #cbd5e1;border-radius:20px;font-family:inherit;font-size:13px;outline:none;">'
+    +(q?'<button onclick="onCercaCambia(\'\');" style="border:none;background:#f1f5f9;color:#475569;border-radius:20px;padding:8px 11px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;">\u2715</button>':'')
+    +'</div>'
+    +'</div>'
+    +(q?'<div style="font-size:12.5px;color:#64748b;margin:-6px 0 10px;">'+list.length+' auto per \u201c'+String(window._onCerca).replace(/</g,'&lt;')+'\u201d</div>':'');
 
   var _nPronte=Math.max(0, nPronte-nOnline);
   h+='<div style="background:'+(_nPronte?'#ecfdf5':'#f8fafc')+';border:1px solid '+(_nPronte?'#86efac':'#e2e8f0')+';border-radius:10px;padding:11px 13px;margin-bottom:10px;font-size:13px;color:#0f172a;line-height:1.5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
@@ -22735,6 +22776,16 @@ function onRender(){
 }
 
 function onFiltro(k){ window._onFiltro=k; onRender(); }
+var _onCercaT=null;
+function onCercaCambia(v){
+  window._onCerca=v;
+  clearTimeout(_onCercaT);
+  _onCercaT=setTimeout(function(){
+    onRender();
+    /* il campo si ridisegna: il cursore torna in fondo */
+    try{ var el=document.getElementById('on-cerca'); if(el && v){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }catch(e){}
+  }, 180);
+}
 /* Accende la pubblicazione su tutte le auto complete (prezzo + foto) ancora
    spente: e' il modo piu' rapido per mandare su Google tutto il piazzale. */
 function onPubblicaTutte(){
