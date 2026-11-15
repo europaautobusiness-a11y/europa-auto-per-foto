@@ -4917,6 +4917,7 @@ function gsJsonp(payload){
 var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-function';
 var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-dotazioni';
+var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
 var EA_WA_NUM = '39029181820';  // ripiego: il valore vero sta nei Parametri
 
 /* ===== I NUMERI DI TELEFONO IN UN POSTO SOLO =====
@@ -22675,6 +22676,155 @@ function onStatoBadge(a){
   var m=map[s.cls]||map.no;
   return '<span title="'+mzEsc(s.testo)+'" style="position:absolute;bottom:8px;left:38px;width:22px;height:22px;border-radius:50%;background:'+m[0]+';color:'+m[1]+';display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:help;">'+m[2]+'</span>';
 }
+
+/* =====================================================================
+   AUTO VENDUTE E SITO (14/11/2026, Davide)
+   Una vendita non toglie piu' l'auto dal sito da sola: col finanziamento
+   la vendita puo' saltare. Alla firma del contratto (e di nuovo alla
+   consegna) parte un avviso all'amministrazione, e in "Auto online" c'e'
+   il riquadro "Vendute ancora sul sito" con due scelte:
+     - Togli dal sito  -> online spento, sitoTolta = data: l'auto passa
+       nella scheda "Vendute (tolte dal sito)" con foto e dati intatti;
+     - Lascia online   -> resta sul sito come "Opzionata"; se lo stato
+       cambia (es. consegnata) la domanda torna.
+   Dalle vendute si puo' rimettere online la stessa scheda, oppure copiare
+   foto, dotazioni e scheda tecnica su un'altra auto appena arrivata.
+   ===================================================================== */
+var ON_STATI_IMPEGNO=['opzionata','prenotata','venduta'];
+function onDaDecidere(a){
+  if(!a || a.nlt || a.deleted || a.sitoTolta || a.online!==true) return false;
+  /* solo le vendite avvisate con la regola nuova: le vecchie opzionate erano
+     gia' sparite dal sito e la vista continua a nasconderle */
+  if(!a.sitoAvvisi) return false;
+  var st=a.stato||'disponibile';
+  var imp=(ON_STATI_IMPEGNO.indexOf(st)>=0) || !!a.impegnata;
+  if(!imp) return false;
+  return String(a.sitoLasciaStato||'')!==String(st);
+}
+function onAvvisaVendita(autoId, cv, fase){
+  try{
+    if(!autoId || typeof mzLoad!=='function') return;
+    var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===autoId; }); if(i<0) return;
+    var a=l[i];
+    if(a.online!==true || a.sitoTolta) return;              /* non e' sul sito: niente da chiedere */
+    var chiave=(fase||'vendita')+'_'+((cv&&cv.id)||'');
+    a.sitoAvvisi=a.sitoAvvisi||{};
+    if(a.sitoAvvisi[chiave]) return;                        /* gia' avvisato da questo o da un altro dispositivo */
+    a.sitoAvvisi[chiave]=Date.now(); a.updatedAt=Date.now();
+    mzSave(l); try{ mzSupaUpsert(a); }catch(e){}
+    var nome=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' · '+a.targa):'');
+    var cli=(cv&&typeof cvNomeCliente==='function')?String(cvNomeCliente(cv.cliente)||'').trim():'';
+    var vend=String((cv&&cv.venditore)||((typeof _currentUserName!=='undefined'&&_currentUserName)||'')).trim();
+    var cosa=(fase==='consegna')?'consegnata':'venduta';
+    var testo='🌐 '+nome+' è stata '+cosa+(vend?(' da '+vend):'')+(cli?(' a '+cli):'')
+      +' ma è ancora sul sito. Decidi tu se toglierla: Auto online → Vendute ancora sul sito.';
+    try{ notifPush(testo, '🌐', { ruoli:['admin'] }); }catch(e){}
+    var corpo='<p>'+mzEsc(nome)+' è stata <b>'+cosa+'</b>'+(vend?(' da '+mzEsc(vend)):'')+(cli?(' a '+mzEsc(cli)):'')+'.</p>'
+      +'<p>L’auto <b>è ancora pubblicata sul sito</b>: non viene tolta in automatico, perché con il finanziamento la vendita può ancora saltare.</p>'
+      +'<p>Per toglierla: gestionale → <b>Auto online</b> → riquadro <b>Vendute ancora sul sito</b> → <b>Togli dal sito</b>. Foto e dati restano nella scheda “Vendute (tolte dal sito)”.</p>'
+      +((fase==='consegna')?'<p>L’auto è stata consegnata: la vendita è conclusa.</p>':'<p>Se il finanziamento non passa, lasciala online.</p>');
+    var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
+    ['amministrazione@europaautosrl.it','europaautobusiness@gmail.com'].forEach(function(d){
+      try{ eaInviaMessaggio({ to:d, subject:'Auto '+cosa+': toglierla dal sito? — '+nome, html:html }); }catch(e){}
+    });
+  }catch(e){}
+}
+function onTogliSito(id){
+  if(!onSoloTitolare()){ alert('Solo l’amministrazione può togliere un’auto dal sito.'); return; }
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  var a=l[i], nome=((a.marca||'')+' '+(a.modello||'')).trim();
+  if(!confirm('Tolgo '+nome+(a.targa?(' ('+a.targa+')'):'')+' dal sito?\n\nFoto e dati restano: la trovi in Auto online → Vendute (tolte dal sito), da dove puoi rimetterla online o copiarla su un’altra auto.')) return;
+  a.online=false; a.onlineTs=Date.now(); a.sitoTolta=Date.now();
+  a.sitoToltaDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  a.updatedAt=Date.now(); mzSave(l); try{ mzSupaUpsert(a); }catch(e){}
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Tolta dal sito: '+nome, true);
+}
+function onLasciaSito(id){
+  if(!onSoloTitolare()) return;
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  l[i].sitoLasciaStato=l[i].stato||'disponibile'; l[i].sitoLasciaTs=Date.now(); l[i].updatedAt=Date.now();
+  mzSave(l); try{ mzSupaUpsert(l[i]); }catch(e){}
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Resta online come “Opzionata”', true);
+}
+function onRimettiSito(id){
+  if(!onSoloTitolare()) return;
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  var a=l[i];
+  if(!(onNum(a.prezzoVen)>0) || !onFoto1(a)){ alert('Per rimetterla online servono prezzo e almeno una foto: aprila con ✎ e completala.'); return; }
+  var msg='Rimetto online '+((a.marca||'')+' '+(a.modello||'')).trim()+'?';
+  if(a.stato==='venduta') msg+='\n\nAttenzione: in magazzino risulta VENDUTA, quindi sul sito comparirà con la scritta “Venduta”. Se è arrivata un’auto uguale, usa invece “Copia su un’altra auto”.';
+  if(!confirm(msg)) return;
+  a.sitoTolta=null; a.online=true; a.onlineTs=Date.now(); a.sitoLasciaStato=a.stato||'disponibile';
+  a.updatedAt=Date.now(); mzSave(l); try{ mzSupaUpsert(a); }catch(e){}
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('🌐 Di nuovo online', true);
+}
+function onCopiaSu(id){
+  if(!onSoloTitolare()) return;
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  var src=l[i];
+  var q=prompt('Su quale auto copio foto, dotazioni e scheda tecnica di '+((src.marca||'')+' '+(src.modello||'')).trim()+'?\n\nScrivi la targa o il numero interno dell’auto arrivata:');
+  if(!q) return;
+  var nq=String(q).toUpperCase().replace(/[^A-Z0-9]/g,'');
+  var cand=l.filter(function(x){ return x && x.id!==id && !x.deleted && x.stato!=='venduta'
+    && (String(x.targa||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===nq || String(x.numero_interno||x.numeroInterno||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===nq); });
+  if(!cand.length){ alert('Nessuna auto in magazzino (non venduta) con targa o numero “'+q+'”.'); return; }
+  var dst=cand[0];
+  var haFoto=((dst.foto||[]).length>0);
+  if(!confirm('Copio su '+((dst.marca||'')+' '+(dst.modello||'')).trim()+(dst.targa?(' ('+dst.targa+')'):'')+':\n• '+((src.foto||[]).length)+' foto'+(src.giro360?' e giro a 360°':'')+'\n• dotazioni\n• scheda tecnica'
+    +(haFoto?'\n\nATTENZIONE: questa auto ha già '+dst.foto.length+' foto, verranno sostituite.':''))) return;
+  dst.foto=JSON.parse(JSON.stringify(src.foto||[]));
+  if(src.giro360) dst.giro360=JSON.parse(JSON.stringify(src.giro360));
+  if(src.dotazioni) dst.dotazioni=src.dotazioni;
+  if(!dst.allestimento && src.allestimento) dst.allestimento=src.allestimento;
+  if(typeof MZ_TEC_CAMPI!=='undefined') MZ_TEC_CAMPI.forEach(function(c){ var k='tec_'+c[0]; if(src[k]) dst[k]=src[k]; });
+  dst.fotoCopiateDa=src.id; dst.updatedAt=Date.now();
+  mzSave(l); try{ mzSupaUpsert(dst); }catch(e){}
+  if(typeof tcToastNew==='function') tcToastNew('Copiato: controlla prezzo e km, poi pubblicala', true);
+  try{ mzForm(dst.id); }catch(e){ onRender(); }
+}
+function onDaDecidereHTML(){
+  var l=mzLoad().filter(onDaDecidere);
+  if(!l.length || !onSoloTitolare()) return '';
+  var h='<div style="background:#fff7ed;border:2px solid #fb923c;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
+    +'<div style="font-weight:900;font-size:15px;color:#9a3412;margin-bottom:3px;">⚠️ Vendute ancora sul sito ('+l.length+')</div>'
+    +'<div style="font-size:12.5px;color:#9a3412;margin-bottom:10px;line-height:1.45;">Hanno un contratto (o sono già consegnate) ma sono ancora pubblicate. Sul sito si vedono come “Opzionata”. Toglile quando la vendita è sicura; se il finanziamento è in corso puoi lasciarle.</div>';
+  l.forEach(function(a){
+    var f=onFoto1(a), st=a.stato||'disponibile';
+    var stTxt=(st==='venduta')?'Consegnata':'Contratto firmato';
+    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #fed7aa;border-radius:10px;padding:8px;margin-top:6px;">'
+      +(f?'<div style="width:70px;height:50px;border-radius:7px;background:#f1f5f9 url(\''+f+'\') center/cover;flex:none;"></div>':'')
+      +'<div style="flex:1;min-width:160px;"><div style="font-weight:800;font-size:13.5px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;">'+mzEsc(a.targa||'')+(a.targa?' · ':'')+'<b style="color:'+(st==='venduta'?'#166534':'#b45309')+';">'+stTxt+'</b>'
+      +(a.sitoLasciaStato?' · lasciata online prima':'')+'</div></div>'
+      +'<button onclick="onTogliSito(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Togli dal sito</button>'
+      +'<button onclick="onLasciaSito(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Lascia online</button>'
+      +'</div>';
+  });
+  return h+'</div>';
+}
+function onVenduteHTML(){
+  var l=mzLoad().filter(function(a){ return a && a.sitoTolta && !a.deleted; })
+    .sort(function(x,y){ return (y.sitoTolta||0)-(x.sitoTolta||0); });
+  var q=String(window._onCerca||'').trim().toLowerCase();
+  if(q){ var p=q.split(/\s+/); l=l.filter(function(a){ var t=[a.marca,a.modello,a.allestimento,a.targa,a.colore].join(' ').toLowerCase(); return p.every(function(w){ return t.indexOf(w)>=0; }); }); }
+  if(!l.length) return '<div style="color:#94a3b8;font-size:14px;padding:20px 0;">Nessuna auto tolta dal sito. Quando togli un’auto venduta, la ritrovi qui con foto e dati.</div>';
+  var h='<div style="font-size:12.5px;color:#64748b;margin-bottom:10px;">Auto tolte dal sito dopo la vendita. Non sono pubblicate, ma foto e dati restano: puoi rimetterle online o copiarle su un’auto uguale appena arrivata.</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">';
+  l.forEach(function(a){
+    var f=onFoto1(a), d=new Date(a.sitoTolta);
+    h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">'
+      +(f?'<div style="height:130px;background:#f1f5f9 url(\''+f+'\') center/cover;"></div>':'<div style="height:130px;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-weight:700;">nessuna foto</div>')
+      +'<div style="padding:10px 12px;"><div style="font-weight:800;font-size:14px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</div>'
+      +'<div style="font-size:11.5px;color:#94a3b8;">'+mzEsc(a.allestimento||'')+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;margin-top:3px;">'+mzEsc(a.targa||'')+((a.foto||[]).length?(' · '+a.foto.length+' foto'):'')+' · tolta il '+d.toLocaleDateString('it-IT')+'</div>'
+      +'<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;">'
+      +'<button onclick="onCopiaSu(\''+a.id+'\')" style="flex:1;padding:8px;border-radius:8px;border:none;background:#2060b8;color:#fff;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">Copia su un’altra auto</button>'
+      +'<button onclick="onRimettiSito(\''+a.id+'\')" style="flex:1;padding:8px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">Rimetti online</button>'
+      +'<button onclick="mzForm(\''+a.id+'\')" title="Apri la scheda" style="padding:8px 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12px;cursor:pointer;">✎</button>'
+      +'</div></div></div>';
+  });
+  return h+'</div>';
+}
 function onRender(){
   var w=document.getElementById('online-wrap'); if(!w) return;
   /* lo stato Google si legge una volta e poi si ridisegna */
@@ -22722,9 +22872,10 @@ function onRender(){
     +'<div style="font-size:12.5px;color:#64748b;margin-bottom:12px;line-height:1.5;">Qui ci sono solo le auto disponibili e non impegnate: le opzionate e le prenotate restano fuori. Metti il prezzo, accendi la pubblicazione, e passa col mouse sulla <b>i</b> di ogni foto per vedere cosa manca per Google. Il pallino accanto: <span style="color:#16a34a;font-weight:800;">\u2713 verde</span> approvata e pubblica su Google, <span style="color:#1a4fa0;font-weight:800;">\u2713 blu</span> nel feed inviato (approvazione non ancora letta), <span style="color:#d97706;font-weight:800;">\u23f3 arancio</span> in revisione o in attesa del feed, <span style="color:#dc2626;font-weight:800;">\u2715 rossa</span> non su Google.</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">'
     + chip('tutte','Tutte le disponibili', mzLoad().filter(onVendibile).length, '#1a4fa0')
-    + chip('online','\u2713 In vetrina', nOnline, '#166534')
+    + chip('online','\u2713 Online', nOnline, '#166534')
     + chip('pronte','Pronte da pubblicare', nPronte-nOnline>0?(nPronte-nOnline):0, '#b45309')
     + chip('manca','Manca qualcosa', mzLoad().filter(function(a){ return onVendibile(a) && (!onFoto1(a)||!(onNum(a.prezzoVen)>0)); }).length, '#64748b')
+    + chip('vendute','Vendute (tolte dal sito)', mzLoad().filter(function(a){ return a && a.sitoTolta && !a.deleted; }).length, '#7c3aed')
     +'<div style="flex:1;min-width:220px;display:flex;align-items:center;gap:6px;">'
     +'<input id="on-cerca" type="search" value="'+String(window._onCerca||'').replace(/"/g,'&quot;')+'" placeholder="\uD83D\uDD0D Cerca qui: marca, modello, targa, n\u00b0\u2026" oninput="onCercaCambia(this.value)" '
     +'style="flex:1;padding:8px 12px;border:1px solid #cbd5e1;border-radius:20px;font-family:inherit;font-size:13px;outline:none;">'
@@ -22733,6 +22884,8 @@ function onRender(){
     +'</div>'
     +(q?'<div style="font-size:12.5px;color:#64748b;margin:-6px 0 10px;">'+list.length+' auto per \u201c'+String(window._onCerca).replace(/</g,'&lt;')+'\u201d</div>':'');
 
+  h+=onDaDecidereHTML();
+  if(filtro==='vendute'){ w.innerHTML=h+onVenduteHTML(); return; }
   var _nPronte=Math.max(0, nPronte-nOnline);
   h+='<div style="background:'+(_nPronte?'#ecfdf5':'#f8fafc')+';border:1px solid '+(_nPronte?'#86efac':'#e2e8f0')+';border-radius:10px;padding:11px 13px;margin-bottom:10px;font-size:13px;color:#0f172a;line-height:1.5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
     +'<div style="flex:1;min-width:200px;"><b style="font-size:15px;">Su Google: '+nOnline+' auto</b> (in vetrina, complete). <b>'+_nPronte+'</b> complete ma ancora spente'+(_nPronte?' \u2192 accendile':'')+'. '
@@ -22777,7 +22930,7 @@ function onRender(){
       +'<input type="number" step="1" value="'+(pr>0?pr:'')+'" placeholder="\u2014" onchange="onPrezzo(\'' + a.id + '\',this.value)" style="flex:1;padding:8px;border:1px solid '+(pr>0?'#cbd5e1':'#fca5a5')+';border-radius:7px;font-family:inherit;font-size:14px;font-weight:700;">'
       +'<span style="font-size:13px;color:#64748b;">\u20ac</span></div>'
       +'<button onclick="onToggle(\'' + a.id + '\')" '+(pronta?'':'disabled')+' style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:none;font-family:inherit;font-weight:800;font-size:13px;cursor:'+(pronta?'pointer':'not-allowed')+';background:'+(on?'#166534':(pronta?'#eff6ff':'#f1f5f9'))+';color:'+(on?'#fff':(pronta?'#1a4fa0':'#94a3b8'))+';">'
-      +(on?'\u2713 In vetrina \u2014 tocca per togliere':(pronta?'Pubblica in vetrina':(!foto?'Manca la foto':'Manca il prezzo')))
+      +(on?'\u2713 Online':(pronta?'Metti online':(!foto?'Manca la foto':'Manca il prezzo')))
       +'</button>'
       +'</div></div>';
   });
@@ -22836,12 +22989,19 @@ function onToggle(id){
     if(i<0) return;
     var a=l[i];
     if(!(onNum(a.prezzoVen)>0) || !onFoto1(a)) return;
+    /* togliere un'auto dal sito chiede due conferme: un tocco sbagliato
+       non deve far sparire un annuncio (Davide, 14/11/2026) */
+    if(a.online===true){
+      var _n=((a.marca||'')+' '+(a.modello||'')).trim()+(a.targa?(' ('+a.targa+')'):'');
+      if(!confirm('Vuoi togliere '+_n+' dal sito?')) return;
+      if(!confirm('Confermi di nuovo?\n\n'+_n+' non sar\u00e0 pi\u00f9 visibile sul sito n\u00e9 su Google finch\u00e9 non la rimetti online.')) return;
+    }
     a.online=!(a.online===true);
     a.onlineTs=Date.now();
     a.updatedAt=Date.now();
     mzSave(l); mzSupaUpsert(a); onRender();
     if(typeof tcToastNew==='function')
-      tcToastNew(a.online?('\ud83c\udf10 '+((a.marca||'')+' '+(a.modello||'')).trim()+' pubblicata'):'Tolta dalla vetrina', true);
+      tcToastNew(a.online?('\ud83c\udf10 '+((a.marca||'')+' '+(a.modello||'')).trim()+' online'):'Tolta dal sito', true);
   }catch(e){}
 }
 function mzInit(){
@@ -25019,6 +25179,216 @@ function sitoAssicHtml(){
     +'<span id="sa-stato" style="margin-left:10px;font-size:12.5px;font-weight:700;"></span>'
     +'</div>';
 }
+
+/* =====================================================================
+   IMMAGINI DELLA HOME DEL SITO (14/11/2026, Davide)
+   Le offerte che scorrono in cima al sito. Si carica l'immagine com'e'
+   (volantino, foto, formato qualsiasi) e qui si adatta ai due formati del
+   sito: computer 1600x600 e telefono 1080x1350 (verticale, come i post
+   Instagram). Per ciascuno:
+     - Riempi : copre tutto, si trascina per scegliere la parte visibile;
+     - Intera : si vede tutta, i lati si riempiono con la stessa immagine
+                sfocata (per volantini con scritte e prezzi).
+   Le due versioni pronte si caricano su R2; la lista sta in
+   config_pubblica, riga 'banner', che il sito legge senza login.
+   ===================================================================== */
+var SB_FORMATI={ d:{W:1600,H:600,pw:640,ph:240,nome:'Computer'}, m:{W:1080,H:1350,pw:216,ph:270,nome:'Telefono'} };
+var _sitoBanner=null, _sbEd=null;
+function sitoBannerLoad(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb) cb({slides:[]}, true); return; }
+  sb.from('config_pubblica').select('id,data').eq('id','banner').then(function(r){
+    var d=(r && !r.error && r.data && r.data[0] && r.data[0].data) ? r.data[0].data : {slides:[]};
+    if(!Array.isArray(d.slides)) d.slides=[];
+    _sitoBanner=d; if(cb) cb(d, r&&r.error);
+  }, function(){ if(cb) cb({slides:[]}, true); });
+}
+function sitoBannerSalvaLista(msg){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ alert('Supabase non raggiungibile'); return Promise.resolve(false); }
+  _sitoBanner.updatedAt=Date.now();
+  return sb.from('config_pubblica').upsert({ id:'banner', data:_sitoBanner }).then(function(r){
+    if(r && r.error){ alert('Non salvato: '+r.error.message); return false; }
+    sitoBannerRidisegna(); if(msg && typeof tcToastNew==='function') tcToastNew(msg, true); return true;
+  });
+}
+function sitoBannerRidisegna(){ var box=document.getElementById('sb-box'); if(box) box.outerHTML=sitoBannerHtml(); }
+function sitoBannerHtml(){
+  if(!_sitoBanner){ setTimeout(function(){ sitoBannerLoad(function(){ sitoBannerRidisegna(); }); },0); }
+  var l=(_sitoBanner&&_sitoBanner.slides)||[];
+  var oggi=new Date().toISOString().slice(0,10);
+  var h='<div id="sb-box" style="margin:22px 0 6px;padding:14px;border:1px solid #fed7aa;background:#fffaf5;border-radius:11px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#c2410c;text-transform:uppercase;margin-bottom:4px;">🖼 Immagini della home del sito</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:10px;line-height:1.5;">Le offerte che scorrono in cima al sito, dopo la scritta “La tua prossima auto…”. Carica l’immagine che hai, in qualsiasi formato: la adatti tu qui al computer e al telefono.</div>';
+  if(!_sitoBanner) h+='<div style="font-size:12.5px;color:#94a3b8;">Carico…</div>';
+  l.forEach(function(s,i){
+    var scad=(s.al && s.al<oggi), fut=(s.dal && s.dal>oggi);
+    var st=(s.attiva===false)?['Spenta','#94a3b8']:(scad?['Scaduta','#dc2626']:(fut?['Dal '+s.dal.split('-').reverse().join('/'),'#b45309']:['Sul sito','#16a34a']));
+    h+='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px;margin-bottom:6px;'+((s.attiva===false||scad)?'opacity:.6;':'')+'">'
+      +'<img src="'+mzEscA(s.img)+'" style="width:160px;height:60px;object-fit:cover;border-radius:6px;background:#f1f5f9;">'
+      +'<img src="'+mzEscA(s.imgM||s.img)+'" style="width:40px;height:50px;object-fit:cover;border-radius:5px;background:#f1f5f9;">'
+      +'<div style="flex:1;min-width:150px;"><div style="font-weight:800;font-size:13px;">'+mzEscA(s.titolo||'(senza titolo)')+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;"><b style="color:'+st[1]+';">'+st[0]+'</b>'+(s.al?(' · fino al '+s.al.split('-').reverse().join('/')):'')+(s.link?(' · link: '+mzEscA(s.link)):'')+'</div></div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap;">'
+      +'<button onclick="sbSposta('+i+',-1)" '+(i===0?'disabled':'')+' title="Su" style="padding:6px 9px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;">↑</button>'
+      +'<button onclick="sbSposta('+i+',1)" '+(i===l.length-1?'disabled':'')+' title="Giù" style="padding:6px 9px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;">↓</button>'
+      +'<button onclick="sbAccendi('+i+')" style="padding:6px 10px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;">'+(s.attiva===false?'Accendi':'Spegni')+'</button>'
+      +'<button onclick="sbApri('+i+')" style="padding:6px 10px;border:1px solid #2060b8;background:#eff6ff;color:#2060b8;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:800;">✎ Modifica</button>'
+      +'<button onclick="sbElimina('+i+')" title="Elimina" style="padding:6px 9px;border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:7px;cursor:pointer;">🗑</button>'
+      +'</div></div>';
+  });
+  h+='<label style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:10px 16px;border-radius:8px;background:#f97316;color:#fff;font-weight:800;font-size:13px;cursor:pointer;">'
+    +'＋ Aggiungi immagine<input type="file" accept="image/*" style="display:none;" onchange="sbNuova(this)"></label>'
+    +'<span style="font-size:11.5px;color:#94a3b8;margin-left:10px;">JPG o PNG, anche grandi: le rimpicciolisco io.</span>'
+    +'</div>';
+  return h;
+}
+function sbSposta(i,d){ var l=_sitoBanner.slides, j=i+d; if(j<0||j>=l.length) return; var t=l[i]; l[i]=l[j]; l[j]=t; sitoBannerSalvaLista(); }
+function sbAccendi(i){ var s=_sitoBanner.slides[i]; s.attiva=(s.attiva===false); sitoBannerSalvaLista(s.attiva?'Immagine accesa':'Immagine spenta'); }
+function sbElimina(i){ if(!confirm('Elimino questa immagine dalla home del sito?')) return; _sitoBanner.slides.splice(i,1); sitoBannerSalvaLista('Immagine eliminata'); }
+function sbNuova(inp){
+  var f=inp && inp.files && inp.files[0]; if(!f) return; inp.value='';
+  var url=URL.createObjectURL(f), img=new Image();
+  img.onload=function(){ sbEditor({ img:img, file:f, idx:-1, s:{ attiva:true } }); };
+  img.onerror=function(){ alert('Questa immagine non si apre: prova con un JPG o un PNG.'); };
+  img.src=url;
+}
+function sbApri(i){
+  var s=_sitoBanner.slides[i]; if(!s) return;
+  var img=new Image(); img.crossOrigin='anonymous';
+  img.onload=function(){ sbEditor({ img:img, file:null, idx:i, s:JSON.parse(JSON.stringify(s)) }); };
+  img.onerror=function(){ alert('Non riesco a riaprire l’immagine originale: caricala di nuovo con “Cambia immagine”.'); sbEditor({ img:null, file:null, idx:i, s:JSON.parse(JSON.stringify(s)) }); };
+  img.src=s.orig||s.img;
+}
+/* due modi di disegnare: riempi (copre) o intera (contiene, con fondo sfocato) */
+function sbDisegna(cv, img, p){
+  var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.fillStyle='#e2e8f0'; ctx.fillRect(0,0,W,H);
+  if(!img) return;
+  var iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  var cover=Math.max(W/iw,H/ih), conta=Math.min(W/iw,H/ih);
+  if(p.modo==='intera'){
+    /* sfocatura fatta rimpicciolendo e ingrandendo: va su tutti i browser */
+    var t=document.createElement('canvas'); t.width=Math.max(6,Math.round(W/48)); t.height=Math.max(6,Math.round(H/48));
+    var tc=t.getContext('2d'); var sc=Math.max(t.width/iw,t.height/ih);
+    tc.drawImage(img,(t.width-iw*sc)/2,(t.height-ih*sc)/2,iw*sc,ih*sc);
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+    ctx.drawImage(t,0,0,W,H);
+    ctx.fillStyle='rgba(0,0,0,.22)'; ctx.fillRect(0,0,W,H);
+  }
+  var s=(p.modo==='intera'?conta:cover)*(p.zoom||1);
+  var dw=iw*s, dh=ih*s;
+  ctx.drawImage(img,(W-dw)*(p.fx==null?.5:p.fx),(H-dh)*(p.fy==null?.5:p.fy),dw,dh);
+}
+function sbEditor(o){
+  _sbEd=o;
+  ['d','m'].forEach(function(k){ o.s[k]=o.s[k]||{ modo:'intera', zoom:1, fx:.5, fy:.5 }; });
+  var w=document.getElementById('sb-ed'); if(w) w.remove();
+  w=document.createElement('div'); w.id='sb-ed';
+  w.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.6);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
+  var inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var lab=function(t){ return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin:8px 0 3px;">'+t+'</label>'; };
+  var pannello=function(k){
+    var F=SB_FORMATI[k], p=o.s[k];
+    return '<div style="flex:'+(k==='d'?'1 1 400px':'0 0 230px')+';min-width:0;">'
+      +'<div style="font-weight:800;font-size:13px;margin-bottom:4px;">'+(k==='d'?'🖥':'📱')+' '+F.nome+' <span style="font-weight:600;color:#94a3b8;font-size:11px;">'+F.W+'×'+F.H+'</span></div>'
+      +'<canvas id="sb-cv-'+k+'" width="'+F.pw*2+'" height="'+F.ph*2+'" style="width:100%;max-width:'+F.pw+'px;aspect-ratio:'+F.W+'/'+F.H+';border-radius:8px;cursor:grab;touch-action:none;display:block;background:#e2e8f0;"></canvas>'
+      +'<div style="display:flex;gap:6px;margin-top:6px;">'
+      +'<button type="button" id="sb-mr-'+k+'" onclick="sbModo(\''+k+'\',\'riempi\')" style="flex:1;padding:7px;border-radius:7px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">Riempi</button>'
+      +'<button type="button" id="sb-mi-'+k+'" onclick="sbModo(\''+k+'\',\'intera\')" style="flex:1;padding:7px;border-radius:7px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;">Intera</button></div>'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:#64748b;">Zoom <input type="range" id="sb-z-'+k+'" min="1" max="3" step="0.01" value="'+(p.zoom||1)+'" oninput="sbZoom(\''+k+'\',this.value)" style="flex:1;"></div>'
+      +'</div>';
+  };
+  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:900px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><div style="font-weight:900;font-size:17px;flex:1;">🖼 Immagine della home</div>'
+    +'<label style="padding:7px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Cambia immagine<input type="file" accept="image/*" style="display:none;" onchange="sbCambiaFile(this)"></label></div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:12px;line-height:1.5;"><b>Riempi</b>: l’immagine copre tutto, trascinala per scegliere la parte che si vede. <b>Intera</b>: si vede tutta, i lati si riempiono con la stessa immagine sfocata (meglio per i volantini con scritte).</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">'+pannello('d')+pannello('m')+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;margin-top:6px;">'
+    +'<div>'+lab('Titolo sull’immagine (facoltativo)')+'<input id="sb-tit" value="'+mzEscA(o.s.titolo||'')+'" placeholder="Lascia vuoto se le scritte sono già nell’immagine" style="'+inp+'"></div>'
+    +'<div>'+lab('Frase sotto il titolo (facoltativa)')+'<input id="sb-txt" value="'+mzEscA(o.s.testo||'')+'" style="'+inp+'"></div>'
+    +'<div>'+lab('Dove porta il clic (facoltativo)')+'<input id="sb-link" value="'+mzEscA(o.s.link||'')+'" placeholder="es. #prenota, #contatti o un indirizzo https" style="'+inp+'"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div>'+lab('Dal')+'<input id="sb-dal" type="date" value="'+mzEscA(o.s.dal||'')+'" style="'+inp+'"></div><div>'+lab('Al (poi sparisce)')+'<input id="sb-al" type="date" value="'+mzEscA(o.s.al||'')+'" style="'+inp+'"></div></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;align-items:center;"><span id="sb-stato" style="flex:1;font-size:12.5px;font-weight:700;color:#64748b;"></span>'
+    +'<button onclick="document.getElementById(\'sb-ed\').remove()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+    +'<button id="sb-salva" onclick="sbSalva()" style="padding:10px 18px;border-radius:8px;border:none;background:#2060b8;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva e pubblica</button></div>'
+    +'</div>';
+  document.body.appendChild(w);
+  ['d','m'].forEach(function(k){ sbAggancia(k); sbAggiorna(k); });
+}
+function sbAggiorna(k){
+  var cv=document.getElementById('sb-cv-'+k); if(!cv||!_sbEd) return;
+  var p=_sbEd.s[k]; sbDisegna(cv, _sbEd.img, p);
+  var r=document.getElementById('sb-mr-'+k), i=document.getElementById('sb-mi-'+k);
+  [[r,'riempi'],[i,'intera']].forEach(function(x){ if(!x[0]) return; var on=(p.modo===x[1]);
+    x[0].style.border='1px solid '+(on?'#2060b8':'#cbd5e1'); x[0].style.background=on?'#2060b8':'#fff'; x[0].style.color=on?'#fff':'#334155'; });
+}
+function sbModo(k,m){ var p=_sbEd.s[k]; p.modo=m; p.zoom=1; p.fx=.5; p.fy=.5; var z=document.getElementById('sb-z-'+k); if(z) z.value=1; sbAggiorna(k); }
+function sbZoom(k,v){ _sbEd.s[k].zoom=parseFloat(v)||1; sbAggiorna(k); }
+function sbAggancia(k){
+  var cv=document.getElementById('sb-cv-'+k); if(!cv) return;
+  var giu=null;
+  cv.addEventListener('pointerdown', function(e){ giu={x:e.clientX,y:e.clientY}; cv.setPointerCapture(e.pointerId); cv.style.cursor='grabbing'; });
+  cv.addEventListener('pointerup', function(){ giu=null; cv.style.cursor='grab'; });
+  cv.addEventListener('pointermove', function(e){
+    if(!giu || !_sbEd || !_sbEd.img) return;
+    var p=_sbEd.s[k], img=_sbEd.img, W=cv.width, H=cv.height, k2=cv.width/cv.clientWidth;
+    var iw=img.naturalWidth, ih=img.naturalHeight;
+    var s=(p.modo==='intera'?Math.min(W/iw,H/ih):Math.max(W/iw,H/ih))*(p.zoom||1);
+    var dx=(e.clientX-giu.x)*k2, dy=(e.clientY-giu.y)*k2; giu={x:e.clientX,y:e.clientY};
+    var lx=W-iw*s, ly=H-ih*s;
+    if(Math.abs(lx)>0.5) p.fx=Math.max(0,Math.min(1,p.fx+dx/lx));
+    if(Math.abs(ly)>0.5) p.fy=Math.max(0,Math.min(1,p.fy+dy/ly));
+    sbAggiorna(k);
+  });
+}
+function sbCambiaFile(inp){
+  var f=inp && inp.files && inp.files[0]; if(!f) return; inp.value='';
+  var img=new Image();
+  img.onload=function(){ _sbEd.img=img; _sbEd.file=f; ['d','m'].forEach(function(k){ sbAggiorna(k); }); };
+  img.src=URL.createObjectURL(f);
+}
+function sbBlob(img, W, H, p){
+  return new Promise(function(res, rej){
+    try{ var c=document.createElement('canvas'); c.width=W; c.height=H; sbDisegna(c, img, p);
+      c.toBlob(function(b){ b?res(b):rej(new Error('immagine non generata')); }, 'image/jpeg', 0.86);
+    }catch(e){ rej(e); }
+  });
+}
+function sbSalva(){
+  var o=_sbEd; if(!o) return;
+  if(!o.img){ alert('Carica l’immagine con “Cambia immagine”.'); return; }
+  var g=function(id){ var el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+  var s=o.s; s.titolo=g('sb-tit'); s.testo=g('sb-txt'); s.link=g('sb-link'); s.dal=g('sb-dal'); s.al=g('sb-al');
+  if(s.dal && s.al && s.al<s.dal){ alert('La data di fine è prima di quella di inizio.'); return; }
+  s.id=s.id||('bn_'+Date.now());
+  var st=document.getElementById('sb-stato'), bt=document.getElementById('sb-salva');
+  if(bt) bt.disabled=true; if(st) st.textContent='Preparo e carico le immagini…';
+  var ts=Date.now();
+  var passi=[ sbBlob(o.img,1600,600,s.d), sbBlob(o.img,1080,1350,s.m) ];
+  if(o.file){
+    /* originale rimpicciolito (lato lungo 2400): serve per modificare dopo */
+    var iw=o.img.naturalWidth, ih=o.img.naturalHeight, k=Math.min(1,2400/Math.max(iw,ih));
+    passi.push(sbBlob(o.img, Math.round(iw*k), Math.round(ih*k), {modo:'riempi',zoom:1,fx:.5,fy:.5}));
+  }
+  Promise.all(passi).then(function(b){
+    var up=[ eaR2Upload(b[0],'banner',s.id+'-pc-'+ts+'.jpg'), eaR2Upload(b[1],'banner',s.id+'-tel-'+ts+'.jpg') ];
+    if(b[2]) up.push(eaR2Upload(b[2],'banner',s.id+'-orig-'+ts+'.jpg'));
+    return Promise.all(up);
+  }).then(function(u){
+    s.img=u[0]; s.imgM=u[1]; if(u[2]) s.orig=u[2];
+    s.updatedAt=Date.now(); if(s.attiva===undefined) s.attiva=true;
+    _sitoBanner=_sitoBanner||{slides:[]};
+    if(o.idx>=0) _sitoBanner.slides[o.idx]=s; else _sitoBanner.slides.push(s);
+    return sitoBannerSalvaLista('🖼 Immagine pubblicata sul sito');
+  }).then(function(ok){ if(ok){ var w=document.getElementById('sb-ed'); if(w) w.remove(); } else if(bt) bt.disabled=false; })
+  .catch(function(e){
+    if(bt) bt.disabled=false;
+    var sec=/tainted|security|insecure/i.test(String(e&&e.message||e));
+    if(st){ st.style.color='#dc2626'; st.textContent=sec?'Per salvare una modifica, ricarica l’immagine con “Cambia immagine”.':('Non riuscito: '+(e&&e.message||e)); }
+  });
+}
+
 function sitoAssicSalva(){
   var g=function(id){ var el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   var d={ attiva:!!(document.getElementById('sa_attiva')||{}).checked, titolo:g('sa_titolo'), sintesi:g('sa_sintesi'), sottotitolo:g('sa_sotto'),
@@ -25032,11 +25402,61 @@ function sitoAssicSalva(){
     _sitoAssic=d; if(st){ st.style.color='#16a34a'; st.textContent='\u2705 Salvato: il sito lo mostra al prossimo caricamento'; }
   });
 }
+/* ===== SCHEDA TECNICA CON L'AI (14/11/2026) =====
+   La funzione genera-scheda-tecnica cerca online la scheda della versione
+   (marca, modello, allestimento, anno) e restituisce i campi tec_*. Si
+   riempiono i campi vuoti; se qualcuno e' gia' compilato si chiede prima
+   se sovrascriverlo. Si salva solo premendo Salva, come sempre. */
+function mzGeneraTec(){
+  var g=function(k){ var el=document.getElementById('mz_'+k); return el?String(el.value||'').trim():''; };
+  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Immatricolazione) prima di generare la scheda tecnica.'); return; }
+  var anno=g('anno')||(g('dataImm').match(/(19|20)\d{2}/)||[''])[0];
+  var pieni=MZ_TEC_CAMPI.filter(function(c){ return g('tec_'+c[0]); }).length;
+  var sovr=false;
+  if(pieni){ sovr=confirm('Ci sono gi\u00e0 '+pieni+' campi compilati.\n\nOK = sostituisco anche quelli con i dati trovati\nAnnulla = riempio solo i campi vuoti'); }
+  var btn=document.getElementById('mz-tec-btn'), es=document.getElementById('mz-tec-esito');
+  if(btn){ btn.disabled=true; btn.textContent='\u23f3 Cerco i dati\u2026'; }
+  if(es){ es.style.color='#64748b'; es.textContent='Ricerca in corso, pu\u00f2 servire anche mezzo minuto\u2026'; }
+  var fine=function(){ if(btn){ btn.disabled=false; btn.textContent='\u2728 Compila con AI'; } };
+  fetch(EA_TEC_URL,{
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
+    body: JSON.stringify({ marca:g('marca'), modello:g('modello'), allestimento:g('allestimento'), anno:anno,
+      alimentazione:g('alimentazione'), cambio:g('cambio'), cilindrata:g('cilindrata'), potenza:g('potenza') })
+  }).then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(j){
+      fine();
+      if(!j || !j.ok || !j.tec){
+        if(es){ es.style.color='#dc2626'; es.textContent='Non riuscito'+((j&&j.error)?(': '+j.error):'')+'. Controlla che la funzione genera-scheda-tecnica sia attiva su Supabase.'; }
+        return;
+      }
+      var messi=0, vuoti=0;
+      MZ_TEC_CAMPI.forEach(function(c){
+        var el=document.getElementById('mz_tec_'+c[0]); if(!el) return;
+        var v=String(j.tec[c[0]]||'').trim();
+        if(!v){ vuoti++; return; }
+        if(el.value.trim() && !sovr) return;
+        if(el.value.trim()!==v){ el.value=v; el.style.background='#f5f3ff'; messi++; }
+      });
+      if(es){
+        es.style.color='#166534';
+        es.innerHTML='\u2705 '+messi+' campi compilati'+(j.versione?(' per <b>'+mzEscA(j.versione)+'</b>'):'')
+          +(vuoti?(' \u00b7 '+vuoti+' non trovati, restano vuoti'):'')
+          +'. I campi in viola sono quelli nuovi: controllali e poi premi Salva.'
+          +((j.fonti&&j.fonti.length)?('<br><span style="color:#64748b;">Fonti: '+j.fonti.map(function(u){ return '<a href="'+mzEscA(u)+'" target="_blank" rel="noopener" style="color:#1a4fa0;">'+mzEscA(u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0])+'</a>'; }).join(', ')+'</span>'):'');
+      }
+    })
+    .catch(function(){ fine(); if(es){ es.style.color='#dc2626'; es.textContent='Errore di rete: riprova tra poco.'; } });
+}
 function mzTecHtml(a){
   a=a||{};
   var pieni=MZ_TEC_CAMPI.filter(function(c){ return String(a['tec_'+c[0]]||'').trim(); }).length;
   var h='<details style="margin:12px 0 4px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#f8fafc;"'+(pieni?' open':'')+'>'
     +'<summary style="cursor:pointer;font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;">\uD83D\uDCD0 Scheda tecnica per il sito <span style="font-weight:600;color:#94a3b8;text-transform:none;">('+pieni+' su '+MZ_TEC_CAMPI.length+' compilati \u00b7 facoltativa)</span></summary>'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">'
+    +'<button type="button" id="mz-tec-btn" onclick="mzGeneraTec()" style="padding:8px 14px;border-radius:8px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">\u2728 Compila con AI</button>'
+    +'<span style="font-size:11.5px;color:#64748b;">Cerca online i dati di marca, modello, allestimento e anno. Controlla sempre il risultato prima di salvare.</span></div>'
+    +'<div id="mz-tec-esito" style="font-size:11.5px;margin-top:6px;"></div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px;">';
   MZ_TEC_CAMPI.forEach(function(c){
     h+='<div><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">'+c[1]+'</label>'
@@ -29390,6 +29810,8 @@ function cvTrasformaContrattoFinale(){
   try{ if(typeof pProvvAuto==='function') pProvvAuto(_cv); }catch(e){}
   if(_cv.permutaOn) cvCreaPeriziaDaPermuta(_cv);
   if(_cv.autoId && typeof mzLoad==='function'){ var _ml=mzLoad(); var _mi=_ml.findIndex(function(x){return x.id===_cv.autoId;}); if(_mi>=0){ _ml[_mi].impegnata=true; _ml[_mi].impegnataDa=_cv.id; _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
+  /* auto venduta: non si toglie dal sito da sola, si avvisa l'amministrazione */
+  try{ if(typeof onAvvisaVendita==='function') onAvvisaVendita(_cv.autoId, _cv, 'contratto'); }catch(e){}
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===_cv.id;});
   _cv.mailDaInviareAt=null;
   _cv.updatedAt=Date.now(); if(idx>=0) list[idx]=_cv; else list.push(_cv);
@@ -32474,6 +32896,7 @@ function parInit(){
   h+=lab('Condizioni PACCHETTO MANUTENZIONE (stampate su preventivo e contratto quando il pacchetto \u00e8 presente)')+'<textarea id="par_pacchettoManut" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:160px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.pacchettoManut)+'</textarea>';
   h+=lab('Condizioni CONTRATTO finale (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
   h+=sitoAssicHtml();
+  h+=sitoBannerHtml();
   h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
   h+='<div id="par-stato" style="text-align:center;font-size:13px;color:#16a34a;font-weight:700;margin-top:10px;min-height:18px;"></div>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Modalità demo</div>';
@@ -41648,6 +42071,7 @@ function cvVendConsegnaFinale(){
     if(typeof regFreezeScarico==='function') regFreezeScarico(_ml[_mi], list[idx], 'Vendita');
     _ml[_mi].updatedAt=Date.now(); mzSave(_ml); if(typeof mzSupaUpsert==='function') mzSupaUpsert(_ml[_mi]); } }
   cvSave(list); supaUpsert('preventivi', list[idx]);
+  try{ if(typeof onAvvisaVendita==='function') onAvvisaVendita(list[idx].autoId, list[idx], 'consegna'); }catch(e){}
   cvModChiudi(); cvVendRender();
   if(typeof cvContrattoFinaleStampa==='function'){ cvContrattoFinaleStampa(id); }
   if(typeof tcToastNew==='function') tcToastNew('\u2705 Consegnato',true);
