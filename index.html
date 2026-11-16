@@ -1123,6 +1123,7 @@ html, body{
             <button class="ptb" onclick="ptog('fi','FIT TO YOU',this)">Fit to You</button>
             <button class="ptb" onclick="ptog('fi','NET',this)">NET</button>
             <button class="ptb" onclick="ptog('fi','KASKO',this)">Kasko</button>
+            <button class="ptb" onclick="ptog('fi','PREMIUM',this)" title="Polizza del finanziamento Compass: Europ Assistance pacchetto PREMIUM">Premium (Compass)</button>
           </div>
         </div>
         <div id="pFiMesiWrap" style="display:none;margin-bottom:14px;margin-top:-6px;padding:12px 14px;background:#f0f7ff;border-left:3px solid var(--blue);">
@@ -7341,7 +7342,7 @@ function pProvvDa(d){
     var fi=String(d.fi||'NO');
     var pFI = fi==='ZURICH'?C15*0.00225 : fi==='UNIPOL'?C15*0.00275
             : fi==='FIT TO YOU'?C15*0.0025 : fi==='NET'?C15*0.003
-            : fi==='KASKO'?C15*0.0038 : 0;
+            : fi==='KASKO'?C15*0.0038 : fi==='PREMIUM'?C15*P_FI_PREMIUM : 0;
     var pGAP=(String(d.gap||'NO')==='SI')?C15*0.0005:0;
     var G11b=G12+pCPI+pFI;
     var fiMult=1;
@@ -7395,7 +7396,10 @@ var P_CTRL_CAMPI=['pTan','pComm','pValore','pAcconto'];
    bloccati: valore bene e acconto restano suoi, perche' sono il prezzo
    dell'auto e non un dato bancario, e servono a verificare per differenza
    l'importo finanziato deliberato. */
-var P_DA_DELIBERA_MAP={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', nessuna:'NO', altra:''};
+/* Premium Compass (Europ Assistance), 16/11/2026: prima finiva sotto NET.
+   Percentuale sul finanziato: per ora uguale a NET, da confermare. */
+var P_FI_PREMIUM=0.003;
+var P_DA_DELIBERA_MAP={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', compass_premium:'PREMIUM', nessuna:'NO', altra:''};
 var P_BLOCCATI=['pTan','pComm'];
 function pSetTog(k,v){
   try{
@@ -7535,7 +7539,7 @@ function pSbloccaDelibera(){
    25 euro e la riga nasce gia' calcolata; col finanziamento resta in attesa
    e si completa da sola quando la delibera viene confermata.
    L'abbinamento e' per cvId, non per nome: niente doppioni. */
-var P_FI_DA_POLIZZA={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', compass_premium:'NET', nessuna:'NO'};
+var P_FI_DA_POLIZZA={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', compass_premium:'PREMIUM', nessuna:'NO'};
 function pProvvDiCv(cvId, reg){
   reg=reg||pLoadReg()||[];
   for(var i=0;i<reg.length;i++){ if(reg[i] && reg[i].cvId===cvId) return {i:i, r:reg[i]}; }
@@ -8226,7 +8230,7 @@ function pDiffDelibera(){
     var val=nv('pValore');
     if(val!==null) cmp('Importo finanziato','pValore', val-(nv('pAcconto')||0), d.importoFinanziato, 50);
     /* Polizza: il calcolatore usa etichette commerciali, la delibera gli id. */
-    var mapFi={'NET':'net','FIT TO YOU':'fit2you'};
+    var mapFi={'NET':'net','FIT TO YOU':'fit2you','PREMIUM':'compasspremium'};
     var fiSel=(typeof PS!=='undefined')?(PS.fi||''):'';
     var dTipo=pNorm(d.polizzaTipo||'');
     if(dTipo==='nessuna' || dTipo==='no' || dTipo==='none') dTipo='';
@@ -8343,7 +8347,8 @@ function pCalcola() {
              : PS.fi  === 'UNIPOL'     ? C15 * 0.00275  // +10% rispetto a Zurich base
              : PS.fi  === 'FIT TO YOU' ? C15 * 0.0025   // base
              : PS.fi  === 'NET'        ? C15 * 0.003
-             : PS.fi  === 'KASKO'      ? C15 * 0.0038 : 0;
+             : PS.fi  === 'KASKO'      ? C15 * 0.0038
+             : PS.fi  === 'PREMIUM'    ? C15 * P_FI_PREMIUM : 0;
   /* Il GAP si vende solo con Compass: entrando nella base comune faceva
      salire anche Deutsche Bank e Prov Premium, per giunta amplificato dai
      moltiplicatori (x1,45 e x1,15). Finche' non si sceglieva la finanziaria,
@@ -25638,6 +25643,89 @@ function nltSalva(){
   .catch(function(err){ if(bt) bt.disabled=false; if(st){ st.style.color='#dc2626'; st.textContent='Non riuscito: '+(err&&err.message||err); } });
 }
 
+
+/* =====================================================================
+   RATA INDICATIVA SUL SITO (16/11/2026, Davide)
+   Il sito calcola "oppure da X euro al mese" come una pratica vera:
+   prezzo - anticipo + commissioni + passaggio di proprieta' (dai kW, con
+   le tariffe di questi Parametri), al TAN e sui mesi scelti qui, piu' le
+   spese di incasso di ogni rata. Si salva in config_pubblica 'finanziamento'.
+   ===================================================================== */
+var SITO_FIN_DEF={ anticipoPerc:20, tan:9.9, mesi:96, commissioni:530, speseIncasso:3.5, conPassaggio:true };
+var _sitoFin=null;
+function sitoFinLoad(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb) cb(); return; }
+  sb.from('config_pubblica').select('id,data').eq('id','finanziamento').then(function(r){
+    var d=(r && !r.error && r.data && r.data[0] && r.data[0].data) || {};
+    _sitoFin=Object.assign({}, SITO_FIN_DEF, d); if(cb) cb();
+  }, function(){ _sitoFin=Object.assign({}, SITO_FIN_DEF); if(cb) cb(); });
+}
+function sitoFinPp(){
+  var p=(typeof parLoad==='function')?parLoad():{};
+  var n=function(x){ var v=parseFloat(x); return isNaN(v)?0:v; };
+  return { min54:n(p.ppMinore54), eq54:n(p.ppUguale54), oltre54:n(p.ppOltre54), immatr:n(p.immatricolazione) };
+}
+function sitoFinCalcola(f, prezzo, kw){
+  var n=function(x){ var v=parseFloat(String(x==null?'':x).replace(',','.')); return isNaN(v)?0:v; };
+  var P=n(prezzo); if(!(P>0)) return null;
+  var ant=Math.round(P*n(f.anticipoPerc)/100/10)*10;
+  var pp=sitoFinPp(), k=n(kw), pas=0;
+  if(f.conPassaggio && k>0) pas = k<54 ? pp.min54 : (k===54 ? pp.eq54 : pp.eq54+(k-54)*pp.oltre54);
+  var C=P-ant+n(f.commissioni)+pas, i=n(f.tan)/100/12, m=n(f.mesi)||96;
+  var r=(i>0)?(C*i/(1-Math.pow(1+i,-m))):(C/m);
+  return { anticipo:ant, passaggio:pas, finanziato:C, rata:Math.round(r+n(f.speseIncasso)) };
+}
+function sitoFinHtml(){
+  setTimeout(sitoFinProva,60);
+  if(!_sitoFin) setTimeout(function(){ sitoFinLoad(function(){ var b=document.getElementById('sfin-box'); if(b) b.outerHTML=sitoFinHtml(); }); },0);
+  var f=_sitoFin||SITO_FIN_DEF;
+  var inp='width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var cella=function(id,t,v,suf){ return '<div><label style="display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:3px;">'+t+'</label>'
+    +'<div style="display:flex;align-items:center;gap:4px;"><input id="'+id+'" type="number" step="any" value="'+(v==null?'':v)+'" oninput="sitoFinProva()" style="'+inp+'"><span style="font-size:12px;color:#64748b;">'+suf+'</span></div></div>'; };
+  return '<div id="sfin-box" style="margin:22px 0 6px;padding:14px;border:1px solid #bbf7d0;background:#f6fef9;border-radius:11px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#15803d;text-transform:uppercase;margin-bottom:4px;">💶 Rata indicativa sul sito</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:10px;line-height:1.5;">Come il sito calcola “oppure da … € al mese”: <b>prezzo − anticipo + commissioni + passaggio di proprietà</b> (dai kW, con le tariffe qui sopra), al TAN e sui mesi indicati, più le spese di incasso di ogni rata. Sul sito si vedono solo rata e anticipo.</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;">'
+    +cella('sfin_ant','Anticipo',f.anticipoPerc,'% del prezzo')+cella('sfin_tan','TAN',f.tan,'%')+cella('sfin_mesi','Durata',f.mesi,'mesi')
+    +cella('sfin_comm','Commissioni',f.commissioni,'€')+cella('sfin_inc','Spese incasso',f.speseIncasso,'€/rata')
+    +'</div>'
+    +'<label style="display:flex;align-items:center;gap:7px;margin-top:10px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sfin_pp" '+(f.conPassaggio!==false?'checked':'')+' onchange="sitoFinProva()"> Metti nel finanziato il passaggio di proprietà (calcolato dai kW)</label>'
+    +'<div style="margin-top:12px;padding:10px 12px;background:#fff;border:1px dashed #86efac;border-radius:9px;">'
+    +'<div style="font-size:12px;font-weight:800;color:#166534;margin-bottom:6px;">Prova: confronta con il calcolo vero</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">'
+    +'<div style="width:140px;">'+'<label style="display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Prezzo auto €</label><input id="sfin_tp" type="number" value="17950" oninput="sitoFinProva()" style="'+inp+'"></div>'
+    +'<div style="width:100px;">'+'<label style="display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:3px;">kW</label><input id="sfin_tk" type="number" value="74" oninput="sitoFinProva()" style="'+inp+'"></div>'
+    +'<div id="sfin_out" style="flex:1;min-width:220px;font-size:13px;color:#0f172a;"></div></div></div>'
+    +'<div style="display:flex;justify-content:flex-end;margin-top:12px;"><button onclick="sitoFinSalva()" style="padding:9px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva rata del sito</button></div>'
+    +'</div>';
+}
+function sitoFinLeggi(){
+  var g=function(id){ var el=document.getElementById(id); return el?parseFloat(String(el.value).replace(',','.')):NaN; };
+  var pp=document.getElementById('sfin_pp');
+  return { anticipoPerc:g('sfin_ant'), tan:g('sfin_tan'), mesi:g('sfin_mesi'), commissioni:g('sfin_comm'), speseIncasso:g('sfin_inc'), conPassaggio:!!(pp&&pp.checked) };
+}
+function sitoFinProva(){
+  var o=document.getElementById('sfin_out'); if(!o) return;
+  var f=sitoFinLeggi(), tp=document.getElementById('sfin_tp'), tk=document.getElementById('sfin_tk');
+  var r=sitoFinCalcola(f, tp&&tp.value, tk&&tk.value);
+  if(!r){ o.textContent=''; return; }
+  var eu=function(v){ return Math.round(v).toLocaleString('it-IT')+' €'; };
+  o.innerHTML='Sul sito: <b style="font-size:16px;color:#15803d;">'+r.rata+' €/mese</b> con anticipo di <b>'+eu(r.anticipo)+'</b>'
+    +'<div style="font-size:11.5px;color:#64748b;">finanziato '+eu(r.finanziato)+(r.passaggio?(' (di cui passaggio '+eu(r.passaggio)+')'):'')+'</div>';
+}
+function sitoFinSalva(){
+  var f=sitoFinLeggi();
+  if(!(f.anticipoPerc>=0 && f.anticipoPerc<=60) || !(f.tan>=0 && f.tan<=25) || !(f.mesi>=12 && f.mesi<=120)){ alert('Controlla i numeri: anticipo 0–60%, TAN 0–25%, durata 12–120 mesi.'); return; }
+  f.commissioni=isNaN(f.commissioni)?0:f.commissioni; f.speseIncasso=isNaN(f.speseIncasso)?0:f.speseIncasso;
+  f.pp=sitoFinPp(); f.updatedAt=Date.now();
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ alert('Supabase non raggiungibile'); return; }
+  sb.from('config_pubblica').upsert({ id:'finanziamento', data:f }).then(function(r){
+    if(r && r.error){ alert('Non salvato: '+r.error.message); return; }
+    _sitoFin=f; if(typeof tcToastNew==='function') tcToastNew('💶 Rata del sito aggiornata', true);
+  });
+}
+
 function sitoAssicSalva(){
   var g=function(id){ var el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   var d={ attiva:!!(document.getElementById('sa_attiva')||{}).checked, titolo:g('sa_titolo'), sintesi:g('sa_sintesi'), sottotitolo:g('sa_sotto'),
@@ -33088,27 +33176,17 @@ function parInit(){
   var p=parLoad(); var el=document.getElementById('par-form'); if(!el) return;
   var lab=function(t){ return '<label style="display:block;font-size:12px;font-weight:700;color:#334155;margin:14px 0 4px;">'+t+'</label>'; };
   var inp=function(id,val,type){ return '<input id="'+id+'" type="'+(type||'text')+'" value="'+fnEsc(val==null?'':val)+'" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;">'; };
-  var h='<div style="max-width:640px;margin:0 auto;">';
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:6px 0;">Validità</div>';
-  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Valid from')+inp('par_validFrom',p.validFrom,'date')+'</div><div style="flex:1;">'+lab('Valid to')+inp('par_validTo',p.validTo,'date')+'</div></div>';
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Passaggio di proprietà (per potenza)</div>';
-  h+=lab('€ per potenza < 54 kw')+inp('par_ppMinore54',p.ppMinore54,'number');
-  h+=lab('€ per potenza = 54 kw')+inp('par_ppUguale54',p.ppUguale54,'number');
-  h+=lab('€ a kw per superiori a 54 kw')+inp('par_ppOltre54',p.ppOltre54,'number');
-  h+=lab('Trasferimento di proprietà legge Dini €')+inp('par_dini',p.dini,'number');
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Costi</div>';
-  h+=lab('Costo immatricolazione €')+inp('par_immatricolazione',p.immatricolazione,'number');
-  h+=lab('Costo minivoltura €')+inp('par_minivoltura',p.minivoltura,'number');
-  h+=lab('Costo garanzia 24 mesi €')+inp('par_garanzia24',p.garanzia24,'number');
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Numerazione fatture</div>';
-  h+='<div style="font-size:11px;color:#64748b;margin-bottom:8px;line-height:1.5;">Numero dell\u2019<b>ultima</b> fattura gi\u00e0 emessa quest\u2019anno per ciascuna serie: la prossima partir\u00e0 dal successivo. Lascia 0 se la serie parte da 1.</div>';
-  h+=lab('Ultima fattura carrozzeria')+inp('par_fatturaBaseCarrozzeria',p.fatturaBaseCarrozzeria,'number');
-  h+=lab('Link recensioni Google (per la richiesta recensione ai clienti)')+inp('par_linkRecensioni',p.linkRecensioni||EA_LINK_RECENSIONI);
-  h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">Se lasciato vuoto si usa comunque la scheda Google di Europa Auto.</div>';
-  h+=lab('Ultima fattura tagliandi')+inp('par_fatturaBaseTagliandi',p.fatturaBaseTagliandi,'number');
-  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Assicurazione e pagamenti</div>';
-  h+=lab('Assicurazione standard')+'<textarea id="par_assicurazione" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:120px;box-sizing:border-box;">'+fnEsc(p.assicurazione)+'</textarea>';
-  h+=lab('IBAN')+inp('par_iban',p.iban);
+  /* ===== PARAMETRI A SCHEDE (16/11/2026, Davide) =====
+     Tutto in una colonna era diventato un elenco infinito. Ora cinque schede:
+     Azienda, Costi e fatture, Contratti, Sito internet, Sistema. I campi
+     restano tutti nella pagina (nascosti quelli delle altre schede), quindi
+     "Salva parametri" salva tutto come prima. */
+  var _tabs=[['azienda','\uD83C\uDFE2 Azienda'],['costi','\uD83D\uDCB6 Costi e fatture'],['contratti','\uD83D\uDCC4 Contratti'],['sito','\uD83C\uDF10 Sito internet'],['sistema','\uD83D\uDEE0 Sistema']];
+  var h='<div style="max-width:760px;margin:0 auto;">';
+  h+='<div style="font-weight:900;font-size:22px;color:#0f172a;margin:0 0 10px;">Parametri</div>';
+  h+='<div id="par-tabbar" style="position:sticky;top:0;z-index:5;background:rgba(234,234,234,.97);padding:6px 0 10px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #e2e8f0;margin-bottom:8px;">'+_tabs.map(function(t){ return '<button type="button" data-t="'+t[0]+'" onclick="parTab(\''+t[0]+'\')" style="padding:9px 14px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;">'+t[1]+'</button>'; }).join('')+'</div>';
+  h+='<div class="par-tab" data-tab="azienda">';
+  h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Numeri di telefono, WhatsApp, IBAN, logo e provenienza dei clienti.</div>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Numeri di telefono</div>';
   h+='<div style="font-size:11px;color:#64748b;margin-bottom:8px;line-height:1.5;">'
     +'Valgono ovunque: pagine dei clienti, email, messaggi. Cambiandoli qui cambiano dappertutto.</div>';
@@ -33118,6 +33196,10 @@ function parInit(){
   h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
     +'Solo cifre, col prefisso internazionale e senza il segno pi\u00f9: 39029181820. '
     +'\u00c8 quello a cui portano i link \u201cScrivici su WhatsApp\u201d.</div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Pagamenti e recensioni</div>';
+  h+=lab('IBAN')+inp('par_iban',p.iban);
+  h+=lab('Link recensioni Google (per la richiesta recensione ai clienti)')+inp('par_linkRecensioni',p.linkRecensioni||EA_LINK_RECENSIONI);
+  h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">Se lasciato vuoto si usa comunque la scheda Google di Europa Auto.</div>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Provenienza clienti (social)</div>';
   h+=lab('Frase WhatsApp dei social')+inp('par_waFraseSocial',p.waFraseSocial);
   h+='<div style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;">'
@@ -33134,6 +33216,29 @@ function parInit(){
     +'Indirizzo di un\u2019immagine su internet, che inizia con https. Finch\u00e9 \u00e8 vuoto, in cima alle '
     +'email compare il nome scritto invece del logo.</div>';
   h+=lab('Numero massimo preparazioni al giorno')+inp('par_maxPreparazioni',p.maxPreparazioni,'number');
+  h+='</div>';
+  h+='<div class="par-tab" data-tab="costi">';
+  h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Validit\u00e0 dei listini, passaggio di propriet\u00e0, costi fissi e numerazione delle fatture.</div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:6px 0;">Validità</div>';
+  h+='<div style="display:flex;gap:10px;"><div style="flex:1;">'+lab('Valid from')+inp('par_validFrom',p.validFrom,'date')+'</div><div style="flex:1;">'+lab('Valid to')+inp('par_validTo',p.validTo,'date')+'</div></div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Passaggio di proprietà (per potenza)</div>';
+  h+=lab('€ per potenza < 54 kw')+inp('par_ppMinore54',p.ppMinore54,'number');
+  h+=lab('€ per potenza = 54 kw')+inp('par_ppUguale54',p.ppUguale54,'number');
+  h+=lab('€ a kw per superiori a 54 kw')+inp('par_ppOltre54',p.ppOltre54,'number');
+  h+=lab('Trasferimento di proprietà legge Dini €')+inp('par_dini',p.dini,'number');
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Costi</div>';
+  h+=lab('Costo immatricolazione €')+inp('par_immatricolazione',p.immatricolazione,'number');
+  h+=lab('Costo minivoltura €')+inp('par_minivoltura',p.minivoltura,'number');
+  h+=lab('Costo garanzia 24 mesi €')+inp('par_garanzia24',p.garanzia24,'number');
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Numerazione fatture</div>';
+  h+='<div style="font-size:11px;color:#64748b;margin-bottom:8px;line-height:1.5;">Numero dell\u2019<b>ultima</b> fattura gi\u00e0 emessa quest\u2019anno per ciascuna serie: la prossima partir\u00e0 dal successivo. Lascia 0 se la serie parte da 1.</div>';
+  h+=lab('Ultima fattura carrozzeria')+inp('par_fatturaBaseCarrozzeria',p.fatturaBaseCarrozzeria,'number');
+  h+=lab('Ultima fattura tagliandi')+inp('par_fatturaBaseTagliandi',p.fatturaBaseTagliandi,'number');
+  h+='</div>';
+  h+='<div class="par-tab" data-tab="contratti">';
+  h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Testi stampati su preventivi, proposte e contratti, e documenti da allegare.</div>';
+  h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Assicurazione standard</div>';
+  h+=lab('Assicurazione standard')+'<textarea id="par_assicurazione" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;min-height:120px;box-sizing:border-box;">'+fnEsc(p.assicurazione)+'</textarea>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:16px 0 6px;">Condizioni contrattuali (stampate sul preventivo)</div>';
   h+=lab('Condizioni PROPOSTA D’ACQUISTO (stampate sul proposta d’acquisto)')+'<textarea id="par_condizioni" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioni)+'</textarea>';
   h+=lab('Pacchetto manutenzione: dove compare sulla stampa')
@@ -33144,11 +33249,17 @@ function parInit(){
     +'<div style="font-size:11px;color:#94a3b8;margin:4px 0 10px;">In entrambi i casi il totale del contratto e la fattura comprendono il pacchetto: cambia solo dove il cliente lo legge.</div>';
   h+=lab('Condizioni PACCHETTO MANUTENZIONE (stampate su preventivo e contratto quando il pacchetto \u00e8 presente)')+'<textarea id="par_pacchettoManut" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:160px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.pacchettoManut)+'</textarea>';
   h+=lab('Condizioni CONTRATTO finale (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
+  h+=apPannelloHTML();
+  h+='</div>';
+  h+='<div class="par-tab" data-tab="sito">';
+  h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Quello che vedono i clienti sul sito: rata, assicurazione inclusa, immagini delle offerte, noleggio. Ogni riquadro ha il suo pulsante Salva.</div>';
+  h+=sitoFinHtml();
   h+=sitoAssicHtml();
   h+=sitoBannerHtml();
   h+=sitoNltHtml();
-  h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
-  h+='<div id="par-stato" style="text-align:center;font-size:13px;color:#16a34a;font-weight:700;margin-top:10px;min-height:18px;"></div>';
+  h+='</div>';
+  h+='<div class="par-tab" data-tab="sistema">';
+  h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Modalit\u00e0 demo e strumenti di controllo della sincronizzazione.</div>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Modalità demo</div>';
   h+='<label style="display:flex;align-items:flex-start;gap:10px;font-size:14px;cursor:pointer;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:12px;"><input type="checkbox" id="par_demo" '+((typeof eaDemoOn==='function'?eaDemoOn():true)?'checked':'')+' onchange="parDemoToggle(this)" style="width:20px;height:20px;flex:0 0 auto;margin-top:1px;"><span>Attiva la <b>modalità demo</b>: consente di <b style="color:#dc2626;">eliminare definitivamente</b> un veicolo gi\u00e0 consegnato (con doppia conferma in rosso). Disattivala nella versione definitiva.</span></label>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Diagnostica sincronizzazione</div>';
@@ -33161,9 +33272,24 @@ function parInit(){
   h+='</div>';
   h+='<div id="diag-out" style="margin-top:10px;font-size:13px;color:#334155;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px;min-height:20px;">Premi \u201cVerifica sincronizzazione\u201d per controllare.</div>';
   h+='</div>';
-  h+=apPannelloHTML();
+  h+='<div id="par-salva-wrap" style="position:sticky;bottom:0;background:linear-gradient(to top,#eaeaea 70%,rgba(234,234,234,0));padding:10px 0 6px;">';
+  h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
+  h+='<div id="par-stato" style="text-align:center;font-size:13px;color:#16a34a;font-weight:700;margin-top:10px;min-height:18px;"></div>';
+  h+='</div>';
+  h+='</div>';
   el.innerHTML=h;
   try{ apRenderLista(); apSupaLoad(); }catch(e){}
+  var _t='azienda'; try{ _t=localStorage.getItem('ea_par_tab')||'azienda'; }catch(e){}
+  parTab(_t);
+}
+function parTab(k){
+  var ok=false;
+  document.querySelectorAll('#par-form .par-tab').forEach(function(d){ var on=(d.getAttribute('data-tab')===k); d.style.display=on?'':'none'; if(on) ok=true; });
+  if(!ok && k!=='azienda') return parTab('azienda');
+  document.querySelectorAll('#par-tabbar button').forEach(function(b){ var on=(b.getAttribute('data-t')===k);
+    b.style.background=on?'#1a4fa0':'#fff'; b.style.color=on?'#fff':'#334155'; b.style.borderColor=on?'#1a4fa0':'#cbd5e1'; });
+  var sw=document.getElementById('par-salva-wrap'); if(sw) sw.style.display=(k==='sito'||k==='sistema')?'none':'';
+  try{ localStorage.setItem('ea_par_tab', k); }catch(e){}
 }
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
@@ -44353,7 +44479,7 @@ function statControlloProvvHTML(V){
          calcolatore quei due valgono 'SI'/'NO', non euro: il confronto dava
          sempre null e non ha mai segnalato nulla. Si confronta invece il tipo
          di polizza, che e' il dato che i due documenti hanno davvero in comune. */
-      var _mapFi={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', nessuna:'NO'};
+      var _mapFi={net:'NET', fit2you:'FIT TO YOU', zurich:'ZURICH', unipol:'UNIPOL', kasko:'KASKO', compass_premium:'PREMIUM', nessuna:'NO'};
       var _dTipo=String(d.polizzaTipo||'').toLowerCase();
       if(_dTipo && _mapFi[_dTipo]){
         var _rFi=String(r.fi||'').toUpperCase();
