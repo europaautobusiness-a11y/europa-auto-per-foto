@@ -72,7 +72,13 @@ input,select,textarea,button{font-family:var(--font);}
   100%{ box-shadow:0 0 0 3px var(--pc); transform:scale(1); }
 }
 .crm-due{ animation:crmPulse 1.2s ease-in-out infinite; will-change:box-shadow,transform; }
-@media (min-width:769px){#view-provv{max-width:1360px;}}
+/* Provvigioni a tutta larghezza (16/11/2026): il registro ha 12 colonne e
+   con la pagina stretta Modifica finiva fuori, da raggiungere scorrendo.
+   In piu' la colonna dei pulsanti resta sempre attaccata al bordo destro. */
+@media (min-width:769px){#view-provv{max-width:none;padding-left:10px;padding-right:10px;}}
+#pRegistro tr.p-riga>td:last-child{position:sticky;right:0;z-index:1;background:inherit;box-shadow:-8px 0 10px -8px rgba(15,23,42,.25);}
+#pRegistro tr.p-riga{background:#fff;}
+#pRegistro thead th:last-child{position:sticky;right:0;z-index:2;}
 /* La tabella delle vendite ha otto colonne di numeri: sui monitor larghi
    restava stretta al centro con mezzo schermo grigio ai lati. Stessa
    larghezza gia' data ai Compiti. */
@@ -7600,6 +7606,30 @@ function pProvvAuto(cv){
        contratto), non il mese in cui il gestionale si accorge che manca la
        riga: altrimenti i contratti di ottobre recuperati a novembre
        finivano tutti su novembre. */
+    /* ===== NIENTE SECONDA RIGA (16/11/2026) =====
+       Se Rudy ha gia' calcolato a mano la provvigione di questa vendita
+       (stesso cliente, stessa auto) prima che arrivasse la delibera, quella
+       riga non e' collegata al contratto: prima qui se ne creava un'altra e
+       la vendita compariva due volte. Ora si collega quella che c'e'. */
+    if(!tro){
+      try{
+        var _n=function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
+        var _cli=_n(cvNomeCliente(cl));
+        var _mm0=(typeof pMarcaModelloDaCv==='function')?pMarcaModelloDaCv(cv):{modello:''};
+        var _mod=_n(_mm0&&_mm0.modello);
+        var _tomb=pTombLoad();
+        var _man=reg.filter(function(r){
+          if(!r || r.deleted || r.cvId || _tomb[String(r.id)]) return false;
+          if(_n(r.cliente)!==_cli) return false;
+          var m=_n(r.modello); return !!_mod && !!m && (m===_mod || m.indexOf(_mod)===0 || _mod.indexOf(m)===0);
+        })[0];
+        if(_man){
+          _man.cvId=cv.id; _man.updatedAt=Date.now();
+          pSaveReg(reg); try{ pSupaUpsert(_man); }catch(_u){}
+          return;
+        }
+      }catch(_x){}
+    }
     var e=tro?tro.r:{ id:Date.now()+Math.floor(Math.random()*1000),
                       data:new Date().toLocaleDateString('it-IT'),
                       mese:pMeseVenditaDi(cv), fonte:'' };
@@ -8441,6 +8471,69 @@ function pSupaMigra(rows){
     }, function(){});
   }catch(e){}
 }
+
+/* =====================================================================
+   DOPPIONI NEL REGISTRO PROVVIGIONI (16/11/2026, Davide)
+   Il difetto di Modifica (ora corretto) creava una seconda riga per la
+   stessa vendita. Qui si tolgono da soli: stesso cliente e stessa auto,
+   vendite a meno di 45 giorni l'una dall'altra = una vendita sola.
+   Si tiene il contenuto dell'ultima modifica (e' la correzione buona),
+   con data, mese e collegamento al contratto della riga originale.
+   Le altre righe ricevono la lapide, come con Elimina, cosi' non
+   ritornano da altri dispositivi ne' dal foglio Google.
+   ===================================================================== */
+function pTogliDoppioni(list){
+  try{
+    var norm=function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
+    var quando=function(r){
+      var m=String(r.data||'').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if(m) return new Date(+m[3], +m[2]-1, +m[1]).getTime();
+      var n=Number(r.id); if(n>1e12) return n;
+      var mm=String(r.mese||'').match(/^(\d{4})-(\d{2})/); if(mm) return new Date(+mm[1], +mm[2]-1, 15).getTime();
+      return 0;
+    };
+    var mod=function(r){ return Math.max(+(r.updatedAt||0), +((r.manuale&&r.manuale.ts)||0), (Number(r.id)>1e12?Number(r.id):0)); };
+    var gruppi={};
+    list.forEach(function(r){ if(!r||r.deleted||!r.cliente||!r.modello) return; var k=norm(r.cliente)+'|'+norm(r.modello); (gruppi[k]=gruppi[k]||[]).push(r); });
+    var via={}, tolti=0;
+    Object.keys(gruppi).forEach(function(k){
+      var g=gruppi[k]; if(g.length<2) return;
+      g.sort(function(a,b){ return quando(a)-quando(b); });
+      /* vendite vicine nel tempo = la stessa vendita */
+      var blocchi=[], cur=[g[0]];
+      for(var i=1;i<g.length;i++){
+        if(quando(g[i])-quando(cur[cur.length-1]) <= 45*86400000) cur.push(g[i]); else { blocchi.push(cur); cur=[g[i]]; }
+      }
+      blocchi.push(cur);
+      blocchi.forEach(function(b){
+        if(b.length<2) return;
+        var complete=b.filter(function(r){ return r.bozza!==true; });
+        var base=(complete.length?complete:b).slice().sort(function(x,y){ return mod(y)-mod(x); })[0];
+        var legata=b.filter(function(r){ return r.cvId; })[0] || b[0];
+        var tenuta=JSON.parse(JSON.stringify(base));
+        tenuta.cvId=base.cvId||legata.cvId||null;
+        tenuta.data=legata.data||tenuta.data;
+        tenuta.mese=legata.mese||tenuta.mese;
+        tenuta.unitoDa=b.filter(function(r){ return r!==base; }).map(function(r){ return String(r.id); });
+        tenuta.updatedAt=Date.now();
+        b.forEach(function(r){
+          if(r===base) return;
+          via[String(r.id)]=1; tolti++;
+          try{ pTombAdd(r.id); }catch(e){}
+          try{ if(typeof supaUpsert==='function') supaUpsert('provvigioni_app', { id:String(r.id), deleted:true, updatedAt:Date.now() }); }catch(e){}
+          try{ pGsDelete(r.id); }catch(e){}
+        });
+        via['__sost_'+String(base.id)]=tenuta;
+        try{ pSupaUpsert(tenuta); }catch(e){}
+      });
+    });
+    if(!tolti) return list;
+    var out=list.filter(function(r){ return !(r && via[String(r.id)]===1); }).map(function(r){ return (r && via['__sost_'+String(r.id)]) || r; });
+    try{ if(typeof tcToastNew==='function') tcToastNew('Provvigioni: '+tolti+' doppion'+(tolti===1?'e tolto':'i tolti'), true); }catch(e){}
+    console.log('pTogliDoppioni: tolti', tolti);
+    return out;
+  }catch(e){ console.warn('pTogliDoppioni', e); return list; }
+}
 function pSupaLoad(){
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb) return;
@@ -8473,6 +8566,7 @@ function pSupaLoad(){
         if(ts(r) > ts(ex)){ byId[k]=r; pSupaUpsert(r); }
       });
       _pRegCache = Object.keys(byId).map(function(k){ return byId[k]; });
+      _pRegCache = pTogliDoppioni(_pRegCache);
       pSaveReg(_pRegCache);
       try{
         var v=document.getElementById('view-provv');
@@ -8703,7 +8797,20 @@ function pSalva() {
   /* Col mese riaperto dal selettore, una provvigione nuova va in quel mese. */
   const mese = window._pMeseVisto || pGetMese();
   const reg  = pLoadReg();
-  const existingEntry = _pEditingId ? reg.find(x => x.id === _pEditingId) : null;
+  /* ===== MODIFICA = STESSA RIGA (16/11/2026) =====
+     Le provvigioni lette dal database hanno l'id come testo, il pulsante
+     Modifica lo passava come numero: il confronto stretto falliva, la riga
+     non veniva trovata e se ne creava una nuova (la provvigione "raddoppiava").
+     Ora si confronta come testo, e si cerca anche nella copia letta dal
+     database se nel registro locale manca. */
+  let existingEntry = null;
+  if (_pEditingId != null && _pEditingId !== '') {
+    existingEntry = reg.find(x => x && String(x.id) === String(_pEditingId)) || null;
+    if (!existingEntry && typeof _pRegCache !== 'undefined' && Array.isArray(_pRegCache)) {
+      const _c = _pRegCache.find(x => x && String(x.id) === String(_pEditingId));
+      if (_c) { existingEntry = _c; reg.unshift(_c); }
+    }
+  }
   const entry = {
     id:   existingEntry ? existingEntry.id   : Date.now(),
     data: existingEntry ? existingEntry.data : new Date().toLocaleDateString('it-IT'),
@@ -8747,6 +8854,20 @@ function pSalva() {
      aggiorna invece di duplicarla. */
   /* existingEntry e' const: la riga adottata si tiene a parte */
   var _adottata = existingEntry || null;
+  /* Ultima rete: stesso cliente e stessa auto gia' nel registro (non bozza)
+     ma il gestionale non sa che e' una modifica: si chiede invece di
+     aggiungere una seconda riga in silenzio. */
+  if(!existingEntry){
+    var _norm=function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
+    var _gia=reg.filter(function(r){ return r && r.bozza!==true && !r.deleted
+      && _norm(r.cliente)===_norm(entry.cliente) && _norm(r.modello)===_norm(entry.modello); })[0];
+    if(_gia){
+      if(confirm('Esiste gi\u00e0 una provvigione per '+entry.cliente+' \u2014 '+(entry.marca||'')+' '+entry.modello+' ('+(_gia.data||pGetMeseLabel(_gia.mese))+').\n\nOK = aggiorno quella (consigliato)\nAnnulla = ne aggiungo una nuova (solo se \u00e8 davvero un\u2019altra vendita)')){
+        entry.id=_gia.id; entry.data=_gia.data||entry.data; entry.mese=_gia.mese||entry.mese; entry.cvId=_gia.cvId||entry.cvId||null;
+        existingEntry=_gia;
+      }
+    }
+  }
   if(!existingEntry && !entry.cvId){
     var _gemella=reg.filter(function(r){
       if(!r || r.id===entry.id) return false;
@@ -8763,7 +8884,7 @@ function pSalva() {
     }
   }
 
-  if(_adottata){const idx=reg.findIndex(x=>x.id===entry.id);if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
+  if(_adottata){const idx=reg.findIndex(x=>String(x.id)===String(entry.id));if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
   entry.updatedAt = Date.now();
   _pEditingId=null;
   pSaveReg(reg);
@@ -8950,7 +9071,7 @@ function pElimina(id) {
      toglie solo la riga dal registro provvigioni. Il contratto resta dov'e'.
      Chiedere la cosa sbagliata faceva rinunciare a un'operazione innocua. */
   if (!confirm('Togliere questa provvigione dal registro?\n\nLa vendita non viene toccata: contratto, fattura e scheda cliente restano come sono.')) return;
-  pSaveReg(pLoadReg().filter(r => r.id !== id));
+  pSaveReg(pLoadReg().filter(r => String(r.id) !== String(id)));
   try{ _pRegCache = _pRegCache.filter(function(r){ return String(r.id) !== String(id); }); }catch(e){}
   pTombAdd(id);
   /* Prima la lapide sul cloud, poi la cancellazione vera. Se scrivessimo solo
@@ -9511,8 +9632,12 @@ function pRenderReg() {
   h += '<table style="min-width:540px;width:100%;border-collapse:collapse;"><thead><tr>';
   h += TH('Data')+TH('Cliente / Auto')+TH('Tipo')+TH('TAN')+TH('Rate')+TH('Finanziaria')+TH('Polizza')+TH('Durata')+TH('CPI')+TH('Comm. Fin.')+TH('Provvigione')+TH('');
   h += '</tr></thead><tbody>';
+  /* doppioni gia' presenti: stesso cliente e stessa auto su piu' righe */
+  var _dpN={}, _dpK=function(r){ return String(r.cliente||'').trim().toUpperCase().replace(/\s+/g,' ')+'|'+String(r.modello||'').trim().toUpperCase().replace(/\s+/g,' '); };
+  reg.forEach(function(r){ if(r && !r.deleted){ var k=_dpK(r); _dpN[k]=(_dpN[k]||0)+1; } });
   reg.forEach(function(r, idx) {
     r._bad = r.bozza ? ('<span '+(r.cvId?('onclick="pCaricaVendita(\''+r.cvId+'\')" title="Apri in Calcola provvigione" '):'')+'style="background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:20px;padding:1px 7px;font-size:10px;font-weight:800;margin-left:6px;'+(r.cvId?'cursor:pointer;':'')+'">\u26a0 da completare: '+((r.manca||[]).join(', ')||'\u2014')+'</span>') : '';
+    if(_dpN[_dpK(r)]>1) r._bad+='<span title="Stesso cliente e stessa auto su pi\u00f9 righe: elimina quella sbagliata" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:20px;padding:1px 7px;font-size:10px;font-weight:800;margin-left:6px;">\u26a0 doppione</span>';
     if (idx === 0 || r.mese !== reg[idx-1].mese) {
       h += '<tr><td colspan="11" style="background:#1e2d3d;color:white;padding:8px 12px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">&#128197; '+(pGetMeseLabel(r.mese)||r.mese||'Mese sconosciuto')+'</td></tr>';
     }
@@ -9564,13 +9689,13 @@ function pRenderReg() {
     var clCell= '<strong>'+cl+'</strong>'+(r._bad||'')+(ve?'<br><span style="font-size:11px;color:#6b6b6b;">'+ve+'</span>':'')
               +(_infoS?'<br><span style="font-size:10.5px;color:'+(_sotto?'#9a3412':'#94a3b8')+';">'+_infoS+'</span>':'');
     var btnM  = '<button onclick="pDettaglio('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #64748b;color:#475569;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#128269; Dettaglio</button>'
-              + '<button onclick="pModifica('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#9998; Modifica</button>';
-    var btnD  = '<button onclick="pElimina('+r.id+')" style="padding:5px 10px;background:none;border:1px solid #e74c3c;color:#e74c3c;font-size:11px;cursor:pointer;white-space:nowrap;">&#10005;</button>';
+              + '<button onclick="pModifica(\''+String(r.id).replace(/[^A-Za-z0-9_-]/g,'')+'\')" style="padding:5px 10px;background:none;border:1px solid #1a4fa0;color:#1a4fa0;font-size:11px;cursor:pointer;margin-right:4px;white-space:nowrap;">&#9998; Modifica</button>';
+    var btnD  = '<button onclick="pElimina(\''+String(r.id).replace(/[^A-Za-z0-9_-]/g,'')+'\')" style="padding:5px 10px;background:none;border:1px solid #e74c3c;color:#e74c3c;font-size:11px;cursor:pointer;white-space:nowrap;">&#10005;</button>';
     var polizzaC = (r.fi && r.fi !== 'NO') ? r.fi : '—';
     var durataC = r.fiMesi ? r.fiMesi + ' mesi' : '—';
     var cpiC = r.cpi && r.cpi !== 'NO' ? '<span style="color:#27ae60;font-weight:700;">✓ ' + r.cpi + '</span>' : '—';
     var commFinC = r.comm ? '<strong style="color:#1a4fa0;">€ ' + parseFloat(r.comm).toFixed(0) + '</strong>' : '—';
-    h += '<tr'+(_sotto?' style="background:#ffedd5;box-shadow:inset 4px 0 0 #f97316;"':'')+'>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(cpiC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
+    h += '<tr class="p-riga"'+(_sotto?' style="background:#ffedd5;box-shadow:inset 4px 0 0 #f97316;"':'')+'>'+TD(r.data)+TD(clCell)+TD(tipoLabel)+TD(tanC)+TD(rateC)+TD(finL)+TD(polizzaC)+TD(durataC)+TD(cpiC)+TD(commFinC)+TD(pvc)+TD(btnM+btnD)+'</tr>';
   });
   h += '</tbody></table></div>';
   el.innerHTML = h;
@@ -25146,14 +25271,16 @@ var MZ_TEC_CAMPI=[
    una percentuale del prezzo dell'auto spalmata sulla durata: se resta
    vuota, sul sito il costo non compare. */
 var SITO_ASSIC_DEF={ attiva:true, sintesi:'Furto, incendio, eventi naturali, cristalli e altro', titolo:'Assicurazione furto e incendio inclusa', sottotitolo:'Protezione completa per i primi anni, compresa nella rata.',
-  garanzie:['Furto e incendio, parziale e totale','Valore a nuovo fino a 36 mesi','Ricorso terzi da incendio','Atti vandalici e sociopolitici','Eventi naturali (grandine compresa)','Cristalli','Urto con animale selvatico','Soccorso stradale','Annullamento franchigia per riparazioni in sede (grandine: franchigia 300 \u20ac)'],
+  garanzie:['Furto e incendio, parziale e totale','36 mesi di valore a nuovo','Ricorso terzi da incendio','Atti vandalici e sociopolitici','Eventi naturali (grandine compresa)','Cristalli','Urto con animale selvatico','Soccorso stradale','Annullamento franchigia per riparazioni in sede'],
   mesi:60, percentuale:'', nota:'Costo indicativo: il preventivo definitivo dipende dalla provincia di residenza e dalla durata scelta.' };
+function assicTesto(g){ return String(g||'').replace(/valore a nuovo fino a 36 mesi/i,'36 mesi di valore a nuovo').replace(/\s*\([^)]*franchigia[^)]*\)/i,'').replace(/\s*[-\u2013,]?\s*tranne (l'|il )?evento grandine.*$/i,'').trim(); }
 var _sitoAssic=null;
 function sitoAssicLoad(cb){
   var sb=(typeof sbClient==='function')?sbClient():null;
   if(!sb){ if(cb) cb(SITO_ASSIC_DEF); return; }
   sb.from('config_pubblica').select('id,data').eq('id','assicurazione').then(function(r){
     _sitoAssic=(r && !r.error && r.data && r.data[0] && r.data[0].data) ? r.data[0].data : null;
+    if(_sitoAssic && Array.isArray(_sitoAssic.garanzie)) _sitoAssic.garanzie=_sitoAssic.garanzie.map(assicTesto).filter(Boolean);
     if(cb) cb(_sitoAssic||SITO_ASSIC_DEF, r&&r.error);
   }, function(){ if(cb) cb(SITO_ASSIC_DEF, true); });
 }
@@ -25387,6 +25514,128 @@ function sbSalva(){
     var sec=/tainted|security|insecure/i.test(String(e&&e.message||e));
     if(st){ st.style.color='#dc2626'; st.textContent=sec?'Per salvare una modifica, ricarica l’immagine con “Cambia immagine”.':('Non riuscito: '+(e&&e.message||e)); }
   });
+}
+
+
+/* =====================================================================
+   OFFERTE NOLEGGIO A LUNGO TERMINE PER IL SITO (15/11/2026, Davide)
+   Sezione a parte sul sito, con offerte proprie (non sono le auto del
+   magazzino): auto, foto, canone, anticipo, durata, km/anno, servizi
+   compresi. Stanno in config_pubblica, riga 'nlt'. Le richieste dal sito
+   arrivano tra le prenotazioni (tipo 'noleggio') e per mail.
+   ===================================================================== */
+var NLT_SERVIZI=['RCA','Kasko','Furto e incendio','Manutenzione ordinaria e straordinaria','Pneumatici','Soccorso stradale 24h','Auto sostitutiva','Tassa di proprietà'];
+var _sitoNlt=null, _nltEd=null;
+function sitoNltLoad(cb){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb){ if(cb) cb(null,true); return; }
+  sb.from('config_pubblica').select('id,data').eq('id','nlt').then(function(r){
+    var d=(r && !r.error && r.data && r.data[0] && r.data[0].data) ? r.data[0].data : {offerte:[]};
+    if(!Array.isArray(d.offerte)) d.offerte=[];
+    _sitoNlt=d; if(cb) cb(d, r&&r.error);
+  }, function(){ if(cb) cb(null,true); });
+}
+function sitoNltSalvaLista(msg){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ alert('Supabase non raggiungibile'); return Promise.resolve(false); }
+  _sitoNlt.updatedAt=Date.now();
+  return sb.from('config_pubblica').upsert({ id:'nlt', data:_sitoNlt }).then(function(r){
+    if(r && r.error){ alert('Non salvato: '+r.error.message); return false; }
+    var box=document.getElementById('nlt-box'); if(box) box.outerHTML=sitoNltHtml();
+    if(msg && typeof tcToastNew==='function') tcToastNew(msg, true); return true;
+  });
+}
+function nltEuro(v){ var n=Number(String(v||'').replace(/\./g,'').replace(',','.')); return (n>0)?(String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,'.')+' €'):''; }
+function sitoNltHtml(){
+  if(!_sitoNlt) setTimeout(function(){ sitoNltLoad(function(){ var box=document.getElementById('nlt-box'); if(box) box.outerHTML=sitoNltHtml(); }); },0);
+  var l=(_sitoNlt&&_sitoNlt.offerte)||[], oggi=new Date().toISOString().slice(0,10);
+  var h='<div id="nlt-box" style="margin:22px 0 6px;padding:14px;border:1px solid #bfdbfe;background:#f5f9ff;border-radius:11px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#1d4ed8;text-transform:uppercase;margin-bottom:4px;">🔑 Noleggio a lungo termine sul sito</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:10px;line-height:1.5;">Le offerte della sezione “Noleggio” del sito. Sono separate dalle auto in vendita. Senza offerte attive, la sezione sul sito non compare.</div>';
+  if(!_sitoNlt) h+='<div style="font-size:12.5px;color:#94a3b8;">Carico…</div>';
+  l.forEach(function(o,i){
+    var scad=(o.al && o.al<oggi);
+    var st=(o.attiva===false)?['Spenta','#94a3b8']:(scad?['Scaduta','#dc2626']:['Sul sito','#16a34a']);
+    h+='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px;margin-bottom:6px;'+((o.attiva===false||scad)?'opacity:.6;':'')+'">'
+      +(o.img?'<img src="'+mzEscA(o.img)+'" style="width:90px;height:60px;object-fit:cover;border-radius:6px;">':'<div style="width:90px;height:60px;border-radius:6px;background:#f1f5f9;"></div>')
+      +'<div style="flex:1;min-width:160px;"><div style="font-weight:800;font-size:13.5px;">'+mzEscA(((o.marca||'')+' '+(o.modello||'')).trim()||'(senza nome)')+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;"><b style="color:'+st[1]+';">'+st[0]+'</b> · '+(nltEuro(o.canone)||'—')+'/mese '+(o.iva==='inclusa'?'IVA incl.':'+ IVA')
+      +(o.durata?(' · '+o.durata+' mesi'):'')+(o.km?(' · '+mzEscA(o.km)+' km/anno'):'')+'</div></div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap;">'
+      +'<button onclick="nltSposta('+i+',-1)" '+(i===0?'disabled':'')+' style="padding:6px 9px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;">↑</button>'
+      +'<button onclick="nltSposta('+i+',1)" '+(i===l.length-1?'disabled':'')+' style="padding:6px 9px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;">↓</button>'
+      +'<button onclick="nltAccendi('+i+')" style="padding:6px 10px;border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;">'+(o.attiva===false?'Accendi':'Spegni')+'</button>'
+      +'<button onclick="nltEditor('+i+')" style="padding:6px 10px;border:1px solid #2060b8;background:#eff6ff;color:#2060b8;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:800;">✎ Modifica</button>'
+      +'<button onclick="nltElimina('+i+')" style="padding:6px 9px;border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:7px;cursor:pointer;">🗑</button>'
+      +'</div></div>';
+  });
+  h+='<button onclick="nltEditor(-1)" style="margin-top:6px;padding:10px 16px;border-radius:8px;border:none;background:#2060b8;color:#fff;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;">＋ Nuova offerta di noleggio</button></div>';
+  return h;
+}
+function nltSposta(i,d){ var l=_sitoNlt.offerte, j=i+d; if(j<0||j>=l.length) return; var t=l[i]; l[i]=l[j]; l[j]=t; sitoNltSalvaLista(); }
+function nltAccendi(i){ var o=_sitoNlt.offerte[i]; o.attiva=(o.attiva===false); sitoNltSalvaLista(o.attiva?'Offerta accesa':'Offerta spenta'); }
+function nltElimina(i){ if(!confirm('Elimino questa offerta di noleggio dal sito?')) return; _sitoNlt.offerte.splice(i,1); sitoNltSalvaLista('Offerta eliminata'); }
+function nltEditor(i){
+  _sitoNlt=_sitoNlt||{offerte:[]};
+  var o=(i>=0)?JSON.parse(JSON.stringify(_sitoNlt.offerte[i])):{ attiva:true, iva:'esclusa', servizi:['RCA','Kasko','Furto e incendio','Manutenzione ordinaria e straordinaria','Soccorso stradale 24h'] };
+  _nltEd={ i:i, o:o, file:null, img:null };
+  var w=document.getElementById('nlt-ed'); if(w) w.remove();
+  w=document.createElement('div'); w.id='nlt-ed';
+  w.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.6);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
+  var inp='width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var lab=function(t){ return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin:8px 0 3px;">'+t+'</label>'; };
+  var f=function(id,t,v,ph,type){ return '<div>'+lab(t)+'<input id="'+id+'" type="'+(type||'text')+'" value="'+mzEscA(v||'')+'" placeholder="'+mzEscA(ph||'')+'" style="'+inp+'"></div>'; };
+  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:720px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+    +'<div style="font-weight:900;font-size:17px;margin-bottom:10px;">🔑 Offerta di noleggio a lungo termine</div>'
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">'
+    +'<div style="flex:0 0 220px;"><div id="nlt-foto" style="width:220px;height:147px;border-radius:9px;background:#f1f5f9 '+(o.img?('url(\''+mzEscA(o.img)+'\') center/cover'):'')+';display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px;font-weight:700;">'+(o.img?'':'nessuna foto')+'</div>'
+    +'<label style="display:block;text-align:center;margin-top:6px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;">📷 '+(o.img?'Cambia foto':'Carica foto')+'<input type="file" accept="image/*" style="display:none;" onchange="nltFoto(this)"></label>'
+    +'<div style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Qualsiasi formato: la ritaglio io al centro.</div></div>'
+    +'<div style="flex:1;min-width:260px;display:grid;grid-template-columns:1fr 1fr;gap:0 10px;">'
+    +f('nlt-marca','Marca',o.marca,'es. Fiat')+f('nlt-modello','Modello',o.modello,'es. 600')
+    +'<div style="grid-column:1/-1;">'+lab('Versione')+'<input id="nlt-versione" value="'+mzEscA(o.versione||'')+'" placeholder="es. 1.2 Hybrid La Prima" style="'+inp+'"></div>'
+    +f('nlt-canone','Canone al mese (€)',o.canone,'es. 299','number')
+    +'<div>'+lab('IVA')+'<select id="nlt-iva" style="'+inp+'"><option value="esclusa"'+(o.iva!=='inclusa'?' selected':'')+'>+ IVA (P.IVA e aziende)</option><option value="inclusa"'+(o.iva==='inclusa'?' selected':'')+'>IVA inclusa (privati)</option></select></div>'
+    +f('nlt-anticipo','Anticipo (€, 0 = zero anticipo)',o.anticipo,'es. 3000','number')
+    +f('nlt-durata','Durata (mesi)',o.durata,'es. 36','number')
+    +f('nlt-km','Km all’anno',o.km,'es. 15.000')
+    +'<div>'+lab('Disponibilità')+'<select id="nlt-disp" style="'+inp+'"><option value="">—</option><option value="pronta"'+(o.disp==='pronta'?' selected':'')+'>Pronta consegna</option><option value="ordine"'+(o.disp==='ordine'?' selected':'')+'>Su ordinazione</option></select></div>'
+    +'</div></div>'
+    +lab('Servizi compresi nel canone')
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px 14px;">'+NLT_SERVIZI.map(function(sv,k){ return '<label style="font-size:12.5px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" class="nlt-sv" value="'+mzEscA(sv)+'"'+((o.servizi||[]).indexOf(sv)>=0?' checked':'')+'> '+sv+'</label>'; }).join('')+'</div>'
+    +'<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:0 10px;">'
+    +'<div>'+lab('Nota (facoltativa)')+'<input id="nlt-nota" value="'+mzEscA(o.nota||'')+'" placeholder="es. Offerta valida fino a esaurimento scorte" style="'+inp+'"></div>'
+    +f('nlt-dal','Dal',o.dal,'','date')+f('nlt-al','Al (poi sparisce)',o.al,'','date')
+    +'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;align-items:center;"><span id="nlt-stato" style="flex:1;font-size:12.5px;font-weight:700;color:#64748b;"></span>'
+    +'<button onclick="document.getElementById(\'nlt-ed\').remove()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+    +'<button id="nlt-salva" onclick="nltSalva()" style="padding:10px 18px;border-radius:8px;border:none;background:#2060b8;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva e pubblica</button></div>'
+    +'</div>';
+  document.body.appendChild(w);
+}
+function nltFoto(inp){
+  var f=inp && inp.files && inp.files[0]; if(!f) return; inp.value='';
+  var img=new Image();
+  img.onload=function(){ _nltEd.img=img; _nltEd.file=f; var b=document.getElementById('nlt-foto'); if(b){ b.style.background='#f1f5f9 url(\''+img.src+'\') center/cover'; b.textContent=''; } };
+  img.src=URL.createObjectURL(f);
+}
+function nltSalva(){
+  var e=_nltEd; if(!e) return; var o=e.o;
+  var g=function(id){ var el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+  o.marca=g('nlt-marca'); o.modello=g('nlt-modello'); o.versione=g('nlt-versione'); o.canone=g('nlt-canone'); o.iva=g('nlt-iva');
+  o.anticipo=g('nlt-anticipo'); o.durata=g('nlt-durata'); o.km=g('nlt-km'); o.disp=g('nlt-disp'); o.nota=g('nlt-nota'); o.dal=g('nlt-dal'); o.al=g('nlt-al');
+  o.servizi=[].slice.call(document.querySelectorAll('.nlt-sv:checked')).map(function(x){ return x.value; });
+  if(!o.marca || !o.modello || !(Number(o.canone)>0)){ alert('Servono almeno marca, modello e canone.'); return; }
+  if(!o.img && !e.img){ alert('Carica una foto dell’auto.'); return; }
+  o.id=o.id||('nlt_'+Date.now());
+  var bt=document.getElementById('nlt-salva'), st=document.getElementById('nlt-stato');
+  if(bt) bt.disabled=true; if(st) st.textContent='Salvo…';
+  var foto=e.img ? sbBlob(e.img,1200,800,{modo:'riempi',zoom:1,fx:.5,fy:.5}).then(function(b){ return eaR2Upload(b,'noleggio',o.id+'-'+Date.now()+'.jpg'); }) : Promise.resolve(o.img);
+  foto.then(function(u){
+    o.img=u; o.updatedAt=Date.now();
+    if(e.i>=0) _sitoNlt.offerte[e.i]=o; else _sitoNlt.offerte.push(o);
+    return sitoNltSalvaLista('🔑 Offerta di noleggio pubblicata');
+  }).then(function(ok){ if(ok){ var w=document.getElementById('nlt-ed'); if(w) w.remove(); } else if(bt) bt.disabled=false; })
+  .catch(function(err){ if(bt) bt.disabled=false; if(st){ st.style.color='#dc2626'; st.textContent='Non riuscito: '+(err&&err.message||err); } });
 }
 
 function sitoAssicSalva(){
@@ -32897,6 +33146,7 @@ function parInit(){
   h+=lab('Condizioni CONTRATTO finale (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
   h+=sitoAssicHtml();
   h+=sitoBannerHtml();
+  h+=sitoNltHtml();
   h+='<button onclick="parSalva()" style="margin-top:20px;width:100%;padding:14px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;">💾 Aggiorna Parametri</button>';
   h+='<div id="par-stato" style="text-align:center;font-size:13px;color:#16a34a;font-weight:700;margin-top:10px;min-height:18px;"></div>';
   h+='<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin:24px 0 6px;">Modalità demo</div>';
