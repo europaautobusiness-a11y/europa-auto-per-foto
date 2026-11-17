@@ -112,29 +112,37 @@ function minData(){ var d=new Date(); d.setDate(d.getDate()+1); while(d.getDay()
    oppure ?a=lancia-ypsilon-EA123, anche con .html in coda. */
 function rifDa(p){ p=String(p||'').replace(/\.html?$/i,'').trim(); var m=p.match(/(EA\d{1,6}|[A-Z]{2}\d{3}[A-Z]{2})$/i); return m? m[1].toUpperCase() : p.toUpperCase(); }
 function caricaAuto(){
-  var p=new URLSearchParams(location.search).get('a')||new URLSearchParams(location.search).get('auto')||''; var rif=rifDa(p);
-  if(!rif){ document.getElementById('f-auto').style.display=''; return; }
+  var Q=new URLSearchParams(location.search);
+  var p=Q.get('a')||Q.get('auto')||''; var rif=rifDa(p);
+  /* Mai il codice al cliente (17/11/2026): se l'auto non si trova, il campo
+     si riempie con marca, modello, km e immatricolazione arrivati nel link. */
+  var descr=[Q.get('n')||'', Q.get('km')?(Number(Q.get('km')).toLocaleString('it-IT')+' km'):'', Q.get('imm')?('immatricolata '+Q.get('imm')):''].filter(Boolean).join(', ');
+  var nonTrovata=function(){ document.getElementById('f-auto').style.display=''; document.getElementById('autotxt').value=descr; };
+  if(!rif){ nonTrovata(); return; }
   var h={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY};
   var scegli=function(rows){
     var piatte=(rows||[]).map(function(r){ var d=(r&&r.data&&typeof r.data==='object')?r.data:(r||{}); d.id=d.id||(r&&r.id); return d; });
     var t=function(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
-    return piatte.filter(function(a){ return t(a.targa)===rif || ('EA'+String(a.numeroInterno||a.numero_interno||'')).toUpperCase()===rif || t(a.id)===rif; })[0]||null;
+    var r2=t(rif);
+    return piatte.filter(function(a){ return (a.targa && t(a.targa)===r2) || ('EA'+String(a.numeroInterno||a.numero_interno||a.numerointerno||'')).toUpperCase()===r2 || t(a.id)===r2; })[0]||null;
   };
   fetch(SB_URL+'/rest/v1/vetrina?select=*',{headers:h}).then(function(r){ return r.json(); }).then(function(rows){
     var a=Array.isArray(rows)?scegli(rows):null;
     if(a) return a;
     return fetch(SB_URL+'/rest/v1/magazzino?select=id,data',{headers:h}).then(function(r){ return r.json(); }).then(scegli);
   }).then(function(a){
-    if(!a){ document.getElementById('f-auto').style.display=''; document.getElementById('autotxt').value=rif; return; }
+    if(!a){ nonTrovata(); return; }
     AUTO=a;
     var foto=a.foto; if(typeof foto==='string'){ try{ foto=JSON.parse(foto); }catch(e){ foto=[]; } }
     var f0=(Array.isArray(foto)&&foto[0]&&foto[0].url)||'';
     var img=document.getElementById('auto-img'); if(f0) img.src=f0; else img.style.display='none';
     document.getElementById('auto-n').textContent=[cap(a.marca),cap(a.modello),a.allestimento||''].join(' ').replace(/\s+/g,' ').trim();
-    document.getElementById('auto-d').textContent=[a.anno||(a.dataImm||'').slice(0,4), a.km?(Number(a.km).toLocaleString('it-IT')+' km'):'', cap(a.alimentazione), cap(a.cambio), cap(a.colore)].filter(Boolean).join(' · ');
-    document.getElementById('auto-p').textContent=euro(a.prezzo||a.prezzoVendita||a.prezzo_vendita);
+    var _imm=a.dataImm||a.dataimm||'', _immTxt='';
+    var _m=String(_imm).match(/^(\d{4})-(\d{2})/); if(_m) _immTxt='imm. '+_m[2]+'/'+_m[1]; else if(a.anno) _immTxt='imm. '+a.anno;
+    document.getElementById('auto-d').textContent=[_immTxt, a.km?(Number(String(a.km).replace(/\./g,'')).toLocaleString('it-IT')+' km'):'', cap(a.alimentazione), cap(a.cambio), cap(a.colore)].filter(Boolean).join(' · ');
+    document.getElementById('auto-p').textContent=euro(a.prezzoVen||a.prezzoven||a.prezzo||a.prezzoVendita||a.prezzo_vendita);
     document.getElementById('auto').style.display='';
-  }).catch(function(){ document.getElementById('f-auto').style.display=''; document.getElementById('autotxt').value=rif; });
+  }).catch(function(){ nonTrovata(); });
 }
 function invia(){
   var g=function(id){ return String((document.getElementById(id)||{}).value||'').trim(); };
