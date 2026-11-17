@@ -21294,7 +21294,7 @@ function pmPeriziaMailHTML(p){
       if(pins.length){
         h+=pmMailSezione('Danni segnalati ('+pins.length+')')+'<div>';
         pins.forEach(function(x,i){
-          var t=String((x&&(x.nota||x.testo||x.tipo))||'').trim();
+          var t=String((x&&(x.desc||x.nota||x.testo||x.tipo))||'').trim();
           h+='<div style="font-size:13px;color:#7c2d12;background:#fff7ed;border-left:3px solid #fdba74;'
             +'padding:7px 11px;border-radius:0 7px 7px 0;margin-bottom:5px;">'
             +'<b>'+(i+1)+'.</b> '+pmEsc(t||'segnalato sulla sagoma')+'</div>';
@@ -21336,6 +21336,55 @@ function pmPeriziaMailHTML(p){
   }catch(e){ return ''; }
 }
 
+/* Firma su carta sul PRIMO foglio della perizia (17/11/2026, Davide): anche
+   quando il cliente ha gia' firmato dal link, sulla stampa firma a mano
+   accanto ai dati del veicolo. Firme affiancate e allineate. */
+function pmFirmaRealeHTML(p){
+  var dig=(p && p.metodoFirma!=='carta' && (p.firma||p.firmaTs));
+  var riga=function(t){ return '<td style="width:46%;vertical-align:bottom;padding:0;border:none;"><div style="font-size:10px;color:#555;height:14px;">'+t+'</div><div style="border-bottom:1px solid #000;height:40px;"></div></td>'; };
+  return '<div style="margin:10px 0 4px;padding:9px 10px;border:1px solid #000;page-break-inside:avoid;break-inside:avoid;">'
+    +'<div style="font-size:11px;line-height:1.45;margin-bottom:8px;">Il sottoscritto <b>'+pmEsc(p.cliente||'')+'</b> conferma che i dati di questa perizia'
+    +(dig?' corrispondono a quelli compilati e firmati digitalmente dal link,':' sono corretti,')
+    +' che i danni elencati sono tutti quelli presenti sul veicolo <b>'+pmEsc(p.modello||'')+(p.targa?(' \u00b7 '+pmEsc(p.targa)):'')+'</b> e che il chilometraggio dichiarato \u00e8 quello reale.</div>'
+    +'<div style="font-size:10px;color:#555;">Le firme vanno in fondo a ogni pagina.</div>'
+    +'</div>';
+}
+/* La striscia firme che va in fondo a ogni pagina della perizia. */
+function pmStrisciaFirme(){
+  var riga=function(t){ return '<td style="width:46%;vertical-align:bottom;padding:0;border:none;"><div style="font-size:9.5px;color:#555;height:13px;">'+t+'</div><div style="border-bottom:1px solid #000;height:30px;"></div></td>'; };
+  return '<div class="pz-firme" style="margin-top:8px;padding-top:6px;border-top:1px dashed #999;">'
+    +'<table style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;margin:0;"><tr>'
+    +riga('Per Europa Auto \u2014 timbro e firma')+'<td style="width:8%;border:none;"></td>'+riga('Firma del cliente (autografa)')
+    +'</tr></table></div>';
+}
+/* Impagina la perizia: misura i blocchi e, prima che una pagina finisca,
+   mette la striscia firme e manda a capo pagina. Gira anche dentro il
+   documento di stampa (inserita come script), senza dipendenze. */
+function pmPaginaFirme(root, strisciaHTML, altMm){
+  try{
+    if(!root) return;
+    var pm=root.querySelector('.pm')||root;
+    var px=96/25.4, avail=(altMm||262)*px;
+    var tmp=document.createElement('div'); tmp.innerHTML=strisciaHTML; var probe=tmp.firstChild; pm.appendChild(probe);
+    var hF=probe.getBoundingClientRect().height+6; pm.removeChild(probe);
+    var start=pm.getBoundingClientRect().top;
+    var figli=[].slice.call(pm.children);
+    for(var i=0;i<figli.length;i++){
+      var el=figli[i]; if(el.tagName==='STYLE') continue;
+      var r=el.getBoundingClientRect();
+      if(r.bottom-start > avail-hF && r.top-start > 40){
+        var t=document.createElement('div'); t.innerHTML=strisciaHTML; var f=t.firstChild;
+        f.style.pageBreakAfter='always'; f.style.breakAfter='page';
+        pm.insertBefore(f, el);
+        start=el.getBoundingClientRect().top;
+      }
+    }
+    var t2=document.createElement('div'); t2.innerHTML=strisciaHTML; pm.appendChild(t2.firstChild);
+  }catch(e){}
+}
+function pmPaginaScript(idRoot, altMm){
+  return '<script>('+pmPaginaFirme.toString()+')(document.getElementById('+JSON.stringify(idRoot)+'),'+JSON.stringify(pmStrisciaFirme())+','+(altMm||262)+');<\/script>';
+}
 function pmPeriziaInner(p){
   var dch=[]; if(p.dichiarazioni.d1)dch.push('le informazioni fornite sullo stato del veicolo sono complete e veritiere'); if(p.dichiarazioni.d2)dch.push('il veicolo non presenta danni, guasti meccanici o vizi occulti diversi da quelli elencati'); if(p.dichiarazioni.d3)dch.push('il chilometraggio indicato è reale e non manomesso'); if(p.dichiarazioni.d4)dch.push('il veicolo non ha subìto danni strutturali da incidente non dichiarati');
   var tf=p.tagliandi.map(function(i){return PM_TAGLIANDI[i][0]+'/'+PM_TAGLIANDI[i][1];});
@@ -21350,6 +21399,7 @@ function pmPeriziaInner(p){
     +'<tr><td><div class="lab">N. proprietari</div>'+pmEsc(p.proprietari)+'</td><td><div class="lab">% Gomme</div>'+pmEsc(p.gomme)+'</td></tr>'
     +'<tr><td><div class="lab">Targa</div>'+pmEsc(p.targa)+'</td><td><div class="lab">Valutazione</div>€ '+pmEsc(p.valutazione)+'</td></tr>'
     +'<tr><td colspan="2"><div class="lab">Dotazioni</div>'+pmEsc(p.dotazioni)+'</td></tr></table>'
+    +pmFirmaRealeHTML(p)
     +'<div class="sez">Rapporto sullo stato del veicolo</div>'
     +'<table><tr><td><div class="lab">Numero chiavi</div>'+pmEsc(p.chiavi)+'</td><td><div class="lab">Scad. bollo</div>'+pmEsc(pmDMY(p.bollo))+'</td></tr>'
     +'<tr><td><div class="lab">Scad. revisione</div>'+pmEsc(pmDMY(p.revisione))+'</td><td></td></tr></table>'
@@ -21369,7 +21419,11 @@ function pmStampa(){
   var p=pmRaccogli();
   var doc=pmPeriziaInner(p);
   var pa=document.getElementById('sin-print'); if(!pa){ pa=document.createElement('div'); pa.id='sin-print'; document.body.appendChild(pa); }
-  pa.innerHTML=doc; pa.style.display='block'; document.body.classList.add('sin-printing');
+  pa.innerHTML='<div id="pz-pag">'+doc+'</div>'; pa.style.display='block'; document.body.classList.add('sin-printing');
+  /* firme in fondo a ogni pagina: si impagina alla larghezza di un A4 */
+  var _w=pa.style.width; pa.style.width='190mm';
+  try{ pmPaginaFirme(document.getElementById('pz-pag'), pmStrisciaFirme(), 262); }catch(e){}
+  pa.style.width=_w;
   setTimeout(function(){ try{ window.print(); }catch(e){} }, 250);
   setTimeout(function(){ pa.style.display='none'; document.body.classList.remove('sin-printing'); }, 1500);
 }
@@ -30841,7 +30895,7 @@ function cvStampaFascicolo(cv, tipo, allegati){
       var vecchio=document.getElementById('ea-fasc-iframe'); if(vecchio) vecchio.parentNode.removeChild(vecchio);
       var ifr=document.createElement('iframe');
       ifr.id='ea-fasc-iframe';
-      ifr.style.cssText='position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
+      ifr.style.cssText='position:fixed;left:-10000px;top:0;width:198mm;height:297mm;border:0;opacity:0;pointer-events:none;';
       document.body.appendChild(ifr);
       var d=ifr.contentDocument||ifr.contentWindow.document;
       d.open(); d.write(fin); d.close();
@@ -30932,27 +30986,36 @@ function cvPeriziaPerContratto(cv){
   }catch(e){ return null; }
 }
 function cvPeriziaPaginaHTML(cv){
+  /* Allegato al contratto: la perizia COMPLETA, la stessa della stampa della
+     perizia (sagoma con i danni e le loro descrizioni, questionario,
+     tagliandi, dichiarazioni, clausole, firma digitale) e, sul primo foglio,
+     lo spazio per la firma a mano. Prima si stampava il riassunto della
+     mail, che lasciava fuori meta' delle cose. */
   var p=cvPeriziaPerContratto(cv);
   if(!p || typeof pmFirmata!=='function' || !pmFirmata(p)) return '';
-  var corpo=''; try{ corpo=pmPeriziaMailHTML(p); }catch(e){}
+  var corpo='';
+  try{
+    p.dichiarazioni=p.dichiarazioni||{}; p.tagliandi=p.tagliandi||[]; p.pins=p.pins||[];
+    corpo=pmPeriziaInner(p);
+  }catch(e){ try{ corpo=pmPeriziaMailHTML(p); }catch(_e){} }
   if(!corpo) return '';
-  var e=function(v){ return (typeof docEsc==='function')?docEsc(v):String(v==null?'':v); };
-  var dig=(p.metodoFirma!=='carta');
-  var quando=p.firmaTs?pmFmtDataOra(p.firmaTs):(p.dataFirma||'');
-  return '<div style="page-break-before:always;break-before:page;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0f172a;">'
-    +'<div style="font-size:15px;font-weight:800;margin-bottom:4px;">Allegato \u2014 Perizia del veicolo in permuta</div>'
-    +'<div style="font-size:11px;color:#475569;margin-bottom:10px;">'+(dig?('Firmata digitalmente dal cliente il '+e(quando)+(p.email?(' ('+e(p.email)+')'):'')):'Firmata su carta')+'. Il cliente conferma con firma autografa di aver preso visione e di riconoscere quanto dichiarato.</div>'
-    +corpo
-    +'<div style="margin-top:22px;padding-top:12px;border-top:1px solid #cbd5e1;page-break-inside:avoid;break-inside:avoid;">'
-    +'<div style="font-weight:800;font-size:12px;margin-bottom:6px;">CONFERMA CARTACEA</div>'
-    +'<div style="font-size:11px;color:#334155;line-height:1.5;margin-bottom:14px;">Il sottoscritto <b>'+e(p.cliente||'')+'</b> conferma che la presente perizia corrisponde a quella compilata e firmata digitalmente, che i danni elencati sono tutti quelli presenti sul veicolo <b>'+e((p.modello||'')+(p.targa?(' \u00b7 '+p.targa):''))+'</b> e che il chilometraggio dichiarato \u00e8 quello reale.</div>'
-    +'<table style="width:100%;border-collapse:collapse;"><tr>'
-    +'<td style="width:50%;padding:0 12px 0 0;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Luogo e data</div><div style="border-bottom:1px solid #0f172a;height:34px;"></div></td>'
-    +'<td style="width:50%;padding:0 0 0 12px;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Firma del cliente (autografa)</div><div style="border-bottom:1px solid #0f172a;height:34px;"></div></td>'
-    +'</tr><tr><td colspan="2" style="padding-top:18px;vertical-align:bottom;"><div style="font-size:10px;color:#64748b;">Per Europa Auto \u2014 timbro e firma</div><div style="border-bottom:1px solid #0f172a;height:34px;width:50%;"></div></td></tr></table>'
-    +'</div></div>';
+  return '<div id="sin-print" style="display:block;page-break-before:always;break-before:page;"><div id="pz-pag">'+corpo+'</div></div>'+pmPaginaScript('pz-pag', 258);
+}
+/* La data del contratto finale e' quella del giorno in cui si preme il
+   pulsante (17/11/2026, Davide): prima si stampava la data della proposta.
+   Si aggiorna a ogni stampa e si salva sul contratto (dataFinale). */
+function cvDataFinaleOggi(id){
+  try{
+    var list=cvLoad(), i=list.findIndex(function(x){return x.id===id;}); if(i<0) return;
+    var oggi=cvOggi();
+    if(list[i].dataFinale!==oggi){
+      list[i].dataFinale=oggi; list[i].dataFinaleTs=Date.now(); list[i].updatedAt=Date.now();
+      cvSave(list); if(typeof supaUpsert==='function') supaUpsert('preventivi', list[i]);
+    }
+  }catch(e){}
 }
 function cvContrattoFinaleStampa(id){
+  cvDataFinaleOggi(id);
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv){ alert('Contratto non trovato.'); return; }
   var needAssic=!!cv.assicOn;
   var needFin=(cv.pagamenti||[]).some(function(p){return /finanziamento/i.test(p.metodo||'')||p.tipo==='Finanziamento';});
@@ -31000,7 +31063,7 @@ function cvBuildHTML(c, tipo){
   };
   var row=function(l,v,cls,neg){ return '<div class="cvrow '+(cls||'')+(neg?' neg':'')+'"><div>'+cvPromoRisalta(l)+'</div><div class="amt">'+(neg?'\u2212 ':'')+cvEuro(v)+'</div></div>'; };
   var doc='<div class="cvdoc">';
-  doc+='<div class="cvtop"><div><div class="cvbrand">EUROPA AUTO SRL</div><div style="font-size:13px;font-weight:800;color:#334155;margin:2px 0;">'+titolo+'</div><div class="cvsmall">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &middot; P.IVA 06440210968 &middot; Tel. 029181820</div></div><div style="text-align:right;" class="cvsmall"><div>Venditore: <b style="color:#0f172a;">'+cvEsc(c.venditore||'')+'</b></div><div>Proposta di vendita: <b style="color:#0f172a;">'+cvEsc(c.data||'')+'</b></div></div></div>';
+  doc+='<div class="cvtop"><div><div class="cvbrand">EUROPA AUTO SRL</div><div style="font-size:13px;font-weight:800;color:#334155;margin:2px 0;">'+titolo+'</div><div class="cvsmall">Via Nigra, 4 &mdash; 20037 Paderno Dugnano (MI) &middot; P.IVA 06440210968 &middot; Tel. 029181820</div></div><div style="text-align:right;" class="cvsmall"><div>Venditore: <b style="color:#0f172a;">'+cvEsc(c.venditore||'')+'</b></div>'+(isFinale?('<div>Data contratto: <b style="color:#0f172a;">'+cvEsc(c.dataFinale||cvOggi())+'</b></div><div>Proposta di vendita del: '+cvEsc(c.data||'')+'</div>'):('<div>Proposta di vendita: <b style="color:#0f172a;">'+cvEsc(c.data||'')+'</b></div>'))+'</div></div>';
   var _cl=c.cliente||{}; doc+='<div class="cvh">Dati acquirente</div><div class="cvgrid">'+fld('Nome',_cl.nome)+fld('Cognome',_cl.cognome)+(_cl.business?(fld('Ragione sociale',_cl.ragSociale)+fld('P.IVA',_cl.piva)+fld('Codice SDI',_cl.sdi)):fld('Codice fiscale',_cl.cf))+fld('Telefono',_cl.telefono)+fld('Email',_cl.email)
     /* Azienda: sul contratto vanno TUTTI E DUE gli indirizzi, la sede legale
        della societa' e la residenza di chi firma (il legale rappresentante
@@ -31398,6 +31461,24 @@ function cvBuildHTML(c, tipo){
        la prima pagina si riempie e le altre proseguono sotto; se non ci
        stanno, scende tutto insieme alla pagina dopo. Cosi' non capita piu'
        di vedere il titolo in fondo a un foglio quasi vuoto. */
+    /* L'ultima parte delle condizioni e le firme stanno sempre sullo stesso
+       foglio (17/11/2026): se non ci stanno insieme, passano insieme alla
+       pagina dopo, cosi' la pagina delle condizioni non resta mai senza firma.
+       Se l'ultima clausola e' lunga, si porta giu' solo il suo ultimo
+       paragrafo (es. "QUOTA 'MAGGIOR VALORE'"). */
+    var _coda='';
+    if(_clausole.length>1){
+      var _ult=_clausole[_clausole.length-1];
+      var _txt=_ult.replace(/^<div[^>]*>/,'').replace(/<\/div>$/,'');
+      if(_txt.length<=700){ _coda=_ult; _clausole.pop(); }
+      else{
+        var _righe=_txt.split('\n'), _k=-1;
+        for(var _r=_righe.length-1;_r>0;_r--){ var _t=_righe[_r].trim(); if(_t.length>3 && _t.length<60 && _t===_t.toUpperCase() && /[A-Z]/.test(_t)){ _k=_r; break; } }
+        if(_k<0) _k=Math.max(1,_righe.length-2);
+        _clausole[_clausole.length-1]='<div style="margin-bottom:5px;">'+_righe.slice(0,_k).join('\n')+'</div>';
+        _coda='<div style="margin-bottom:5px;">'+_righe.slice(_k).join('\n')+'</div>';
+      }
+    }
     var _AVVIO=4;
     var _testa=_clausole.slice(0,_AVVIO).join('');
     var _resto=_clausole.slice(_AVVIO).join('');
@@ -31407,7 +31488,10 @@ function cvBuildHTML(c, tipo){
       +(_clausolaPermuta?('<div style="margin-bottom:7px;">'+_clausolaPermuta+'</div>'):'')
       +_testa
       +'</div></div>'
-      +(_resto?('<div class="cvbox cvcond" style="background:#fff;border:none;padding:0 0 8px;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_resto+'</div>'):''); doc+=cvFirmaHTML(); doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di 18 mesi e riconoscimento dello sconto promozionale in caso di estinzione anticipata (clausola 8);</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
+      +(_resto?('<div class="cvbox cvcond" style="background:#fff;border:none;padding:0 0 8px;font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_resto+'</div>'):'');
+    doc+='<div class="nospezza cvcoda-firme" style="page-break-inside:avoid;break-inside:avoid;">'
+      +(_coda?('<div style="font-size:9.5px;line-height:1.45;white-space:pre-line;">'+_coda+'</div>'):'')
+      +cvFirmaHTML()+'</div>'; doc+='<div class="cvaccept">L\'acquirente, ai sensi e per gli effetti degli artt. 1341 e 1342 c.c. nonché in virtù della sua posizione di consumatore, dopo averne presa attenta conoscenza, approva ed accetta espressamente le seguenti clausole:<ul class="cvacc-ul"><li>riserva di proprietà;</li><li>dazione di caparra;</li><li>limitazione di responsabilità per fatto di terzi;</li><li>termine minimo di 18 mesi e riconoscimento dello sconto promozionale in caso di estinzione anticipata (clausola 8);</li><li>variazione indicativa dell\'importo della rata (clausola 12);</li><li>condizioni delle garanzie assicurative incluse in promozione (clausola 13).</li></ul></div>'; doc+='<div class="cvsign"><div class="s"><div class="line"></div>Il venditore</div><div class="s"><div class="line"></div>L\'acquirente (firma per accettazione clausole)</div></div>'; }
   if(c.note){ doc+='<div class="cvh">Note</div><div class="cvbox">'+cvEsc(c.note)+'</div>'; }
   doc+='</div>';
   var needSign=(tipo!=='preventivo'); var pageBottom=needSign?'20mm':'12mm';
@@ -35665,7 +35749,7 @@ function eaStampa(html, titolo){
     var vecchio=document.getElementById('ea-print-iframe'); if(vecchio) vecchio.parentNode.removeChild(vecchio);
     var ifr=document.createElement('iframe');
     ifr.id='ea-print-iframe'; ifr.setAttribute('aria-hidden','true'); ifr.tabIndex=-1;
-    ifr.style.cssText='position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
+    ifr.style.cssText='position:fixed;left:-10000px;top:0;width:198mm;height:297mm;border:0;opacity:0;pointer-events:none;';
     document.body.appendChild(ifr);
     var w=ifr.contentWindow, d=w.document;
     d.open(); d.write(html); d.close();
@@ -41857,7 +41941,7 @@ function cvVendCard(cv){
                 +'</div>'; }).join('')))
           +'</div>';
       })()
-      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+cvEstinzBtn(cv)+_demoC+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;"><button onclick="event.stopPropagation();cvStampaById(\''+cv.id+'\',\'pre\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;">🖨️ Proposta</button><button onclick="event.stopPropagation();cvContrattoFinaleStampa(\''+cv.id+'\')" style="flex:1;padding:8px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">🖨️ Contratto</button>'+cvFatturaBtn(cv)+cvEstinzBtn(cv)+_demoC+'</div>'
       +'</div>';
   }
   var pag=(cv.pagamenti||[]).map(function(p,ri){ if(!cvNum(p.importo)) return '';
@@ -42384,11 +42468,26 @@ function cvVendConsegna(id){
   var pags=(cv.pagamenti||[]).filter(function(p){return cvNum(p.importo);});
   var tuttiConf = pags.length>0 && pags.every(function(p){return p.confermato;});
   if(!tuttiConf){ alert('Non puoi segnare come CONSEGNATO: il saldo non risulta ancora confermato.\n\nConferma tutti i pagamenti (caparra e saldo/finanziamento) prima di procedere alla consegna.'); return; }
-  _cvCons={doppiaChiave:null, libretto:null, cortesia:null, id:id};
+  _cvCons={doppiaChiave:null, libretto:null, cortesia:null, proposta:(cv.propostaFirmata===true?true:null), id:id};
   var m=cvModModal();
+  /* Proposta d'acquisto firmata? (17/11/2026, Davide) Chi compra online spesso
+     non l'ha mai firmata: alla consegna lo si chiede, e se manca la si stampa
+     da qui per farla firmare insieme al contratto. */
+  var _bt='flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;font-size:13px;cursor:pointer;';
+  var _propBox=(cv.propostaFirmata===true)?'':('<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:12px;margin-bottom:16px;">'
+    +'<div style="font-size:14px;font-weight:800;color:#92400e;margin-bottom:4px;">📝 La proposta d\u2019acquisto (precontratto) \u00e8 firmata dal cliente?</div>'
+    +'<div style="font-size:12px;color:#92400e;margin-bottom:8px;line-height:1.45;">Se il cliente ha acquistato <b>online</b> o a distanza, spesso non l\u2019ha mai firmata: va firmata oggi, insieme al contratto.</div>'
+    +'<div style="display:flex;gap:8px;"><button type="button" id="cvp-si" onclick="cvConsProp(true)" style="'+_bt+'">\u2713 S\u00ec, firmata</button>'
+    +'<button type="button" id="cvp-no" onclick="cvConsProp(false)" style="'+_bt+'">No, da firmare</button></div>'
+    +'<div id="cvp-avviso" style="display:none;margin-top:10px;background:#fff;border:1px solid #fdba74;border-radius:9px;padding:10px;">'
+    +'<div style="font-size:12.5px;color:#9a3412;font-weight:700;margin-bottom:8px;">Stampala adesso e falla firmare al cliente prima di consegnare le chiavi.</div>'
+    +'<button type="button" onclick="cvStampaById(\''+cv.id+'\',\'pre\')" style="width:100%;padding:10px;border-radius:8px;border:none;background:#f59e0b;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">🖨️ Stampa la proposta d\u2019acquisto</button>'
+    +'<label style="display:flex;align-items:center;gap:7px;margin-top:9px;font-size:13px;font-weight:700;color:#0f172a;cursor:pointer;"><input type="checkbox" id="cvp-fatta" onchange="cvConsProp(this.checked?true:false, true)"> Fatta firmare adesso</label>'
+    +'</div></div>');
   m.innerHTML='<div style="max-width:460px;margin:8vh auto 0;background:#fff;border-radius:14px;overflow:hidden;">'
     +'<div style="background:#16a34a;color:#fff;padding:14px 18px;font-weight:800;">Consegna veicolo</div>'
     +'<div style="padding:18px;">'
+    +_propBox
     +'<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:8px;">Stai consegnando anche la doppia chiave?</div>'
     +'<div style="display:flex;gap:8px;margin-bottom:16px;"><button type="button" id="cvk-si" onclick="cvConsKey(true)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">S\u00EC</button><button type="button" id="cvk-no" onclick="cvConsKey(false)" style="flex:1;padding:11px;border-radius:9px;border:2px solid #cbd5e1;background:#fff;color:#334155;font-weight:700;font-family:inherit;cursor:pointer;">No</button></div>'
     +'<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:8px;">Il libretto va spedito o ritirato fisicamente?</div>'
@@ -42410,7 +42509,15 @@ function cvVendConsegna(id){
     +'</div></div>';
   m.style.display='block';
 }
-var _cvCons={doppiaChiave:null, libretto:null, cortesia:null, id:null};
+var _cvCons={doppiaChiave:null, libretto:null, cortesia:null, proposta:null, id:null};
+function cvConsProp(v, adesso){
+  _cvCons.proposta=v;
+  var si=document.getElementById('cvp-si'), no=document.getElementById('cvp-no'), av=document.getElementById('cvp-avviso');
+  var aperto=(v===false||adesso===true);
+  if(si){ var onS=(v===true && !adesso); si.style.border=onS?'2px solid #16a34a':'2px solid #cbd5e1'; si.style.background=onS?'#f0fdf4':'#fff'; }
+  if(no){ no.style.border=aperto?'2px solid #f59e0b':'2px solid #cbd5e1'; no.style.background=aperto?'#fffbeb':'#fff'; }
+  if(av) av.style.display=aperto?'block':'none';
+}
 function cvConsKey(v){ _cvCons.doppiaChiave=v; var si=document.getElementById('cvk-si'), no=document.getElementById('cvk-no'); if(si){ si.style.border=v?'2px solid #16a34a':'2px solid #cbd5e1'; si.style.background=v?'#f0fdf4':'#fff'; si.style.color=v?'#15803d':'#334155'; } if(no){ no.style.border=(v===false)?'2px solid #dc2626':'2px solid #cbd5e1'; no.style.background=(v===false)?'#fef2f2':'#fff'; no.style.color=(v===false)?'#dc2626':'#334155'; } }
 function cvConsCortesia(v){
   _cvCons.cortesia=v;
@@ -42427,8 +42534,11 @@ function cvVendConsegnaFinale(){
   if(_cvCons.doppiaChiave===null){ alert('Indica se stai consegnando la doppia chiave.'); return; }
   if(!_cvCons.libretto){ alert('Indica se il libretto va spedito o ritirato.'); return; }
   if(_cvCons.cortesia===null){ alert('Hai proposto la '+CV_GAR_MOTORE.titolo+'? Indica la risposta del cliente.'); return; }
+  if(_cvCons.proposta===null){ alert('La proposta d\u2019acquisto (precontratto) \u00e8 firmata dal cliente? Rispondi alla prima domanda.'); return; }
+  if(_cvCons.proposta===false && !confirm('La proposta d\u2019acquisto NON risulta firmata.\n\nSe il cliente ha acquistato online va firmata oggi: stampala dal pulsante arancione.\n\nConsegnare lo stesso?')) return;
   var list=cvLoad(); var idx=list.findIndex(function(x){return x.id===id;}); if(idx<0){ cvModChiudi(); return; }
   list[idx].doppiaChiaveConsegnata=_cvCons.doppiaChiave; list[idx].librettoModalita=_cvCons.libretto;
+  list[idx].propostaFirmata=(_cvCons.proposta===true); list[idx].propostaFirmataTs=(_cvCons.proposta===true)?(list[idx].propostaFirmataTs||Date.now()):null;
   if(_cvCons.cortesia){
     var _met=(document.getElementById('cvc-metodo')||{}).value||'Contanti';
     list[idx].garanziaMotore={ acquistata:true, prezzo:CV_GAR_MOTORE.prezzo, mesi:CV_GAR_MOTORE.mesi, kmMax:CV_GAR_MOTORE.kmMax, metodo:_met, ts:Date.now(), venditore:list[idx].venditore||'' };
