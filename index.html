@@ -4927,6 +4927,7 @@ var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-f
 var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-dotazioni';
 var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
+var EA_F24_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/leggi-f24';
 var EA_WA_NUM = '39029181820';  // ripiego: il valore vero sta nei Parametri
 
 /* ===== I NUMERI DI TELEFONO IN UN POSTO SOLO =====
@@ -13231,6 +13232,7 @@ function f24Render(){
     +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
     +'<div style="font-size:20px;font-weight:900;flex:1;">🧾 F24 pagati</div>'
     +'<select onchange="_f24Anno=+this.value;f24Render()" style="padding:9px 12px;border-radius:8px;border:1px solid #cbd5e1;font-family:inherit;font-size:14px;font-weight:700;">'+f24Anni().map(function(y){ return '<option value="'+y+'"'+(y===anno?' selected':'')+'>'+y+'</option>'; }).join('')+'</select>'
+    +'<label id="f24-pdf-btn" style="padding:10px 16px;border-radius:9px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-weight:800;font-size:14px;cursor:pointer;">📄 Carica PDF del commercialista<input type="file" accept="application/pdf,image/*" multiple style="display:none;" onchange="f24CaricaPdf(this)"></label>'
     +'<button onclick="f24Editor(null)" style="padding:10px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">＋ Nuovo F24</button>'
     +'</div>'
     +'<div id="f24-stato" style="font-size:12px;color:#b45309;margin-bottom:6px;"></div>'
@@ -13257,7 +13259,7 @@ function f24HtmlVersamenti(l){
     return '<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 2px 6px;border-bottom:2px solid #1a4fa0;margin-bottom:6px;"><b style="font-size:15px;">'+F24_MESI[+k.slice(5,7)-1]+' '+k.slice(0,4)+'</b><b style="color:#1a4fa0;">'+f24Eu(tm)+'</b></div>'
       +per[k].map(function(m){ var t=f24Tot(m);
         return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:6px;">'
-          +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:200px;"><b>Addebito '+String(m.data).split('-').reverse().join('/')+'</b>'+(m.note?(' <span style="color:#64748b;font-size:12.5px;">· '+f24E(m.note)+'</span>'):'')+'</div>'
+          +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:200px;"><b>Addebito '+String(m.data).split('-').reverse().join('/')+'</b>'+(m.note?(' <span style="color:#64748b;font-size:12.5px;">· '+f24E(m.note)+'</span>'):'')+(m.pdf?(' <a href="'+f24E(m.pdf)+'" target="_blank" rel="noopener" style="font-size:12.5px;font-weight:800;color:#1a4fa0;margin-left:6px;">📄 PDF</a>'):'')+'</div>'
           +'<div style="font-weight:900;font-size:15px;">'+f24Eu(t.saldo)+'</div>'
           +'<button onclick="f24Editor(\''+m.id+'\')" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">✎ Modifica</button>'
           +'<button onclick="f24Elimina(\''+m.id+'\')" title="Elimina" style="padding:6px 9px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#dc2626;cursor:pointer;">🗑</button></div>'
@@ -13309,8 +13311,8 @@ function f24HtmlCodici(anno, l){
     +'<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">La media al mese di ogni codice è calcolata sui mesi in cui quel codice è stato pagato.</div>';
 }
 /* ---------- inserimento / modifica ---------- */
-function f24Editor(id){
-  var m=id?JSON.parse(JSON.stringify(f24Load().filter(function(x){ return x.id===id; })[0]||null)):null;
+function f24Editor(id, nuovo){
+  var m=id?JSON.parse(JSON.stringify(f24Load().filter(function(x){ return x.id===id; })[0]||null)):(nuovo||null);
   if(!m){ var d=new Date(); m={ id:'f24_'+Date.now(), data:d.toISOString().slice(0,10), righe:[{sezione:'erario',codice:'',descrizione:'',rif:'',debito:'',credito:''}], note:'' }; }
   _f24Ed=m;
   var w=document.getElementById('f24-ed'); if(w) w.remove();
@@ -13318,8 +13320,9 @@ function f24Editor(id){
   w.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.55);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
   var dl='<datalist id="f24-codici">'+Object.keys(F24_CODICI).map(function(k){ return '<option value="'+k+'">'+f24E(F24_CODICI[k][1])+'</option>'; }).join('')+'</datalist>';
   w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:980px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'+dl
-    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div style="font-weight:900;font-size:18px;flex:1;">🧾 '+(id?'Modifica F24':'Nuovo F24')+'</div>'
-    +'<button onclick="document.getElementById(\'f24-ed\').remove()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">✕</button></div>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div style="font-weight:900;font-size:18px;flex:1;">🧾 '+(id?'Modifica F24':(m._daPdf?'F24 letto dal PDF':'Nuovo F24'))+'</div>'
+    +'<button onclick="f24Chiudi()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">✕</button></div>'
+    +f24BannerPdf(m)
     +'<div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:end;">'
     +'<div><label style="display:block;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Data di addebito *</label><input id="f24-data" type="date" value="'+f24E(m.data)+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
     +'<div><label style="display:block;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Note (facoltative)</label><input id="f24-note" value="'+f24E(m.note||'')+'" placeholder="es. F24 stipendi ottobre, ravvedimento…" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
@@ -13328,7 +13331,7 @@ function f24Editor(id){
     +'<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:820px;" id="f24-righe"></table></div>'
     +'<button onclick="f24RigaAgg()" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:1px dashed #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;cursor:pointer;">＋ Aggiungi riga</button>'
     +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;flex-wrap:wrap;"><div id="f24-totale" style="flex:1;font-size:14px;"></div>'
-    +'<button onclick="document.getElementById(\'f24-ed\').remove()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+    +'<button onclick="f24Chiudi()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">'+(_f24Coda.length?'Salta':'Annulla')+'</button>'
     +'<button onclick="f24Salva()" style="padding:10px 18px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva F24</button></div>'
     +'</div>';
   document.body.appendChild(w);
@@ -13361,7 +13364,8 @@ function f24Codice(i,v){
 function f24RigaAgg(){ var u=_f24Ed.righe[_f24Ed.righe.length-1]||{}; _f24Ed.righe.push({sezione:u.sezione||'erario',codice:'',descrizione:'',rif:u.rif||'',debito:'',credito:''}); f24RigheRender(); }
 function f24RigaDel(i){ _f24Ed.righe.splice(i,1); if(!_f24Ed.righe.length) _f24Ed.righe.push({sezione:'erario',codice:'',descrizione:'',rif:'',debito:'',credito:''}); f24RigheRender(); }
 function f24TotaleEd(){ var el=document.getElementById('f24-totale'); if(!el||!_f24Ed) return; var t=f24Tot(_f24Ed);
-  el.innerHTML='A debito <b>'+f24Eu(t.debito)+'</b>'+(t.credito?(' · compensati <b style="color:#166534;">− '+f24Eu(t.credito)+'</b>'):'')+' · <span style="font-size:16px;">Addebitato <b style="color:#1a4fa0;">'+f24Eu(t.saldo)+'</b></span>'; }
+  var ok=(_f24Ed._saldoPdf==null)?'':(Math.abs(t.saldo-_f24Ed._saldoPdf)<0.01?' <span style="color:#166534;font-weight:800;">✓ uguale al saldo del PDF</span>':' <span style="color:#b91c1c;font-weight:800;">⚠ il saldo nel PDF è '+f24Eu(_f24Ed._saldoPdf)+': controlla le righe</span>');
+  el.innerHTML='A debito <b>'+f24Eu(t.debito)+'</b>'+(t.credito?(' · compensati <b style="color:#166534;">− '+f24Eu(t.credito)+'</b>'):'')+' · <span style="font-size:16px;">Addebitato <b style="color:#1a4fa0;">'+f24Eu(t.saldo)+'</b></span>'+ok; }
 function f24Salva(){
   var m=_f24Ed; if(!m) return;
   m.data=String((document.getElementById('f24-data')||{}).value||'').trim();
@@ -13375,11 +13379,71 @@ function f24Salva(){
   m.updatedAt=Date.now(); m.updatedBy=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
   if(!m.createdAt){ m.createdAt=m.updatedAt; m.createdBy=m.updatedBy; }
   var l=f24Load(), i=l.findIndex(function(x){ return x.id===m.id; });
+  if(i<0){ var sal=f24Tot(m).saldo, dop=l.filter(function(x){ return x && !x.deleted && x.data===m.data && Math.abs(f24Tot(x).saldo-sal)<0.01; })[0];
+    if(dop && !confirm('Esiste già un F24 addebitato il '+m.data.split('-').reverse().join('/')+' di '+f24Eu(sal)+'.\n\nOK = salvo comunque (è un altro modello)\nAnnulla = non lo salvo')) return; }
+  delete m._daPdf; delete m._saldoPdf; delete m._contribuente;
   if(i>=0) l[i]=m; else l.push(m);
   _f24=l; f24SaveLocal(); f24Supa(m);
   _f24Anno=+m.data.slice(0,4);
   var w=document.getElementById('f24-ed'); if(w) w.remove();
   f24Render(); try{ tcToastNew('🧾 F24 salvato: '+f24Eu(f24Tot(m).saldo), true); }catch(e){}
+  f24ProssimoCoda();
+}
+/* ---------- lettura dei PDF del commercialista ---------- */
+var _f24Coda=[];
+function f24Chiudi(){ var w=document.getElementById('f24-ed'); if(w) w.remove(); if(_f24Ed && _f24Ed._daPdf) f24ProssimoCoda(); }
+function f24ProssimoCoda(){
+  if(!_f24Coda.length){ _f24Ed=null; return; }
+  var n=_f24Coda.shift(); setTimeout(function(){ f24Editor(null, n); }, 150);
+}
+function f24BannerPdf(m){
+  if(!m || !m._daPdf) return '';
+  return '<div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:13px;color:#713f12;">'
+    +'<b>Letto dal PDF:</b> controlla data, codici e importi, poi premi <b>Salva F24</b>.'
+    +(m._contribuente?(' <span style="color:#a16207;">Contribuente: '+f24E(m._contribuente)+'</span>'):'')
+    +(m.pdf?(' <a href="'+f24E(m.pdf)+'" target="_blank" rel="noopener" style="font-weight:800;color:#1a4fa0;margin-left:6px;">📄 Apri il PDF</a>'):'')
+    +(_f24Coda.length?('<br>Dopo questo ce ne sono altri <b>'+_f24Coda.length+'</b> da controllare.'):'')
+    +'</div>';
+}
+function f24Stato(t, col){ var el=document.getElementById('f24-stato'); if(el){ el.style.color=col||'#b45309'; el.innerHTML=t; } }
+function f24CaricaPdf(input){
+  var files=Array.prototype.slice.call((input&&input.files)||[]); if(input) input.value='';
+  if(!files.length) return;
+  var btn=document.getElementById('f24-pdf-btn'); if(btn) btn.style.opacity='.5';
+  var letti=[], errori=[], fatti=0;
+  f24Stato('⏳ Leggo '+files.length+' file… può servire qualche secondo per file.','#1a4fa0');
+  var uno=function(f, idx){
+    if(f.size>20*1024*1024){ errori.push(f.name+': file troppo grande'); return Promise.resolve(); }
+    var tipo=f.type||(/\.pdf$/i.test(f.name)?'application/pdf':'');
+    var su=eaR2Upload(f,'f24',Date.now()+'_'+String(f.name).replace(/[^\w.\-]+/g,'_')).catch(function(){ return ''; });
+    var leggi=eaBlobToBase64(f).then(function(b64){
+      return fetch(EA_F24_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY},
+        body: JSON.stringify({ file:b64, tipo:tipo, nome:f.name }) }).then(function(r){ return r.json().catch(function(){ return {}; }); });
+    });
+    return Promise.all([leggi, su]).then(function(x){
+      var j=x[0], url=x[1];
+      fatti++; f24Stato('⏳ Letti '+fatti+' di '+files.length+'…','#1a4fa0');
+      if(!j || !j.ok || !(j.modelli||[]).length){ errori.push(f.name+': '+((j&&j.error)||'non letto')); return; }
+      j.modelli.forEach(function(md, k){
+        letti.push({ id:'f24_'+Date.now()+'_'+idx+'_'+k, data:md.data||'', note:'Da PDF: '+f.name, pdf:url||'',
+          _daPdf:true, _saldoPdf:(md.saldo||md.saldo===0)?Number(md.saldo):null, _contribuente:md.contribuente||'',
+          righe:(md.righe||[]).map(function(r){ var c=String(r.codice||'').toUpperCase(), info=F24_CODICI[c];
+            return { sezione:r.sezione||(info?info[0]:'altri'), codice:c, descrizione:info?info[1]:'', _descAuto:!!info, rif:r.rif||'',
+              debito:r.debito?String(r.debito).replace('.',','):'', credito:r.credito?String(r.credito).replace('.',','):'' }; }) });
+      });
+    }).catch(function(e){ errori.push(f.name+': '+(e&&e.message||e)); });
+  };
+  var catena=Promise.resolve();
+  files.forEach(function(f,i){ catena=catena.then(function(){ return uno(f,i); }); });
+  catena.then(function(){
+    if(btn) btn.style.opacity='';
+    letti.sort(function(a,b){ return String(a.data).localeCompare(String(b.data)); });
+    var msg=letti.length?('✓ Trovati '+letti.length+' modell'+(letti.length===1?'o':'i')+' F24: controllali uno alla volta e salva.'):'';
+    if(errori.length) msg+=(msg?'<br>':'')+'⚠ Non letti: '+errori.map(f24E).join(' · ')+(errori.some(function(e){ return /fetch|Failed|non letto/i.test(e); })?' — controlla che la funzione leggi-f24 sia attiva su Supabase.':'');
+    f24Stato(msg, errori.length&&!letti.length?'#dc2626':'#166534');
+    if(!letti.length) return;
+    _f24Coda=letti; f24ProssimoCoda();
+  });
 }
 function f24Elimina(id){
   var l=f24Load(), m=l.filter(function(x){ return x.id===id; })[0]; if(!m) return;
