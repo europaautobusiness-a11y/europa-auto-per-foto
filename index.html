@@ -24757,10 +24757,10 @@ function mzMediaHtml(){
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">'
     +'<input type="file" id="mz-video-input" accept="video/*" style="display:none;" onchange="mzVideoUpload(this.files)">'
     +'<input type="file" id="mz-giro-input" accept="video/*" style="display:none;" onchange="mzGiroUpload(this.files)">'
-    +'<button type="button" onclick="document.getElementById(\'mz-video-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🎬 Carica video</button>'
-    +'<button type="button" onclick="document.getElementById(\'mz-giro-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🔄 Carica giro 360°</button>'
+    +'<button type="button" onclick="document.getElementById(\'mz-video-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🎬 Carica video completo<br><span style="font-weight:500;font-size:11.5px;color:#64748b;">esterno + interno · sito e WhatsApp</span></button>'
+    +'<button type="button" onclick="document.getElementById(\'mz-giro-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🔄 Carica video 360°<br><span style="font-weight:500;font-size:11.5px;color:#64748b;">solo esterno · giro sul sito</span></button>'
     +'</div>'
-    +'<div id="mz-media-stato" style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;">Video: filmato di presentazione, anche 1 minuto; la versione WhatsApp si crea da sola. Giro 360\u00b0: un giro completo intorno all\u2019auto, 30\u201340 secondi.</div>'
+    +'<div id="mz-media-stato" style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;"><b>Video completo</b> (esterno e interno): va sul sito e da questo si crea da sola la versione WhatsApp. <b>Video 360\u00b0</b> (solo esterno, un giro completo, 30\u201340 secondi): serve solo per il giro sul sito, niente WhatsApp. Al termine del caricamento l\u2019auto si salva da sola.</div>'
     +'</div>';
 }
 function mzMediaInit(a){
@@ -24833,6 +24833,36 @@ function mzMediaRender(){
   if(!h) h='<div style="font-size:12px;color:#94a3b8;padding:4px 0 8px;">Nessun video caricato.</div>';
   el.innerHTML=h;
 }
+/* ===== SALVATAGGIO AUTOMATICO DOPO IL CARICAMENTO DEI VIDEO =====
+   Finito il caricamento si salva l'auto come col tasto Salva. Se nella
+   scheda manca un campo obbligatorio (auto nuova non ancora completata)
+   e l'auto esiste gia' in magazzino, si salvano almeno i video sulla
+   scheda gia' salvata; se e' un'auto nuova, si avvisa di completarla. */
+function mzSalvaSoloMedia(id){
+  try{
+    if(!id || typeof mzById!=='function' || !mzById(id)) return false;
+    var list=mzLoad(), i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return false;
+    var a=list[i]; a.video=_mzMedia.video||null; a.giro360=_mzMedia.giro360||null; a.videoWa=_mzMedia.videoWa||null; a.updatedAt=Date.now();
+    mzSave(list); mzSupaUpsert(a); return true;
+  }catch(e){ return false; }
+}
+function mzAutoSalvaMedia(id, msg){
+  var aperta=document.getElementById('mz_marca') && typeof _mzId!=='undefined' && _mzId===id;
+  if(!aperta){ /* la scheda e' stata chiusa o si e' passati a un'altra auto */
+    if(mzSalvaSoloMedia(id)){ try{ tcToastNew('💾 Video salvati sull’auto', true); }catch(e){} }
+    return;
+  }
+  var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
+  var mancano=['marca','modello','dataImm','km','colore','alimentazione','cambio'].filter(function(k){ return !g(k); });
+  var fs=document.getElementById('mz_fornitore');
+  if(!mancano.length && fs && fs.value && (_mzEstera ? g('telaio') : g('targa'))){
+    var t0=Date.now(); try{ mzSalva(); }catch(e){}
+    var sv=(typeof mzById==='function')?mzById(id):null;
+    if(sv && (sv.updatedAt||0)>=t0){ mzMediaStato(msg+' <b style="color:#166534;">Auto salvata in automatico.</b>'); return; }
+  }
+  if(mzSalvaSoloMedia(id)){ mzMediaStato(msg+' <b style="color:#166534;">Video salvati sull’auto.</b> <span style="color:#b45309;">Gli altri campi modificati vanno salvati col tasto Salva.</span>'); try{ tcToastNew('💾 Video salvati sull’auto', true); }catch(e){} }
+  else mzMediaStato(msg+' <b style="color:#b45309;">Auto nuova non ancora completa: compila i campi obbligatori e premi Salva.</b>');
+}
 function mzEscA(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function mzMediaStato(msg){ var st=document.getElementById('mz-media-stato'); if(st) st.innerHTML=msg; }
 /* Sopra i 40 MB si va a pezzi: Cloudflare rifiuta le richieste da 100 MB
@@ -24887,7 +24917,7 @@ function mzVideoUpload(files){
   if(!f) return;
   if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
   if(f.size>MZ_VIDEO_MAX){ alert('Video troppo grande ('+mzFotoBytes(f.size)+'): massimo '+mzFotoBytes(MZ_VIDEO_MAX)+'. Dal telefono scegli una qualità più bassa o taglia il filmato.'); return; }
-  _mzMediaBusy=true;
+  _mzMediaBusy=true; var _idAuto=(typeof _mzId!=='undefined')?_mzId:null;
   mzMediaStato('⏳ Carico il video ('+mzFotoBytes(f.size)+')… <span style="color:#94a3b8;">non chiudere la scheda</span>');
   var ext=(f.name.match(/\.(\w+)$/)||[])[1]||'mp4';
   mzMediaUpload(f, 'video-'+Date.now()+'.'+ext.toLowerCase(), function(p){
@@ -24895,11 +24925,12 @@ function mzVideoUpload(files){
   }).then(function(res){
     _mzMedia.video={ url:res.url, key:res.key||'', size:f.size, tipo:f.type||'', ts:Date.now() };
     _mzMedia.videoWa=null;
-    mzMediaRender(); mzMediaStato('✅ Video caricato. Ora preparo la versione per WhatsApp…');
+    mzMediaRender(); mzSalvaSoloMedia(_idAuto);
+    mzMediaStato('✅ Video caricato. Ora preparo la versione per WhatsApp…');
     return mzVideoWaProduci(f);
   }).then(function(){
-    mzMediaRender();
-    mzMediaStato((_mzMedia.videoWa&&_mzMedia.videoWa.url?'✅ Video e versione WhatsApp pronti.':'✅ Video caricato (versione WhatsApp non creata).')+' <b>Ricordati di salvare l’auto.</b>');
+    mzMediaRender(); _mzMediaBusy=false;
+    mzAutoSalvaMedia(_idAuto, _mzMedia.videoWa&&_mzMedia.videoWa.url?'✅ Video e versione WhatsApp pronti.':'✅ Video caricato (versione WhatsApp non creata).');
   }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Video non caricato: '+mzEscA((err&&err.message)||err)+'</span>'); })
   .then(function(){ _mzMediaBusy=false; });
 }
@@ -24982,10 +25013,11 @@ function mzVideoWaDaFile(files){
   var f=files&&files[0]; var inp=document.getElementById('mz-videowa-input'); if(inp) inp.value='';
   if(!f) return;
   if(_mzMediaBusy){ alert('Attendi: c\u2019\u00e8 gi\u00e0 un caricamento in corso.'); return; }
-  _mzMediaBusy=true;
+  _mzMediaBusy=true; var _idAuto=(typeof _mzId!=='undefined')?_mzId:null;
   mzVideoWaProduci(f).then(function(){
     mzMediaRender();
-    if(_mzMedia.videoWa&&_mzMedia.videoWa.url) mzMediaStato('\u2705 Versione WhatsApp pronta. <b>Ricordati di salvare l\u2019auto.</b>');
+    _mzMediaBusy=false;
+    if(_mzMedia.videoWa&&_mzMedia.videoWa.url) mzAutoSalvaMedia(_idAuto, '\u2705 Versione WhatsApp pronta.');
   }).then(function(){ _mzMediaBusy=false; });
 }
 /* estrae N fotogrammi equidistanti dal filmato, ridimensionati a 1280px */
@@ -25022,7 +25054,7 @@ function mzGiroUpload(files){
   var f=files&&files[0]; var inp=document.getElementById('mz-giro-input'); if(inp) inp.value='';
   if(!f) return;
   if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
-  _mzMediaBusy=true;
+  _mzMediaBusy=true; var _idAuto=(typeof _mzId!=='undefined')?_mzId:null;
   mzMediaStato('⏳ Estraggo i fotogrammi dal filmato…');
   mzGiroEstrai(f, MZ_GIRO_FRAMES, function(i,n){ mzMediaStato('⏳ Fotogramma '+i+'/'+n+'…'); }).then(function(frames){
     var urls=new Array(frames.length), idx=0, ok=0, ko=0, base='giro360-'+Date.now();
@@ -25037,7 +25069,8 @@ function mzGiroUpload(files){
       var buoni=urls.filter(Boolean);
       if(buoni.length<frames.length*0.8) throw new Error(ko+' fotogrammi non caricati: riprova');
       _mzMedia.giro360={ frames:buoni, n:buoni.length, ts:Date.now(), fonte:f.name||'' };
-      mzMediaRender(); mzMediaStato('✅ Giro a 360° pronto ('+buoni.length+' fotogrammi). <b>Ricordati di salvare l’auto.</b>');
+      mzMediaRender(); _mzMediaBusy=false;
+      mzAutoSalvaMedia(_idAuto, '✅ Giro a 360° pronto ('+buoni.length+' fotogrammi).');
     });
   }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Giro 360° non riuscito: '+mzEscA((err&&err.message)||err)+'</span>'); })
   .then(function(){ _mzMediaBusy=false; });
