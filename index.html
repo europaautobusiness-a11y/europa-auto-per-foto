@@ -523,6 +523,7 @@ html, body{
     <button class="sidebar-item si-provv" id="si-provv" onclick="sidebarNav('provv',this)"><span class="si-icon">&#128182;</span><span class="si-label"> Provvigioni</span></button>
     <button class="sidebar-item" id="si-presenze" onclick="sidebarNav('presenze',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128101;</span><span class="si-label"> Presenze</span></button>
     <button class="sidebar-item" id="si-noleggio" onclick="sidebarNav('noleggio',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128666;</span><span class="si-label"> Noleggio / cortesia</span></button>
+    <button class="sidebar-item" id="si-f24" onclick="sidebarNav('f24',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#129534;</span><span class="si-label"> F24</span></button>
     <button class="sidebar-item" id="si-fornitori" onclick="sidebarNav('fornitori',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127970;</span><span class="si-label"> Fornitori</span></button>
     <button class="sidebar-item" id="si-welfare" onclick="sidebarNav('welfare',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#127873;</span><span class="si-label"> Fringe benefit</span></button>
     <button class="sidebar-item" id="si-statistiche" onclick="sidebarNav('statistiche',this)" style="color:rgba(255,255,255,.6);"><span class="si-icon">&#128202;</span><span class="si-label"> Statistiche</span></button>
@@ -1328,6 +1329,7 @@ html, body{
 <div class="view" id="view-mansioni" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-welfare" style="padding:22px 16px;"></div>
+<div class="view" id="view-f24" style="padding:22px 16px;"></div>
 
 <div class="view" id="view-permessi" style="padding:22px 16px;">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
@@ -11698,6 +11700,7 @@ function applyRoleUI() {
        nessuno li toccava e restavano visibili. Se li trattassimo come gli
        altri sparirebbero a tutti, amministratore compreso. */
     if(v==='online' || v==='simulatore') return;
+    if(v==='f24'){ btn.style.display=(role==='admin'||role==='contabilita')?'':'none'; return; }
     /* i sotto-pulsanti del calendario seguono il permesso 'compiti' */
     if(v==='task'){ btn.style.display = (allowed.indexOf('compiti')!==-1 && (typeof mnSezioneVisibile!=='function' || mnSezioneVisibile())) ? '' : 'none'; return; }
     if(v==='appuntamenti'){ btn.style.display = allowed.indexOf('compiti')!==-1 ? '' : 'none'; return; }
@@ -13126,6 +13129,264 @@ function wfSave(d){
     try{ console.log('welfare su Supabase:', e && e.message || e); }catch(e2){}
   }
 }
+
+/* =====================================================================
+   F24 (18/11/2026, Davide) — sezione per Arianna e per l'amministratore.
+   Ogni modello F24 pagato: data di addebito, righe con sezione, codice
+   tributo, periodo di riferimento, importo a debito e a credito
+   (compensazioni). Il mese di competenza e' quello dell'addebito.
+   Riepiloghi: per mese, per anno (con confronto con l'anno prima), per
+   codice tributo e per sezione.
+   Dati: tabella Supabase f24_app (id, data jsonb), copia locale ea_f24.
+   ===================================================================== */
+var F24_SEZIONI=[['erario','Erario'],['inps','INPS'],['regioni','Regioni'],['enti','IMU e tributi locali'],['inail','INAIL'],['altri','Altri enti']];
+/* descrizioni indicative dei codici piu' usati: si possono sempre correggere */
+var F24_CODICI={
+  '1001':['erario','Ritenute su retribuzioni (lavoro dipendente)'],
+  '1002':['erario','Ritenute su emolumenti arretrati'],
+  '1012':['erario','Ritenute su TFR e indennità di fine rapporto'],
+  '1038':['erario','Ritenute su provvigioni (agenti e procacciatori)'],
+  '1040':['erario','Ritenute su compensi di lavoro autonomo'],
+  '1019':['erario','Ritenute 4% condominio'],
+  '1627':['erario','Eccedenza di versamenti di ritenute (credito)'],
+  '1631':['erario','Rimborsi 730 ai dipendenti (credito)'],
+  '1712':['erario','Imposta sostitutiva rivalutazione TFR — acconto'],
+  '1713':['erario','Imposta sostitutiva rivalutazione TFR — saldo'],
+  '6001':['erario','IVA mensile — gennaio'],'6002':['erario','IVA mensile — febbraio'],'6003':['erario','IVA mensile — marzo'],
+  '6004':['erario','IVA mensile — aprile'],'6005':['erario','IVA mensile — maggio'],'6006':['erario','IVA mensile — giugno'],
+  '6007':['erario','IVA mensile — luglio'],'6008':['erario','IVA mensile — agosto'],'6009':['erario','IVA mensile — settembre'],
+  '6010':['erario','IVA mensile — ottobre'],'6011':['erario','IVA mensile — novembre'],'6012':['erario','IVA mensile — dicembre'],
+  '6013':['erario','IVA — acconto (contribuenti mensili)'],
+  '6099':['erario','IVA — saldo annuale'],
+  '2001':['erario','IRES — acconto prima rata'],'2002':['erario','IRES — acconto seconda rata'],'2003':['erario','IRES — saldo'],
+  '3800':['regioni','IRAP — saldo'],'3812':['regioni','IRAP — acconto prima rata'],'3813':['regioni','IRAP — acconto seconda rata'],
+  '3802':['regioni','Addizionale regionale IRPEF trattenuta ai dipendenti'],
+  '3847':['enti','Addizionale comunale IRPEF dipendenti — acconto'],
+  '3848':['enti','Addizionale comunale IRPEF dipendenti — saldo'],
+  '3850':['enti','Diritto annuale Camera di Commercio'],
+  '3918':['enti','IMU — altri fabbricati (Comune)'],
+  '3925':['enti','IMU — fabbricati categoria D (Stato)'],
+  '3930':['enti','IMU — fabbricati categoria D (Comune)'],
+  '7085':['erario','Tassa annuale vidimazione libri sociali'],
+  '8904':['erario','Sanzione IVA (ravvedimento)'],
+  '8906':['erario','Sanzione sostituti d’imposta (ravvedimento)'],
+  '1991':['erario','Interessi ravvedimento IVA'],
+  'DM10':['inps','Contributi INPS dipendenti'],
+  'CXX':['inps','Contributi INPS gestione separata'],
+  'AF':['inps','INPS artigiani — contributi fissi'],
+  'CF':['inps','INPS commercianti — contributi fissi'],
+  'AP':['inps','INPS artigiani — eccedenza minimale'],
+  'CP':['inps','INPS commercianti — eccedenza minimale']
+};
+var F24_MESI=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+var _f24=null, _f24Anno=null, _f24Tab='versamenti', _f24Ed=null;
+function f24Puo(){ var r=(typeof getCurrentRole==='function')?getCurrentRole():''; return r==='admin'||r==='contabilita'; }
+function f24Load(){ if(_f24) return _f24; try{ _f24=JSON.parse(localStorage.getItem('ea_f24')||'[]'); }catch(e){ _f24=[]; } if(!Array.isArray(_f24)) _f24=[]; return _f24; }
+function f24SaveLocal(){ try{ localStorage.setItem('ea_f24', JSON.stringify(_f24||[])); }catch(e){} }
+function f24Num(v){ var x=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',','.')); return isNaN(x)?0:x; }
+function f24Eu(v){ var n=Math.round((Number(v)||0)*100)/100, neg=n<0; n=Math.abs(n); var p=n.toFixed(2).split('.'); return (neg?'\u2212':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]+' \u20ac'; }
+function f24E(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function f24Tot(m){ var d=0,c=0; (m.righe||[]).forEach(function(r){ d+=f24Num(r.debito); c+=f24Num(r.credito); }); return {debito:d, credito:c, saldo:d-c}; }
+function f24SupaLoad(){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  sb.from('f24_app').select('id,data').then(function(res){
+    if(!res || res.error){ var el=document.getElementById('f24-stato'); if(el && res && res.error) el.textContent='Archivio online non raggiungibile ('+res.error.message+'): i dati restano su questo computer finché non si collega.'; return; }
+    var loc={}; f24Load().forEach(function(m){ loc[m.id]=m; });
+    (res.data||[]).forEach(function(r){ var d=r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(!d) return; d.id=d.id||r.id;
+      var l=loc[d.id]; if(!l || (d.updatedAt||0)>=(l.updatedAt||0)) loc[d.id]=d; });
+    _f24=Object.keys(loc).map(function(k){ return loc[k]; });
+    /* quelli creati qui e mai arrivati online si rimandano */
+    var online={}; (res.data||[]).forEach(function(r){ online[r.id]=1; });
+    _f24.forEach(function(m){ if(!online[m.id]) f24Supa(m); });
+    f24SaveLocal(); f24Render();
+  });
+}
+function f24Supa(m){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  sb.from('f24_app').upsert({ id:m.id, data:m }).then(function(r){ if(r && r.error){ try{ tcToastNew('F24 non salvato online: '+r.error.message, false); }catch(e){} } });
+}
+function f24Anni(){
+  var a={}, y=new Date().getFullYear(); a[y]=1; a[y-1]=1;
+  f24Load().forEach(function(m){ if(!m.deleted && m.data) a[+String(m.data).slice(0,4)]=1; });
+  return Object.keys(a).map(Number).filter(Boolean).sort(function(x,y){ return y-x; });
+}
+function f24Render(){
+  var w=document.getElementById('view-f24'); if(!w) return;
+  if(!f24Puo()){ w.innerHTML='<div style="padding:30px;color:#64748b;">Sezione riservata all’amministrazione.</div>'; return; }
+  var anno=_f24Anno||new Date().getFullYear();
+  var tutti=f24Load().filter(function(m){ return m && !m.deleted; });
+  var lAnno=tutti.filter(function(m){ return String(m.data||'').slice(0,4)===String(anno); }).sort(function(a,b){ return String(b.data).localeCompare(String(a.data)); });
+  var lPrec=tutti.filter(function(m){ return String(m.data||'').slice(0,4)===String(anno-1); });
+  var totA=0; lAnno.forEach(function(m){ totA+=f24Tot(m).saldo; });
+  var oggi=new Date(), meseCorr=(anno===oggi.getFullYear())?oggi.getMonth():11;
+  /* stesso periodo dell'anno prima, per un confronto onesto */
+  var totPrecStesso=0; lPrec.forEach(function(m){ if(+String(m.data).slice(5,7)-1<=meseCorr) totPrecStesso+=f24Tot(m).saldo; });
+  var mesiConDati={}; lAnno.forEach(function(m){ mesiConDati[String(m.data).slice(5,7)]=1; });
+  var nMesi=Math.max(1, (anno===oggi.getFullYear())?(oggi.getMonth()+1):12);
+  var media=totA/nMesi;
+  var card=function(t,v,s,col){ return '<div style="flex:1;min-width:170px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;">'+t+'</div><div style="font-size:22px;font-weight:900;color:'+(col||'#0f172a')+';margin-top:3px;">'+v+'</div>'+(s?('<div style="font-size:11.5px;color:#64748b;margin-top:2px;">'+s+'</div>'):'')+'</div>'; };
+  var diff=totA-totPrecStesso, diffTxt=totPrecStesso?((diff>=0?'+':'')+f24Eu(diff)+' rispetto a gen–'+F24_MESI[meseCorr].slice(0,3).toLowerCase()+' '+(anno-1)):('nessun dato '+(anno-1));
+  var meseTot=0; lAnno.forEach(function(m){ if(+String(m.data).slice(5,7)-1===meseCorr) meseTot+=f24Tot(m).saldo; });
+  var h='<div style="max-width:1200px;margin:0 auto;">'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
+    +'<div style="font-size:20px;font-weight:900;flex:1;">🧾 F24 pagati</div>'
+    +'<select onchange="_f24Anno=+this.value;f24Render()" style="padding:9px 12px;border-radius:8px;border:1px solid #cbd5e1;font-family:inherit;font-size:14px;font-weight:700;">'+f24Anni().map(function(y){ return '<option value="'+y+'"'+(y===anno?' selected':'')+'>'+y+'</option>'; }).join('')+'</select>'
+    +'<button onclick="f24Editor(null)" style="padding:10px 16px;border-radius:9px;border:none;background:#1a4fa0;color:#fff;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">＋ Nuovo F24</button>'
+    +'</div>'
+    +'<div id="f24-stato" style="font-size:12px;color:#b45309;margin-bottom:6px;"></div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+    +card('Totale '+anno, f24Eu(totA), lAnno.length+' modelli F24', '#1a4fa0')
+    +card('Media al mese', f24Eu(media), 'su '+nMesi+' mes'+(nMesi===1?'e':'i'))
+    +card(F24_MESI[meseCorr]+' '+anno, f24Eu(meseTot), '')
+    +card('Confronto anno prima', totPrecStesso?f24Eu(totPrecStesso):'—', diffTxt, diff>0?'#b91c1c':'#166534')
+    +'</div>'
+    +'<div style="display:flex;gap:6px;margin-bottom:12px;">'
+    +[['versamenti','Versamenti'],['mesi','Per mese'],['codici','Per codice tributo']].map(function(t){ var on=(_f24Tab===t[0]); return '<button onclick="_f24Tab=\''+t[0]+'\';f24Render()" style="padding:8px 14px;border-radius:999px;border:1px solid '+(on?'#1a4fa0':'#cbd5e1')+';background:'+(on?'#1a4fa0':'#fff')+';color:'+(on?'#fff':'#334155')+';font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">'+t[1]+'</button>'; }).join('')
+    +'</div>';
+  if(_f24Tab==='mesi') h+=f24HtmlMesi(anno, lAnno, lPrec);
+  else if(_f24Tab==='codici') h+=f24HtmlCodici(anno, lAnno);
+  else h+=f24HtmlVersamenti(lAnno);
+  h+='</div>';
+  w.innerHTML=h;
+}
+function f24HtmlVersamenti(l){
+  if(!l.length) return '<div style="background:#fff;border:1px dashed #cbd5e1;border-radius:12px;padding:26px;text-align:center;color:#64748b;">Nessun F24 inserito per quest’anno. Premi <b>＋ Nuovo F24</b> per aggiungere il primo.</div>';
+  var per={}; l.forEach(function(m){ var k=String(m.data).slice(0,7); (per[k]=per[k]||[]).push(m); });
+  return Object.keys(per).sort().reverse().map(function(k){
+    var tm=0; per[k].forEach(function(m){ tm+=f24Tot(m).saldo; });
+    return '<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 2px 6px;border-bottom:2px solid #1a4fa0;margin-bottom:6px;"><b style="font-size:15px;">'+F24_MESI[+k.slice(5,7)-1]+' '+k.slice(0,4)+'</b><b style="color:#1a4fa0;">'+f24Eu(tm)+'</b></div>'
+      +per[k].map(function(m){ var t=f24Tot(m);
+        return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:6px;">'
+          +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:200px;"><b>Addebito '+String(m.data).split('-').reverse().join('/')+'</b>'+(m.note?(' <span style="color:#64748b;font-size:12.5px;">· '+f24E(m.note)+'</span>'):'')+'</div>'
+          +'<div style="font-weight:900;font-size:15px;">'+f24Eu(t.saldo)+'</div>'
+          +'<button onclick="f24Editor(\''+m.id+'\')" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;">✎ Modifica</button>'
+          +'<button onclick="f24Elimina(\''+m.id+'\')" title="Elimina" style="padding:6px 9px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#dc2626;cursor:pointer;">🗑</button></div>'
+          +'<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px;">'
+          +(m.righe||[]).map(function(r){ var sez=(F24_SEZIONI.filter(function(s){ return s[0]===r.sezione; })[0]||['',''])[1];
+            return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:4px 6px;width:70px;font-weight:800;">'+f24E(r.codice)+'</td><td style="padding:4px 6px;">'+f24E(r.descrizione||((F24_CODICI[String(r.codice||'').toUpperCase()]||[])[1])||'')+' <span style="color:#94a3b8;">'+f24E(sez)+(r.rif?(' · rif. '+f24E(r.rif)):'')+'</span></td>'
+              +'<td style="padding:4px 6px;text-align:right;white-space:nowrap;">'+(f24Num(r.debito)?f24Eu(f24Num(r.debito)):'')+'</td><td style="padding:4px 6px;text-align:right;white-space:nowrap;color:#166534;">'+(f24Num(r.credito)?('− '+f24Eu(f24Num(r.credito))):'')+'</td></tr>'; }).join('')
+          +'</table></div>'; }).join('')
+      +'</div>';
+  }).join('');
+}
+function f24HtmlMesi(anno, l, lp){
+  var mesi=[], max=0;
+  for(var i=0;i<12;i++){ var mm=('0'+(i+1)).slice(-2), d=0,c=0,n=0,p=0;
+    l.forEach(function(m){ if(String(m.data).slice(5,7)===mm){ var t=f24Tot(m); d+=t.debito; c+=t.credito; n++; } });
+    lp.forEach(function(m){ if(String(m.data).slice(5,7)===mm) p+=f24Tot(m).saldo; });
+    mesi.push({i:i,d:d,c:c,s:d-c,n:n,p:p}); if(d-c>max) max=d-c; }
+  var tD=0,tC=0,tP=0,tN=0; mesi.forEach(function(x){ tD+=x.d; tC+=x.c; tP+=x.p; tN+=x.n; });
+  var th='padding:8px 10px;text-align:right;font-size:11px;color:#64748b;text-transform:uppercase;';
+  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:680px;">'
+    +'<tr style="background:#f8fafc;"><th style="'+th+'text-align:left;">Mese</th><th style="'+th+'">F24</th><th style="'+th+'">A debito</th><th style="'+th+'">Compensati</th><th style="'+th+'">Pagato</th><th style="'+th+'text-align:left;width:28%;"></th><th style="'+th+'">'+(anno-1)+'</th></tr>'
+    +mesi.map(function(x){ return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:7px 10px;font-weight:700;">'+F24_MESI[x.i]+'</td><td style="padding:7px 10px;text-align:right;">'+(x.n||'')+'</td>'
+      +'<td style="padding:7px 10px;text-align:right;">'+(x.d?f24Eu(x.d):'')+'</td><td style="padding:7px 10px;text-align:right;color:#166534;">'+(x.c?('− '+f24Eu(x.c)):'')+'</td>'
+      +'<td style="padding:7px 10px;text-align:right;font-weight:800;">'+(x.n?f24Eu(x.s):'')+'</td>'
+      +'<td style="padding:7px 10px;"><div style="height:10px;border-radius:5px;background:#1a4fa0;width:'+(max>0?Math.max(0,Math.round(x.s/max*100)):0)+'%;"></div></td>'
+      +'<td style="padding:7px 10px;text-align:right;color:#64748b;">'+(x.p?f24Eu(x.p):'')+'</td></tr>'; }).join('')
+    +'<tr style="border-top:2px solid #1a4fa0;background:#f8fafc;font-weight:900;"><td style="padding:9px 10px;">Totale '+anno+'</td><td style="padding:9px 10px;text-align:right;">'+tN+'</td><td style="padding:9px 10px;text-align:right;">'+f24Eu(tD)+'</td><td style="padding:9px 10px;text-align:right;color:#166534;">'+(tC?('− '+f24Eu(tC)):'')+'</td><td style="padding:9px 10px;text-align:right;color:#1a4fa0;">'+f24Eu(tD-tC)+'</td><td></td><td style="padding:9px 10px;text-align:right;color:#64748b;">'+(tP?f24Eu(tP):'')+'</td></tr>'
+    +'</table></div>';
+}
+function f24HtmlCodici(anno, l){
+  var cod={}, sez={};
+  l.forEach(function(m){ (m.righe||[]).forEach(function(r){
+    var k=String(r.codice||'?').toUpperCase(), v=f24Num(r.debito)-f24Num(r.credito);
+    var c=cod[k]=cod[k]||{k:k, desc:r.descrizione||((F24_CODICI[k]||[])[1])||'', tot:0, n:0, mesi:{}};
+    c.tot+=v; c.n++; c.mesi[String(m.data).slice(5,7)]=1;
+    var s=r.sezione||'altri'; sez[s]=(sez[s]||0)+v; }); });
+  var lc=Object.keys(cod).map(function(k){ return cod[k]; }).sort(function(a,b){ return b.tot-a.tot; });
+  if(!lc.length) return '<div style="color:#64748b;padding:20px;">Nessun dato per '+anno+'.</div>';
+  var tot=0; lc.forEach(function(c){ tot+=c.tot; });
+  var th='padding:8px 10px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;';
+  return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
+    +F24_SEZIONI.filter(function(s){ return sez[s[0]]; }).map(function(s){ return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px 12px;"><div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase;">'+s[1]+'</div><div style="font-weight:900;font-size:16px;">'+f24Eu(sez[s[0]])+'</div><div style="font-size:11px;color:#94a3b8;">'+Math.round(sez[s[0]]/(tot||1)*100)+'% del totale</div></div>'; }).join('')
+    +'</div>'
+    +'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px;">'
+    +'<tr style="background:#f8fafc;"><th style="'+th+'">Codice</th><th style="'+th+'">Descrizione</th><th style="'+th+'text-align:right;">Versamenti</th><th style="'+th+'text-align:right;">Totale '+anno+'</th><th style="'+th+'text-align:right;">Media al mese</th></tr>'
+    +lc.map(function(c){ var nm=Object.keys(c.mesi).length||1; return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:7px 10px;font-weight:900;">'+f24E(c.k)+'</td><td style="padding:7px 10px;">'+f24E(c.desc)+'</td><td style="padding:7px 10px;text-align:right;">'+c.n+'</td><td style="padding:7px 10px;text-align:right;font-weight:800;">'+f24Eu(c.tot)+'</td><td style="padding:7px 10px;text-align:right;color:#64748b;">'+f24Eu(c.tot/nm)+'</td></tr>'; }).join('')
+    +'<tr style="border-top:2px solid #1a4fa0;background:#f8fafc;font-weight:900;"><td style="padding:9px 10px;" colspan="3">Totale</td><td style="padding:9px 10px;text-align:right;color:#1a4fa0;">'+f24Eu(tot)+'</td><td></td></tr>'
+    +'</table></div>'
+    +'<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">La media al mese di ogni codice è calcolata sui mesi in cui quel codice è stato pagato.</div>';
+}
+/* ---------- inserimento / modifica ---------- */
+function f24Editor(id){
+  var m=id?JSON.parse(JSON.stringify(f24Load().filter(function(x){ return x.id===id; })[0]||null)):null;
+  if(!m){ var d=new Date(); m={ id:'f24_'+Date.now(), data:d.toISOString().slice(0,10), righe:[{sezione:'erario',codice:'',descrizione:'',rif:'',debito:'',credito:''}], note:'' }; }
+  _f24Ed=m;
+  var w=document.getElementById('f24-ed'); if(w) w.remove();
+  w=document.createElement('div'); w.id='f24-ed';
+  w.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.55);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
+  var dl='<datalist id="f24-codici">'+Object.keys(F24_CODICI).map(function(k){ return '<option value="'+k+'">'+f24E(F24_CODICI[k][1])+'</option>'; }).join('')+'</datalist>';
+  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:980px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'+dl
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div style="font-weight:900;font-size:18px;flex:1;">🧾 '+(id?'Modifica F24':'Nuovo F24')+'</div>'
+    +'<button onclick="document.getElementById(\'f24-ed\').remove()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">✕</button></div>'
+    +'<div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:end;">'
+    +'<div><label style="display:block;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Data di addebito *</label><input id="f24-data" type="date" value="'+f24E(m.data)+'" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
+    +'<div><label style="display:block;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Note (facoltative)</label><input id="f24-note" value="'+f24E(m.note||'')+'" placeholder="es. F24 stipendi ottobre, ravvedimento…" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
+    +'</div>'
+    +'<div style="font-size:12px;color:#64748b;margin:12px 0 6px;">Una riga per ogni codice tributo del modello. Scrivi il codice: la descrizione si compila da sola per quelli più comuni. Le compensazioni vanno nella colonna <b>A credito</b>.</div>'
+    +'<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:820px;" id="f24-righe"></table></div>'
+    +'<button onclick="f24RigaAgg()" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:1px dashed #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;cursor:pointer;">＋ Aggiungi riga</button>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;flex-wrap:wrap;"><div id="f24-totale" style="flex:1;font-size:14px;"></div>'
+    +'<button onclick="document.getElementById(\'f24-ed\').remove()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Annulla</button>'
+    +'<button onclick="f24Salva()" style="padding:10px 18px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva F24</button></div>'
+    +'</div>';
+  document.body.appendChild(w);
+  f24RigheRender();
+}
+function f24RigheRender(){
+  var t=document.getElementById('f24-righe'); if(!t||!_f24Ed) return;
+  var inp='width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;';
+  var th='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;text-align:left;padding:4px;';
+  t.innerHTML='<tr><th style="'+th+'width:150px;">Sezione</th><th style="'+th+'width:95px;">Codice</th><th style="'+th+'">Descrizione</th><th style="'+th+'width:110px;">Rif. (mm/aaaa)</th><th style="'+th+'width:120px;">A debito €</th><th style="'+th+'width:120px;">A credito €</th><th style="width:34px;"></th></tr>'
+    +_f24Ed.righe.map(function(r,i){
+      return '<tr>'
+        +'<td style="padding:3px;"><select onchange="f24Riga('+i+',\'sezione\',this.value)" style="'+inp+'">'+F24_SEZIONI.map(function(s){ return '<option value="'+s[0]+'"'+(r.sezione===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join('')+'</select></td>'
+        +'<td style="padding:3px;"><input list="f24-codici" value="'+f24E(r.codice)+'" onchange="f24Codice('+i+',this.value)" style="'+inp+'font-weight:800;"></td>'
+        +'<td style="padding:3px;"><input id="f24-desc-'+i+'" value="'+f24E(r.descrizione)+'" oninput="f24Riga('+i+',\'descrizione\',this.value)" style="'+inp+'"></td>'
+        +'<td style="padding:3px;"><input value="'+f24E(r.rif)+'" placeholder="10/2026" oninput="f24Riga('+i+',\'rif\',this.value)" style="'+inp+'"></td>'
+        +'<td style="padding:3px;"><input value="'+f24E(r.debito)+'" inputmode="decimal" placeholder="0,00" oninput="f24Riga('+i+',\'debito\',this.value)" style="'+inp+'text-align:right;"></td>'
+        +'<td style="padding:3px;"><input value="'+f24E(r.credito)+'" inputmode="decimal" placeholder="0,00" oninput="f24Riga('+i+',\'credito\',this.value)" style="'+inp+'text-align:right;"></td>'
+        +'<td style="padding:3px;text-align:center;"><button onclick="f24RigaDel('+i+')" title="Togli la riga" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:16px;">✕</button></td>'
+        +'</tr>'; }).join('');
+  f24TotaleEd();
+}
+function f24Riga(i,k,v){ if(!_f24Ed||!_f24Ed.righe[i]) return; _f24Ed.righe[i][k]=v; if(k==='debito'||k==='credito') f24TotaleEd(); }
+function f24Codice(i,v){
+  var c=String(v||'').trim().toUpperCase(), r=_f24Ed.righe[i]; if(!r) return;
+  r.codice=c; var info=F24_CODICI[c];
+  if(info){ if(!r.descrizione || r._descAuto){ r.descrizione=info[1]; r._descAuto=true; } r.sezione=info[0]; }
+  f24RigheRender();
+}
+function f24RigaAgg(){ var u=_f24Ed.righe[_f24Ed.righe.length-1]||{}; _f24Ed.righe.push({sezione:u.sezione||'erario',codice:'',descrizione:'',rif:u.rif||'',debito:'',credito:''}); f24RigheRender(); }
+function f24RigaDel(i){ _f24Ed.righe.splice(i,1); if(!_f24Ed.righe.length) _f24Ed.righe.push({sezione:'erario',codice:'',descrizione:'',rif:'',debito:'',credito:''}); f24RigheRender(); }
+function f24TotaleEd(){ var el=document.getElementById('f24-totale'); if(!el||!_f24Ed) return; var t=f24Tot(_f24Ed);
+  el.innerHTML='A debito <b>'+f24Eu(t.debito)+'</b>'+(t.credito?(' · compensati <b style="color:#166534;">− '+f24Eu(t.credito)+'</b>'):'')+' · <span style="font-size:16px;">Addebitato <b style="color:#1a4fa0;">'+f24Eu(t.saldo)+'</b></span>'; }
+function f24Salva(){
+  var m=_f24Ed; if(!m) return;
+  m.data=String((document.getElementById('f24-data')||{}).value||'').trim();
+  m.note=String((document.getElementById('f24-note')||{}).value||'').trim();
+  m.righe=m.righe.filter(function(r){ return String(r.codice||'').trim() || f24Num(r.debito) || f24Num(r.credito); })
+    .map(function(r){ var x={sezione:r.sezione,codice:String(r.codice||'').trim().toUpperCase(),descrizione:String(r.descrizione||'').trim(),rif:String(r.rif||'').trim(),debito:f24Num(r.debito)||'',credito:f24Num(r.credito)||''}; return x; });
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(m.data)){ alert('Inserisci la data di addebito.'); return; }
+  if(!m.righe.length){ alert('Inserisci almeno una riga con codice tributo e importo.'); f24RigheRender(); return; }
+  var senza=m.righe.filter(function(r){ return !r.codice; }).length;
+  if(senza){ alert('Ci sono '+senza+' righe senza codice tributo: completale.'); return; }
+  m.updatedAt=Date.now(); m.updatedBy=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  if(!m.createdAt){ m.createdAt=m.updatedAt; m.createdBy=m.updatedBy; }
+  var l=f24Load(), i=l.findIndex(function(x){ return x.id===m.id; });
+  if(i>=0) l[i]=m; else l.push(m);
+  _f24=l; f24SaveLocal(); f24Supa(m);
+  _f24Anno=+m.data.slice(0,4);
+  var w=document.getElementById('f24-ed'); if(w) w.remove();
+  f24Render(); try{ tcToastNew('🧾 F24 salvato: '+f24Eu(f24Tot(m).saldo), true); }catch(e){}
+}
+function f24Elimina(id){
+  var l=f24Load(), m=l.filter(function(x){ return x.id===id; })[0]; if(!m) return;
+  if(!confirm('Elimino l’F24 addebitato il '+String(m.data).split('-').reverse().join('/')+' ('+f24Eu(f24Tot(m).saldo)+')?')) return;
+  m.deleted=true; m.updatedAt=Date.now(); f24SaveLocal(); f24Supa(m); f24Render();
+}
+
 function wfSupaLoad(){
   try{
     var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
@@ -16448,6 +16709,7 @@ function presenzeEsportaExcel(){
 
 // ── SIDEBAR NAVIGATION ─────────────────────────────────────
 var SIDEBAR_TITLES = {
+  'f24': 'F24',
   'mansioni': 'Mansioni',
   'rcl': 'Richieste clienti',
   'bmvalue': 'BM Value',
@@ -16841,6 +17103,10 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministratore.', false);
       return;
     }
+    /* F24: amministratore e contabilita' (Arianna), a prescindere dalle sezioni assegnate */
+    if(view==='f24'){
+      if(!(typeof f24Puo==='function' && f24Puo())){ if(typeof tcToastNew==='function') tcToastNew('Sezione riservata all\u2019amministrazione.', false); return; }
+    }
     if(view==='rcl' && typeof rclVisibile==='function' && !rclVisibile()){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata.', false);
       return;
@@ -16849,7 +17115,7 @@ function sidebarNav(view,btn){
       if(typeof tcToastNew==='function') tcToastNew('Sezione in prova: non ancora attiva per il tuo utente.', false);
       return;
     }
-    if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && view!=='online' && mie.indexOf(view)<0){
+    if(mie && EA_SEZIONI_LIBERE.indexOf(view)<0 && view!=='online' && view!=='f24' && mie.indexOf(view)<0){
       if(typeof tcToastNew==='function') tcToastNew('Sezione riservata: chiedi all\u2019amministratore.', false);
       return;
     }
@@ -16904,6 +17170,7 @@ function sidebarNav(view,btn){
   if(view==='noleggio'){ try{ nlRender(); nlSupaLoad(); }catch(e){} }
   if(view==='mansioni'){ try{ mnRender(); if(typeof ccSupaLoad==='function') ccSupaLoad(function(){ try{ mnRender(); }catch(e){} }); }catch(e){} }
   if(view==='welfare'){ try{ wfRender(); wfSupaLoad(); wfBuoniSupaLoad(); }catch(e){} }
+  if(view==='f24'){ try{ f24Render(); f24SupaLoad(); }catch(e){} }
   if(view==='presenze'){ try{ if(typeof presenzeSyncTutto==='function') presenzeSyncTutto(); }catch(e){} }
   if(view==='sinistri'){ try{ if(typeof sinSupaLoad==='function') sinSupaLoad(); }catch(e){} }
   if(view==='bmvalue'){ try{ if(typeof bmRender==='function') bmRender(); }catch(e){} }
@@ -23012,6 +23279,78 @@ function onVenduteHTML(){
   });
   return h+'</div>';
 }
+
+/* =====================================================================
+   SCHEDA DA ESPORRE SULL'AUTO (18/11/2026, Davide)
+   Foglio A4 da mettere dietro il parabrezza: marca e modello, prezzo
+   grande, le caratteristiche principali, la rata indicativa (stesso calcolo
+   del sito) e un QR che apre la pagina dell'auto sul sito con foto e video.
+   ===================================================================== */
+function onSchedaEsporre(id){
+  var a=(mzLoad()||[]).filter(function(x){ return x && x.id===id; })[0];
+  if(!a){ alert('Auto non trovata.'); return; }
+  var vai=function(){ try{ eaStampa(onSchedaEsporreHTML(a), 'Scheda '+((a.marca||'')+' '+(a.modello||'')).trim()); }catch(e){ alert('Non riesco a preparare la scheda: '+e.message); } };
+  if(typeof _sitoFin!=='undefined' && !_sitoFin && typeof sitoFinLoad==='function') sitoFinLoad(vai); else vai();
+}
+function onSchedaEsporreHTML(a){
+  var E=function(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var cap=function(v){ v=String(v||'').trim(); return v?v.charAt(0).toUpperCase()+v.slice(1).toLowerCase():''; };
+  var n=function(v){ var x=parseFloat(String(v==null?'':v).replace(/\./g,'').replace(',','.')); return isNaN(x)?0:x; };
+  var mig=function(v){ return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g,'.'); };
+  var prezzo=n(a.prezzoVen), listino=n(a.listino), kw=n(a.potenza);
+  var imm=String(a.dataImm||''), immTxt='';
+  var m=imm.match(/^(\d{4})-(\d{2})/); if(m) immTxt=m[2]+'/'+m[1]; else if(a.anno) immTxt=String(a.anno);
+  var righe=[
+    ['Immatricolazione', immTxt],
+    ['Chilometri', n(a.km)?(mig(n(a.km))+' km'):(String(a.km||'')==='0'?'0 km':'')],
+    ['Alimentazione', cap(a.alimentazione)],
+    ['Cambio', cap(a.cambio)+(a.tec_marce?(' · '+a.tec_marce+' marce'):'')],
+    ['Potenza', kw?(Math.round(kw)+' kW ('+Math.round(kw*1.3596)+' CV)'):''],
+    ['Cilindrata', n(a.cilindrata)?(mig(n(a.cilindrata))+' cm³'):''],
+    ['Classe emissioni', a.tec_classe||''],
+    ['Trazione', cap(a.tec_trazione)],
+    ['Carrozzeria', cap(a.tec_carrozzeria)],
+    ['Porte / posti', (a.tec_porte||a.tec_posti)?((a.tec_porte||'–')+' / '+(a.tec_posti||'–')):''],
+    ['Colore', cap(a.colore)],
+    ['Consumo medio', a.tec_consumo||''],
+    ['IVA esposta', a.ivaEsposta?'Sì':'']
+  ].filter(function(r){ return String(r[1]||'').trim(); });
+  var rata=null;
+  try{ if(prezzo>0 && typeof sitoFinCalcola==='function') rata=sitoFinCalcola((typeof _sitoFin!=='undefined'&&_sitoFin)||SITO_FIN_DEF, prezzo, kw); }catch(e){}
+  var url=''; try{ url=waVideoUrl(a); }catch(e){}
+  var qr=url?('https://api.qrserver.com/v1/create-qr-code/?size=360x360&margin=0&data='+encodeURIComponent(url)):'';
+  var risp=(listino>prezzo && prezzo>0)?(listino-prezzo):0;
+  var css='@page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    +'.top{display:flex;align-items:center;justify-content:space-between;border-bottom:5px solid #2060b8;padding-bottom:10px}'
+    +'.brand{font-size:30px;font-weight:900;letter-spacing:.5px;color:#2060b8}.brand b{color:#0f172a}'
+    +'.tag{font-size:13px;color:#475569;text-align:right;line-height:1.4}'
+    +'h1{font-size:46px;line-height:1;margin:16px 0 4px;font-weight:900}.all{font-size:22px;font-weight:700;color:#334155}'
+    +'.prezzo{display:flex;align-items:flex-end;gap:18px;margin:12px 0 4px;flex-wrap:wrap}'
+    +'.p{font-size:92px;font-weight:900;line-height:.9;letter-spacing:-2px}.p small{font-size:46px}'
+    +'.list{font-size:20px;color:#475569;margin-bottom:10px}.list s{color:#475569}.ris{display:inline-block;background:#ff7a1a;color:#fff;font-weight:900;padding:4px 12px;border-radius:6px;margin-left:8px;font-size:22px}'
+    +'.iva{font-size:16px;color:#475569;margin-bottom:12px}'
+    +'table{width:100%;border-collapse:collapse;font-size:18px;margin-top:6px}td{padding:6px 12px;border-bottom:1px solid #e2e8f0}tr:nth-child(odd) td{background:#f1f5f9}td.k{color:#475569;width:42%}td.v{font-weight:800}'
+    +'.giu{display:flex;gap:18px;align-items:stretch;margin-top:12px;page-break-inside:avoid}'
+    +'.rata{flex:1;background:#2060b8;color:#fff;border-radius:10px;padding:16px 20px}.rata .r{font-size:44px;font-weight:900;line-height:1}.rata .s{font-size:17px;margin-top:6px}.rata .n{font-size:12px;opacity:.85;margin-top:6px}'
+    +'.qr{width:170px;border:2px solid #2060b8;border-radius:10px;padding:10px;text-align:center;font-size:13px;font-weight:700;color:#2060b8}.qr img{width:140px;height:140px;display:block;margin:0 auto 6px}'
+    +'.foot{margin-top:12px;border-top:5px solid #2060b8;padding-top:10px;display:flex;justify-content:space-between;align-items:center;font-size:17px}'
+    +'.foot .az{font-size:26px;font-weight:900}.foot .tel{font-size:24px;font-weight:900;text-align:right}';
+  var h='<!doctype html><html><head><meta charset="utf-8"><title>Scheda auto</title><style>'+css+'</style></head><body>'
+    +'<div class="top"><div class="brand">EUROPA <b>AUTO</b></div><div class="tag">Auto controllate e garantite<br>Finanziamento o leasing in sede · Permuta</div></div>'
+    +'<h1>'+E(cap(a.marca)+' '+cap(a.modello))+'</h1>'
+    +(a.allestimento?('<div class="all">'+E(a.allestimento)+'</div>'):'')
+    +'<div class="prezzo"><div class="p">'+(prezzo?mig(prezzo):'—')+'<small> €</small></div></div>'
+    +(risp?('<div class="list">Prezzo da nuova <s>'+mig(listino)+' €</s><span class="ris">Risparmi '+mig(risp)+' €</span></div>'):'')
+    +(a.ivaEsposta?'<div class="iva">IVA esposta: ideale per partite IVA e aziende</div>':'')
+    +'<table>'+righe.map(function(r){ return '<tr><td class="k">'+E(r[0])+'</td><td class="v">'+E(r[1])+'</td></tr>'; }).join('')+'</table>'
+    +'<div class="giu">'
+    +(rata?('<div class="rata"><div class="r">da '+rata.rata+' €/mese</div><div class="s">con anticipo di '+mig(rata.anticipo)+' €</div><div class="n">Esempio indicativo di finanziamento, salvo approvazione della finanziaria. Chiedi in sede la tua rata su misura.</div></div>'):'<div style="flex:1"></div>')
+    +(qr?('<div class="qr"><img src="'+qr+'" alt="QR">Inquadra per foto, video e dettagli</div>'):'')
+    +'</div>'
+    +'<div class="foot"><div><div class="az">EUROPA AUTO SRL</div>Via Nigra 4 · Paderno Dugnano (MI) · europaautosrl.it</div><div class="tel">Tel. 02 9181820<br><span style="font-size:19px;">WhatsApp 333 710 7403</span></div></div>'
+    +'</body></html>';
+  return h;
+}
 function onRender(){
   var w=document.getElementById('online-wrap'); if(!w) return;
   /* lo stato Google si legge una volta e poi si ridisegna */
@@ -23119,6 +23458,7 @@ function onRender(){
       +'<button onclick="onToggle(\'' + a.id + '\')" '+(pronta?'':'disabled')+' style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:none;font-family:inherit;font-weight:800;font-size:13px;cursor:'+(pronta?'pointer':'not-allowed')+';background:'+(on?'#166534':(pronta?'#eff6ff':'#f1f5f9'))+';color:'+(on?'#fff':(pronta?'#1a4fa0':'#94a3b8'))+';">'
       +(on?'\u2713 Online':(pronta?'Metti online':(!foto?'Manca la foto':'Manca il prezzo')))
       +'</button>'
+      +'<button onclick="onSchedaEsporre(\''+a.id+'\')" title="Foglio A4 da esporre sull\u2019auto" style="margin-top:6px;width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">\uD83D\uDDA8\uFE0F Scheda da esporre</button>'
       +'</div></div>';
   });
   h+='</div>';
@@ -24899,7 +25239,7 @@ function mzSchedaCss(){
   if(document.getElementById('mz-scheda-css')) return;
   var st=document.createElement('style'); st.id='mz-scheda-css';
   st.textContent='#mz-modal .mz-nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px 20px;background:#f8fafc;border-bottom:1px solid #e2e8f0}'
-   +'#mz-modal .mz-nav button{padding:7px 13px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer}'
+   +'#mz-modal .mz-nav button{padding:9px 16px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer}'
    +'#mz-modal .mz-nav button:hover{border-color:#1a4fa0;color:#1a4fa0}'
    +'#mz-modal .mz-grid{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}'
    +'@media(min-width:1000px){#mz-modal .mz-grid{grid-template-columns:1fr 1fr}#mz-modal .mz-sez.larga{grid-column:1/-1}#mz-modal .mz-due{display:grid;grid-template-columns:1fr 1fr;gap:20px}}'
@@ -24908,7 +25248,19 @@ function mzSchedaCss(){
    +'#mz-modal .mz-salva-bar{position:sticky;bottom:0;background:linear-gradient(to top,#fff 75%,rgba(255,255,255,0));padding:8px 0 10px;margin-top:8px;z-index:2}';
   document.head.appendChild(st);
 }
-function mzVaiSez(k){ var el=document.getElementById('mzs-'+k); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }
+/* Tre schede (17/11/2026): Dati e prezzi | Sito | Documenti e registro.
+   Si vede una scheda alla volta; i campi delle altre restano nella pagina,
+   nascosti, quindi Salva salva tutto. */
+var MZ_SCHEDE={ dati:['dati','prezzi'], sito:['sito'], doc:['doc'] };
+function mzVaiSez(k){
+  if(!MZ_SCHEDE[k]) k='dati';
+  var soloDoc=(typeof getCurrentRole==='function' && getCurrentRole()==='contabilita');
+  if(soloDoc && k==='sito') k='dati';
+  ['dati','prezzi','sito','doc'].forEach(function(id){ var el=document.getElementById('mzs-'+id); if(el) el.style.display=(MZ_SCHEDE[k].indexOf(id)>=0)?'':'none'; });
+  document.querySelectorAll('#mz-modal .mz-nav button').forEach(function(b){ var on=(b.getAttribute('data-t')===k);
+    b.style.background=on?'#1a4fa0':'#fff'; b.style.color=on?'#fff':'#334155'; b.style.borderColor=on?'#1a4fa0':'#cbd5e1'; });
+  var sc=document.getElementById('mz-scroll'); if(sc) sc.scrollTop=0;
+}
 function mzForm(id){
 
   var a = id ? mzById(id) : null;
@@ -24932,7 +25284,7 @@ function mzForm(id){
   mzSchedaCss();
   var h='<div style="max-width:1280px;width:100%;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">';
   h+='<div style="background:#1a4fa0;color:#fff;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;font-size:16px;">'+(a?'Modifica auto':'Nuova auto')+'</span><button onclick="mzChiudi()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;">✕</button></div>';
-  h+='<div class="mz-nav">'+[['dati','\uD83D\uDE97 Dati veicolo'],['prezzi','\uD83D\uDCB6 Prezzi e stato'],['sito','\uD83C\uDF10 Sito: foto, video, scheda'],['doc','\uD83D\uDCC2 Documenti e registro']].filter(function(x){ return !(_mzSoloDoc && x[0]==='sito'); }).map(function(x){ return '<button type="button" onclick="mzVaiSez(\''+x[0]+'\')">'+x[1]+'</button>'; }).join('')+'</div>';
+  h+='<div class="mz-nav">'+[['dati','\uD83D\uDE97 Dati e prezzi'],['sito','\uD83C\uDF10 Sito: foto, video, scheda'],['doc','\uD83D\uDCC2 Documenti e registro']].filter(function(x){ return !(_mzSoloDoc && x[0]==='sito'); }).map(function(x){ return '<button type="button" data-t="'+x[0]+'" onclick="mzVaiSez(\''+x[0]+'\')">'+x[1]+'</button>'; }).join('')+'</div>';
   h+='<div style="padding:16px 20px 0;max-height:calc(100vh - 150px);overflow:auto;" id="mz-scroll">';
   h+='<div class="mz-grid">';
   h+='<section id="mzs-dati" class="mz-sez"><h3>\uD83D\uDE97 Dati veicolo</h3>';
@@ -25173,6 +25525,7 @@ function mzForm(id){
      nasce sempre da un preventivo, e il preventivo si apre dal pulsante verde
      sulla scheda del veicolo in magazzino. Da qui era una seconda strada per
      lo stesso posto, in un riquadro gia' lungo. */
+  if(a) h+='<button onclick="onSchedaEsporre(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">\uD83D\uDDA8\uFE0F Scheda da esporre sull\u2019auto</button>';
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
   var m=document.getElementById('mz-modal');
@@ -25186,6 +25539,7 @@ function mzForm(id){
   try{ if(document.getElementById('cv-modal') && document.getElementById('cv-modal').style.display==='block') eaPortaSopra(m); }catch(e){}
   try{ if(typeof mzFotoInit==='function') mzFotoInit(a); }catch(e){}
   try{ if(typeof mzMediaInit==='function') mzMediaInit(a); }catch(e){}
+  try{ mzVaiSez('dati'); }catch(e){}
   _mzProvVend = (a && a.provenienzaVenditore) ? a.provenienzaVenditore : ((a && a.origine==='permuta') ? 'privato' : ((a && a.ivaEsposta && !a.estera) ? 'azienda' : 'privato'));
   mzTipoAuto(a && a.estera===true);
   mzProvVenditore(_mzProvVend);
