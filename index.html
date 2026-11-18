@@ -25888,6 +25888,7 @@ function mzForm(id){
      nasce sempre da un preventivo, e il preventivo si apre dal pulsante verde
      sulla scheda del veicolo in magazzino. Da qui era una seconda strada per
      lo stesso posto, in un riquadro gia' lungo. */
+  if(a && typeof isAdmin==='function' && isAdmin()) h+='<button onclick="mzDuplica(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #c4b5fd;background:#faf5ff;color:#6d28d9;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\uD83D\uDCC4 Duplica questo veicolo</button>';
   if(a) h+='<button onclick="onSchedaEsporre(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">\uD83D\uDDA8\uFE0F Scheda da esporre sull\u2019auto</button>';
   if(a) h+='<button onclick="mzElimina(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;">🗑 Elimina</button>';
   h+='</div></div>';
@@ -25910,6 +25911,48 @@ function mzForm(id){
   try{ mzDocPratiche(_mzId, 'mz-doc-pratiche'); }catch(e){}
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
+}
+/* ===== DUPLICA VEICOLO (solo amministratore) =====
+   Apre una scheda NUOVA gia' compilata con i dati del modello (marca,
+   allestimento, prezzi, descrizione, equipaggiamento, specifiche...).
+   Restano vuoti targa, telaio e n. auto: senza quelli non si salva (sono
+   gia' obbligatori, e il controllo doppioni blocca la targa/telaio
+   dell'originale). Non si copiano foto, video, documenti, vendita, perizia,
+   registro, stato del sito. Km e immatricolazione si copiano ma si
+   evidenziano da controllare. */
+var MZ_DUP_NO={ id:1, targa:1, telaio:1, numero_interno:1, foto:1, video:1, videoWa:1, giro360:1, createdAt:1, updatedAt:1, dataCarico:1,
+  stato:1, online:1, onlineTs:1, sitoAvvisi:1, sitoTolta:1, periziaId:1, permutaDifetti:1, permutaContrattoId:1, origine:1, provenienza:1,
+  doppiaChiave:1, deleted:1, venditaId:1, cvId:1, dataScarico:1, scarico:1, registro:1, cartellina:1, prezzoAcq:1 };
+function mzDuplica(id){
+  if(!(typeof isAdmin==='function' && isAdmin())) return;
+  var src=mzById(id); if(!src) return;
+  if(!confirm('Duplicare '+[src.marca,src.modello,src.allestimento].filter(Boolean).join(' ')+'?\n\nSi apre una scheda nuova con gli stessi dati: dovrai inserire targa e/o telaio della nuova auto prima di salvare. Foto e video non si copiano.')) return;
+  var c=JSON.parse(JSON.stringify(src));
+  mzForm();
+  var est=(c.estera===true);
+  try{ mzTipoAuto(est); }catch(e){}
+  try{ if(c.provenienzaVenditore) mzProvVenditore(c.provenienzaVenditore); }catch(e){}
+  Object.keys(c).forEach(function(k){
+    if(MZ_DUP_NO[k]) return;
+    var el=document.getElementById('mz_'+k); if(!el) return;
+    if(el.type==='checkbox') el.checked=(c[k]===true||c[k]==='true');
+    else if(c[k]!=null && typeof c[k]!=='object') el.value=String(c[k]);
+  });
+  try{ var fs=document.getElementById('mz_fornitore'); if(fs && c.fornitoreId) fs.value=c.fornitoreId; }catch(e){}
+  try{ var iv=document.getElementById('mz_ivaEsposta'); if(iv && !est) iv.checked=!!c.ivaEsposta; }catch(e){}
+  try{ var dg=document.getElementById('mz_descrGen'); if(dg) dg.checked=(c.descrGen!==false); }catch(e){}
+  try{ var po=document.getElementById('mz_promoOn'); if(po && po.onchange) po.onchange(); }catch(e){}
+  var segna=function(k, col){ var el=document.getElementById('mz_'+k); if(el){ el.value=(col==='#dc2626')?'':el.value; el.style.border='2px solid '+col; el.style.background=(col==='#dc2626')?'#fef2f2':'#fffbeb'; } };
+  segna('targa','#dc2626'); segna('telaio','#dc2626'); segna('numero_interno','#dc2626');
+  segna('km','#f59e0b'); segna('dataImm','#f59e0b'); segna('colore','#f59e0b');
+  var box=document.getElementById('mzs-dati');
+  if(box){ var b=document.createElement('div');
+    b.style.cssText='background:#faf5ff;border:1px solid #c4b5fd;border-left:5px solid #7c3aed;border-radius:9px;padding:10px 13px;margin:0 0 12px;font-size:13px;color:#4c1d95;line-height:1.5;';
+    b.innerHTML='\uD83D\uDCC4 <b>Copia di '+mzEsc([src.marca,src.modello,src.allestimento].filter(Boolean).join(' '))+(src.targa?(' ('+mzEsc(src.targa)+')'):'')+'</b>. '
+      +'Inserisci '+(est?'il <b>telaio</b> e il <b>N. auto</b>':'la <b>targa</b> (e il telaio, se lo hai)')+' della nuova auto: senza non si salva. '
+      +'Controlla anche <b>km, immatricolazione e colore</b> (in giallo). Foto e video vanno caricati da capo.';
+    box.insertBefore(b, box.children[1]||null); }
+  setTimeout(function(){ var t=document.getElementById(est?'mz_telaio':'mz_targa'); if(t){ t.focus(); try{ t.scrollIntoView({block:'center'}); }catch(e){} } }, 100);
 }
 /* La promo vale se e' accesa, ha un prezzo, e non e' scaduta. */
 function mzPromoAttiva(a){
