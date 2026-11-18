@@ -5702,7 +5702,7 @@ function mzGeneraDotazioni(auto){
   }).then(function(r){ return r.json().catch(function(){ return {}; }); })
     .then(function(j){
       fine();
-      if(j && j.dotazioni){ if(ta){ ta.value=j.dotazioni; ta.scrollTop=0; ta.style.background='#f5f3ff'; } return true; }
+      if(j && j.dotazioni){ if(ta){ ta.value=j.dotazioni; ta.scrollTop=0; ta.style.background='#f5f3ff'; } try{ mzOptSync(); }catch(e){} return true; }
       if(!auto) alert('Generazione non riuscita'+((j&&j.error)?(': '+j.error):'')+'.\nControlla che la funzione genera-dotazioni sia attiva su Supabase e che la chiave ANTHROPIC_API_KEY sia impostata nei Secrets.');
       return false;
     })
@@ -24895,9 +24895,24 @@ function mzGiroElabora(bmps, dati){
   an=anS.map(function(v){ return med+(v-med)*0.5; });
   var p90=function(a){ var s=a.slice().sort(function(x,y){return x-y;}); return s[Math.min(s.length-1, Math.floor(s.length*0.9))]; };
   /* riquadro stretto sull'auto: poco pavimento e poco soffitto */
-  var serveH=p90(bh)*1.28, serveW=p90(bw)*1.08;
+  var serveH=p90(bh)*1.32, serveW=p90(bw)*1.08;
   var A=Math.max(1.25, Math.min(1.6, serveW/serveH));
-  var Hc=Math.max(serveH, serveW/A), OW=1280, OH=Math.round(OW/A), sc=OH/Hc;
+  var ch=Math.max(serveH, serveW/A), cw=ch*A;
+  /* il riquadro (anche ruotato) deve stare DENTRO il fotogramma vero:
+     prima, dove mancava immagine, si riempiva con il fotogramma sfocato
+     e il pavimento veniva rovinato. Ora si stringe il riquadro: prima la
+     larghezza (video verticali), poi se serve si ingrandisce un po'. */
+  var amax=0; an.forEach(function(v){ amax=Math.max(amax, Math.abs(v)); });
+  var cs=Math.cos(amax*Math.PI/180), sn=Math.sin(amax*Math.PI/180);
+  var cwMax=(W*0.995 - ch*sn)/cs;
+  if(cw>cwMax) cw=Math.max(cwMax, ch*0.75);   /* meglio un riquadro meno largo che tagliare l'auto */
+  var k=Math.min(1, W*0.995/(cw*cs+ch*sn), H*0.995/(cw*sn+ch*cs)); cw*=k; ch*=k;
+  for(var q=0;q<n;q++){
+    var c2=Math.cos(an[q]*Math.PI/180), s2=Math.abs(Math.sin(an[q]*Math.PI/180));
+    var hw=(cw*c2+ch*s2)/2, hh=(cw*s2+ch*c2)/2;
+    cx[q]=Math.max(hw, Math.min(W-hw, cx[q])); cy[q]=Math.max(hh, Math.min(H-hh, cy[q]));
+  }
+  var OW=1280, OH=Math.round(OW*ch/cw), sc=OW/cw;
   /* colore e luce uguali per tutto il giro: bilanciamento del bianco,
      livelli (neri piu' neri, bianchi piu' bianchi), luminosita' e un po'
      di saturazione; calcolati sull'auto di tutti i fotogrammi */
@@ -24915,17 +24930,16 @@ function mzGiroElabora(bmps, dati){
   (function(){
     if(!cnt){ for(var v=0;v<256;v++){ lut[0][v]=lut[1][v]=lut[2][v]=v; } return; }
     var mR=sR/cnt, mG=sG/cnt, mB=sB/cnt, mm=(mR+mG+mB)/3;
-    var gain=[mm/mR, mm/mG, mm/mB].map(function(g){ return Math.max(0.88, Math.min(1.14, 1+(g-1)*0.7)); });
+    var gain=[mm/mR, mm/mG, mm/mB].map(function(g){ return Math.max(0.94, Math.min(1.06, 1+(g-1)*0.4)); });
     var tot=0, lo=0, hi=255, acc=0; isto.forEach(function(c){ tot+=c; });
     for(var v2=0;v2<256;v2++){ acc+=isto[v2]; if(acc<tot*0.01) lo=v2; if(acc<tot*0.995) hi=v2; }
-    lo=Math.min(lo, 40); hi=Math.max(hi, 200);
+    lo=Math.min(lo, 20); hi=Math.max(hi, 230);
     acc=0; var medL=128; for(var v3=0;v3<256;v3++){ acc+=isto[v3]; if(acc>=tot/2){ medL=v3; break; } }
     var mn=Math.max(0.02,Math.min(0.98,(medL-lo)/(hi-lo)));
-    var gam=Math.max(0.7, Math.min(1.3, Math.log(0.5)/Math.log(mn)));   /* porta la luce media verso la meta' */
+    var gam=Math.max(0.85, Math.min(1.15, Math.log(0.5)/Math.log(mn)));   /* porta la luce media verso la meta', con calma */
     for(var c=0;c<3;c++) for(var v4=0;v4<256;v4++){
       var t=Math.max(0, Math.min(1, (v4*gain[c]-lo)/(hi-lo)));
       t=Math.pow(t, gam);
-      t=t+(t-t*t)*0.18*(t<0.5?-1:1)*Math.min(t,1-t)*4;                    /* leggera curva a S: piu' contrasto */
       lut[c][v4]=Math.max(0, Math.min(255, Math.round(t*255)));
     }
   })();
@@ -24935,20 +24949,16 @@ function mzGiroElabora(bmps, dati){
     var uno=function(){
       if(i2>=n){ resolve({ blobs:out, A:A }); return; }
       var k=i2++, bm=bmps[k];
-      ctx.save(); ctx.filter='blur(30px) brightness(0.85)';
-      var cov=Math.max(OW/W, OH/H)*1.1; ctx.drawImage(bm, (OW-W*cov)/2, (OH-H*cov)/2, W*cov, H*cov); ctx.restore();
+      ctx.fillStyle='#d8d8d8'; ctx.fillRect(0,0,OW,OH);
       ctx.save(); ctx.translate(OW/2, OH/2); ctx.rotate(-an[k]*Math.PI/180); ctx.scale(sc, sc); ctx.translate(-cx[k], -cy[k]);
       ctx.drawImage(bm, 0, 0); ctx.restore();
       var id=ctx.getImageData(0,0,OW,OH), p=id.data, L0=lut[0], L1=lut[1], L2=lut[2];
       for(var j=0;j<p.length;j+=4){
         var r=L0[p[j]], g=L1[p[j+1]], bb=L2[p[j+2]], l=0.299*r+0.587*g+0.114*bb;
-        r=l+(r-l)*1.12; g=l+(g-l)*1.12; bb=l+(bb-l)*1.12;
+        r=l+(r-l)*1.05; g=l+(g-l)*1.05; bb=l+(bb-l)*1.05;
         p[j]=r<0?0:r>255?255:r; p[j+1]=g<0?0:g>255?255:g; p[j+2]=bb<0?0:bb>255?255:bb;
       }
       ctx.putImageData(id,0,0);
-      /* vignettatura leggera: l'occhio va sull'auto */
-      var gr=ctx.createRadialGradient(OW/2,OH/2,Math.min(OW,OH)*0.45,OW/2,OH/2,Math.hypot(OW,OH)*0.6);
-      gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(0,0,0,0.22)'); ctx.fillStyle=gr; ctx.fillRect(0,0,OW,OH);
       c.toBlob(function(bl){ out.push(bl); setTimeout(uno, 0); }, 'image/jpeg', 0.9);
     };
     uno();
@@ -25749,8 +25759,9 @@ function mzForm(id){
   h+=mzDescrHtml(a);
   try{ h+=mzTecHtml(a); }catch(e){}
   h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 3px;"><label style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Dotazioni di serie e optional</label><button type="button" id="mz-dot-btn" onclick="mzGeneraDotazioni()" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">\u2728 Genera con AI</button></div>';
-  h+='<textarea id="mz_dotazioni" placeholder="Una dotazione per riga\u2026 (genera con AI e poi aggiungi in fondo gli optional presenti sull\'auto)" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-height:110px;box-sizing:border-box;">'+v('dotazioni')+'</textarea>';
+  h+='<textarea id="mz_dotazioni" oninput="mzOptSyncPresto()" placeholder="Una dotazione per riga\u2026 (genera con AI e poi aggiungi in fondo gli optional presenti sull\'auto)" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-height:110px;box-sizing:border-box;">'+v('dotazioni')+'</textarea>';
   h+='<div style="font-size:11px;color:#94a3b8;margin:2px 0 4px;">La lista generata contiene le dotazioni di serie tipiche dell\'allestimento: verificala e aggiungi gli optional effettivi. Compare sul sito nella sezione \u00abEquipaggiamento\u00bb.</div>';
+  h+=mzOptHtml();
   h+='</div></div>';
   h+='</section>';
   h+='<section id="mzs-doc" class="mz-sez larga"><h3>\uD83D\uDCC2 Documenti e registro</h3>';
@@ -25909,6 +25920,7 @@ function mzForm(id){
   mzProvVenditore(_mzProvVend);
   try{ docListaRender('auto', _mzId, 'mzdoc', docSoloVendita()); }catch(e){}
   try{ mzDocPratiche(_mzId, 'mz-doc-pratiche'); }catch(e){}
+  try{ mzOptSync(); }catch(e){}
   // stato default per nuova auto
   if(!a){ var st=document.getElementById('mz_stato'); if(st) st.value='disponibile'; }
 }
@@ -25952,6 +25964,7 @@ function mzDuplica(id){
       +'Inserisci '+(est?'il <b>telaio</b> e il <b>N. auto</b>':'la <b>targa</b> (e il telaio, se lo hai)')+' della nuova auto: senza non si salva. '
       +'Controlla anche <b>km, immatricolazione e colore</b> (in giallo). Foto e video vanno caricati da capo.';
     box.insertBefore(b, box.children[1]||null); }
+  try{ mzOptSync(); }catch(e){}
   setTimeout(function(){ var t=document.getElementById(est?'mz_telaio':'mz_targa'); if(t){ t.focus(); try{ t.scrollIntoView({block:'center'}); }catch(e){} } }, 100);
 }
 /* La promo vale se e' accesa, ha un prezzo, e non e' scaduta. */
@@ -26113,6 +26126,75 @@ function mzControllaDuplicati(targa, telaio, idCorrente){
     + A+A+'OK per proseguire, Annulla per fermarsi e controllare.');
 }
 
+/* ===== OPTIONAL DA SPUNTARE (stessa lista di AutoScout24 / CarMove) =====
+   La lista e' un aiuto per scrivere l'equipaggiamento: spuntare una voce
+   aggiunge la riga nel campo "Dotazioni", togliere la spunta la cancella.
+   Il campo resta l'unica fonte: quello che c'e' scritto va sul sito. Le
+   spunte si accendono da sole se la voce e' gia' nel testo (anche dopo la
+   generazione con l'AI). I nomi sono quelli di AutoScout24, cosi' il
+   collegamento futuro li riconosce. */
+var MZ_OPT={
+  'Sicurezza':['ABS','Airbag conducente','Airbag passeggero','Airbag laterali','Airbag testa','Airbag posteriore','ESP','Controllo automatico trazione','Controllo elettronico della corsia','Frenata d\u2019emergenza assistita','Assistente abbaglianti','Blind spot monitor','Riconoscimento dei segnali stradali','Sistema di riconoscimento della stanchezza','Sistema di avviso di distanza','Sistema di chiamata d\u2019emergenza','Sistema di controllo pressione pneumatici','Sistema di visione notturna','Head-up display','360\u00b0 camera','Chiusura centralizzata senza chiave','Chiusura centralizzata telecomandata','Freno di stazionamento elettrico','Fari Xenon','Fari direzionali','Fendinebbia','Luci diurne','Sensore di luminosit\u00e0','Sistema lavafari','Specchietto retrovisore con funzione antiabbagliamento','Kit antipanne','Ruota di riserva','Ruotino','Sospensioni pneumatiche','Porta scorrevole','Porta scorrevole a destra','Porta scorrevole a sinistra','Tendalino','Pompa di calore','Ricarica bidirezionale','Certificato della batteria'],
+  'Comfort':['Adaptive Cruise Control','Cruise control','Limitatore di velocit\u00e0','Climatizzatore','Climatizzatore automatico','Climatizzatore automatico, 2 zone','Climatizzatore automatico, 3 zone','Climatizzatore automatico, 4 zone','Alzacristalli elettrici','Specchietti laterali elettrici','Chiusura centralizzata','Servosterzo','Computer di bordo','Hill Holder','Isofix','Bracciolo','Carica per smartphone a induzione','Sensore di pioggia','Sensori di parcheggio assistito anteriori','Sensori di parcheggio assistito posteriori','Telecamera per parcheggio assistito','Sistema di parcheggio automatico','Tetto panoramico','Tettuccio apribile','Vetri oscurati','Volante in pelle','Volante riscaldato','Leve al volante','Sedili riscaldati','Sedili posteriori riscaldabili','Sedili ventilati','Sedili massaggianti','Sedili sportivi','Regolazione elettrica sedili','Regolazione elettrica del sedile posteriore','Supporto lombare','Sedile passeggero ribaltabile','Sedile posteriore sdoppiato','Portellone posteriore elettrico','Parabrezza riscaldato','Riscaldamento ausiliario','Pacchetto invernale','Pacchetto sportivo','Kit fumatori','Range extender'],
+  'Multimedia':['Sistema di navigazione','Apple CarPlay','Android Auto','Bluetooth','Vivavoce','Touch screen','Schermo multifunzione interamente digitale','Volante multifunzione','Controllo vocale','Autoradio','Autoradio digitale','Sound system','Streaming musicale integrato','USB','MP3','CD','Hotspot Wi-Fi','Funzione TV'],
+  'Extra':['Fari LED','Fari full-LED','Luci diurne LED','Fari bi-Xeno','Fari al laser','Fari di profondit\u00e0 antiabbagliamento','Luce d\u2019ambiente','Antifurto','Immobilizzatore elettronico','Gancio traino','Portapacchi','Spoiler','Deflettori','Start/Stop Automatico','Cerchioni in acciaio','Pneumatici estivi','Pneumatici da neve','Pneumatici quattro stagioni','Marmitta catalitica','Abilitata per E10','Conversione biodiesel','Adatto a portatori di handicap','Guida a destra','Veicolo elaborato']
+};
+function mzOptNorm(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[\u2019']/g,' ').replace(/[^a-z0-9]+/g,' ').trim(); }
+function mzOptRighe(){ var ta=document.getElementById('mz_dotazioni'); return ta?ta.value.split(/\r?\n/):[]; }
+function mzOptC(v){ var n=mzOptNorm(v); return function(r){ var x=mzOptNorm(String(r).replace(/^[-\u2022\u00b7*\s]+/,'')); return x===n; }; }
+function mzOptHtml(){
+  var h='<details id="mz-opt" ontoggle="if(this.open) mzOptSync()" style="margin:8px 0 4px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#fff;">'
+    +'<summary style="cursor:pointer;font-size:13px;font-weight:800;color:#1a4fa0;">\u2611 Aggiungi optional dalla lista <span style="font-weight:600;color:#64748b;">(come AutoScout24) \u00b7 <span id="mz-opt-n">0</span> spuntati</span></summary>'
+    +'<div style="font-size:11.5px;color:#64748b;margin:6px 0 8px;">Spunta quello che l\u2019auto ha in pi\u00f9: la riga si aggiunge da sola nelle dotazioni qui sopra. Le voci gi\u00e0 presenti nel testo sono gi\u00e0 spuntate.</div>'
+    +'<input id="mz-opt-cerca" oninput="mzOptFiltra(this.value)" placeholder="\uD83D\uDD0D Cerca (es. sensori, tetto, navigatore)\u2026" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;box-sizing:border-box;margin-bottom:8px;">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:#f8fafc;border-radius:8px;margin-bottom:8px;">'
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer;"><input type="checkbox" id="mz-opt-cerchi" onchange="mzOptCerchi()"> Cerchi in lega da</label>'
+    +'<select id="mz-opt-pollici" onchange="mzOptCerchi(true)" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;">'+[14,15,16,17,18,19,20,21,22].map(function(p){ return '<option value="'+p+'"'+(p===17?' selected':'')+'>'+p+'"</option>'; }).join('')+'</select></div>';
+  Object.keys(MZ_OPT).forEach(function(g){
+    h+='<div class="mz-opt-g" style="margin-top:8px;"><div style="font-size:12px;font-weight:800;color:#1a4fa0;margin-bottom:4px;">'+g+'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 12px;">'
+      +MZ_OPT[g].map(function(v){ return '<label class="mz-opt-i" data-n="'+mzEscA(mzOptNorm(v))+'" style="display:flex;align-items:flex-start;gap:6px;font-size:12.5px;color:#334155;padding:3px 0;cursor:pointer;line-height:1.3;"><input type="checkbox" data-v="'+mzEscA(v)+'" onchange="mzOptClic(this)" style="margin-top:2px;flex:none;"> '+mzEsc(v)+'</label>'; }).join('')
+      +'</div></div>';
+  });
+  h+='<div style="display:flex;gap:6px;margin-top:10px;"><input id="mz-opt-altro" placeholder="Altro optional non in lista (es. Pacchetto Premium)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();mzOptAltro();}" style="flex:1;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;">'
+    +'<button type="button" onclick="mzOptAltro()" style="padding:8px 12px;border-radius:8px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;font-family:inherit;font-weight:800;cursor:pointer;">+ Aggiungi</button></div>';
+  return h+'</details>';
+}
+function mzOptScrivi(righe){ var ta=document.getElementById('mz_dotazioni'); if(!ta) return; ta.value=righe.filter(function(r,i,a){ return !(i===a.length-1 && !r.trim()); }).join('\n'); }
+function mzOptClic(cb){
+  var v=cb.getAttribute('data-v'), r=mzOptRighe(), c=mzOptC(v);
+  if(cb.checked){ if(!r.some(c)){ while(r.length && !r[r.length-1].trim()) r.pop(); r.push(v); } }
+  else r=r.filter(function(x){ return !c(x); });
+  mzOptScrivi(r); mzOptConta();
+}
+function mzOptCerchi(cambio){
+  var cb=document.getElementById('mz-opt-cerchi'), p=document.getElementById('mz-opt-pollici').value;
+  if(cambio) cb.checked=true;
+  var r=mzOptRighe().filter(function(x){ return !/^\s*[-\u2022*]?\s*cerchi in lega/i.test(x); });
+  if(cb.checked){ while(r.length && !r[r.length-1].trim()) r.pop(); r.push('Cerchi in lega da '+p+'"'); }
+  mzOptScrivi(r); mzOptConta();
+}
+function mzOptAltro(){
+  var i=document.getElementById('mz-opt-altro'), v=String(i.value||'').trim(); if(!v) return;
+  var r=mzOptRighe(); if(!r.some(mzOptC(v))){ while(r.length && !r[r.length-1].trim()) r.pop(); r.push(v); }
+  mzOptScrivi(r); i.value=''; mzOptSync();
+}
+function mzOptSync(){
+  var r=mzOptRighe().map(function(x){ return mzOptNorm(String(x).replace(/^[-\u2022\u00b7*\s]+/,'')); }), set={};
+  r.forEach(function(x){ set[x]=1; });
+  document.querySelectorAll('#mz-opt input[data-v]').forEach(function(cb){ cb.checked=!!set[mzOptNorm(cb.getAttribute('data-v'))]; });
+  var ce=mzOptRighe().filter(function(x){ return /cerchi in lega/i.test(x); })[0], cb=document.getElementById('mz-opt-cerchi');
+  if(cb){ cb.checked=!!ce; var m=ce&&ce.match(/(\d{2})\s*(?:"|''|pollici|\u201d)/); if(m) document.getElementById('mz-opt-pollici').value=m[1]; }
+  mzOptConta();
+}
+var _mzOptT=null;
+function mzOptSyncPresto(){ clearTimeout(_mzOptT); _mzOptT=setTimeout(function(){ if(document.getElementById('mz-opt')) mzOptSync(); }, 300); }
+function mzOptConta(){ var n=document.querySelectorAll('#mz-opt input[type=checkbox]:checked').length, el=document.getElementById('mz-opt-n'); if(el) el.textContent=n; }
+function mzOptFiltra(q){
+  q=mzOptNorm(q);
+  document.querySelectorAll('#mz-opt .mz-opt-i').forEach(function(l){ l.style.display=(!q || l.getAttribute('data-n').indexOf(q)>=0)?'flex':'none'; });
+  document.querySelectorAll('#mz-opt .mz-opt-g').forEach(function(g){ var vis=Array.prototype.some.call(g.querySelectorAll('.mz-opt-i'), function(l){ return l.style.display!=='none'; }); g.style.display=vis?'':'none'; });
+}
 /* ===== DESCRIZIONE DELL'AUTO SUL SITO =====
    Testo libero di quest'auto (a.descrizione) + la descrizione generica
    uguale per tutte (Parametri -> Sito, config_pubblica 'descrizione'),
