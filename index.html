@@ -4927,6 +4927,7 @@ var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-f
 var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-dotazioni';
 var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
+var EA_G360_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/migliora-giro360';
 var EA_F24_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/leggi-f24';
 var EA_WA_NUM = '39029181820';  // ripiego: il valore vero sta nei Parametri
 
@@ -24760,12 +24761,33 @@ function mzMediaHtml(){
     +'<button type="button" onclick="document.getElementById(\'mz-video-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🎬 Carica video completo<br><span style="font-weight:500;font-size:11.5px;color:#64748b;">esterno + interno · sito e WhatsApp</span></button>'
     +'<button type="button" onclick="document.getElementById(\'mz-giro-input\').click()" style="flex:1;min-width:160px;padding:10px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;">🔄 Carica video 360°<br><span style="font-weight:500;font-size:11.5px;color:#64748b;">solo esterno · giro sul sito</span></button>'
     +'</div>'
+    +'<label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12.5px;font-weight:700;color:#334155;cursor:pointer;"><input type="checkbox" id="mz-g360-ai" '+(mzGiroAiAuto()?'checked':'')+' onchange="mzGiroAiAuto(this.checked)"> \u2728 Migliora il 360\u00b0 con l\u2019AI al caricamento <span style="font-weight:500;color:#94a3b8;">(raddrizza, centra e taglia sull\u2019auto)</span></label>'
     +'<div id="mz-media-stato" style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.5;"><b>Video completo</b> (esterno e interno): va sul sito e da questo si crea da sola la versione WhatsApp. <b>Video 360\u00b0</b> (solo esterno, un giro completo, 30\u201340 secondi): serve solo per il giro sul sito, niente WhatsApp. Al termine del caricamento l\u2019auto si salva da sola.</div>'
     +'</div>';
 }
 function mzMediaInit(a){
   _mzMedia={ video:(a&&a.video)?JSON.parse(JSON.stringify(a.video)):null, giro360:(a&&a.giro360)?JSON.parse(JSON.stringify(a.giro360)):null, videoWa:(a&&a.videoWa)?JSON.parse(JSON.stringify(a.videoWa)):null };
   mzMediaRender();
+  /* auto nuova: se un 360 o un video caricato su una scheda nuova mai
+     salvata e' rimasto in sospeso, lo si recupera qui */
+  if(!a || !a.id || !(typeof mzById==='function' && mzById(a.id))){
+    var b=mzBozzaMedia();
+    if(b && (b.giro360||b.video)){
+      if(b.giro360 && !_mzMedia.giro360) _mzMedia.giro360=b.giro360;
+      if(b.video && !_mzMedia.video){ _mzMedia.video=b.video; _mzMedia.videoWa=b.videoWa||null; }
+      mzMediaRender();
+      setTimeout(function(){ mzMediaStato('<b style="color:#1a4fa0;">Recuperato il '+(b.giro360?'giro 360\u00b0':'video')+' caricato prima su un\u2019auto nuova non salvata.</b> Si salva insieme all\u2019auto; se non \u00e8 di quest\u2019auto toglilo col cestino.'); }, 50);
+    }
+  }
+}
+function mzBozzaMedia(v){
+  try{
+    if(v===null){ localStorage.removeItem('ea_mz_media_bozza'); return null; }
+    if(v){ localStorage.setItem('ea_mz_media_bozza', JSON.stringify(v)); return v; }
+    var b=JSON.parse(localStorage.getItem('ea_mz_media_bozza')||'null');
+    if(b && Date.now()-(b.ts||0) < 7*24*3600*1000) return b;
+  }catch(e){}
+  return null;
 }
 function mzMediaRender(){
   var el=document.getElementById('mz-media-list'); if(!el) return;
@@ -24819,8 +24841,10 @@ function mzMediaRender(){
   if(_mzMedia.giro360 && _mzMedia.giro360.frames && _mzMedia.giro360.frames.length){
     var fr=_mzMedia.giro360.frames;
     h+=_riga('<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto;">',
-      'Giro a 360\u00b0', fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
-      _bt('\u21BB Anteprima','mzGiroAnteprima()','link')+_bt('\uD83D\uDDD1',"_mzMedia.giro360=null;mzMediaRender();",'del'));
+      'Giro a 360\u00b0'+(_mzMedia.giro360.ai?' <span style="color:#7c3aed;">\u2728 migliorato con AI</span>':''), fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
+      _bt('\u21BB Anteprima','mzGiroAnteprima()','link')
+      +((_mzMedia.giro360.ai && _mzMedia.giro360.originali)?_bt('\u21A9 Originale','mzGiroOriginale()',''):_bt('\u2728 Migliora con AI','mzGiroMiglioraAI(null)',''))
+      +_bt('\u2702 Inquadra','mzGiroInquadra()','')+_bt('\uD83D\uDDD1',"_mzMedia.giro360=null;mzMediaRender();",'del'));
   }
   if(false){
     var fr=_mzMedia.giro360.frames;
@@ -24833,6 +24857,140 @@ function mzMediaRender(){
   if(!h) h='<div style="font-size:12px;color:#94a3b8;padding:4px 0 8px;">Nessun video caricato.</div>';
   el.innerHTML=h;
 }
+/* ===== GIRO 360 MIGLIORATO CON L'AI =====
+   1) i fotogrammi in piccolo vanno alla funzione migliora-giro360, che
+      per ognuno dice dov'e' l'auto e di quanti gradi raddrizzarla;
+   2) qui si ammorbidiscono i valori tra un fotogramma e l'altro (niente
+      scatti), si sceglie un riquadro di misura fissa (l'auto non si
+      ingrandisce e rimpicciolisce) e si rifanno i fotogrammi: ruotati,
+      centrati sull'auto, con poco pavimento e poco soffitto; dove manca
+      immagine si riempie con lo stesso fotogramma sfocato;
+   3) si caricano i nuovi fotogrammi; gli originali restano in
+      giro360.originali e si possono ripristinare con un clic. */
+function mzGiroAiAuto(v){
+  try{ if(v===true||v===false){ localStorage.setItem('ea_g360_ai', v?'1':'0'); return v; } return localStorage.getItem('ea_g360_ai')!=='0'; }catch(e){ return true; }
+}
+function mzGiroCarica(src){
+  if(src instanceof Blob) return createImageBitmap(src);
+  return fetch(src, { mode:'cors', cache:'no-store' }).then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); }).then(function(b){ return createImageBitmap(b); });
+}
+function mzGiroMedia(arr, k, win){ /* media mobile circolare (il giro si chiude su se stesso) */
+  var n=arr.length, out=[];
+  for(var i=0;i<n;i++){ var s=0; for(var d=-win; d<=win; d++) s+=arr[((i+d)%n+n)%n]; out.push(s/(2*win+1)); }
+  return out;
+}
+function mzGiroElabora(bmps, dati){
+  var n=bmps.length, W=bmps[0].width, H=bmps[0].height;
+  /* fotogrammi senza riquadro: si prende il piu' vicino valido */
+  var b=dati.map(function(f){ return f&&f.b?f.b:null; });
+  for(var i=0;i<n;i++) if(!b[i]){ for(var d=1; d<n; d++){ var x=b[(i+d)%n]||b[((i-d)%n+n)%n]; if(x){ b[i]=x; break; } } }
+  var cx=[],cy=[],bw=[],bh=[],an=[];
+  b.forEach(function(r,i){ cx.push((r[0]+r[2])/2000*W); cy.push((r[1]+r[3])/2000*H); bw.push((r[2]-r[0])/1000*W); bh.push((r[3]-r[1])/1000*H); an.push(Math.max(-8,Math.min(8, +((dati[i]||{}).a)||0))); });
+  cx=mzGiroMedia(cx,0,2); cy=mzGiroMedia(cy,0,2); an=mzGiroMedia(an,0,3);
+  var p90=function(a){ var s=a.slice().sort(function(x,y){return x-y;}); return s[Math.min(s.length-1, Math.floor(s.length*0.9))]; };
+  var serveH=p90(bh)*1.40, serveW=p90(bw)*1.14;
+  var A=Math.max(1.1, Math.min(1.6, serveW/serveH));          /* proporzioni del riquadro finale */
+  var Hc=Math.max(serveH, serveW/A), OW=1280, OH=Math.round(OW/A), sc=OH/Hc;
+  var c=document.createElement('canvas'); c.width=OW; c.height=OH; var ctx=c.getContext('2d');
+  var out=[], i2=0;
+  return new Promise(function(resolve){
+    var uno=function(){
+      if(i2>=n){ resolve({ blobs:out, A:A }); return; }
+      var k=i2++, bm=bmps[k];
+      ctx.save(); ctx.filter='blur(28px) brightness(0.92)';
+      var cov=Math.max(OW/W, OH/H); ctx.drawImage(bm, (OW-W*cov)/2, (OH-H*cov)/2, W*cov, H*cov); ctx.restore();
+      ctx.save(); ctx.filter='contrast(1.04) saturate(1.06)';
+      ctx.translate(OW/2, OH/2); ctx.rotate(an[k]*Math.PI/180); ctx.scale(sc, sc); ctx.translate(-cx[k], -cy[k]);
+      ctx.drawImage(bm, 0, 0); ctx.restore();
+      c.toBlob(function(bl){ out.push(bl); uno(); }, 'image/jpeg', 0.88);
+    };
+    uno();
+  });
+}
+function mzGiroMiglioraAI(blobs){
+  var g=_mzMedia.giro360; if(!g || !g.frames || !g.frames.length) return;
+  if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
+  _mzMediaBusy=true; var _idAuto=(typeof _mzId!=='undefined')?_mzId:null;
+  var originali=(g.ai && g.originali)?g.originali.slice():g.frames.slice();
+  var sorgenti=blobs||originali;
+  mzMediaStato('⏳ ✨ L’AI sta sistemando il giro 360°: preparo i fotogrammi…');
+  var bmps=[];
+  Promise.all(sorgenti.map(mzGiroCarica)).catch(function(){
+    throw new Error('non riesco a leggere i fotogrammi già caricati: ricarica il video 360° con l’opzione AI attiva');
+  }).then(function(b){
+    bmps=b; var W=b[0].width, H=b[0].height, sw=(W>H)?448:300, sh=Math.round(sw*H/W);
+    var c=document.createElement('canvas'); c.width=sw; c.height=sh; var ctx=c.getContext('2d');
+    var piccoli=b.map(function(bm){ ctx.drawImage(bm,0,0,sw,sh); return c.toDataURL('image/jpeg',0.72).split(',')[1]; });
+    mzMediaStato('⏳ ✨ L’AI cerca l’auto in '+b.length+' fotogrammi… <span style="color:#94a3b8;">circa 20–40 secondi</span>');
+    return fetch(EA_G360_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify({ frames:piccoli }) })
+      .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); });
+  }).then(function(j){
+    if(!j || !j.ok) throw new Error((j&&j.error)||'risposta non valida (la funzione migliora-giro360 è attiva su Supabase?)');
+    mzMediaStato('⏳ ✨ Raddrizzo e centro i fotogrammi…');
+    return mzGiroElabora(bmps, j.frames);
+  }).then(function(res){
+    var urls=new Array(res.blobs.length), idx=0, ok=0, ko=0, base='giro360ai-'+Date.now();
+    var uno=function(){
+      if(idx>=res.blobs.length) return Promise.resolve();
+      var k=idx++;
+      return mzMediaUpload(res.blobs[k], base+'-'+String(k+1).padStart(2,'0')+'.jpg')
+        .then(function(r){ urls[k]=r.url; ok++; }, function(){ ko++; })
+        .then(function(){ mzMediaStato('⏳ ✨ Carico i fotogrammi migliorati '+(ok+ko)+'/'+res.blobs.length+'… <span style="color:#94a3b8;">non chiudere la scheda</span>'); return uno(); });
+    };
+    return Promise.all([uno(),uno(),uno()]).then(function(){
+      if(ko) throw new Error(ko+' fotogrammi migliorati non caricati: riprova con «✨ Migliora con AI»');
+      var cur=_mzMedia.giro360||{};
+      _mzMedia.giro360={ frames:urls, n:urls.length, ts:cur.ts||Date.now(), fonte:cur.fonte||'', ai:true, originali:originali };
+      mzMediaRender(); _mzMediaBusy=false;
+      mzAutoSalvaMedia(_idAuto, '✨ Giro 360° migliorato con l’AI: raddrizzato e centrato sull’auto. Se non ti piace premi «↩ Originale».');
+    });
+  }).catch(function(err){
+    mzMediaStato('<span style="color:#dc2626;">Miglioramento AI non riuscito: '+mzEscA((err&&err.message)||err)+'</span> <span style="color:#64748b;">Il giro resta quello originale.</span>');
+  }).then(function(){ _mzMediaBusy=false; try{ bmps.forEach(function(b){ b.close&&b.close(); }); }catch(e){} });
+}
+function mzGiroOriginale(){
+  var g=_mzMedia.giro360; if(!g || !g.originali) return;
+  if(!confirm('Tornare al giro 360\u00b0 originale, senza le correzioni dell\u2019AI?')) return;
+  _mzMedia.giro360={ frames:g.originali.slice(), n:g.originali.length, ts:g.ts, fonte:g.fonte||'' };
+  mzMediaRender(); mzAutoSalvaMedia(_mzId, '\u21A9 Ripristinato il giro 360\u00b0 originale.');
+}
+/* ===== INQUADRATURA DEL GIRO 360 =====
+   Sul sito il giro si ritaglia per togliere pavimento e soffitto e
+   tenere l'auto al centro. Senza scelta manuale vale il taglio automatico
+   (video verticale: riquadro quasi quadrato un po' sopra il centro). Qui si regola
+   quanto tagliare e dove; il valore va in giro360.taglio = {r, y}. */
+var MZ_G360_AUTO={ r:1, y:40 };
+function mzGiroInquadra(){
+  var g=_mzMedia.giro360; if(!g||!g.frames||!g.frames.length) return;
+  var t=g.taglio||MZ_G360_AUTO, n=g.frames.length;
+  var w=document.createElement('div'); w.id='mz-g360-inq';
+  w.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:14px;';
+  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:96vh;overflow:auto;padding:16px 18px;font-family:inherit;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><b style="font-size:16px;color:#0f172a;">\u2702 Inquadratura del giro 360\u00b0</b>'
+    +'<button type="button" onclick="document.getElementById(\'mz-g360-inq\').remove()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">\u2715</button></div>'
+    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:10px;">Cos\u00ec si vedr\u00e0 sul sito. Togli pavimento e soffitto lasciando l\u2019auto intera; gira l\u2019auto con il cursore \u00abFotogramma\u00bb per controllare anche i lati.</div>'
+    +'<div id="mz-g360-box" style="background:#111;border-radius:10px;overflow:hidden;"><img id="mz-g360-img" src="'+mzEscA(g.frames[0])+'" style="width:100%;display:block;object-fit:cover;max-height:60vh;"></div>'
+    +'<label style="display:block;margin-top:12px;font-size:13px;font-weight:700;color:#334155;">Quanto tagliare sopra e sotto<input id="mz-g360-r" type="range" min="0.8" max="2.2" step="0.05" value="'+t.r+'" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
+    +'<label style="display:block;margin-top:6px;font-size:13px;font-weight:700;color:#334155;">Sposta su / gi\u00f9<input id="mz-g360-y" type="range" min="0" max="100" step="1" value="'+t.y+'" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
+    +'<label style="display:block;margin-top:6px;font-size:13px;font-weight:700;color:#334155;">Fotogramma<input id="mz-g360-f" type="range" min="0" max="'+(n-1)+'" step="1" value="0" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap;">'
+    +'<button type="button" onclick="mzGiroInqSalva(true)" style="padding:10px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Automatico</button>'
+    +'<button type="button" onclick="mzGiroInqSalva(false)" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">\uD83D\uDCBE Salva inquadratura</button></div></div>';
+  document.body.appendChild(w); mzGiroInqAgg();
+}
+function mzGiroInqAgg(){
+  var g=_mzMedia.giro360, img=document.getElementById('mz-g360-img'); if(!g||!img) return;
+  var r=document.getElementById('mz-g360-r').value, y=document.getElementById('mz-g360-y').value, f=+document.getElementById('mz-g360-f').value;
+  if(g.frames[f] && img.getAttribute('src')!==g.frames[f]) img.src=g.frames[f];
+  img.style.aspectRatio=String(r); img.style.objectPosition='50% '+y+'%';
+}
+function mzGiroInqSalva(auto){
+  var g=_mzMedia.giro360; if(!g) return;
+  if(auto) delete g.taglio;
+  else g.taglio={ r:+document.getElementById('mz-g360-r').value, y:+document.getElementById('mz-g360-y').value };
+  var w=document.getElementById('mz-g360-inq'); if(w) w.remove();
+  mzMediaRender(); mzAutoSalvaMedia(_mzId, '\u2705 Inquadratura del 360\u00b0 '+(auto?'automatica':'salvata')+'.');
+}
 /* ===== SALVATAGGIO AUTOMATICO DOPO IL CARICAMENTO DEI VIDEO =====
    Finito il caricamento si salva l'auto come col tasto Salva. Se nella
    scheda manca un campo obbligatorio (auto nuova non ancora completata)
@@ -24843,13 +25001,14 @@ function mzSalvaSoloMedia(id){
     if(!id || typeof mzById!=='function' || !mzById(id)) return false;
     var list=mzLoad(), i=list.findIndex(function(x){ return x.id===id; }); if(i<0) return false;
     var a=list[i]; a.video=_mzMedia.video||null; a.giro360=_mzMedia.giro360||null; a.videoWa=_mzMedia.videoWa||null; a.updatedAt=Date.now();
-    mzSave(list); mzSupaUpsert(a); return true;
+    mzSave(list); mzSupaUpsert(a); mzBozzaMedia(null); return true;
   }catch(e){ return false; }
 }
 function mzAutoSalvaMedia(id, msg){
   var aperta=document.getElementById('mz_marca') && typeof _mzId!=='undefined' && _mzId===id;
   if(!aperta){ /* la scheda e' stata chiusa o si e' passati a un'altra auto */
     if(mzSalvaSoloMedia(id)){ try{ tcToastNew('💾 Video salvati sull’auto', true); }catch(e){} }
+    else mzBozzaMedia({ id:id, ts:Date.now(), giro360:_mzMedia.giro360||null, video:_mzMedia.video||null, videoWa:_mzMedia.videoWa||null });
     return;
   }
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
@@ -24861,7 +25020,8 @@ function mzAutoSalvaMedia(id, msg){
     if(sv && (sv.updatedAt||0)>=t0){ mzMediaStato(msg+' <b style="color:#166534;">Auto salvata in automatico.</b>'); return; }
   }
   if(mzSalvaSoloMedia(id)){ mzMediaStato(msg+' <b style="color:#166534;">Video salvati sull’auto.</b> <span style="color:#b45309;">Gli altri campi modificati vanno salvati col tasto Salva.</span>'); try{ tcToastNew('💾 Video salvati sull’auto', true); }catch(e){} }
-  else mzMediaStato(msg+' <b style="color:#b45309;">Auto nuova non ancora completa: compila i campi obbligatori e premi Salva.</b>');
+  else { mzBozzaMedia({ id:id, ts:Date.now(), giro360:_mzMedia.giro360||null, video:_mzMedia.video||null, videoWa:_mzMedia.videoWa||null });
+    mzMediaStato(msg+' <b style="color:#b45309;">Auto nuova non ancora completa: il '+(_mzMedia.giro360?'360\u00b0':'video')+' \u00e8 messo da parte e non si perde; compila i campi obbligatori e si salver\u00e0 con l\u2019auto.</b>'); }
 }
 function mzEscA(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function mzMediaStato(msg){ var st=document.getElementById('mz-media-stato'); if(st) st.innerHTML=msg; }
@@ -25071,6 +25231,7 @@ function mzGiroUpload(files){
       _mzMedia.giro360={ frames:buoni, n:buoni.length, ts:Date.now(), fonte:f.name||'' };
       mzMediaRender(); _mzMediaBusy=false;
       mzAutoSalvaMedia(_idAuto, '✅ Giro a 360° pronto ('+buoni.length+' fotogrammi).');
+      if(mzGiroAiAuto() && ko===0) setTimeout(function(){ mzGiroMiglioraAI(frames); }, 300);
     });
   }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Giro 360° non riuscito: '+mzEscA((err&&err.message)||err)+'</span>'); })
   .then(function(){ _mzMediaBusy=false; });
@@ -26419,7 +26580,7 @@ function mzSalva(){
   a.nlt = (function(){ var el=document.getElementById('mz_nlt'); return !!(el && el.checked); })();
   a.targa=(a.targa||'').toUpperCase(); a.updatedAt=Date.now();
   a.foto = (typeof _mzFoto!=='undefined' && Array.isArray(_mzFoto)) ? _mzFoto.slice() : (a.foto||[]);
-  try{ if(typeof _mzMedia!=='undefined'){ a.video=_mzMedia.video||null; a.giro360=_mzMedia.giro360||null; a.videoWa=_mzMedia.videoWa||null; } }catch(e){}
+  try{ if(typeof _mzMedia!=='undefined'){ a.video=_mzMedia.video||null; a.giro360=_mzMedia.giro360||null; a.videoWa=_mzMedia.videoWa||null; if(a.video||a.giro360) mzBozzaMedia(null); } }catch(e){}
   if(typeof mzAllineaImpegno==='function') mzAllineaImpegno(a);
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
