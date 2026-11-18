@@ -4926,6 +4926,7 @@ function gsJsonp(payload){
 var EA_MSG_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/smooth-function';
 var EA_MSG_KEY = 'sb_publishable_Q2ROk7MEaOCpG2W2xZv_pQ_BDyLItzw';
 var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-dotazioni';
+var EA_EQ_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-equipaggiamento';
 var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
 var EA_G360_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/migliora-giro360';
 var EA_F24_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/leggi-f24';
@@ -5687,26 +5688,52 @@ function eaInviaMessaggio(msg){
     body: JSON.stringify(Object.assign({ canale:'email' }, msg))
   }).then(function(r){ return r.json().catch(function(){ return {}; }); });
 }
-function mzGeneraDotazioni(auto){
+/* EQUIPAGGIAMENTO CON L'AI, con le voci di AutoScout24.
+   La funzione genera-equipaggiamento restituisce le dotazioni usando
+   esattamente i nomi della lista optional (MZ_OPT): cosi' le caselle si
+   spuntano da sole e, col collegamento, finiscono anche su AutoScout24.
+   allinea=true: non genera, riscrive con i nomi della lista il testo gia'
+   presente (senza aggiungere ne' togliere dotazioni).
+   Se la funzione nuova non e' ancora pubblicata si usa la vecchia
+   genera-dotazioni (testo libero, spunte solo dove i nomi coincidono). */
+function mzOptTutte(){ var l=[]; Object.keys(MZ_OPT).forEach(function(g){ l=l.concat(MZ_OPT[g]); }); return l; }
+function mzGeneraDotazioni(auto, allinea){
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
-  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Anno) prima di generare le dotazioni.'); return Promise.resolve(false); }
-  var ta=document.getElementById('mz_dotazioni');
-  if(ta && ta.value.trim()){ if(auto) return Promise.resolve('gia'); if(!confirm('Il campo Dotazioni non \u00e8 vuoto: sostituisco il contenuto con la lista generata?')) return Promise.resolve(false); }
-  var btn=document.getElementById('mz-dot-btn'); if(btn){ btn.disabled=true; btn.textContent='\u23f3 Genero\u2026'; }
-  var fine=function(){ if(btn){ btn.disabled=false; btn.textContent='\u2728 Genera con AI'; } };
-  return fetch(EA_DOT_URL,{
-    method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
-    body: JSON.stringify({ marca:g('marca'), modello:g('modello'), allestimento:g('allestimento'), anno:g('anno'),
-      alimentazione:g('alimentazione'), cambio:g('cambio'), cilindrata:g('cilindrata'), potenza:g('potenza') })
-  }).then(function(r){ return r.json().catch(function(){ return {}; }); })
+  var ta=document.getElementById('mz_dotazioni'), testo=ta?ta.value.trim():'';
+  if(allinea){ if(!testo){ if(!auto) alert('Il campo Dotazioni è vuoto: usa «✨ Genera con AI».'); return Promise.resolve(false); } }
+  else {
+    if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Anno) prima di generare le dotazioni.'); return Promise.resolve(false); }
+    if(testo){ if(auto) return mzGeneraDotazioni(true, true); if(!confirm('Il campo Dotazioni non è vuoto: sostituisco il contenuto con la lista generata?\n\n(Per tenere quello che hai scritto e solo spuntare le voci di AutoScout usa «↻ Allinea alla lista».)')) return Promise.resolve(false); }
+  }
+  var btn=document.getElementById(allinea?'mz-dot-all':'mz-dot-btn'), et=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='⏳ '+(allinea?'Allineo':'Genero')+'…'; }
+  var fine=function(){ if(btn){ btn.disabled=false; btn.textContent=et; } };
+  var dati={ marca:g('marca'), modello:g('modello'), allestimento:g('allestimento'), anno:g('anno')||String(g('dataImm')).slice(0,4),
+    alimentazione:g('alimentazione'), cambio:g('cambio'), cilindrata:g('cilindrata'), potenza:g('potenza') };
+  var H={ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY };
+  var tutte=mzOptTutte();
+  var scrivi=function(txt){ if(ta){ ta.value=txt; ta.scrollTop=0; ta.style.background='#f5f3ff'; } try{ mzOptSync(); var d=document.getElementById('mz-opt'); if(d) d.open=true; }catch(e){} };
+  var vecchia=function(){
+    if(allinea) return false;
+    return fetch(EA_DOT_URL,{ method:'POST', headers:H, body:JSON.stringify(dati) })
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){ if(j && j.dotazioni){ scrivi(j.dotazioni); return true; } return false; });
+  };
+  return fetch(EA_EQ_URL,{ method:'POST', headers:H, body:JSON.stringify(Object.assign({ opzioni:tutte, testo:allinea?testo:'' }, dati)) })
+    .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); }, function(){ return { ok:false, error:'rete' }; })
     .then(function(j){
-      fine();
-      if(j && j.dotazioni){ if(ta){ ta.value=j.dotazioni; ta.scrollTop=0; ta.style.background='#f5f3ff'; } try{ mzOptSync(); }catch(e){} return true; }
-      if(!auto) alert('Generazione non riuscita'+((j&&j.error)?(': '+j.error):'')+'.\nControlla che la funzione genera-dotazioni sia attiva su Supabase e che la chiave ANTHROPIC_API_KEY sia impostata nei Secrets.');
-      return false;
+      if(j && j.ok){
+        var std=(j.standard||[]).slice().sort(function(x,y){ return tutte.indexOf(x)-tutte.indexOf(y); });
+        var righe=std.concat(j.cerchi?['Cerchi in lega da '+j.cerchi+'"']:[]).concat(j.extra||[]);
+        scrivi(righe.join('\n')); fine(); return true;
+      }
+      return Promise.resolve(vecchia()).then(function(ok){
+        fine();
+        if(!ok && !auto) alert((allinea?'Allineamento':'Generazione')+' non riuscit'+(allinea?'o':'a')+((j&&j.error)?(': '+j.error):'')+'.\nControlla che la funzione genera-equipaggiamento sia attiva su Supabase (Verify JWT spento).');
+        return ok;
+      });
     })
-    .catch(function(){ if(!auto) alert('Errore di rete nella generazione dotazioni.'); fine(); return false; });
+    .catch(function(){ fine(); if(!auto) alert('Errore di rete nella generazione dotazioni.'); return false; });
 }
 function gsPost(payload){
   /* Questa strada porta due cose diverse allo stesso indirizzo: le scritture
@@ -23212,7 +23239,7 @@ function onStatoBadge(a){
    ===================================================================== */
 var ON_STATI_IMPEGNO=['opzionata','prenotata','venduta'];
 function onDaDecidere(a){
-  if(!a || a.nlt || a.deleted || a.sitoTolta || a.online!==true) return false;
+  if(!onVisibileSulSito(a)) return false;
   /* solo le vendite avvisate con la regola nuova: le vecchie opzionate erano
      gia' sparite dal sito e la vista continua a nasconderle */
   if(!a.sitoAvvisi) return false;
@@ -23221,12 +23248,42 @@ function onDaDecidere(a){
   if(!imp) return false;
   return String(a.sitoLasciaStato||'')!==String(st);
 }
+/* L'auto si vede DAVVERO sul sito? Stesse regole della vetrina:
+   interruttore Online acceso, non tolta, marca e modello, prezzo di
+   vendita. Prima bastava l'interruttore: un'auto accesa ma senza prezzo
+   (che il sito non mostra) faceva partire l'avviso "e' ancora sul sito". */
+function onVisibileSulSito(a){
+  if(!a || a.deleted || a.nlt || a.online!==true || a.sitoTolta) return false;
+  if(!a.marca || !a.modello) return false;
+  if(!(onNum(a.prezzoVen)>0)) return false;
+  return true;
+}
+/* Prima di avvisare si rilegge l'auto dall'archivio: il dispositivo di chi
+   vende puo' avere una copia vecchia (per esempio con Online acceso da
+   tempo e poi spento da un altro computer). */
 function onAvvisaVendita(autoId, cv, fase){
+  try{
+    var sb=(typeof sbClient==='function')?sbClient():null;
+    if(sb && autoId && !(cv&&cv._riletta)){
+      sb.from('magazzino').select('data').eq('id', autoId).then(function(r){
+        try{
+          var d=r && !r.error && r.data && r.data[0] && r.data[0].data;
+          if(d){ var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===autoId; });
+            if(i>=0){ ['online','sitoTolta','prezzoVen','marca','modello','nlt','deleted','sitoAvvisi'].forEach(function(k){ if(d[k]!==undefined) l[i][k]=d[k]; else if(k!=='sitoAvvisi') delete l[i][k]; }); mzSave(l); } }
+        }catch(e){}
+        onAvvisaVenditaOra(autoId, cv, fase);
+      }, function(){ onAvvisaVenditaOra(autoId, cv, fase); });
+      return;
+    }
+  }catch(e){}
+  onAvvisaVenditaOra(autoId, cv, fase);
+}
+function onAvvisaVenditaOra(autoId, cv, fase){
   try{
     if(!autoId || typeof mzLoad!=='function') return;
     var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===autoId; }); if(i<0) return;
     var a=l[i];
-    if(a.online!==true || a.sitoTolta) return;              /* non e' sul sito: niente da chiedere */
+    if(!onVisibileSulSito(a)) return;                       /* non e' davvero sul sito: niente da chiedere */
     var chiave=(fase||'vendita')+'_'+((cv&&cv.id)||'');
     a.sitoAvvisi=a.sitoAvvisi||{};
     if(a.sitoAvvisi[chiave]) return;                        /* gia' avvisato da questo o da un altro dispositivo */
@@ -25754,6 +25811,7 @@ function mzForm(id){
   h+=mzDescrHtml(a);
   try{ h+=mzTecHtml(a); }catch(e){}
   h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 3px;"><label style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Dotazioni di serie e optional</label><button type="button" id="mz-dot-btn" onclick="mzGeneraDotazioni()" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">\u2728 Genera con AI</button></div>';
+  h+='<div style="text-align:right;margin:-1px 0 3px;"><button type="button" id="mz-dot-all" onclick="mzGeneraDotazioni(false,true)" title="Riscrive le dotazioni gi\u00e0 presenti con le voci di AutoScout24 e spunta le caselle" style="padding:4px 9px;border-radius:7px;border:1px solid #c4b5fd;background:#faf5ff;color:#6d28d9;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;">\u21bb Allinea alla lista AutoScout</button></div>';
   h+='<textarea id="mz_dotazioni" oninput="mzOptSyncPresto()" placeholder="Una dotazione per riga\u2026 (genera con AI e poi aggiungi in fondo gli optional presenti sull\'auto)" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-height:110px;box-sizing:border-box;">'+v('dotazioni')+'</textarea>';
   h+='<div style="font-size:11px;color:#94a3b8;margin:2px 0 4px;">La lista generata contiene le dotazioni di serie tipiche dell\'allestimento: verificala e aggiungi gli optional effettivi. Compare sul sito nella sezione \u00abEquipaggiamento\u00bb.</div>';
   h+=mzOptHtml();
@@ -26214,7 +26272,7 @@ function mzAiTutto(){
   }).then(function(r){ esDot=r;
     if(btn){ btn.disabled=false; btn.textContent='\u2728 Compila tutto con AI'; }
     if(st) st.innerHTML=(esTec?'\u2705 Specifiche compilate':'\u26a0 Specifiche non trovate')
-      +' \u00b7 '+(esDot==='gia'?'equipaggiamento gi\u00e0 presente, non toccato':(esDot?'\u2705 equipaggiamento compilato':'\u26a0 equipaggiamento non generato'))
+      +' \u00b7 '+(esDot?'\u2705 equipaggiamento compilato e voci AutoScout spuntate':'\u26a0 equipaggiamento non generato')
       +'. <b>Controlla i campi in viola</b>, aggiungi gli optional presenti sull\u2019auto e premi Salva.';
   });
 }
