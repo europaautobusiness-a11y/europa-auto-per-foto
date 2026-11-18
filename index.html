@@ -5687,25 +5687,26 @@ function eaInviaMessaggio(msg){
     body: JSON.stringify(Object.assign({ canale:'email' }, msg))
   }).then(function(r){ return r.json().catch(function(){ return {}; }); });
 }
-function mzGeneraDotazioni(){
+function mzGeneraDotazioni(auto){
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?el.value.trim():''; };
-  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Anno) prima di generare le dotazioni.'); return; }
+  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Anno) prima di generare le dotazioni.'); return Promise.resolve(false); }
   var ta=document.getElementById('mz_dotazioni');
-  if(ta && ta.value.trim() && !confirm('Il campo Dotazioni non \u00e8 vuoto: sostituisco il contenuto con la lista generata?')) return;
+  if(ta && ta.value.trim()){ if(auto) return Promise.resolve('gia'); if(!confirm('Il campo Dotazioni non \u00e8 vuoto: sostituisco il contenuto con la lista generata?')) return Promise.resolve(false); }
   var btn=document.getElementById('mz-dot-btn'); if(btn){ btn.disabled=true; btn.textContent='\u23f3 Genero\u2026'; }
   var fine=function(){ if(btn){ btn.disabled=false; btn.textContent='\u2728 Genera con AI'; } };
-  fetch(EA_DOT_URL,{
+  return fetch(EA_DOT_URL,{
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
     body: JSON.stringify({ marca:g('marca'), modello:g('modello'), allestimento:g('allestimento'), anno:g('anno'),
       alimentazione:g('alimentazione'), cambio:g('cambio'), cilindrata:g('cilindrata'), potenza:g('potenza') })
   }).then(function(r){ return r.json().catch(function(){ return {}; }); })
     .then(function(j){
-      if(j && j.dotazioni){ if(ta){ ta.value=j.dotazioni; ta.scrollTop=0; } }
-      else alert('Generazione non riuscita'+((j&&j.error)?(': '+j.error):'')+'.\nControlla che la funzione genera-dotazioni sia attiva su Supabase e che la chiave ANTHROPIC_API_KEY sia impostata nei Secrets.');
       fine();
+      if(j && j.dotazioni){ if(ta){ ta.value=j.dotazioni; ta.scrollTop=0; ta.style.background='#f5f3ff'; } return true; }
+      if(!auto) alert('Generazione non riuscita'+((j&&j.error)?(': '+j.error):'')+'.\nControlla che la funzione genera-dotazioni sia attiva su Supabase e che la chiave ANTHROPIC_API_KEY sia impostata nei Secrets.');
+      return false;
     })
-    .catch(function(){ alert('Errore di rete nella generazione dotazioni.'); fine(); });
+    .catch(function(){ if(!auto) alert('Errore di rete nella generazione dotazioni.'); fine(); return false; });
 }
 function gsPost(payload){
   /* Questa strada porta due cose diverse allo stesso indirizzo: le scritture
@@ -24843,7 +24844,8 @@ function mzMediaRender(){
     h+=_riga('<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto;">',
       'Giro a 360\u00b0'+(_mzMedia.giro360.ai?' <span style="color:#7c3aed;">\u2728 migliorato con AI</span>':''), fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
       _bt('\u21BB Anteprima','mzGiroAnteprima()','link')
-      +((_mzMedia.giro360.ai && _mzMedia.giro360.originali)?_bt('\u21A9 Originale','mzGiroOriginale()',''):_bt('\u2728 Migliora con AI','mzGiroMiglioraAI(null)',''))
+      +_bt((_mzMedia.giro360.ai?'\u2728 Rifai con AI':'\u2728 Migliora con AI'),'mzGiroMiglioraAI(null)','')
+      +((_mzMedia.giro360.ai && _mzMedia.giro360.originali)?_bt('\u21A9 Originale','mzGiroOriginale()',''):'')
       +_bt('\u2702 Inquadra','mzGiroInquadra()','')+_bt('\uD83D\uDDD1',"_mzMedia.giro360=null;mzMediaRender();",'del'));
   }
   if(false){
@@ -24885,24 +24887,69 @@ function mzGiroElabora(bmps, dati){
   var b=dati.map(function(f){ return f&&f.b?f.b:null; });
   for(var i=0;i<n;i++) if(!b[i]){ for(var d=1; d<n; d++){ var x=b[(i+d)%n]||b[((i-d)%n+n)%n]; if(x){ b[i]=x; break; } } }
   var cx=[],cy=[],bw=[],bh=[],an=[];
-  b.forEach(function(r,i){ cx.push((r[0]+r[2])/2000*W); cy.push((r[1]+r[3])/2000*H); bw.push((r[2]-r[0])/1000*W); bh.push((r[3]-r[1])/1000*H); an.push(Math.max(-8,Math.min(8, +((dati[i]||{}).a)||0))); });
-  cx=mzGiroMedia(cx,0,2); cy=mzGiroMedia(cy,0,2); an=mzGiroMedia(an,0,3);
+  b.forEach(function(r,i){ cx.push((r[0]+r[2])/2000*W); cy.push((r[1]+r[3])/2000*H); bw.push((r[2]-r[0])/1000*W); bh.push((r[3]-r[1])/1000*H); an.push(Math.max(-10,Math.min(10, +((dati[i]||{}).a)||0))); });
+  cx=mzGiroMedia(cx,0,3); cy=mzGiroMedia(cy,0,3);
+  /* inclinazione: quella media del giro (il telefono si tiene storto sempre
+     uguale) piu' meta' della variazione del singolo fotogramma */
+  var med=an.slice().sort(function(x,y){return x-y;})[Math.floor(n/2)], anS=mzGiroMedia(an,0,3);
+  an=anS.map(function(v){ return med+(v-med)*0.5; });
   var p90=function(a){ var s=a.slice().sort(function(x,y){return x-y;}); return s[Math.min(s.length-1, Math.floor(s.length*0.9))]; };
-  var serveH=p90(bh)*1.40, serveW=p90(bw)*1.14;
-  var A=Math.max(1.1, Math.min(1.6, serveW/serveH));          /* proporzioni del riquadro finale */
+  /* riquadro stretto sull'auto: poco pavimento e poco soffitto */
+  var serveH=p90(bh)*1.28, serveW=p90(bw)*1.08;
+  var A=Math.max(1.25, Math.min(1.6, serveW/serveH));
   var Hc=Math.max(serveH, serveW/A), OW=1280, OH=Math.round(OW/A), sc=OH/Hc;
-  var c=document.createElement('canvas'); c.width=OW; c.height=OH; var ctx=c.getContext('2d');
+  /* colore e luce uguali per tutto il giro: bilanciamento del bianco,
+     livelli (neri piu' neri, bianchi piu' bianchi), luminosita' e un po'
+     di saturazione; calcolati sull'auto di tutti i fotogrammi */
+  var tc=document.createElement('canvas'); tc.width=160; tc.height=Math.round(160*H/W); var tx=tc.getContext('2d', { willReadFrequently:true });
+  var sR=0,sG=0,sB=0,cnt=0, isto=new Array(256).fill(0);
+  bmps.forEach(function(bm,k){
+    tx.drawImage(bm,0,0,tc.width,tc.height);
+    var x0=Math.max(0,Math.floor((cx[k]-bw[k]/2)/W*tc.width)), x1=Math.min(tc.width,Math.ceil((cx[k]+bw[k]/2)/W*tc.width));
+    var y0=Math.max(0,Math.floor((cy[k]-bh[k]/2)/H*tc.height)), y1=Math.min(tc.height,Math.ceil((cy[k]+bh[k]/2)/H*tc.height));
+    if(x1-x0<4||y1-y0<4) return;
+    var px=tx.getImageData(x0,y0,x1-x0,y1-y0).data;
+    for(var j=0;j<px.length;j+=8){ sR+=px[j]; sG+=px[j+1]; sB+=px[j+2]; cnt++; isto[Math.round(0.299*px[j]+0.587*px[j+1]+0.114*px[j+2])]++; }
+  });
+  var lut=[[],[],[]];
+  (function(){
+    if(!cnt){ for(var v=0;v<256;v++){ lut[0][v]=lut[1][v]=lut[2][v]=v; } return; }
+    var mR=sR/cnt, mG=sG/cnt, mB=sB/cnt, mm=(mR+mG+mB)/3;
+    var gain=[mm/mR, mm/mG, mm/mB].map(function(g){ return Math.max(0.88, Math.min(1.14, 1+(g-1)*0.7)); });
+    var tot=0, lo=0, hi=255, acc=0; isto.forEach(function(c){ tot+=c; });
+    for(var v2=0;v2<256;v2++){ acc+=isto[v2]; if(acc<tot*0.01) lo=v2; if(acc<tot*0.995) hi=v2; }
+    lo=Math.min(lo, 40); hi=Math.max(hi, 200);
+    acc=0; var medL=128; for(var v3=0;v3<256;v3++){ acc+=isto[v3]; if(acc>=tot/2){ medL=v3; break; } }
+    var mn=Math.max(0.02,Math.min(0.98,(medL-lo)/(hi-lo)));
+    var gam=Math.max(0.7, Math.min(1.3, Math.log(0.5)/Math.log(mn)));   /* porta la luce media verso la meta' */
+    for(var c=0;c<3;c++) for(var v4=0;v4<256;v4++){
+      var t=Math.max(0, Math.min(1, (v4*gain[c]-lo)/(hi-lo)));
+      t=Math.pow(t, gam);
+      t=t+(t-t*t)*0.18*(t<0.5?-1:1)*Math.min(t,1-t)*4;                    /* leggera curva a S: piu' contrasto */
+      lut[c][v4]=Math.max(0, Math.min(255, Math.round(t*255)));
+    }
+  })();
+  var c=document.createElement('canvas'); c.width=OW; c.height=OH; var ctx=c.getContext('2d', { willReadFrequently:true });
   var out=[], i2=0;
   return new Promise(function(resolve){
     var uno=function(){
       if(i2>=n){ resolve({ blobs:out, A:A }); return; }
       var k=i2++, bm=bmps[k];
-      ctx.save(); ctx.filter='blur(28px) brightness(0.92)';
-      var cov=Math.max(OW/W, OH/H); ctx.drawImage(bm, (OW-W*cov)/2, (OH-H*cov)/2, W*cov, H*cov); ctx.restore();
-      ctx.save(); ctx.filter='contrast(1.04) saturate(1.06)';
-      ctx.translate(OW/2, OH/2); ctx.rotate(an[k]*Math.PI/180); ctx.scale(sc, sc); ctx.translate(-cx[k], -cy[k]);
+      ctx.save(); ctx.filter='blur(30px) brightness(0.85)';
+      var cov=Math.max(OW/W, OH/H)*1.1; ctx.drawImage(bm, (OW-W*cov)/2, (OH-H*cov)/2, W*cov, H*cov); ctx.restore();
+      ctx.save(); ctx.translate(OW/2, OH/2); ctx.rotate(-an[k]*Math.PI/180); ctx.scale(sc, sc); ctx.translate(-cx[k], -cy[k]);
       ctx.drawImage(bm, 0, 0); ctx.restore();
-      c.toBlob(function(bl){ out.push(bl); uno(); }, 'image/jpeg', 0.88);
+      var id=ctx.getImageData(0,0,OW,OH), p=id.data, L0=lut[0], L1=lut[1], L2=lut[2];
+      for(var j=0;j<p.length;j+=4){
+        var r=L0[p[j]], g=L1[p[j+1]], bb=L2[p[j+2]], l=0.299*r+0.587*g+0.114*bb;
+        r=l+(r-l)*1.12; g=l+(g-l)*1.12; bb=l+(bb-l)*1.12;
+        p[j]=r<0?0:r>255?255:r; p[j+1]=g<0?0:g>255?255:g; p[j+2]=bb<0?0:bb>255?255:bb;
+      }
+      ctx.putImageData(id,0,0);
+      /* vignettatura leggera: l'occhio va sull'auto */
+      var gr=ctx.createRadialGradient(OW/2,OH/2,Math.min(OW,OH)*0.45,OW/2,OH/2,Math.hypot(OW,OH)*0.6);
+      gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(0,0,0,0.22)'); ctx.fillStyle=gr; ctx.fillRect(0,0,OW,OH);
+      c.toBlob(function(bl){ out.push(bl); setTimeout(uno, 0); }, 'image/jpeg', 0.9);
     };
     uno();
   });
@@ -24918,15 +24965,15 @@ function mzGiroMiglioraAI(blobs){
   Promise.all(sorgenti.map(mzGiroCarica)).catch(function(){
     throw new Error('non riesco a leggere i fotogrammi già caricati: ricarica il video 360° con l’opzione AI attiva');
   }).then(function(b){
-    bmps=b; var W=b[0].width, H=b[0].height, sw=(W>H)?448:300, sh=Math.round(sw*H/W);
+    bmps=b; var W=b[0].width, H=b[0].height, sw=(W>H)?560:380, sh=Math.round(sw*H/W);
     var c=document.createElement('canvas'); c.width=sw; c.height=sh; var ctx=c.getContext('2d');
-    var piccoli=b.map(function(bm){ ctx.drawImage(bm,0,0,sw,sh); return c.toDataURL('image/jpeg',0.72).split(',')[1]; });
-    mzMediaStato('⏳ ✨ L’AI cerca l’auto in '+b.length+' fotogrammi… <span style="color:#94a3b8;">circa 20–40 secondi</span>');
+    var piccoli=b.map(function(bm){ ctx.drawImage(bm,0,0,sw,sh); return c.toDataURL('image/jpeg',0.75).split(',')[1]; });
+    mzMediaStato('⏳ ✨ L’AI cerca l’auto e la sua inclinazione in '+b.length+' fotogrammi… <span style="color:#94a3b8;">circa 30–60 secondi</span>');
     return fetch(EA_G360_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify({ frames:piccoli }) })
       .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); });
   }).then(function(j){
     if(!j || !j.ok) throw new Error((j&&j.error)||'risposta non valida (la funzione migliora-giro360 è attiva su Supabase?)');
-    mzMediaStato('⏳ ✨ Raddrizzo e centro i fotogrammi…');
+    mzMediaStato('⏳ ✨ Raddrizzo, centro e sistemo luce e colori…');
     return mzGiroElabora(bmps, j.frames);
   }).then(function(res){
     var urls=new Array(res.blobs.length), idx=0, ok=0, ko=0, base='giro360ai-'+Date.now();
@@ -24942,54 +24989,108 @@ function mzGiroMiglioraAI(blobs){
       var cur=_mzMedia.giro360||{};
       _mzMedia.giro360={ frames:urls, n:urls.length, ts:cur.ts||Date.now(), fonte:cur.fonte||'', ai:true, originali:originali };
       mzMediaRender(); _mzMediaBusy=false;
-      mzAutoSalvaMedia(_idAuto, '✨ Giro 360° migliorato con l’AI: raddrizzato e centrato sull’auto. Se non ti piace premi «↩ Originale».');
+      mzAutoSalvaMedia(_idAuto, '✨ Giro 360° migliorato con l’AI: raddrizzato, centrato, luce e colori sistemati. Per ritocchi usa «✂ Inquadra»; per tornare indietro «↩ Originale».');
     });
   }).catch(function(err){
-    mzMediaStato('<span style="color:#dc2626;">Miglioramento AI non riuscito: '+mzEscA((err&&err.message)||err)+'</span> <span style="color:#64748b;">Il giro resta quello originale.</span>');
+    mzMediaStato('<span style="color:#dc2626;">Miglioramento AI non riuscito: '+mzEscA((err&&err.message)||err)+'</span> <span style="color:#64748b;">Il giro resta com’era.</span>');
   }).then(function(){ _mzMediaBusy=false; try{ bmps.forEach(function(b){ b.close&&b.close(); }); }catch(e){} });
 }
 function mzGiroOriginale(){
   var g=_mzMedia.giro360; if(!g || !g.originali) return;
-  if(!confirm('Tornare al giro 360\u00b0 originale, senza le correzioni dell\u2019AI?')) return;
+  if(!confirm('Tornare al giro 360° originale, senza le correzioni dell’AI?')) return;
   _mzMedia.giro360={ frames:g.originali.slice(), n:g.originali.length, ts:g.ts, fonte:g.fonte||'' };
-  mzMediaRender(); mzAutoSalvaMedia(_mzId, '\u21A9 Ripristinato il giro 360\u00b0 originale.');
+  mzMediaRender(); mzAutoSalvaMedia(_mzId, '↩ Ripristinato il giro 360° originale.');
 }
 /* ===== INQUADRATURA DEL GIRO 360 =====
-   Sul sito il giro si ritaglia per togliere pavimento e soffitto e
-   tenere l'auto al centro. Senza scelta manuale vale il taglio automatico
-   (video verticale: riquadro quasi quadrato un po' sopra il centro). Qui si regola
-   quanto tagliare e dove; il valore va in giro360.taglio = {r, y}. */
-var MZ_G360_AUTO={ r:1, y:40 };
+   giro360.taglio = { r: proporzioni del riquadro (larghezza/altezza),
+   z: ingrandimento (1 = l'immagine riempie il riquadro), x / y: spostamento
+   in % del riquadro, rot: gradi per raddrizzare }. Lo stesso calcolo
+   (g360Taglio / g360Disponi) e' nel sito vetrina: quello che si vede qui
+   e' quello che si vede sul sito. */
+function g360Taglio(g, W, H){
+  var t=g&&g.taglio;
+  if(t && t.z) return { r:+t.r||W/H, z:+t.z||1, x:+t.x||0, y:+t.y||0, rot:+t.rot||0 };
+  if((g&&g.ai) || H<=W) return { r:W/H, z:1, x:0, y:0, rot:0 };
+  return { r:1, z:1, x:0, y:10, rot:0 };
+}
+function g360Disponi(box, img, t){
+  var W=img.naturalWidth, H=img.naturalHeight; if(!W||!H||!box.clientWidth) return;
+  var Bw=box.clientWidth, Bh=Bw/t.r; box.style.height=Bh+'px';
+  var th=Math.abs(t.rot)*Math.PI/180, rc=Math.cos(th)+Math.max(t.r,1/t.r)*Math.sin(th);
+  var s=Math.max(Bw/W, Bh/H)*t.z*rc;
+  img.style.cssText='position:absolute;left:50%;top:50%;max-width:none;max-height:none;width:'+(W*s)+'px;height:'+(H*s)+'px;transform:translate(-50%,-50%) translate('+(t.x*Bw/100)+'px,'+(t.y*Bh/100)+'px) rotate('+t.rot+'deg);pointer-events:none;';
+}
+var _mzInq=null;
 function mzGiroInquadra(){
   var g=_mzMedia.giro360; if(!g||!g.frames||!g.frames.length) return;
-  var t=g.taglio||MZ_G360_AUTO, n=g.frames.length;
   var w=document.createElement('div'); w.id='mz-g360-inq';
-  w.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:14px;';
-  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:96vh;overflow:auto;padding:16px 18px;font-family:inherit;">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><b style="font-size:16px;color:#0f172a;">\u2702 Inquadratura del giro 360\u00b0</b>'
-    +'<button type="button" onclick="document.getElementById(\'mz-g360-inq\').remove()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">\u2715</button></div>'
-    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:10px;">Cos\u00ec si vedr\u00e0 sul sito. Togli pavimento e soffitto lasciando l\u2019auto intera; gira l\u2019auto con il cursore \u00abFotogramma\u00bb per controllare anche i lati.</div>'
-    +'<div id="mz-g360-box" style="background:#111;border-radius:10px;overflow:hidden;"><img id="mz-g360-img" src="'+mzEscA(g.frames[0])+'" style="width:100%;display:block;object-fit:cover;max-height:60vh;"></div>'
-    +'<label style="display:block;margin-top:12px;font-size:13px;font-weight:700;color:#334155;">Quanto tagliare sopra e sotto<input id="mz-g360-r" type="range" min="0.8" max="2.2" step="0.05" value="'+t.r+'" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
-    +'<label style="display:block;margin-top:6px;font-size:13px;font-weight:700;color:#334155;">Sposta su / gi\u00f9<input id="mz-g360-y" type="range" min="0" max="100" step="1" value="'+t.y+'" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
-    +'<label style="display:block;margin-top:6px;font-size:13px;font-weight:700;color:#334155;">Fotogramma<input id="mz-g360-f" type="range" min="0" max="'+(n-1)+'" step="1" value="0" style="width:100%;" oninput="mzGiroInqAgg()"></label>'
-    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap;">'
+  w.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:10px;';
+  var sl=function(id,lab,min,max,step){ return '<label style="display:block;margin-top:8px;font-size:13px;font-weight:700;color:#334155;">'+lab+' <span id="'+id+'-v" style="color:#94a3b8;font-weight:600;"></span><input id="'+id+'" type="range" min="'+min+'" max="'+max+'" step="'+step+'" style="width:100%;margin:2px 0 0;" oninput="mzGiroInqLeggi()"></label>'; };
+  var fb=function(r,lab){ return '<button type="button" data-r="'+r+'" onclick="mzGiroInqFormato('+r+')" style="padding:7px 10px;border-radius:7px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">'+lab+'</button>'; };
+  w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:620px;width:100%;max-height:96vh;display:flex;flex-direction:column;overflow:hidden;font-family:inherit;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px 6px;"><b style="font-size:16px;color:#0f172a;">✂ Inquadratura del giro 360°</b>'
+    +'<button type="button" onclick="mzGiroInqChiudi()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">✕</button></div>'
+    +'<div style="overflow:auto;padding:0 16px 10px;">'
+    +'<div style="font-size:12.5px;color:#64748b;margin-bottom:8px;">Così si vedrà sul sito. Trascina l’immagine per spostarla; usa la griglia per raddrizzare. Controlla anche i lati con «Fotogramma».</div>'
+    +'<div id="mz-g360-box" style="position:relative;overflow:hidden;background:#111;border-radius:10px;margin:0 auto;touch-action:none;cursor:move;">'
+    +'<img id="mz-g360-img" src="'+mzEscA(g.frames[0])+'" draggable="false">'
+    +'<div style="position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px);background-size:100% 16.666%,16.666% 100%;"></div></div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center;"><span style="font-size:13px;font-weight:700;color:#334155;margin-right:4px;">Formato</span>'+fb(1,'Quadrato')+fb(1.333,'4:3')+fb(1.6,'16:10')+fb(1.778,'16:9')+'</div>'
+    +sl('mz-g360-rot','↻ Raddrizza',-12,12,0.25)
+    +sl('mz-g360-z','🔍 Ingrandisci (taglia di più)',1,2.5,0.01)
+    +sl('mz-g360-y','↕ Sposta su / giù',-40,40,0.5)
+    +sl('mz-g360-x','↔ Sposta destra / sinistra',-40,40,0.5)
+    +sl('mz-g360-f','🎞 Fotogramma',0,g.frames.length-1,1)
+    +'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #e2e8f0;background:#f8fafc;flex-wrap:wrap;">'
     +'<button type="button" onclick="mzGiroInqSalva(true)" style="padding:10px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">Automatico</button>'
-    +'<button type="button" onclick="mzGiroInqSalva(false)" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">\uD83D\uDCBE Salva inquadratura</button></div></div>';
-  document.body.appendChild(w); mzGiroInqAgg();
+    +'<button type="button" onclick="mzGiroInqSalva(false)" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">💾 Salva inquadratura</button></div></div>';
+  document.body.appendChild(w);
+  document.getElementById('mz-g360-f').value=0; document.getElementById('mz-g360-f-v').textContent='1 di '+g.frames.length;
+  var img=document.getElementById('mz-g360-img'), box=document.getElementById('mz-g360-box');
+  var avvia=function(){
+    _mzInq=g360Taglio(g, img.naturalWidth, img.naturalHeight);
+    mzGiroInqScrivi(); mzGiroInqDisegna();
+  };
+  if(img.complete && img.naturalWidth) avvia(); else img.addEventListener('load', avvia, { once:true });
+  /* trascinare l'immagine = spostarla */
+  var giu=null;
+  box.addEventListener('pointerdown', function(e){ if(!_mzInq) return; giu={ x:e.clientX, y:e.clientY, tx:_mzInq.x, ty:_mzInq.y }; try{ box.setPointerCapture(e.pointerId); }catch(er){} });
+  box.addEventListener('pointermove', function(e){ if(!giu) return; var Bw=box.clientWidth, Bh=box.clientHeight;
+    _mzInq.x=Math.max(-40,Math.min(40, giu.tx+(e.clientX-giu.x)/Bw*100)); _mzInq.y=Math.max(-40,Math.min(40, giu.ty+(e.clientY-giu.y)/Bh*100));
+    mzGiroInqScrivi(); mzGiroInqDisegna(); });
+  var su=function(){ giu=null; }; box.addEventListener('pointerup', su); box.addEventListener('pointercancel', su);
+  window.addEventListener('resize', mzGiroInqDisegna);
 }
-function mzGiroInqAgg(){
-  var g=_mzMedia.giro360, img=document.getElementById('mz-g360-img'); if(!g||!img) return;
-  var r=document.getElementById('mz-g360-r').value, y=document.getElementById('mz-g360-y').value, f=+document.getElementById('mz-g360-f').value;
-  if(g.frames[f] && img.getAttribute('src')!==g.frames[f]) img.src=g.frames[f];
-  img.style.aspectRatio=String(r); img.style.objectPosition='50% '+y+'%';
+function mzGiroInqScrivi(){
+  var t=_mzInq; if(!t) return;
+  var set=function(id,v,txt){ var el=document.getElementById(id); if(el) el.value=v; var s=document.getElementById(id+'-v'); if(s) s.textContent=txt; };
+  set('mz-g360-rot', t.rot, (t.rot>0?'+':'')+(+t.rot).toFixed(2).replace(/\.?0+$/,'')+'°');
+  set('mz-g360-z', t.z, '×'+(+t.z).toFixed(2));
+  set('mz-g360-y', t.y, Math.round(t.y)+'%'); set('mz-g360-x', t.x, Math.round(t.x)+'%');
+  document.querySelectorAll('#mz-g360-inq [data-r]').forEach(function(b){ var on=Math.abs(+b.getAttribute('data-r')-t.r)<0.02; b.style.background=on?'#1a4fa0':'#fff'; b.style.color=on?'#fff':'#334155'; b.style.borderColor=on?'#1a4fa0':'#cbd5e1'; });
 }
+function mzGiroInqLeggi(){
+  if(!_mzInq) return; var v=function(id){ return +document.getElementById(id).value; };
+  _mzInq.rot=v('mz-g360-rot'); _mzInq.z=v('mz-g360-z'); _mzInq.y=v('mz-g360-y'); _mzInq.x=v('mz-g360-x');
+  var g=_mzMedia.giro360, img=document.getElementById('mz-g360-img'), f=v('mz-g360-f');
+  if(g && img && g.frames[f] && img.getAttribute('src')!==g.frames[f]) img.src=g.frames[f];
+  var s=document.getElementById('mz-g360-f-v'); if(s) s.textContent=(f+1)+' di '+(g?g.frames.length:'');
+  mzGiroInqScrivi(); mzGiroInqDisegna();
+}
+function mzGiroInqFormato(r){ if(!_mzInq) return; _mzInq.r=r; mzGiroInqScrivi(); mzGiroInqDisegna(); }
+function mzGiroInqDisegna(){
+  var box=document.getElementById('mz-g360-box'), img=document.getElementById('mz-g360-img'); if(!box||!img||!_mzInq) return;
+  box.style.width='min(100%, '+Math.round(window.innerHeight*0.46*_mzInq.r)+'px)';
+  g360Disponi(box, img, _mzInq);
+}
+function mzGiroInqChiudi(){ var w=document.getElementById('mz-g360-inq'); if(w) w.remove(); window.removeEventListener('resize', mzGiroInqDisegna); _mzInq=null; }
 function mzGiroInqSalva(auto){
   var g=_mzMedia.giro360; if(!g) return;
   if(auto) delete g.taglio;
-  else g.taglio={ r:+document.getElementById('mz-g360-r').value, y:+document.getElementById('mz-g360-y').value };
-  var w=document.getElementById('mz-g360-inq'); if(w) w.remove();
-  mzMediaRender(); mzAutoSalvaMedia(_mzId, '\u2705 Inquadratura del 360\u00b0 '+(auto?'automatica':'salvata')+'.');
+  else if(_mzInq) g.taglio={ r:Math.round(_mzInq.r*1000)/1000, z:Math.round(_mzInq.z*100)/100, x:Math.round(_mzInq.x*10)/10, y:Math.round(_mzInq.y*10)/10, rot:_mzInq.rot };
+  mzGiroInqChiudi();
+  mzMediaRender(); mzAutoSalvaMedia(_mzId, '✅ Inquadratura del 360° '+(auto?'automatica':'salvata')+'.');
 }
 /* ===== SALVATAGGIO AUTOMATICO DOPO IL CARICAMENTO DEI VIDEO =====
    Finito il caricamento si salva l'auto come col tasto Salva. Se nella
@@ -25642,6 +25743,10 @@ function mzForm(id){
   h+=(typeof mzFotoHtml==='function'?mzFotoHtml():'');
   h+=(typeof mzMediaHtml==='function'?mzMediaHtml():'');
   h+='</div><div>';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid #ddd6fe;background:#faf5ff;border-radius:10px;">'
+    +'<button type="button" id="mz-ai-tutto" onclick="mzAiTutto()" style="padding:9px 14px;border-radius:8px;border:none;background:#7c3aed;color:#fff;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;">\u2728 Compila tutto con AI</button>'
+    +'<span id="mz-ai-tutto-st" style="flex:1;min-width:180px;font-size:11.5px;color:#6b21a8;line-height:1.4;">Specifiche (dimensioni, peso, consumi, CO\u2082, cilindri, potenza fiscale, neopatentati\u2026) ed equipaggiamento di serie, da marca, modello, allestimento e anno. Riempie solo i campi vuoti.</span></div>';
+  h+=mzDescrHtml(a);
   try{ h+=mzTecHtml(a); }catch(e){}
   h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 3px;"><label style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;">Dotazioni di serie e optional</label><button type="button" id="mz-dot-btn" onclick="mzGeneraDotazioni()" style="padding:6px 11px;border-radius:7px;border:1px solid #1a4fa0;background:#eaf1fb;color:#1a4fa0;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">\u2728 Genera con AI</button></div>';
   h+='<textarea id="mz_dotazioni" placeholder="Una dotazione per riga\u2026 (genera con AI e poi aggiungi in fondo gli optional presenti sull\'auto)" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-height:110px;box-sizing:border-box;">'+v('dotazioni')+'</textarea>';
@@ -25965,6 +26070,34 @@ function mzControllaDuplicati(targa, telaio, idCorrente){
     + A+A+'OK per proseguire, Annulla per fermarsi e controllare.');
 }
 
+/* ===== DESCRIZIONE DELL'AUTO SUL SITO =====
+   Testo libero di quest'auto (a.descrizione) + la descrizione generica
+   uguale per tutte (Parametri -> Sito, config_pubblica 'descrizione'),
+   che si puo' togliere auto per auto (a.descrGen === false). */
+function mzDescrHtml(a){
+  a=a||{};
+  var gen=(a.descrGen!==false);
+  return '<label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin:12px 0 3px;text-transform:uppercase;">Descrizione di quest\u2019auto (sito)</label>'
+    +'<textarea id="mz_descrizione" placeholder="es. Unico proprietario, tagliandi certificati Alfa Romeo, gomme nuove\u2026" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;min-height:80px;box-sizing:border-box;">'+mzEscA(a.descrizione||'')+'</textarea>'
+    +'<label style="display:flex;align-items:center;gap:7px;margin-top:5px;font-size:12.5px;color:#334155;cursor:pointer;"><input type="checkbox" id="mz_descrGen" '+(gen?'checked':'')+'> Aggiungi sotto la descrizione generica uguale per tutte le auto <span style="color:#94a3b8;">(si scrive in Parametri \u2192 Sito)</span></label>';
+}
+/* "Compila tutto con AI": scheda tecnica (solo campi vuoti) ed
+   equipaggiamento (solo se vuoto), uno dopo l'altro. Poi si salva da soli. */
+function mzAiTutto(){
+  var btn=document.getElementById('mz-ai-tutto'), st=document.getElementById('mz-ai-tutto-st');
+  if(btn){ btn.disabled=true; btn.textContent='\u23f3 Lavoro\u2026'; }
+  if(st) st.innerHTML='Cerco le specifiche della versione online (fino a un minuto)\u2026';
+  var esTec=false, esDot=false;
+  Promise.resolve(mzGeneraTec(true)).then(function(r){ esTec=r;
+    if(st) st.innerHTML=(r?'\u2705 Specifiche fatte. ':'\u26a0 Specifiche non trovate. ')+'Ora l\u2019equipaggiamento\u2026';
+    return mzGeneraDotazioni(true);
+  }).then(function(r){ esDot=r;
+    if(btn){ btn.disabled=false; btn.textContent='\u2728 Compila tutto con AI'; }
+    if(st) st.innerHTML=(esTec?'\u2705 Specifiche compilate':'\u26a0 Specifiche non trovate')
+      +' \u00b7 '+(esDot==='gia'?'equipaggiamento gi\u00e0 presente, non toccato':(esDot?'\u2705 equipaggiamento compilato':'\u26a0 equipaggiamento non generato'))
+      +'. <b>Controlla i campi in viola</b>, aggiungi gli optional presenti sull\u2019auto e premi Salva.';
+  });
+}
 /* ===== SCHEDA TECNICA PER IL SITO =====
    Misure e dati che su Autoscout arrivano da una banca dati (Infocar/
    Motornet/Eurotax). Finche' non c'e' un collegamento si scrivono a mano;
@@ -25973,7 +26106,9 @@ var MZ_TEC_CAMPI=[
   ['porte','Porte',''],['posti','Posti',''],['carrozzeria','Carrozzeria','es. Berlina, SUV, Station wagon'],['trazione','Trazione','es. Anteriore, Integrale'],
   ['classe','Classe emissioni','es. Euro 6d'],['co2','CO\u2082 (g/km)',''],['consumo','Consumo misto (l/100 km o kWh/100 km)',''],['autonomia','Autonomia elettrica (km)','solo ibride plug-in / elettriche'],
   ['lunghezza','Lunghezza (mm)',''],['larghezza','Larghezza (mm)',''],['altezza','Altezza (mm)',''],['passo','Passo (mm)',''],
-  ['bagagliaio','Bagagliaio (litri)',''],['massa','Massa a vuoto (kg)',''],['serbatoio','Serbatoio (litri)',''],['marce','Marce','']
+  ['bagagliaio','Bagagliaio (litri)',''],['massa','Massa a vuoto (kg)',''],['serbatoio','Serbatoio (litri)',''],['marce','Marce',''],
+  ['cilindri','Numero cilindri',''],['cvf','Potenza fiscale (CV)',''],['neopatentati','Neopatentati','S\u00ec / No'],
+  ['coloreInt','Colore interni','es. Nero','man'],['tappezzeria','Tappezzeria','es. Stoffa, Pelle, Alcantara','man']
 ];
 /* ===== ASSICURAZIONE INCLUSA, SUL SITO =====
    Testo e garanzie mostrati nella pagina di ogni auto in vetrina, accanto
@@ -26383,6 +26518,38 @@ function sitoFinCalcola(f, prezzo, kw){
   var r=(i>0)?(C*i/(1-Math.pow(1+i,-m))):(C/m);
   return { anticipo:ant, passaggio:pas, finanziato:C, rata:Math.round(r+n(f.speseIncasso)) };
 }
+/* ===== DESCRIZIONE GENERICA DELLE AUTO SUL SITO =====
+   Compare nella sezione "Descrizione" di ogni auto, sotto il testo della
+   singola auto (se l'auto non la esclude). config_pubblica 'descrizione'. */
+var SITO_DESCR_DEF='\u2705 I NOSTRI VEICOLI SONO GARANTITI CON:\n* Chilometraggio certificato\n* Garanzia da 12 a 24 mesi\n* Tagliando e check-up completi pre-consegna\n* Pulizia e igienizzazione dell\u2019abitacolo\n* Assistenza post-vendita dedicata\n\n\uD83D\uDE97 HAI UN USATO DA PERMUTARE?\nValutiamo e accettiamo tutti i tipi di veicoli. Inviaci foto e info su WhatsApp per ricevere una valutazione.\n\n\u26a0\ufe0f Nota bene: alcuni optional inseriti potrebbero variare, ti invitiamo a verificare sempre la dotazione.';
+var _sitoDescr=null;
+function sitoDescrHtml(){
+  if(_sitoDescr===null) setTimeout(function(){
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    sb.from('config_pubblica').select('id,data').eq('id','descrizione').then(function(r){
+      var d=(r && !r.error && r.data && r.data[0] && r.data[0].data)||null;
+      _sitoDescr=d?String(d.testo||''):'';
+      var ta=document.getElementById('sdes_testo'); if(ta && !ta.dataset.toccato) ta.value=d?_sitoDescr:SITO_DESCR_DEF;
+      var st=document.getElementById('sdes-st'); if(st) st.textContent=d?'':'Non ancora salvata: \u00e8 una proposta, modificala e salva.';
+    });
+  },0);
+  return '<div style="margin:22px 0 6px;padding:14px;border:1px solid #bfdbfe;background:#f5f9ff;border-radius:11px;">'
+    +'<div style="font-weight:800;font-size:13px;color:#1a4fa0;text-transform:uppercase;margin-bottom:4px;">\uD83D\uDCDD Descrizione generica delle auto</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-bottom:8px;line-height:1.5;">Compare nella pagina di <b>ogni</b> auto, nella sezione \u00abDescrizione\u00bb, sotto il testo scritto per quell\u2019auto. Si pu\u00f2 togliere auto per auto dalla scheda del veicolo (scheda Sito). Gli a capo restano come li scrivi.</div>'
+    +'<textarea id="sdes_testo" oninput="this.dataset.toccato=1" style="width:100%;min-height:190px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box;">'+mzEscA(_sitoDescr===null?'':(_sitoDescr||SITO_DESCR_DEF))+'</textarea>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;"><span id="sdes-st" style="font-size:12px;color:#b45309;"></span>'
+    +'<button onclick="sitoDescrSalva()" style="padding:9px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-weight:800;cursor:pointer;">\uD83D\uDCBE Salva descrizione</button></div></div>';
+}
+function sitoDescrSalva(){
+  var ta=document.getElementById('sdes_testo'); if(!ta) return;
+  var d={ testo:String(ta.value||'').trim(), updatedAt:Date.now() };
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb){ alert('Supabase non raggiungibile'); return; }
+  sb.from('config_pubblica').upsert({ id:'descrizione', data:d }).then(function(r){
+    if(r && r.error){ alert('Non salvata: '+r.error.message); return; }
+    _sitoDescr=d.testo; var st=document.getElementById('sdes-st'); if(st) st.textContent='';
+    if(typeof tcToastNew==='function') tcToastNew('\uD83D\uDCDD Descrizione generica salvata', true);
+  });
+}
 function sitoFinHtml(){
   setTimeout(sitoFinProva,60);
   if(!_sitoFin) setTimeout(function(){ sitoFinLoad(function(){ var b=document.getElementById('sfin-box'); if(b) b.outerHTML=sitoFinHtml(); }); },0);
@@ -26451,18 +26618,19 @@ function sitoAssicSalva(){
    (marca, modello, allestimento, anno) e restituisce i campi tec_*. Si
    riempiono i campi vuoti; se qualcuno e' gia' compilato si chiede prima
    se sovrascriverlo. Si salva solo premendo Salva, come sempre. */
-function mzGeneraTec(){
+function mzGeneraTec(auto){
   var g=function(k){ var el=document.getElementById('mz_'+k); return el?String(el.value||'').trim():''; };
-  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Immatricolazione) prima di generare la scheda tecnica.'); return; }
+  if(!g('marca')||!g('modello')){ alert('Compila almeno Marca e Modello (meglio anche Allestimento e Immatricolazione) prima di generare la scheda tecnica.'); return Promise.resolve(false); }
   var anno=g('anno')||(g('dataImm').match(/(19|20)\d{2}/)||[''])[0];
   var pieni=MZ_TEC_CAMPI.filter(function(c){ return g('tec_'+c[0]); }).length;
   var sovr=false;
-  if(pieni){ sovr=confirm('Ci sono gi\u00e0 '+pieni+' campi compilati.\n\nOK = sostituisco anche quelli con i dati trovati\nAnnulla = riempio solo i campi vuoti'); }
+  if(pieni && !auto){ sovr=confirm('Ci sono gi\u00e0 '+pieni+' campi compilati.\n\nOK = sostituisco anche quelli con i dati trovati\nAnnulla = riempio solo i campi vuoti'); }
+  try{ var _det=document.getElementById('mz-tec-det'); if(_det) _det.open=true; }catch(e){}
   var btn=document.getElementById('mz-tec-btn'), es=document.getElementById('mz-tec-esito');
   if(btn){ btn.disabled=true; btn.textContent='\u23f3 Cerco i dati\u2026'; }
   if(es){ es.style.color='#64748b'; es.textContent='Ricerca in corso, pu\u00f2 servire anche mezzo minuto\u2026'; }
   var fine=function(){ if(btn){ btn.disabled=false; btn.textContent='\u2728 Compila con AI'; } };
-  fetch(EA_TEC_URL,{
+  return fetch(EA_TEC_URL,{
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY },
     body: JSON.stringify({ marca:g('marca'), modello:g('modello'), allestimento:g('allestimento'), anno:anno,
@@ -26472,10 +26640,11 @@ function mzGeneraTec(){
       fine();
       if(!j || !j.ok || !j.tec){
         if(es){ es.style.color='#dc2626'; es.textContent='Non riuscito'+((j&&j.error)?(': '+j.error):'')+'. Controlla che la funzione genera-scheda-tecnica sia attiva su Supabase.'; }
-        return;
+        return false;
       }
       var messi=0, vuoti=0;
       MZ_TEC_CAMPI.forEach(function(c){
+        if(c[3]==='man') return;
         var el=document.getElementById('mz_tec_'+c[0]); if(!el) return;
         var v=String(j.tec[c[0]]||'').trim();
         if(!v){ vuoti++; return; }
@@ -26489,13 +26658,14 @@ function mzGeneraTec(){
           +'. I campi in viola sono quelli nuovi: controllali e poi premi Salva.'
           +((j.fonti&&j.fonti.length)?('<br><span style="color:#64748b;">Fonti: '+j.fonti.map(function(u){ return '<a href="'+mzEscA(u)+'" target="_blank" rel="noopener" style="color:#1a4fa0;">'+mzEscA(u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0])+'</a>'; }).join(', ')+'</span>'):'');
       }
+      return true;
     })
-    .catch(function(){ fine(); if(es){ es.style.color='#dc2626'; es.textContent='Errore di rete: riprova tra poco.'; } });
+    .catch(function(){ fine(); if(es){ es.style.color='#dc2626'; es.textContent='Errore di rete: riprova tra poco.'; } return false; });
 }
 function mzTecHtml(a){
   a=a||{};
   var pieni=MZ_TEC_CAMPI.filter(function(c){ return String(a['tec_'+c[0]]||'').trim(); }).length;
-  var h='<details style="margin:12px 0 4px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#f8fafc;"'+(pieni?' open':'')+'>'
+  var h='<details id="mz-tec-det" style="margin:12px 0 4px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#f8fafc;"'+(pieni?' open':'')+'>'
     +'<summary style="cursor:pointer;font-size:11px;font-weight:800;color:#1a4fa0;text-transform:uppercase;">\uD83D\uDCD0 Scheda tecnica per il sito <span style="font-weight:600;color:#94a3b8;text-transform:none;">('+pieni+' su '+MZ_TEC_CAMPI.length+' compilati \u00b7 facoltativa)</span></summary>'
     +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">'
     +'<button type="button" id="mz-tec-btn" onclick="mzGeneraTec()" style="padding:8px 14px;border-radius:8px;border:1px solid #7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">\u2728 Compila con AI</button>'
@@ -26503,7 +26673,7 @@ function mzTecHtml(a){
     +'<div id="mz-tec-esito" style="font-size:11.5px;margin-top:6px;"></div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px;">';
   MZ_TEC_CAMPI.forEach(function(c){
-    h+='<div><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">'+c[1]+'</label>'
+    h+='<div><label style="display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">'+c[1]+(c[3]==='man'?' <span style="color:#b45309;font-weight:600;">\u00b7 a mano</span>':'')+'</label>'
       +'<input id="mz_tec_'+c[0]+'" value="'+mzEscA(a['tec_'+c[0]]||'')+'" placeholder="'+mzEscA(c[2])+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;"></div>';
   });
   h+='</div><div style="font-size:11px;color:#94a3b8;margin-top:6px;">Si vedono sulla pagina dell\u2019auto nel sito solo i campi compilati. Prendili dal libretto o dalla scheda ufficiale del modello.</div></details>';
@@ -26556,7 +26726,8 @@ function mzSalva(){
   ['marca','modello','allestimento','targa','km','colore','alimentazione','cambio','cilindrata','potenza','telaio','dataImm','numero_interno','prezzoAcq','prezzoVen','listino','stato','note','dotazioni','etichetta','promoPrezzo','promoScad','promoCond','promoPacchetto','promoPacchettoAnni'].forEach(function(k){ if(k==='prezzoAcq' && !_canPrAcq) return; a[k]=g(k); });
   /* Scheda tecnica per il sito (facoltativa): si salva solo se il riquadro
      e' stato aperto, cosi' un salvataggio non cancella valori che non si vedono. */
-  if(document.getElementById('mz_tec_porte')) MZ_TEC_CAMPI.forEach(function(c){ a['tec_'+c[0]]=g('tec_'+c[0]); }); ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
+  if(document.getElementById('mz_tec_porte')) MZ_TEC_CAMPI.forEach(function(c){ a['tec_'+c[0]]=g('tec_'+c[0]); });
+  if(document.getElementById('mz_descrizione')){ a.descrizione=g('descrizione'); var _dg=document.getElementById('mz_descrGen'); a.descrGen=!!(_dg&&_dg.checked); } ['marca','modello','allestimento','colore'].forEach(function(k){ if(a[k]) a[k]=String(a[k]).toUpperCase(); });
   a.estera=_mzEstera;
   if(_fidPrivato){ a.fornitoreNome=_fidPrivato; a.provenienzaVenditore='privato'; }
   a.provenienzaVenditore=_mzEstera?'':_mzProvVend;
@@ -33990,6 +34161,7 @@ function parInit(){
   h+='</div>';
   h+='<div class="par-tab" data-tab="sito">';
   h+='<div style="font-size:12.5px;color:#64748b;margin:2px 0 6px;line-height:1.5;">Quello che vedono i clienti sul sito: rata, assicurazione inclusa, immagini delle offerte, noleggio. Ogni riquadro ha il suo pulsante Salva.</div>';
+  h+=sitoDescrHtml();
   h+=sitoFinHtml();
   h+=sitoAssicHtml();
   h+=sitoBannerHtml();
