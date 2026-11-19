@@ -4929,6 +4929,7 @@ var EA_DOT_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-d
 var EA_EQ_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-equipaggiamento';
 var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
 var EA_G360_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/migliora-giro360';
+var EA_F24COD_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/spiega-codici-f24';
 var EA_F24_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/leggi-f24';
 var EA_WA_NUM = '39029181820';  // ripiego: il valore vero sta nei Parametri
 
@@ -13208,6 +13209,60 @@ var F24_CODICI={
   'AP':['inps','INPS artigiani — eccedenza minimale'],
   'CP':['inps','INPS commercianti — eccedenza minimale']
 };
+/* TRIBUTO di ogni codice (IMU, IRES, IRAP, IVA...): quelli noti qui sotto,
+   gli altri si cercano con l'AI (funzione spiega-codici-f24) e si salvano
+   nell'archivio (record f24_app 'cfg_codici'), cosi' ogni codice si cerca
+   una volta sola e vale per tutti i computer. */
+var F24_CATEG={'1001':'Ritenute dipendenti','1002':'Ritenute dipendenti','1012':'Ritenute dipendenti','1038':'Ritenute agenti','1040':'Ritenute lavoro autonomo','1019':'Altre ritenute',
+  '1627':'Crediti e compensazioni','1631':'Crediti e compensazioni','1712':'Imposta sostitutiva','1713':'Imposta sostitutiva','6013':'IVA','6099':'IVA',
+  '2001':'IRES','2002':'IRES','2003':'IRES','3800':'IRAP','3812':'IRAP','3813':'IRAP','3802':'Addizionale regionale','3847':'Addizionale comunale','3848':'Addizionale comunale',
+  '3850':'Diritto camerale','3918':'IMU','3925':'IMU','3930':'IMU','7085':'Registro e bollo','8904':'Sanzioni','8906':'Sanzioni','1991':'Interessi',
+  'DM10':'Contributi INPS','CXX':'Contributi INPS','AF':'Contributi INPS','CF':'Contributi INPS','AP':'Contributi INPS','CP':'Contributi INPS'};
+(function(){ for(var i=1;i<=12;i++) F24_CATEG[String(6000+i)]='IVA'; })();
+var F24_CAT_LISTA=['IVA','IRES','IRAP','IRPEF','IMU','TARI e tributi comunali','Ritenute dipendenti','Ritenute lavoro autonomo','Ritenute agenti','Altre ritenute','Addizionale regionale','Addizionale comunale','Imposta sostitutiva','Contributi INPS','INAIL','Diritto camerale','Registro e bollo','Sanzioni','Interessi','Crediti e compensazioni','Altro'];
+var _f24Cod=null;
+function f24CodLoad(){ if(_f24Cod) return _f24Cod; try{ _f24Cod=JSON.parse(localStorage.getItem('ea_f24_codici')||'{}')||{}; }catch(e){ _f24Cod={}; } return _f24Cod; }
+function f24CodSalva(){ try{ localStorage.setItem('ea_f24_codici', JSON.stringify(_f24Cod||{})); }catch(e){}
+  var sb=(typeof sbClient==='function')?sbClient():null; if(sb) sb.from('f24_app').upsert({ id:'cfg_codici', data:{ id:'cfg_codici', tipo:'codici', codici:_f24Cod, updatedAt:Date.now() } }).then(function(){}); }
+/* tutto quello che si sa di un codice: { sezione, descrizione, categoria } */
+function f24Info(c){
+  c=String(c||'').trim().toUpperCase(); if(!c) return null;
+  var d=F24_CODICI[c], a=f24CodLoad()[c];
+  if(!d && !a) return null;
+  return { sezione:(d&&d[0])||(a&&a.sezione)||'', descrizione:(d&&d[1])||(a&&a.descrizione)||'', categoria:F24_CATEG[c]||(a&&a.categoria)||'' };
+}
+function f24Cat(r){ var i=f24Info(r&&r.codice); return (r&&r.categoria)||(i&&i.categoria)||''; }
+var _f24InCerca={};
+/* cerca con l'AI i codici che non conosciamo; poi aggiorna righe e schermata */
+function f24Spiega(codici, dopo){
+  var cache=f24CodLoad();
+  var da=(codici||[]).map(function(c){ return String(c||'').trim().toUpperCase(); }).filter(function(c,i,a){ return c && a.indexOf(c)===i && !F24_CATEG[c] && !(cache[c]&&cache[c].categoria) && !_f24InCerca[c]; });
+  if(!da.length){ if(dopo) dopo(0); return; }
+  da.forEach(function(c){ _f24InCerca[c]=1; });
+  fetch(EA_F24COD_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify({ codici:da }) })
+    .then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(j){
+      da.forEach(function(c){ delete _f24InCerca[c]; });
+      var n=0;
+      if(j && j.ok && j.codici){ Object.keys(j.codici).forEach(function(c){ var x=j.codici[c]; if(x && x.categoria){ cache[c]={ categoria:x.categoria, descrizione:x.descrizione||'', sezione:x.sezione||'', da:'ai', ts:Date.now() }; n++; } }); if(n) f24CodSalva(); }
+      if(_f24Ed){ var cambiato=false; _f24Ed.righe.forEach(function(r){ var i=f24Info(r.codice); if(!i) return;
+        if(!r.categoria && i.categoria){ r.categoria=i.categoria; cambiato=true; }
+        if((!r.descrizione || r._descAuto) && i.descrizione){ r.descrizione=i.descrizione; r._descAuto=true; cambiato=true; }
+        if(i.sezione && (!r.sezione || r.sezione==='altri')){ r.sezione=i.sezione; cambiato=true; } });
+        if(cambiato && document.getElementById('f24-righe')) f24RigheRender(); }
+      if(document.getElementById('view-f24')) f24Render();
+      if(dopo) dopo(n, j);
+    }, function(){ da.forEach(function(c){ delete _f24InCerca[c]; }); if(dopo) dopo(0); });
+}
+/* per gli F24 gia' inseriti: cerca tutti i codici senza tributo */
+function f24SpiegaTutti(){
+  var cod={}; f24Load().forEach(function(m){ if(m && !m.deleted) (m.righe||[]).forEach(function(r){ if(r.codice && !f24Cat(r)) cod[String(r.codice).toUpperCase()]=1; }); });
+  var l=Object.keys(cod);
+  if(!l.length){ alert('Tutti i codici hanno gi\u00e0 il loro tributo.'); return; }
+  var b=document.getElementById('f24-spiega-btn'); if(b){ b.disabled=true; b.textContent='\u23f3 Cerco '+l.length+' codici\u2026'; }
+  f24Spiega(l, function(n, j){ if(b){ b.disabled=false; b.textContent='\uD83D\uDD0E Cerca i codici senza tributo'; }
+    f24Stato(n?('\u2713 Trovati '+n+' codici su '+l.length+'.'):('\u26a0 Ricerca non riuscita'+((j&&j.error)?(': '+f24E(j.error)):'')+'. Controlla che la funzione spiega-codici-f24 sia attiva su Supabase.'), n?'#166534':'#dc2626'); });
+}
 var F24_MESI=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 var _f24=null, _f24Anno=null, _f24Tab='versamenti', _f24Ed=null;
 function f24Puo(){ var r=(typeof getCurrentRole==='function')?getCurrentRole():''; return r==='admin'||r==='contabilita'; }
@@ -13223,10 +13278,12 @@ function f24SupaLoad(){
     if(!res || res.error){ var el=document.getElementById('f24-stato'); if(el && res && res.error) el.textContent='Archivio online non raggiungibile ('+res.error.message+'): i dati restano su questo computer finché non si collega.'; return; }
     var loc={}; f24Load().forEach(function(m){ loc[m.id]=m; });
     (res.data||[]).forEach(function(r){ var d=r.data; if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } } if(!d) return; d.id=d.id||r.id;
+      if(d.tipo==='codici' || r.id==='cfg_codici'){ var c=f24CodLoad(); Object.keys(d.codici||{}).forEach(function(k){ if(!c[k] || (d.codici[k].ts||0)>=(c[k].ts||0)) c[k]=d.codici[k]; }); try{ localStorage.setItem('ea_f24_codici', JSON.stringify(c)); }catch(e){} return; }
       var l=loc[d.id]; if(!l || (d.updatedAt||0)>=(l.updatedAt||0)) loc[d.id]=d; });
     _f24=Object.keys(loc).map(function(k){ return loc[k]; });
     /* quelli creati qui e mai arrivati online si rimandano */
     var online={}; (res.data||[]).forEach(function(r){ online[r.id]=1; });
+    _f24=_f24.filter(function(m){ return m && m.id!=='cfg_codici' && m.tipo!=='codici'; });
     _f24.forEach(function(m){ if(!online[m.id]) f24Supa(m); });
     f24SaveLocal(); f24Render();
   });
@@ -13294,7 +13351,8 @@ function f24HtmlVersamenti(l){
           +'<button onclick="f24Elimina(\''+m.id+'\')" title="Elimina" style="padding:6px 9px;border-radius:7px;border:1px solid #fecaca;background:#fff;color:#dc2626;cursor:pointer;">🗑</button></div>'
           +'<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px;">'
           +(m.righe||[]).map(function(r){ var sez=(F24_SEZIONI.filter(function(s){ return s[0]===r.sezione; })[0]||['',''])[1];
-            return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:4px 6px;width:70px;font-weight:800;">'+f24E(r.codice)+'</td><td style="padding:4px 6px;">'+f24E(r.descrizione||((F24_CODICI[String(r.codice||'').toUpperCase()]||[])[1])||'')+' <span style="color:#94a3b8;">'+f24E(sez)+(r.rif?(' · rif. '+f24E(r.rif)):'')+'</span></td>'
+            var _ct=f24Cat(r), _in=f24Info(r.codice);
+            return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:4px 6px;width:70px;font-weight:800;">'+f24E(r.codice)+'</td><td style="padding:4px 6px;">'+(_ct?('<span style="display:inline-block;background:#eef2ff;color:#3730a3;border-radius:5px;padding:1px 7px;font-weight:800;font-size:11.5px;margin-right:6px;">'+f24E(_ct)+'</span>'):'<span style="display:inline-block;background:#fef3c7;color:#92400e;border-radius:5px;padding:1px 7px;font-weight:800;font-size:11.5px;margin-right:6px;">?</span>')+f24E(r.descrizione||(_in&&_in.descrizione)||'')+' <span style="color:#94a3b8;">'+f24E(sez)+(r.rif?(' · rif. '+f24E(r.rif)):'')+'</span></td>'
               +'<td style="padding:4px 6px;text-align:right;white-space:nowrap;">'+(f24Num(r.debito)?f24Eu(f24Num(r.debito)):'')+'</td><td style="padding:4px 6px;text-align:right;white-space:nowrap;color:#166534;">'+(f24Num(r.credito)?('− '+f24Eu(f24Num(r.credito))):'')+'</td></tr>'; }).join('')
           +'</table></div>'; }).join('')
       +'</div>';
@@ -13322,20 +13380,24 @@ function f24HtmlCodici(anno, l){
   var cod={}, sez={};
   l.forEach(function(m){ (m.righe||[]).forEach(function(r){
     var k=String(r.codice||'?').toUpperCase(), v=f24Num(r.debito)-f24Num(r.credito);
-    var c=cod[k]=cod[k]||{k:k, desc:r.descrizione||((F24_CODICI[k]||[])[1])||'', tot:0, n:0, mesi:{}};
+    var _in=f24Info(k);
+    var c=cod[k]=cod[k]||{k:k, desc:r.descrizione||(_in&&_in.descrizione)||'', cat:f24Cat(r), tot:0, n:0, mesi:{}};
     c.tot+=v; c.n++; c.mesi[String(m.data).slice(5,7)]=1;
-    var s=r.sezione||'altri'; sez[s]=(sez[s]||0)+v; }); });
+    var s=c.cat||'Da capire'; sez[s]=(sez[s]||0)+v; }); });
   var lc=Object.keys(cod).map(function(k){ return cod[k]; }).sort(function(a,b){ return b.tot-a.tot; });
   if(!lc.length) return '<div style="color:#64748b;padding:20px;">Nessun dato per '+anno+'.</div>';
   var tot=0; lc.forEach(function(c){ tot+=c.tot; });
   var th='padding:8px 10px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;';
-  return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
-    +F24_SEZIONI.filter(function(s){ return sez[s[0]]; }).map(function(s){ return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px 12px;"><div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase;">'+s[1]+'</div><div style="font-weight:900;font-size:16px;">'+f24Eu(sez[s[0]])+'</div><div style="font-size:11px;color:#94a3b8;">'+Math.round(sez[s[0]]/(tot||1)*100)+'% del totale</div></div>'; }).join('')
+  var senza=lc.filter(function(c){ return !c.cat; }).length;
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;"><b style="font-size:14px;flex:1;">Quanto per tributo nel '+anno+'</b>'
+    +'<button id="f24-spiega-btn" onclick="f24SpiegaTutti()" style="padding:7px 12px;border-radius:8px;border:1px solid '+(senza?'#f59e0b':'#cbd5e1')+';background:'+(senza?'#fffbeb':'#fff')+';color:'+(senza?'#92400e':'#334155')+';font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">\uD83D\uDD0E Cerca i codici senza tributo'+(senza?(' ('+senza+')'):'')+'</button></div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">'
+    +Object.keys(sez).sort(function(a,b){ return sez[b]-sez[a]; }).map(function(s){ return '<div style="background:#fff;border:1px solid '+(s==='Da capire'?'#fcd34d':'#e2e8f0')+';border-radius:10px;padding:9px 12px;min-width:130px;"><div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase;">'+f24E(s)+'</div><div style="font-weight:900;font-size:16px;">'+f24Eu(sez[s])+'</div><div style="font-size:11px;color:#94a3b8;">'+Math.round(sez[s]/(tot||1)*100)+'% del totale</div></div>'; }).join('')
     +'</div>'
     +'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px;">'
-    +'<tr style="background:#f8fafc;"><th style="'+th+'">Codice</th><th style="'+th+'">Descrizione</th><th style="'+th+'text-align:right;">Versamenti</th><th style="'+th+'text-align:right;">Totale '+anno+'</th><th style="'+th+'text-align:right;">Media al mese</th></tr>'
-    +lc.map(function(c){ var nm=Object.keys(c.mesi).length||1; return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:7px 10px;font-weight:900;">'+f24E(c.k)+'</td><td style="padding:7px 10px;">'+f24E(c.desc)+'</td><td style="padding:7px 10px;text-align:right;">'+c.n+'</td><td style="padding:7px 10px;text-align:right;font-weight:800;">'+f24Eu(c.tot)+'</td><td style="padding:7px 10px;text-align:right;color:#64748b;">'+f24Eu(c.tot/nm)+'</td></tr>'; }).join('')
-    +'<tr style="border-top:2px solid #1a4fa0;background:#f8fafc;font-weight:900;"><td style="padding:9px 10px;" colspan="3">Totale</td><td style="padding:9px 10px;text-align:right;color:#1a4fa0;">'+f24Eu(tot)+'</td><td></td></tr>'
+    +'<tr style="background:#f8fafc;"><th style="'+th+'">Codice</th><th style="'+th+'">Tributo</th><th style="'+th+'">Descrizione</th><th style="'+th+'text-align:right;">Versamenti</th><th style="'+th+'text-align:right;">Totale '+anno+'</th><th style="'+th+'text-align:right;">Media al mese</th></tr>'
+    +lc.map(function(c){ var nm=Object.keys(c.mesi).length||1; return '<tr style="border-top:1px solid #f1f5f9;"><td style="padding:7px 10px;font-weight:900;">'+f24E(c.k)+'</td><td style="padding:7px 10px;font-weight:800;color:#3730a3;">'+(c.cat?f24E(c.cat):'<span style="color:#b45309;">da capire</span>')+'</td><td style="padding:7px 10px;">'+f24E(c.desc)+'</td><td style="padding:7px 10px;text-align:right;">'+c.n+'</td><td style="padding:7px 10px;text-align:right;font-weight:800;">'+f24Eu(c.tot)+'</td><td style="padding:7px 10px;text-align:right;color:#64748b;">'+f24Eu(c.tot/nm)+'</td></tr>'; }).join('')
+    +'<tr style="border-top:2px solid #1a4fa0;background:#f8fafc;font-weight:900;"><td style="padding:9px 10px;" colspan="4">Totale</td><td style="padding:9px 10px;text-align:right;color:#1a4fa0;">'+f24Eu(tot)+'</td><td></td></tr>'
     +'</table></div>'
     +'<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">La media al mese di ogni codice è calcolata sui mesi in cui quel codice è stato pagato.</div>';
 }
@@ -13347,7 +13409,7 @@ function f24Editor(id, nuovo){
   var w=document.getElementById('f24-ed'); if(w) w.remove();
   w=document.createElement('div'); w.id='f24-ed';
   w.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.55);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
-  var dl='<datalist id="f24-codici">'+Object.keys(F24_CODICI).map(function(k){ return '<option value="'+k+'">'+f24E(F24_CODICI[k][1])+'</option>'; }).join('')+'</datalist>';
+  var dl='<datalist id="f24-cat">'+F24_CAT_LISTA.map(function(c){ return '<option value="'+c+'">'; }).join('')+'</datalist><datalist id="f24-codici">'+Object.keys(F24_CODICI).map(function(k){ return '<option value="'+k+'">'+f24E(F24_CODICI[k][1])+'</option>'; }).join('')+'</datalist>';
   w.innerHTML='<div style="background:#fff;border-radius:14px;max-width:980px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'+dl
     +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div style="font-weight:900;font-size:18px;flex:1;">🧾 '+(id?'Modifica F24':(m._daPdf?'F24 letto dal PDF':'Nuovo F24'))+'</div>'
     +'<button onclick="f24Chiudi()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">✕</button></div>'
@@ -13357,7 +13419,7 @@ function f24Editor(id, nuovo){
     +'<div><label style="display:block;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;">Note (facoltative)</label><input id="f24-note" value="'+f24E(m.note||'')+'" placeholder="es. F24 stipendi ottobre, ravvedimento…" style="width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;"></div>'
     +'</div>'
     +'<div style="font-size:12px;color:#64748b;margin:12px 0 6px;">Una riga per ogni codice tributo del modello. Scrivi il codice: la descrizione si compila da sola per quelli più comuni. Le compensazioni vanno nella colonna <b>A credito</b>.</div>'
-    +'<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:820px;" id="f24-righe"></table></div>'
+    +'<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:960px;" id="f24-righe"></table></div>'
     +'<button onclick="f24RigaAgg()" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:1px dashed #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-weight:800;cursor:pointer;">＋ Aggiungi riga</button>'
     +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;flex-wrap:wrap;"><div id="f24-totale" style="flex:1;font-size:14px;"></div>'
     +'<button onclick="f24Chiudi()" style="padding:10px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-weight:700;cursor:pointer;">'+(_f24Coda.length?'Salta':'Annulla')+'</button>'
@@ -13370,11 +13432,12 @@ function f24RigheRender(){
   var t=document.getElementById('f24-righe'); if(!t||!_f24Ed) return;
   var inp='width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-family:inherit;font-size:13px;box-sizing:border-box;';
   var th='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;text-align:left;padding:4px;';
-  t.innerHTML='<tr><th style="'+th+'width:150px;">Sezione</th><th style="'+th+'width:95px;">Codice</th><th style="'+th+'">Descrizione</th><th style="'+th+'width:110px;">Rif. (mm/aaaa)</th><th style="'+th+'width:120px;">A debito €</th><th style="'+th+'width:120px;">A credito €</th><th style="width:34px;"></th></tr>'
+  t.innerHTML='<tr><th style="'+th+'width:150px;">Sezione</th><th style="'+th+'width:95px;">Codice</th><th style="'+th+'width:150px;">Tributo</th><th style="'+th+'">Descrizione</th><th style="'+th+'width:110px;">Rif. (mm/aaaa)</th><th style="'+th+'width:120px;">A debito €</th><th style="'+th+'width:120px;">A credito €</th><th style="width:34px;"></th></tr>'
     +_f24Ed.righe.map(function(r,i){
       return '<tr>'
         +'<td style="padding:3px;"><select onchange="f24Riga('+i+',\'sezione\',this.value)" style="'+inp+'">'+F24_SEZIONI.map(function(s){ return '<option value="'+s[0]+'"'+(r.sezione===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join('')+'</select></td>'
         +'<td style="padding:3px;"><input list="f24-codici" value="'+f24E(r.codice)+'" onchange="f24Codice('+i+',this.value)" style="'+inp+'font-weight:800;"></td>'
+        +'<td style="padding:3px;"><input list="f24-cat" value="'+f24E(r.categoria||f24Cat(r))+'" placeholder="'+(_f24InCerca[String(r.codice||'').toUpperCase()]?'\u23f3 cerco\u2026':'')+'" oninput="f24Riga('+i+',\'categoria\',this.value)" style="'+inp+'color:#3730a3;font-weight:700;"></td>'
         +'<td style="padding:3px;"><input id="f24-desc-'+i+'" value="'+f24E(r.descrizione)+'" oninput="f24Riga('+i+',\'descrizione\',this.value)" style="'+inp+'"></td>'
         +'<td style="padding:3px;"><input value="'+f24E(r.rif)+'" placeholder="10/2026" oninput="f24Riga('+i+',\'rif\',this.value)" style="'+inp+'"></td>'
         +'<td style="padding:3px;"><input value="'+f24E(r.debito)+'" inputmode="decimal" placeholder="0,00" oninput="f24Riga('+i+',\'debito\',this.value)" style="'+inp+'text-align:right;"></td>'
@@ -13386,8 +13449,9 @@ function f24RigheRender(){
 function f24Riga(i,k,v){ if(!_f24Ed||!_f24Ed.righe[i]) return; _f24Ed.righe[i][k]=v; if(k==='debito'||k==='credito') f24TotaleEd(); }
 function f24Codice(i,v){
   var c=String(v||'').trim().toUpperCase(), r=_f24Ed.righe[i]; if(!r) return;
-  r.codice=c; var info=F24_CODICI[c];
-  if(info){ if(!r.descrizione || r._descAuto){ r.descrizione=info[1]; r._descAuto=true; } r.sezione=info[0]; }
+  r.codice=c; var info=f24Info(c);
+  if(info){ if(info.descrizione && (!r.descrizione || r._descAuto)){ r.descrizione=info.descrizione; r._descAuto=true; } if(info.sezione) r.sezione=info.sezione; if(info.categoria && !r.categoria) r.categoria=info.categoria; }
+  if(c && !(info && info.categoria)) f24Spiega([c]);
   f24RigheRender();
 }
 function f24RigaAgg(){ var u=_f24Ed.righe[_f24Ed.righe.length-1]||{}; _f24Ed.righe.push({sezione:u.sezione||'erario',codice:'',descrizione:'',rif:u.rif||'',debito:'',credito:''}); f24RigheRender(); }
@@ -13400,7 +13464,7 @@ function f24Salva(){
   m.data=String((document.getElementById('f24-data')||{}).value||'').trim();
   m.note=String((document.getElementById('f24-note')||{}).value||'').trim();
   m.righe=m.righe.filter(function(r){ return String(r.codice||'').trim() || f24Num(r.debito) || f24Num(r.credito); })
-    .map(function(r){ var x={sezione:r.sezione,codice:String(r.codice||'').trim().toUpperCase(),descrizione:String(r.descrizione||'').trim(),rif:String(r.rif||'').trim(),debito:f24Num(r.debito)||'',credito:f24Num(r.credito)||''}; return x; });
+    .map(function(r){ var x={sezione:r.sezione,codice:String(r.codice||'').trim().toUpperCase(),descrizione:String(r.descrizione||'').trim(),categoria:String(r.categoria||f24Cat(r)||'').trim(),rif:String(r.rif||'').trim(),debito:f24Num(r.debito)||'',credito:f24Num(r.credito)||''}; return x; });
   if(!/^\d{4}-\d{2}-\d{2}$/.test(m.data)){ alert('Inserisci la data di addebito.'); return; }
   if(!m.righe.length){ alert('Inserisci almeno una riga con codice tributo e importo.'); f24RigheRender(); return; }
   var senza=m.righe.filter(function(r){ return !r.codice; }).length;
@@ -13456,8 +13520,9 @@ function f24CaricaPdf(input){
       j.modelli.forEach(function(md, k){
         letti.push({ id:'f24_'+Date.now()+'_'+idx+'_'+k, data:md.data||'', note:'Da PDF: '+f.name, pdf:url||'',
           _daPdf:true, _saldoPdf:(md.saldo||md.saldo===0)?Number(md.saldo):null, _contribuente:md.contribuente||'',
-          righe:(md.righe||[]).map(function(r){ var c=String(r.codice||'').toUpperCase(), info=F24_CODICI[c];
-            return { sezione:r.sezione||(info?info[0]:'altri'), codice:c, descrizione:info?info[1]:'', _descAuto:!!info, rif:r.rif||'',
+          righe:(md.righe||[]).map(function(r){ var c=String(r.codice||'').toUpperCase(), info=f24Info(c);
+            return { sezione:r.sezione||(info&&info.sezione)||'altri', codice:c, descrizione:(info&&info.descrizione)||r.descrizione||'', _descAuto:true,
+              categoria:(info&&info.categoria)||r.categoria||'', rif:r.rif||'',
               debito:r.debito?String(r.debito).replace('.',','):'', credito:r.credito?String(r.credito).replace('.',','):'' }; }) });
       });
     }).catch(function(e){ errori.push(f.name+': '+(e&&e.message||e)); });
@@ -13471,6 +13536,13 @@ function f24CaricaPdf(input){
     if(errori.length) msg+=(msg?'<br>':'')+'⚠ Non letti: '+errori.map(f24E).join(' · ')+(errori.some(function(e){ return /fetch|Failed|non letto/i.test(e); })?' — controlla che la funzione leggi-f24 sia attiva su Supabase.':'');
     f24Stato(msg, errori.length&&!letti.length?'#dc2626':'#166534');
     if(!letti.length) return;
+    /* i codici che nessuno conosce si cercano subito con l'AI */
+    var cache=f24CodLoad(), nuovi=0;
+    letti.forEach(function(m){ m.righe.forEach(function(r){ var c=String(r.codice||'').toUpperCase();
+      if(c && !(f24Info(c)||{}).categoria && r.categoria && r.categoria!=='Altro'){ cache[c]={ categoria:r.categoria, descrizione:r.descrizione||'', sezione:r.sezione||'', da:'pdf', ts:Date.now() }; nuovi++; } }); });
+    if(nuovi) f24CodSalva();
+    var ign=[]; letti.forEach(function(m){ m.righe.forEach(function(r){ if(r.codice && !(f24Info(r.codice)||{}).categoria) ign.push(r.codice); }); });
+    if(ign.length) f24Spiega(ign);
     _f24Coda=letti; f24ProssimoCoda();
   });
 }
