@@ -4930,6 +4930,7 @@ var EA_EQ_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-eq
 var EA_TEC_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/genera-scheda-tecnica';
 var EA_G360_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/migliora-giro360';
 var EA_F24COD_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/spiega-codici-f24';
+var EA_OLIO_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/olio-motore';
 var EA_F24_URL = 'https://jasrectyddshjizpxiia.supabase.co/functions/v1/leggi-f24';
 var EA_WA_NUM = '39029181820';  // ripiego: il valore vero sta nei Parametri
 
@@ -36546,6 +36547,8 @@ function tgApri(id){
   }
   m.style.display='block';
   tgRender();
+  /* l'olio si cerca da solo appena si apre la fattura */
+  setTimeout(function(){ if(_tgId===id) tgOlioAuto(); }, 350);
 }
 function tgChiudiModal(){ var m=document.getElementById('tg-modal'); if(m) m.style.display='none'; _tgId=null; }
 
@@ -36569,17 +36572,226 @@ function tgAddRiga(){ _tgRighe.push({cod:'',desc:'',qta:1,um:'',prezzo:0}); tgSa
 function tgDelRiga(i){ _tgRighe.splice(i,1); tgSalvaBozza(); tgRender(); }
 
 /* Salvataggio indipendente dalla provenienza: appuntamento o intervento. */
-function tgListaFonte(){
-  return (String(_tgId||'').indexOf('iv_')===0)
+function tgListaFonte(id){
+  return (String(id||_tgId||'').indexOf('iv_')===0)
     ? { list:ivLoad(), salva:ivSave, upsert:(typeof ivSupaUpsert==='function'?ivSupaUpsert:null) }
     : { list:(typeof ccLoad==='function'?ccLoad():[]), salva:(typeof ccSave==='function'?ccSave:function(){}), upsert:(typeof ccSupaUpsert==='function'?ccSupaUpsert:null) };
 }
+/* ===== OLIO MOTORE CON L'AI =====
+   Dal libretto (campo P.5 = tipo motore) o da marca e modello, la funzione
+   olio-motore cerca online l'olio prescritto dal costruttore: gradazione,
+   specifiche/omologazioni e quantita'. Con un clic finisce nella riga
+   "OLIO MOTORE" della fattura. Il risultato resta salvato (f.olio). */
+function tgOlioHtml(f){
+  f=f||{}; var o=f.olio;
+  var bt='padding:7px 11px;border-radius:7px;font-family:inherit;font-weight:800;font-size:12px;cursor:pointer;';
+  var h='<div style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px;margin:-4px 0 12px;">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><b style="font-size:12px;color:#92400e;flex:1;min-width:160px;">🛢️ OLIO MOTORE</b>'
+    +'<label title="Solo se il libretto non è già in archivio" style="'+bt+'border:1px solid #cbd5e1;background:#fff;color:#334155;">📄 Carica libretto<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="tgLeggiLibretto(this)"></label>'
+    +'<button type="button" id="tg-olio-btn" onclick="tgCercaOlio()" style="'+bt+'border:none;background:#d97706;color:#fff;">✨ Trova olio con AI</button></div>'
+    +'<div id="tg-olio-out" style="font-size:12.5px;color:#78350f;margin-top:6px;line-height:1.5;">';
+  if(o && (o.viscosita || (o.specifiche||[]).length)){
+    h+='<b style="font-size:14px;">'+tgEsc(o.viscosita||'')+'</b>'+((o.specifiche||[]).length?(' · '+tgEsc(o.specifiche.join(' · '))):'')
+      +(o.capacita?(' · <b>'+tgEsc(o.capacita)+' l</b> con filtro'):'')
+      +(o.motoreTrovato?('<br><span style="color:#92400e;">Motore: '+tgEsc(o.motoreTrovato)+'</span>'):'')
+      +'<br><span style="color:#92400e;">Ricerca fatta '+(o.fonte==='libretto'?'dal <b>tipo motore del libretto</b>':'da <b>marca, modello, cilindrata e potenza</b> (nessun libretto in archivio)')+'</span>'
+      +(o.note?('<br>'+tgEsc(o.note)):'')
+      +'<br><span style="color:'+(o.certezza==='bassa'?'#b91c1c':'#a16207')+';">Affidabilità: '+tgEsc(o.certezza||'media')+' — controlla sempre con la scheda del costruttore.</span>'
+      +((o.fonti||[]).length?(' Fonti: '+o.fonti.map(function(u){ return '<a href="'+tgEsc(u)+'" target="_blank" rel="noopener" style="color:#1a4fa0;">'+tgEsc(u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0])+'</a>'; }).join(', ')):'')
+      +'<div style="margin-top:6px;"><button type="button" onclick="tgOlioInFattura()" style="'+bt+'border:1px solid #16a34a;background:#f0fdf4;color:#166534;">➕ Metti nella riga OLIO MOTORE</button></div>';
+  } else h+='<span style="color:#a16207;">L’olio si cerca <b>da solo</b> quando apri la fattura e va nella riga OLIO MOTORE: prima dal <b>libretto del cliente</b> in archivio (tipo motore P.5), altrimenti da marca, modello, cilindrata e potenza. <b>✨ Trova olio con AI</b> serve solo per rifare la ricerca.</span>';
+  return h+'</div></div>';
+}
+function tgOlioStato(t, col){ var el=document.getElementById('tg-olio-out'); if(el){ el.style.color=col||'#78350f'; el.innerHTML=t; } }
+function tgOlioPost(body){
+  return fetch(EA_OLIO_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify(body) })
+    .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); });
+}
+function tgLeggiLibretto(input){
+  var file=input&&input.files&&input.files[0]; if(input) input.value=''; if(!file) return;
+  if(file.size>20*1024*1024){ alert('File troppo grande.'); return; }
+  tgOlioStato('⏳ Leggo il libretto…');
+  eaBlobToBase64(file).then(function(b64){ return tgOlioPost({ azione:'libretto', file:b64, tipo:file.type||'' }); })
+  .then(function(j){
+    if(!j || !j.ok){ tgOlioStato('Libretto non letto'+((j&&j.error)?(': '+tgEsc(j.error)):'')+'. Controlla che la funzione olio-motore sia attiva su Supabase.', '#b91c1c'); return; }
+    tgApplicaLibretto(j.libretto||{});
+    tgCercaOlioOnline(tgDatiDaForm(), 'libretto');
+  }).catch(function(){ tgOlioStato('Errore di rete nella lettura del libretto.', '#b91c1c'); });
+}
+/* Il veicolo della fattura nel gestionale: magazzino (targa/telaio) o
+   pratica di vendita. Serve per cilindrata/potenza e per trovare il libretto. */
+function tgDatiVeicolo(targa, telaio, c){
+  var out={ autoId:'', praticaId:'', marca:'', modello:'', cilindrata:'', kw:'', alimentazione:'', clienteKey:'' };
+  try{
+    var n=function(x){ return String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,''); };
+    var tg=n(targa), tl=n(telaio);
+    var a=(tg||tl)?(typeof mzLoad==='function'?mzLoad():[]).filter(function(x){ return x && ((tg && n(x.targa)===tg) || (tl && n(x.telaio)===tl)); })[0]:null;
+    var pr=(typeof cvLoad==='function'?cvLoad():[]).filter(function(x){ if(!x) return false; var sn=x.autoSnapshot||{};
+        return (tg && (n(sn.targa)===tg || n(x.nuovaTarga)===tg)) || (tl && n(sn.telaio)===tl) || (a && x.autoId===a.id); })
+      .sort(function(x,y){ return (y.updatedAt||0)-(x.updatedAt||0); })[0];
+    var s2=(pr&&pr.autoSnapshot)||{};
+    if(!a && pr && pr.autoId && typeof mzById==='function') a=mzById(pr.autoId);
+    a=a||{};
+    out.autoId=a.id||(pr&&pr.autoId)||''; out.praticaId=(pr&&pr.id)||'';
+    out.marca=a.marca||s2.marca||''; out.modello=a.modello||s2.modello||'';
+    out.cilindrata=a.cilindrata||s2.cilindrata||''; out.kw=a.potenza||s2.potenza||''; out.alimentazione=a.alimentazione||s2.alimentazione||'';
+    out.clienteKey=(c&&c.clienteKey)||(pr&&pr.clienteKey)||'';
+  }catch(e){}
+  return out;
+}
+function tgDatiDaForm(){
+  var g=function(id){ var el=document.getElementById(id); return el?el.value.trim():''; };
+  var _f=tgListaFonte(), c=_f.list.find(function(x){ return x.id===_tgId; })||{};
+  return tgDatiVeicolo(g('tg_targa'), g('tg_telaio'), c);
+}
+/* cerca in archivio il libretto: prima quello NUOVO intestato al cliente */
+function tgLibrettoInArchivio(dv){
+  var sb=(typeof sbClient==='function')?sbClient():null;
+  if(!sb) return Promise.resolve(null);
+  var cats=(typeof LIB_CATS!=='undefined')?LIB_CATS:['libretto','libretto_nuovo','libretto_estero'];
+  var chi=[]; if(dv.autoId) chi.push(['auto',dv.autoId]); if(dv.praticaId) chi.push(['pratica',dv.praticaId]); if(dv.clienteKey) chi.push(['cliente',dv.clienteKey]);
+  if(!chi.length) return Promise.resolve(null);
+  return Promise.all(chi.map(function(x){
+    return sb.from('documenti').select('storage_path,nome_file,categoria,created_at').eq('entita_tipo',x[0]).eq('entita_id',String(x[1])).in('categoria',cats).order('created_at',{ascending:false})
+      .then(function(r){ return (r&&r.data)||[]; }, function(){ return []; });
+  })).then(function(ll){
+    var tutti=[].concat.apply([], ll);
+    if(!tutti.length) return null;
+    tutti.sort(function(x,y){ var px=(x.categoria==='libretto_nuovo')?1:0, py=(y.categoria==='libretto_nuovo')?1:0; return (py-px) || String(y.created_at).localeCompare(String(x.created_at)); });
+    return tutti[0];
+  });
+}
+function tgScaricaDoc(path){
+  var sb=sbClient();
+  return sb.storage.from('documenti').createSignedUrl(path, 600).then(function(r){
+    if(!(r&&r.data&&r.data.signedUrl)) throw new Error('link non disponibile');
+    return fetch(r.data.signedUrl).then(function(x){ if(!x.ok) throw new Error('HTTP '+x.status); return x.blob(); });
+  });
+}
+/* DUE STRADE:
+   1) c'e' il libretto in archivio (auto, pratica o cliente; prima quello
+      nuovo intestato al cliente) -> si legge: tipo motore P.5, cc, kW, e si
+      cerca l'olio per quel motore;
+   2) non c'e' -> si cerca da marca, modello, cilindrata e potenza. */
+function tgCercaOlio(auto){
+  auto=(auto===true);
+  var g=function(id){ var el=document.getElementById(id); return el?el.value.trim():''; };
+  var dv=tgDatiDaForm();
+  var b=document.getElementById('tg-olio-btn'); if(b){ b.disabled=true; b.textContent='⏳ Cerco…'; }
+  if(g('tg_motore')){ tgCercaOlioOnline(dv, 'libretto', auto); return; }
+  tgOlioStato('⏳ Cerco il libretto del cliente in archivio…');
+  tgLibrettoInArchivio(dv).then(function(doc){
+    if(!doc){ tgOlioStato('Libretto non presente in archivio: cerco da marca, modello, cilindrata e potenza…'); tgCercaOlioOnline(dv, 'dati', auto); return; }
+    tgOlioStato('📄 Trovato il '+(doc.categoria==='libretto_nuovo'?'libretto nuovo intestato al cliente':'libretto')+': lo leggo…');
+    return tgScaricaDoc(doc.storage_path).then(function(blob){
+      var tipo=blob.type || (/\.pdf$/i.test(doc.nome_file||'')?'application/pdf':'image/jpeg');
+      return eaBlobToBase64(blob).then(function(b64){ return tgOlioPost({ azione:'libretto', file:b64, tipo:tipo }); });
+    }).then(function(j){
+      if(j && j.ok && j.libretto){ tgApplicaLibretto(j.libretto); tgCercaOlioOnline(tgDatiDaForm(), 'libretto', auto); }
+      else { tgOlioStato('Libretto non leggibile: cerco da marca, modello, cilindrata e potenza…'); tgCercaOlioOnline(dv, 'dati', auto); }
+    });
+  }).catch(function(){ tgOlioStato('Libretto non leggibile: cerco da marca, modello, cilindrata e potenza…'); tgCercaOlioOnline(dv, 'dati', auto); });
+}
+function tgApplicaLibretto(L){
+  var messi=[];
+  var metti=function(id, val, nome, forza){ var el=document.getElementById(id); if(el && val && (forza || !el.value.trim())){ el.value=val; el.style.background='#fef9c3'; messi.push(nome); } };
+  metti('tg_modello', ((L.marca||'')+' '+(L.modello||'')).trim(), 'modello');
+  metti('tg_targa', L.targa, 'targa'); metti('tg_telaio', L.telaio, 'telaio');
+  metti('tg_dataImm', L.dataImm?L.dataImm.split('-').reverse().join('/'):'', 'immatricolazione');
+  metti('tg_cil', L.cilindrata, 'cilindrata'); metti('tg_kw', L.kw, 'potenza');
+  metti('tg_motore', L.motore, 'tipo motore', true);
+  window._tgLib=L; tgSalvaBozza();
+  return messi;
+}
+function tgCercaOlioOnline(dv, fonte, auto){
+  var g=function(id){ var el=document.getElementById(id); return el?el.value.trim():''; };
+  var idOra=_tgId, chiave=tgOlioChiave();
+  var L=window._tgLib||{}, mod=g('tg_modello'), parole=mod.split(/\s+/);
+  var marca=L.marca||dv.marca||parole[0]||'', modello=L.modello||dv.modello||parole.slice(1).join(' ');
+  var mot=g('tg_motore').toUpperCase(), cil=g('tg_cil')||L.cilindrata||dv.cilindrata||'', kw=g('tg_kw')||L.kw||dv.kw||'';
+  var anno=(g('tg_dataImm').match(/(19|20)\d{2}/)||[''])[0];
+  var b=document.getElementById('tg-olio-btn');
+  var fine=function(){ window._tgOlioInCorso=null; if(b){ b.disabled=false; b.textContent='✨ Trova olio con AI'; } };
+  if(!marca && !modello && !mot){ fine(); tgOlioStato('Scrivi almeno marca e modello dell’auto.', '#b91c1c'); return; }
+  tgOlioStato('⏳ Cerco online l’olio prescritto '+(mot?('per il motore <b>'+tgEsc(mot)+'</b> (dal libretto)'):('per '+tgEsc((marca+' '+modello).trim())+(cil?(' '+tgEsc(cil)+' cc'):'')+(kw?(' '+tgEsc(kw)+' kW'):'')))+'… <span style="color:#a16207;">fino a un minuto</span>');
+  tgOlioPost({ azione:'olio', marca:marca, modello:modello, motore:mot, anno:anno, cilindrata:cil, kw:kw, alimentazione:L.alimentazione||dv.alimentazione||'' })
+  .then(function(j){
+    fine();
+    if(!j || !j.ok){ tgOlioStato('Ricerca non riuscita'+((j&&j.error)?(': '+tgEsc(j.error)):'')+'. Controlla che la funzione olio-motore sia attiva su Supabase.', '#b91c1c'); return; }
+    if(_tgId===idOra) tgSalvaBozza();
+    var _f=tgListaFonte(idOra), list=_f.list, i=list.findIndex(function(x){ return x.id===idOra; }); if(i<0) return;
+    var f=list[i].fatturaTag||{}; f.olio=j.olio; f.olio.ts=Date.now(); f.olio.fonte=(mot?'libretto':'dati'); f.olio.chiave=chiave; list[i].fatturaTag=f; list[i].updatedAt=Date.now();
+    _f.salva(list); if(_f.upsert) try{ _f.upsert(list[i]); }catch(e){}
+    /* fattura chiusa o cambiata nel frattempo: l'olio resta salvato e va in riga alla prossima apertura */
+    if(_tgId!==idOra) return;
+    if(j.olio && (j.olio.viscosita || (j.olio.specifiche||[]).length)){ tgOlioInFattura(true); return; }
+    var box=document.getElementById('tg-olio-out'); if(box){ var tmp=document.createElement('div'); tmp.innerHTML=tgOlioHtml(f); var nuovo=tmp.querySelector('#tg-olio-out'); if(nuovo) box.innerHTML=nuovo.innerHTML; box.style.color='#78350f'; }
+  }).catch(function(){ fine(); tgOlioStato('Errore di rete: riprova tra poco.', '#b91c1c'); });
+}
+function tgOlioDesc(o){ return ('OLIO MOTORE '+[o.viscosita].concat((o.specifiche||[]).slice(0,3)).filter(Boolean).join(' ')).trim(); }
+function tgOlioInFattura(auto){
+  var _f=tgListaFonte(), list=_f.list, it=list.find(function(x){ return x.id===_tgId; }); if(!it) return;
+  var o=(it.fatturaTag||{}).olio; if(!o) return;
+  var desc=tgOlioDesc(o);
+  var q=parseFloat(String(o.capacita||'').replace(',','.'));
+  var i=(_tgRighe||[]).findIndex(function(r){ return /olio\s*motore/i.test(r.desc||''); });
+  if(auto && i>=0){
+    /* in automatico non si tocca una riga scritta a mano: si riempie solo
+       quella generica ("OLIO MOTORE") o quella messa dall'AI in precedenza */
+    var d=String(_tgRighe[i].desc||'').trim().toUpperCase();
+    if(d===desc.toUpperCase()) return;
+    if(!/^OLIO\s*MOTORE\.?$/.test(d) && d!==String(o.descMessa||'').toUpperCase()) return;
+  }
+  if(i<0){ _tgRighe.splice(1,0,{ cod:'', desc:desc, qta:(q>0?q:1), um:'LT', prezzo:0 }); }
+  else { _tgRighe[i].desc=desc; if(q>0) _tgRighe[i].qta=q; if(!_tgRighe[i].um) _tgRighe[i].um='LT'; }
+  o.descMessa=desc;
+  tgSalvaBozza();
+  var _f2=tgListaFonte(), l2=_f2.list, k=l2.findIndex(function(x){ return x.id===_tgId; });
+  if(k>=0 && l2[k].fatturaTag && l2[k].fatturaTag.olio){ l2[k].fatturaTag.olio.descMessa=desc; _f2.salva(l2); }
+  tgRenderQuandoLibero();
+  try{ if(typeof tcToastNew==='function') tcToastNew(auto?'🛢️ Olio trovato e messo in fattura: controlla prezzo e quantità':'🛢️ Olio messo in fattura: controlla prezzo e quantità', true); }catch(e){}
+}
+/* ridisegna la fattura senza togliere il cursore a chi sta scrivendo */
+function tgRenderQuandoLibero(){
+  var m=document.getElementById('tg-modal'), a=document.activeElement;
+  if(m && a && m.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){
+    a.addEventListener('blur', function(){ setTimeout(function(){
+      var b=document.activeElement; if(m.contains(b) && /^(INPUT|TEXTAREA|SELECT)$/.test(b.tagName)) tgRenderQuandoLibero(); else tgRender();
+    }, 50); }, { once:true });
+    return;
+  }
+  tgRender();
+}
+/* quale auto: se cambia targa/telaio l'olio si ricerca */
+function tgOlioChiave(){
+  var g=function(id){ var el=document.getElementById(id); return el?el.value.trim():''; };
+  return String(g('tg_targa')||g('tg_telaio')||g('tg_modello')).toUpperCase().replace(/[^A-Z0-9]/g,'');
+}
+/* All'apertura della fattura (tagliando o nuovo intervento dal cliente):
+   se l'olio di questa auto non e' ancora stato cercato, lo cerca e lo mette
+   nella riga OLIO MOTORE. Niente su fatture gia' emesse. */
+function tgOlioAuto(){
+  try{
+    var c=tgById(_tgId); if(!c) return;
+    var f=c.fatturaTag||{};
+    if(f.numero) return;
+    if(!document.getElementById('tg-olio-out')) return;
+    var chiave=tgOlioChiave();
+    if(!chiave) return;
+    if(f.olio && (!f.olio.chiave || f.olio.chiave===chiave)){ tgOlioInFattura(true); return; }
+    if(window._tgOlioInCorso===_tgId+'|'+chiave) return;
+    window._tgOlioInCorso=_tgId+'|'+chiave;
+    window._tgLib=null;
+    tgCercaOlio(true);
+  }catch(e){}
+}
+
 function tgSalvaBozza(){
   try{
     var _f=tgListaFonte();
     var list=_f.list, i=list.findIndex(function(x){ return x.id===_tgId; }); if(i<0) return;
     var f=list[i].fatturaTag||{};
-    ['nome','indirizzo','cf','piva','km','targa','telaio','modello','dataImm','pagamento'].forEach(function(k){
+    ['nome','indirizzo','cf','piva','km','targa','telaio','modello','dataImm','pagamento','motore','cil','kw'].forEach(function(k){
       var el=document.getElementById('tg_'+k); if(el) f[k]=el.value.trim();
     });
     var iv=document.getElementById('tg_ivaPct'); if(iv) f.ivaPct=tgNum(iv.value);
@@ -36726,7 +36938,11 @@ function tgRender(){
     +'<div style="flex:2 1 180px;"><label style="'+lbl+'">Num. telaio</label><input id="tg_telaio" style="'+inp+'" value="'+tgEsc(g('telaio', v.telaio))+'" oninput="tgSalvaBozza()"></div>'
     +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Immatricolazione</label><input id="tg_dataImm" style="'+inp+'" value="'+tgEsc(g('dataImm', v.dataImm))+'" oninput="tgSalvaBozza()"></div>'
     +'<div style="flex:1 1 120px;"><label style="'+lbl+'">Km percorsi</label><input id="tg_km" type="number" style="'+inp+'" value="'+tgEsc(g('km', v.km))+'" oninput="tgSalvaBozza()"></div>'
-    +'</div>';
+    +'<div style="flex:1 1 110px;"><label style="'+lbl+'">Cilindrata (cc)</label><input id="tg_cil" style="'+inp+'" value="'+tgEsc(g('cil', tgDatiVeicolo(g('targa', v.targa), g('telaio', v.telaio), c).cilindrata||''))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1 1 110px;"><label style="'+lbl+'">Potenza (kW)</label><input id="tg_kw" style="'+inp+'" value="'+tgEsc(g('kw', tgDatiVeicolo(g('targa', v.targa), g('telaio', v.telaio), c).kw||''))+'" oninput="tgSalvaBozza()"></div>'
+    +'<div style="flex:1 1 140px;"><label style="'+lbl+'">Tipo motore (P.5)</label><input id="tg_motore" style="'+inp+'text-transform:uppercase;" value="'+tgEsc(g('motore', v.motore||''))+'" placeholder="dal libretto" oninput="tgSalvaBozza()"></div>'
+    +'</div>'
+    +tgOlioHtml(f);
 
   /* Righe */
   h+='<div style="display:flex;align-items:center;margin-bottom:6px;">'
