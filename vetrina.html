@@ -1141,6 +1141,10 @@ function motivoScarto(a, controllaOnline){
   if(num(a.prezzoVen)==null) return 'prezzo mancante';
   return '';
 }
+/* Auto vendute: dalla firma del contratto (opzionata / prenotata) fino alla
+   consegna, piu' le ultime 5 consegnate (le sceglie la vista "vetrina").
+   Sul sito restano con il timbro VENDUTA, in fondo all'elenco. */
+function venduta(a){ return ['opzionata','prenotata','venduta'].indexOf(String(a&&a.stato||''))>=0; }
 function pubblicabile(a, controllaOnline){ return !motivoScarto(a, controllaOnline); }
 
 function carica(){
@@ -1185,7 +1189,8 @@ function carica(){
       try{ console.log('VETRINA', JSON.stringify(VETRINA_DIAG)); }catch(e){}
       popolaFiltri(); applica(); apriDaHash();
       var el=document.getElementById('hero-sub');
-      if(el&&AUTO.length) el.innerHTML='<b>'+AUTO.length+' auto</b> selezionate e garantite, a Paderno Dugnano e Bovisio Masciago.';
+      var _nd=AUTO.filter(function(a){ return !venduta(a); }).length;
+      if(el&&_nd) el.innerHTML='<b>'+_nd+' auto</b> selezionate e garantite, a Paderno Dugnano e Bovisio Masciago.';
     })
     .catch(function(e){
       VETRINA_DIAG.errore=String((e&&e.message)||e);
@@ -1245,6 +1250,7 @@ function applica(){
     return true;
   });
   VISTA.sort(function(x,y){
+    var vx=venduta(x)?1:0, vy=venduta(y)?1:0; if(vx!==vy) return vx-vy;
     if(sort==='pr-asc') return (num(x.prezzoVen)||9e9)-(num(y.prezzoVen)||9e9);
     if(sort==='pr-desc') return (num(y.prezzoVen)||0)-(num(x.prezzoVen)||0);
     if(sort==='km') return (num(x.km)||9e9)-(num(y.km)||9e9);
@@ -1278,7 +1284,8 @@ function targaHTML(a){
 }
 function render(){
   var g=document.getElementById('grid');
-  document.getElementById('tcount').innerHTML=VISTA.length?('<b>'+VISTA.length+'</b> auto disponibili'):'';
+  var _nDisp=VISTA.filter(function(a){ return !venduta(a); }).length;
+  document.getElementById('tcount').innerHTML=VISTA.length?('<b>'+_nDisp+'</b> auto disponibili'):'';
   if(!AUTO.length){
     var dbg=(String(location.search||'').indexOf('debug')>=0);
     g.innerHTML = dbg ? vetrinaDebugHTML()
@@ -1294,8 +1301,7 @@ function render(){
     if(a.alimentazione)chips+='<span class="chip">'+ico('fuel',15)+esc(cap(a.alimentazione))+'</span>';
     if(a.cambio)chips+='<span class="chip">'+ico('gear',15)+esc(cap(a.cambio))+'</span>';
     var _kmN=num(a.km);
-    var badge=a.stato==='venduta'?'<span class="cbadge vend">Venduta</span>'
-      :(a.stato==='prenotata'||a.stato==='opzionata')?'<div class="opz-st">Opzionata</div>'
+    var badge=venduta(a)?'<div class="opz-st">Venduta</div>'
       :(a.etichetta?'<span class="cbadge custom">'+esc(a.etichetta)+'</span>'
       :((_kmN!=null&&_kmN<=100)?'<span class="cbadge km0">Km 0</span>'
       :(a.ivaEsposta?'<span class="cbadge iva">IVA esposta</span>':'')));
@@ -1304,7 +1310,7 @@ function render(){
     var _lst=num(a.listino), _prz=num(a.prezzoVen);
     var sconto=(_lst&&_prz&&_lst>_prz)?('<span class="cbadge sconto" data-k="'+esc(a.id)+'">Risparmi '+esc(euro(_lst-_prz))+'</span>'):'';
     return '<button class="card" onclick="dtApri(\''+esc(a.id)+'\')" aria-label="'+esc(a.marca+' '+a.modello)+'">'
-      +'<div class="cimg'+((a.stato==='prenotata'||a.stato==='opzionata')?' opzv':'')+'">'+cov+badge+sconto+(a.foto.length>1?('<span class="cnum">📷 '+a.foto.length+'</span>'):'')+'</div>'
+      +'<div class="cimg'+(venduta(a)?' opzv':'')+'">'+cov+badge+sconto+(a.foto.length>1?('<span class="cnum">📷 '+a.foto.length+'</span>'):'')+'</div>'
       +'<div class="cbody">'
       +'<div><div class="ctit"><span class="mk">'+esc(cap(a.marca))+'</span> '+esc(cap(a.modello))+'</div>'
       +(a.allestimento?('<div class="csub">'+esc(a.allestimento)+'</div>'):'')+'</div>'
@@ -1352,8 +1358,7 @@ function dtApri(id){
       +'<div id="gal-foto">'+gal+'</div><div id="gal-360" style="display:none;">'+g360HTML(a)+'</div>';
   }
   var badges='';
-  if(a.stato==='venduta') badges+='<span class="dt-badge o">Venduta, chiedici un\u2019auto simile</span>';
-  else if(a.stato==='prenotata'||a.stato==='opzionata') badges+='<span class="dt-badge o">Opzionata, chiedi disponibilit\u00e0</span>';
+  if(venduta(a)) badges+='<span class="dt-badge o">Venduta, chiedici un\u2019auto simile</span>';
   if(a.ivaEsposta) badges+='<span class="dt-badge">IVA esposta, ideale per P.IVA e leasing</span>';
   var vantaggi='<div class="vant"><h3>I vantaggi per te</h3><div class="vant-g">'
     +[['shield','Garanzia inclusa','Auto controllata prima della consegna.'],
