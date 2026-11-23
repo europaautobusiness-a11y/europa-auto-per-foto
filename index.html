@@ -20671,6 +20671,7 @@ function sinPreventivo(id, versione){
   html+='<button onclick="pvInviaMail()" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1a4fa0;background:#eff6ff;color:#1a4fa0;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;">📧 Invia al cliente</button>';
   html+='</div>';
   html+='<button onclick="pvConferma()" style="margin-top:8px;width:100%;padding:13px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;">✅ Conferma preventivo (rendilo scaricabile)</button>';
+  html+='<button onclick="pvFatturaIdentica()" title="Conferma il preventivo cos\u00ec com\u2019\u00e8 e apre la fattura con le stesse voci e lo stesso totale" style="margin-top:8px;width:100%;padding:12px;border-radius:8px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer;">🧾 Fattura identica a questo preventivo</button>';
   html+='<div style="font-size:12px;text-align:center;margin-top:8px;font-weight:700;color:'+(s.preventivoConfermato?'#16a34a':'#d97706')+';">'+(s.preventivoConfermato?'✅ Preventivo confermato — scaricabile dalla scheda':'⏳ Bozza — confermalo per poterlo scaricare')+'</div>';
   }
   html+='</div>';
@@ -37760,6 +37761,66 @@ function fcTotaliFinali(t, esito, target){
   return out;
 }
 
+/* ===== DUE MODI DI FATTURARE =====
+   'riallinea' (di sempre): le voci del preventivo vengono limate fino a
+   fare esattamente il concordato.
+   'preventivo': la fattura e' IDENTICA al preventivo (stesse voci, stessi
+   tempi, stesso costo orario, stesso totale). Serve quando la liquidazione
+   arriva diversa dal concordato: si corregge il preventivo e si fattura
+   quello, senza aggiustamenti automatici. */
+function fcModo(s){
+  var f=(s&&s.fatturaCarr)||{};
+  if(f.modo==='preventivo' || f.modo==='riallinea') return f.modo;
+  return (fcNum(s&&s.importoConcordato)>0)?'riallinea':'preventivo';
+}
+function fcCalcola(s, t){
+  var pv=s.preventivo||{}, ivaPct=t.ivaPct||22, modo=fcModo(s);
+  var conc=fcNum(s.importoConcordato);
+  if(modo==='preventivo'){
+    var righe=(pv.righe||[]).map(function(r){ return {cr:r.cr, descr:r.descr, sr:r.sr, la:r.la, ve:r.ve, me:r.me, ric:r.ric}; });
+    var c=fcSimula(t, righe, 1, []);
+    var imp=Math.round(t.imponibile*100)/100;
+    var v={ righe:righe, tagli:righe.map(function(){return 0;}), lucidFat:1, calc:c, materiale:c.materiale, ricambi:t.sumRic,
+            smalt:c.smalt, levabolli:t.levabolli, sconto:0, oreMan:c.oreMan, manodopera:Math.round(c.manodopera*100)/100,
+            orario:t.orario, imponibile:imp, scartoOrario:0, leveInsufficienti:false };
+    var iva=Math.round(imp*(ivaPct/100)*100)/100;
+    return { modo:modo, conc:conc, target:imp, e:{righe:righe, tagli:v.tagli, lucidFat:1}, v:v, iva:iva, tot:Math.round((imp+iva)*100)/100, ivaPct:ivaPct };
+  }
+  if(!(conc>0)) conc=Math.round(t.totale*100)/100;
+  var target=Math.round((conc/(1+ivaPct/100))*100)/100;
+  var e=fcRiallinea(t, target, pv.righe||[]);
+  var v2=fcTotaliFinali(t, e, target);
+  var iva2=Math.round((conc - v2.imponibile)*100)/100;
+  return { modo:modo, conc:conc, target:target, e:e, v:v2, iva:iva2, tot:Math.round((v2.imponibile+iva2)*100)/100, ivaPct:ivaPct };
+}
+function fcSetModo(m){
+  try{
+    fcSalvaScelte();
+    var list=sinLoad(), i=list.findIndex(function(x){return x.id===_fcId;}); if(i<0) return;
+    if(list[i].fatturaCarr && list[i].fatturaCarr.numero) return;   /* gia' emessa: non si cambia */
+    var f=list[i].fatturaCarr||{}; f.modo=m; list[i].fatturaCarr=f; sinSave(list); fcRender();
+  }catch(e){}
+}
+/* Dal preventivo: salva quello che c'e' a video e apre la fattura identica. */
+function pvFatturaIdentica(){
+  if(!_pvId) return;
+  if(_pvVersioneVista!=null){ alert('Stai guardando una versione archiviata: riprendila come bozza prima di fatturare.'); return; }
+  var id=_pvId, list=sinLoad(), idx=list.findIndex(function(x){return x.id===id;}); if(idx<0) return;
+  if(list[idx].fatturaCarr && list[idx].fatturaCarr.numero){
+    alert('Su questo sinistro c\u2019\u00e8 gi\u00e0 la fattura n. '+list[idx].fatturaCarr.numero+'/'+list[idx].fatturaCarr.anno+'.\n\nPer farla uguale al preventivo modificato: apri la fattura, annullala e poi rigenerala da qui.');
+    return;
+  }
+  var _nuovo=pvCollect();
+  if(!(_nuovo.righe||[]).some(function(r){ return r.descr||r.ric||r.sr||r.la||r.ve||r.me; })){ alert('Il preventivo non ha voci.'); return; }
+  pvArchiviaSeServe(list[idx], _nuovo);
+  list[idx].preventivo=_nuovo; list[idx].preventivoConfermato=true; list[idx].preventivoConfermatoTs=Date.now(); list[idx].updatedAt=Date.now();
+  try{ var _t=pvCompute(); list[idx].preventivoTotale=Math.round(_t.totale*100)/100; list[idx].preventivoImponibile=Math.round(_t.imponibile*100)/100; }catch(e){}
+  var f=list[idx].fatturaCarr||{}; f.modo='preventivo'; list[idx].fatturaCarr=f;
+  sinSave(list); if(typeof sinPush==='function') sinPush(list[idx]);
+  if(typeof sinChiudi==='function') sinChiudi();
+  try{ sinRender(); }catch(e){}
+  setTimeout(function(){ fcApri(id); }, 150);
+}
 function fcApri(id){
   var s=(typeof sinById==='function')?sinById(id):null;
   if(!s){ alert('Sinistro non trovato.'); return; }
@@ -37770,7 +37831,7 @@ function fcApri(id){
   /* senza concordato si fattura il totale del preventivo (IVA inclusa),
      senza riallineamento */
   var conc=fcNum(s.importoConcordato);
-  if(conc<=0){ var _tt0=fcTotaliDaPreventivo(s); if(!(_tt0.totale>0)){ alert('Il preventivo non ha un totale: controlla le voci.'); return; } if(!confirm('Non c\u2019\u00e8 un importo concordato: la fattura verr\u00e0 emessa sul totale del preventivo, '+fcEu(_tt0.totale)+' \u20ac IVA inclusa.\n\nContinuare?')) return; }
+  if(conc<=0 && fcModo(s)!=='preventivo'){ var _tt0=fcTotaliDaPreventivo(s); if(!(_tt0.totale>0)){ alert('Il preventivo non ha un totale: controlla le voci.'); return; } if(!confirm('Non c\u2019\u00e8 un importo concordato: la fattura verr\u00e0 emessa sul totale del preventivo, '+fcEu(_tt0.totale)+' \u20ac IVA inclusa.\n\nContinuare?')) return; }
   _fcId=id; _fcT=fcTotaliDaPreventivo(s);
   var m=document.getElementById('fc-modal');
   if(!m){ m=document.createElement('div'); m.id='fc-modal';
@@ -37786,14 +37847,9 @@ function fcRender(){
   var s=sinById(_fcId); if(!s) return;
   var pv=s.preventivo||{}, t=_fcT;
   var f=(s.fatturaCarr)||{};
-  var conc=fcNum(s.importoConcordato); if(!(conc>0)) conc=Math.round(t.totale*100)/100;   /* senza concordato: il preventivo */
-  var ivaPct=t.ivaPct||22;
-  /* concordato SEMPRE IVA inclusa */
-  var target=Math.round((conc/(1+ivaPct/100))*100)/100;
-  var e=fcRiallinea(t, target, (s.preventivo&&s.preventivo.righe)||[]);
-  var v=fcTotaliFinali(t, e, target);
-  var iva=Math.round((conc - v.imponibile)*100)/100;   /* per differenza: il totale fa il concordato */
-  var tot=Math.round((v.imponibile+iva)*100)/100;
+  var K=fcCalcola(s, t), modo=K.modo;
+  var conc=K.conc, ivaPct=K.ivaPct, target=K.target, e=K.e, v=K.v, iva=K.iva, tot=K.tot;
+  var concVero=fcNum(s.importoConcordato);
   var diff=Math.round((target-t.imponibile)*100)/100;
   var lbl='display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;';
   var inp='width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;box-sizing:border-box;';
@@ -37869,35 +37925,56 @@ function fcRender(){
     h+='</div>';
   }
 
+  /* come si fattura */
+  var _emessa=!!(s.fatturaCarr && s.fatturaCarr.numero);
+  var _btn=function(m,tit,sub){ var on=(modo===m);
+    return '<button '+(_emessa?'disabled ':'')+'onclick="fcSetModo(\''+m+'\')" style="flex:1;text-align:left;padding:9px 10px;border-radius:8px;border:2px solid '+(on?'#1a4fa0':'#e2e8f0')+';background:'+(on?'#eff6ff':'#fff')+';font-family:inherit;cursor:'+(_emessa?'default':'pointer')+';">'
+      +'<div style="font-weight:800;font-size:12.5px;color:'+(on?'#1a4fa0':'#334155')+';">'+(on?'\u25c9 ':'\u25cb ')+tit+'</div><div style="font-size:11px;color:#64748b;margin-top:2px;">'+sub+'</div></button>'; };
+  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">COME FATTURARE</div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px;">'
+    +_btn('preventivo','Identica al preventivo','stesse voci, tempi e totale del preventivo')
+    +(concVero>0?_btn('riallinea','Sul concordato','le voci si adattano a \u20ac '+fcEu(concVero)):'')
+    +'</div>';
+  if(modo==='preventivo'){
+    h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:20px;font-weight:800;color:#1e40af;">\u20ac '+fcEu(tot)+'</span><span style="font-size:11px;font-weight:700;color:#1e40af;">totale del preventivo, IVA inclusa</span></div>'
+      +'<div style="font-size:11px;color:#1e40af;margin-top:6px;">La fattura riporta le voci e i tempi del preventivo cos\u00ec come sono. Per cambiare qualcosa, modifica il preventivo e premi \u201cFattura identica\u201d.</div></div>';
+    if(concVero>0 && Math.abs(tot-concVero)>=0.01){
+      h+='<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:8px;padding:10px;margin-bottom:12px;color:#92400e;font-size:12px;">'
+        +'\u26a0\ufe0f Il totale del preventivo (\u20ac '+fcEu(tot)+') \u00e8 diverso dal concordato (\u20ac '+fcEu(concVero)+'): '+(tot>concVero?'+':'\u2212')+' \u20ac '+fcEu(Math.abs(tot-concVero))+'. '
+        +'Se la liquidazione \u00e8 arrivata con un altro importo, aggiorna anche il concordato (\u270f\ufe0f nella scheda del sinistro).</div>';
+    }
+  } else {
   /* concordato */
-  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">IMPORTO CONCORDATO</div>';
-  h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;">';
-  h+='<div style="display:flex;justify-content:space-between;align-items:baseline;">'
-    +'<span style="font-size:20px;font-weight:800;color:#1e40af;">\u20ac '+fcEu(conc)+'</span>'
-    +'<span style="font-size:11px;font-weight:700;color:#1e40af;">IVA inclusa</span></div>';
-  h+='<div style="font-size:11px;color:#1e40af;margin-top:6px;">Scorporo IVA '+fcEu(ivaPct)+'%: imponibile \u20ac '+fcEu(target)+'</div>';
-  h+='</div>';
-
-  /* riallineamento */
-  h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">COME ARRIVO AL CONCORDATO</div>';
-  h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
-  h+=riga('Imponibile da preventivo', '\u20ac '+fcEu(t.imponibile));
-  h+=riga('Imponibile da fatturare', '\u20ac '+fcEu(target));
-  h+=riga('<b>Da limare</b>', '<b style="color:'+(diff<0?'#dc2626':'#16a34a')+';">'+(diff>0?'+':'')+fcEu(diff)+' \u20ac</b>');
-  h+='<div style="margin-top:8px;font-size:12px;">';
-  var lucidTxt = (e.lucidFat>=0.995) ? ('lucidatura <b>invariata</b> ('+fcEu(t.supplFin)+' h)')
-               : (e.lucidFat<=0.005 ? '<b>lucidatura tolta</b> (erano '+fcEu(t.supplFin)+' h)'
-                                    : ('lucidatura ridotta al <b>'+Math.round(e.lucidFat*100)+'%</b> \u2192 '+fcEu(v.calc.supplFin)+' h'));
-  h+='<div style="padding:3px 0;">\u2022 '+lucidTxt+'</div>';
-  var qualche=false;
-  (e.righe||[]).forEach(function(r,i2){
-    if(!(e.tagli[i2]>0)) return; qualche=true;
-    var orig=fcNum(((s.preventivo.righe||[])[i2]||{}).ve);
-    h+='<div style="padding:3px 0;">\u2022 voce <b>'+fcEsc(r.cr||(i2+1))+'</b> '+fcEsc(String(r.descr||'').slice(0,28))+' \u2014 verniciatura '+fcEu(orig)+' \u2192 <b>'+fcEu(r.ve)+' h</b> (\u2212'+fcEu(e.tagli[i2])+')</div>';
-  });
-  if(!qualche && e.lucidFat>=0.995) h+='<div style="padding:3px 0;color:#64748b;">\u2022 tempi invariati</div>';
-  h+='</div></div>';
-
+    h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">IMPORTO CONCORDATO</div>';
+    h+='<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:baseline;">'
+      +'<span style="font-size:20px;font-weight:800;color:#1e40af;">\u20ac '+fcEu(conc)+'</span>'
+      +'<span style="font-size:11px;font-weight:700;color:#1e40af;">IVA inclusa</span></div>';
+    h+='<div style="font-size:11px;color:#1e40af;margin-top:6px;">Scorporo IVA '+fcEu(ivaPct)+'%: imponibile \u20ac '+fcEu(target)+'</div>';
+    h+='</div>';
+  
+    /* riallineamento */
+    h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">COME ARRIVO AL CONCORDATO</div>';
+    h+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
+    h+=riga('Imponibile da preventivo', '\u20ac '+fcEu(t.imponibile));
+    h+=riga('Imponibile da fatturare', '\u20ac '+fcEu(target));
+    h+=riga('<b>Da limare</b>', '<b style="color:'+(diff<0?'#dc2626':'#16a34a')+';">'+(diff>0?'+':'')+fcEu(diff)+' \u20ac</b>');
+    h+='<div style="margin-top:8px;font-size:12px;">';
+    var lucidTxt = (e.lucidFat>=0.995) ? ('lucidatura <b>invariata</b> ('+fcEu(t.supplFin)+' h)')
+                 : (e.lucidFat<=0.005 ? '<b>lucidatura tolta</b> (erano '+fcEu(t.supplFin)+' h)'
+                                      : ('lucidatura ridotta al <b>'+Math.round(e.lucidFat*100)+'%</b> \u2192 '+fcEu(v.calc.supplFin)+' h'));
+    h+='<div style="padding:3px 0;">\u2022 '+lucidTxt+'</div>';
+    var qualche=false;
+    (e.righe||[]).forEach(function(r,i2){
+      if(!(e.tagli[i2]>0)) return; qualche=true;
+      var orig=fcNum(((s.preventivo.righe||[])[i2]||{}).ve);
+      h+='<div style="padding:3px 0;">\u2022 voce <b>'+fcEsc(r.cr||(i2+1))+'</b> '+fcEsc(String(r.descr||'').slice(0,28))+' \u2014 verniciatura '+fcEu(orig)+' \u2192 <b>'+fcEu(r.ve)+' h</b> (\u2212'+fcEu(e.tagli[i2])+')</div>';
+    });
+    if(!qualche && e.lucidFat>=0.995) h+='<div style="padding:3px 0;color:#64748b;">\u2022 tempi invariati</div>';
+    h+='</div></div>';
+  
+    }
   /* dettaglio fattura */
   h+='<div style="font-weight:800;font-size:12px;color:#1a4fa0;margin-bottom:6px;">COSA ANDR\u00c0 IN FATTURA</div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;">';
@@ -38028,16 +38105,10 @@ function fcAnnulla(id){
 function fcStampa(id){
   var s=sinById(id); if(!s || !s.fatturaCarr) return;
   var f=s.fatturaCarr, pv=s.preventivo||{}, p=pv.params||{}, t=fcTotaliDaPreventivo(s);
-  var conc=fcNum(s.importoConcordato), ivaPct=t.ivaPct||22;
-  var senzaConc=!(conc>0); if(senzaConc) conc=Math.round(t.totale*100)/100;   /* senza concordato: il preventivo */
-  /* il concordato col perito e' sempre IVA inclusa: si scorpora */
-  var target=Math.round((conc/(1+ivaPct/100))*100)/100;
-  var e=fcRiallinea(t, target, (pv.righe)||[]);
-  var r=fcTotaliFinali(t, e, target);
-  var imponibile=r.imponibile;
-  /* IVA per differenza: il totale documento fa esattamente il concordato */
-  var iva=Math.round((conc - imponibile)*100)/100;
-  var totale=Math.round((imponibile+iva)*100)/100;
+  var K=fcCalcola(s, t);
+  var conc=K.conc, ivaPct=K.ivaPct, target=K.target, e=K.e, r=K.v;
+  var senzaConc=!(fcNum(s.importoConcordato)>0) || K.modo==='preventivo';
+  var imponibile=r.imponibile, iva=K.iva, totale=K.tot;
   var c=r.calc;
 
   var E=(typeof sinEsc==='function')?sinEsc:fcEsc;
@@ -38125,7 +38196,7 @@ function fcStampa(id){
   +'<thead><tr style="background:#f2f2f2;">'
   +'<th style="'+cel+lab+'text-align:center;width:11%;">COD.ART.</th><th style="'+cel+lab+'text-align:center;">DESCRIZIONE ARTICOLO</th><th style="'+cel+lab+'text-align:center;width:6%;">U.M</th><th style="'+cel+lab+'text-align:center;width:9%;">QUANTITA\'</th><th style="'+cel+lab+'text-align:center;width:13%;">PREZZO</th><th style="'+cel+lab+'text-align:center;width:14%;">IMPORTO</th><th style="'+cel+lab+'text-align:center;width:6%;">C.IVA</th></tr></thead>'
   +'<tbody style="vertical-align:top;">'+rowsH+'</tbody>'
-  +'<tr><td colspan="7" style="padding:4px 6px;font-size:9px;font-family:Arial,Helvetica,sans-serif;text-align:center;">'+(senzaConc?'Importo non concordato: fattura emessa sul preventivo.':'Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.')+'</td></tr></table>'
+  +'<tr><td colspan="7" style="padding:4px 6px;font-size:9px;font-family:Arial,Helvetica,sans-serif;text-align:center;">'+(K.modo==='preventivo'?'Riparazione eseguita come da preventivo'+(p.num?(' n. '+E(p.num)):'')+(p.data?(' del '+E(p.data)):'')+'.':senzaConc?'Importo non concordato: fattura emessa sul preventivo.':'Riparazione eseguita come da importo concordato'+(s.perito?(' con il perito '+E(s.perito)):'')+'.')+'</td></tr></table>'
   /* totali */
   +'<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;border-top:none;"><tr>'
   +'<td style="'+cel+'border-top:none;width:45%;"><div style="'+lab+'">TOTALE MERCE</div><div style="margin-top:6px;text-align:right;">'+EU(imponibile)+'</div></td>'
