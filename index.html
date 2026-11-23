@@ -10348,7 +10348,7 @@ async function leggiTestoPdf(b64) {
       var page=await pdf.getPage(1);
       /* scala 2 invece di 2.5: un quarto di pixel in meno da elaborare, e il
          riconoscimento su un documento stampato resta buono uguale */
-      var vp=page.getViewport({scale:2});
+      var vp=page.getViewport({scale:2.6});   /* il telaio e' scritto piccolo: a scala 2 l'OCR sbagliava le lettere */
       var canvas=document.createElement('canvas');
       canvas.width=vp.width; canvas.height=vp.height;
       await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
@@ -33694,7 +33694,18 @@ function docVinDaTesto(testo, targa){
       if(!/[0-9]/.test(v)) continue;
       trovati.push({ vin:v, pos:m.index });
     }
-    if(!trovati.length) return null;
+    if(!trovati.length){
+      /* Testo da OCR: il telaio arriva spezzato da spazi o con O/I/Q al posto
+         di 0/1/0. Si cerca dopo la parola "telaio" (o "VIN", o il campo E)
+         e si ricompongono 17 caratteri. */
+      var kw=/(TELAIO|\bVIN\b|IDENTIFICAZIONE)[^A-Z0-9]*/g, km;
+      while((km=kw.exec(t))!==null){
+        var dopo=t.slice(km.index+km[0].length, km.index+km[0].length+40).replace(/[^A-Z0-9]/g,'');
+        var c=dopo.slice(0,17).replace(/[OQ]/g,'0').replace(/I/g,'1');
+        if(docTelaioValido(c)) return c;
+      }
+      return null;
+    }
     /* Se la targa dell'auto compare nel documento, si prende il telaio piu'
        vicino a lei: e' il modo piu' sicuro di non pescare quello sbagliato
        quando in una pagina ci sono piu' veicoli. */
@@ -33785,18 +33796,50 @@ function docTelaioAMano(autoId, st, motivo){
     if(st) st.innerHTML='\u26a0\ufe0f Caricato, ma <b>'+docEsc(nome)+' \u00e8 ancora senza telaio</b>';
   }catch(e){}
 }
+/* Quando il testo del PDF non basta (scansione storta, foto, telaio
+   spezzato) si fa leggere il documento all'intelligenza artificiale,
+   la stessa funzione che legge il libretto per il tagliando. */
+function docTelaioAI(file, targa){
+  return eaBlobToBase64(file).then(function(b64){
+    return fetch(EA_OLIO_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY},
+      body:JSON.stringify({ azione:'telaio', file:b64, tipo:(file.type||'application/pdf'), targa:targa||'' }) });
+  }).then(function(r){ return r.json(); }).then(function(j){
+    return (j && j.ok) ? docTelaioValido(j.telaio) : '';
+  }).catch(function(){ return ''; });
+}
+function docTelaioProponi(autoId, vin, st, obbligatorio, a){
+  var nome=((a.marca||'')+' '+(a.modello||'')).trim();
+  if(!confirm('Nel documento ho trovato questo numero di telaio:\n\n    '+vin+'\n\n'
+    +'Lo scrivo sulla scheda di '+(nome||'questo veicolo')+(a.targa?(' ('+a.targa+')'):'')+'?\n\n'
+    +'Controlla che corrisponda: se non \u00e8 giusto, rispondi No e lo scrivi a mano.')) {
+    if(obbligatorio) docTelaioAMano(autoId, st, 'Va bene, il telaio letto non era quello giusto.');
+    else if(st) st.textContent='\u2705 Caricato \u2014 telaio non inserito';
+    return;
+  }
+  docTelaioScrivi(autoId, vin, st);
+}
+function docCercaTelaioAI(file, autoId, st, obbligatorio, a, motivo){
+  if(st) st.textContent='Leggo il telaio con l\u2019intelligenza artificiale\u2026';
+  docTelaioAI(file, a.targa).then(function(vin){
+    if(vin) docTelaioProponi(autoId, vin, st, obbligatorio, a);
+    else if(obbligatorio) docTelaioAMano(autoId, st, motivo);
+    else if(st) st.textContent='\u2705 Caricato \u2014 telaio non trovato nel documento';
+  });
+}
 function docCercaTelaio(file, autoId, st, obbligatorio){
   try{
     if(!file || !autoId) return;
     if(typeof mzById!=='function') return;
     var a=mzById(autoId); if(!a) return;
     if(String(a.telaio||'').trim()) return;      /* ce l'ha gia': non si tocca */
+    var _img=/^image\//i.test(file.type||'') || /\.(jpe?g|png|webp)$/i.test(file.name||'');
+    if(_img){ docCercaTelaioAI(file, autoId, st, obbligatorio, a, 'Non ho trovato un numero di telaio leggibile nella foto.'); return; }
     if(!/pdf$/i.test(file.type||'') && !/\.pdf$/i.test(file.name||'')){
-      if(obbligatorio) docTelaioAMano(autoId, st, 'Il file non \u00e8 un PDF, quindi non posso leggerlo.');
+      if(obbligatorio) docTelaioAMano(autoId, st, 'Il file non \u00e8 un PDF n\u00e9 una foto, quindi non posso leggerlo.');
       return;
     }
     if(typeof leggiTestoPdf!=='function'){
-      if(obbligatorio) docTelaioAMano(autoId, st, 'Non riesco a leggere il documento.');
+      docCercaTelaioAI(file, autoId, st, obbligatorio, a, 'Non riesco a leggere il documento.');
       return;
     }
     if(st) st.textContent='Leggo il documento per trovare il telaio\u2026';
@@ -33804,23 +33847,11 @@ function docCercaTelaio(file, autoId, st, obbligatorio){
     fr.onload=function(){
       leggiTestoPdf(String(fr.result||'')).then(function(testo){
         var vin=docVinDaTesto(testo, a.targa);
-        var nome=((a.marca||'')+' '+(a.modello||'')).trim();
-        if(!vin){
-          if(obbligatorio) docTelaioAMano(autoId, st, 'Nel certificato non ho trovato un numero di telaio leggibile.');
-          else if(st) st.textContent='\u2705 Caricato \u2014 telaio non trovato nel documento';
-          return;
-        }
-        if(!confirm('Nel documento ho trovato questo numero di telaio:\n\n    '+vin+'\n\n'
-          +'Lo scrivo sulla scheda di '+(nome||'questo veicolo')+(a.targa?(' ('+a.targa+')'):'')+'?\n\n'
-          +'Controlla che corrisponda: se non \u00e8 giusto, rispondi No e lo scrivi a mano.')) {
-          if(obbligatorio) docTelaioAMano(autoId, st, 'Va bene, il telaio letto non era quello giusto.');
-          else if(st) st.textContent='\u2705 Caricato \u2014 telaio non inserito';
-          return;
-        }
-        docTelaioScrivi(autoId, vin, st);
+        /* niente telaio nel testo (scansione, OCR sporco): lo legge l'AI */
+        if(!vin){ docCercaTelaioAI(file, autoId, st, obbligatorio, a, 'Nel certificato non ho trovato un numero di telaio leggibile.'); return; }
+        docTelaioProponi(autoId, vin, st, obbligatorio, a);
       }, function(){
-        if(obbligatorio) docTelaioAMano(autoId, st, 'Non sono riuscito a leggere il PDF.');
-        else if(st) st.textContent='\u2705 Caricato';
+        docCercaTelaioAI(file, autoId, st, obbligatorio, a, 'Non sono riuscito a leggere il PDF.');
       });
     };
     fr.readAsDataURL(file);
