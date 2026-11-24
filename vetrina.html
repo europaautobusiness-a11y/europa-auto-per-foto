@@ -941,7 +941,7 @@ var BANNER_SECONDI = 5;   /* ogni quanti secondi cambia immagine */
 /* Solo campi pubblici: prezzo di acquisto, note interne e fornitori NON vengono mai mostrati. */
 var CAMPI_PUBBLICI=['marca','modello','allestimento','anno','km','colore','alimentazione','cambio','cilindrata','potenza','dataImm','targa','prezzoVen','listino','stato','ivaEsposta','estera','foto','dotazioni','etichetta','giro360','tec_porte','tec_posti','tec_carrozzeria','tec_trazione','tec_classe','tec_co2','tec_consumo','tec_autonomia','tec_lunghezza','tec_larghezza','tec_altezza','tec_passo','tec_bagagliaio','tec_massa','tec_serbatoio','tec_marce','tec_cilindri','tec_cvf','tec_neopatentati','tec_coloreInt','tec_tappezzeria','descrizione','descrGen','online','onlineTs','updatedAt','createdAt'];
 
-var VETRINA_VER='2026-08-06b';
+var VETRINA_VER='2026-11-24';
 var VETRINA_DIAG={};
 var CARICATO=false;   /* finche' le auto non sono arrivate resta lo scheletro di caricamento */
 var AUTO=[];      /* tutte le auto pubblicabili */
@@ -1240,7 +1240,26 @@ function carica(){
       return rows;
     });
   };
-  sbGet('/rest/v1/vetrina?select=*')
+  /* 17 o 36 AUTO (24/11/2026): se la vista "vetrina" rispondeva lenta o con
+     un errore, il sito passava subito alla tabella del magazzino, che non
+     conosce le regole delle vendute (ultime 5 consegnate, pratiche in corso):
+     uscivano auto vendute mesi fa. Ora la vista si riprova fino a 3 volte;
+     il magazzino si usa solo se la vista proprio non esiste, e senza le
+     vendute. */
+  var vista=function(tent){
+    return sbGet('/rest/v1/vetrina?select=*').catch(function(e){
+      var cod=String((e&&e.message)||e);
+      if(cod==='404' || tent>=3) throw e;
+      return new Promise(function(r){ setTimeout(r, 700*tent); }).then(function(){ return vista(tent+1); });
+    });
+  };
+  var perMagazzinoSenzaVendute=function(){
+    return perMagazzino().then(function(rows){
+      VETRINA_DIAG.fonte='magazzino (vista non disponibile: vendute escluse)';
+      return rows.filter(function(r){ var d=(r&&r.data)||r||{}; return !d.stato || d.stato==='disponibile'; });
+    });
+  };
+  vista(1)
     .then(function(rows){
       VETRINA_DIAG.fonte='vetrina';
       /* La vista pubblica puo' esistere ma essere vuota o non contenere i
@@ -1248,10 +1267,12 @@ function carica(){
          scattava mai: la pagina restava vuota. Qui si controlla il contenuto,
          non solo che la chiamata sia andata a buon fine. */
       var utile=rows.some(function(r){ return r && (r.marca || (r.data && r.data.marca)); });
-      if(!rows.length || !utile) return perMagazzino();
+      if(!rows.length || !utile) return perMagazzinoSenzaVendute();
       return rows;
+    }, function(e){
+      VETRINA_DIAG.erroreVista=String((e&&e.message)||e);
+      return perMagazzinoSenzaVendute();
     })
-    .catch(perMagazzino)
     .then(function(rows){
       /* le righe possono arrivare come {id,data:{...}} oppure gia' piatte */
       var piatte=rows.map(function(r){
@@ -1299,6 +1320,7 @@ function vetrinaDebugHTML(){
     +'<div>auto pubblicate: <b>'+(d.pubblicate||0)+'</b></div>'
     +(righe?('<div style="margin-top:8px;"><b>Scartate perché:</b>'+righe+'</div>'):'')
     +(d.errore?('<div style="margin-top:8px;color:#b91c1c;">errore: '+esc(d.errore)+'</div>'):'')
+    +(d.erroreVista?('<div style="margin-top:8px;color:#b45309;">la vista "vetrina" non ha risposto ('+esc(d.erroreVista)+'): usato il magazzino</div>'):'')
     +'</div>';
 }
 function sbGet(path){
