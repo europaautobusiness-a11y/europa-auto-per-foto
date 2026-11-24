@@ -24551,11 +24551,28 @@ function gsearchRun(){
     return blob.indexOf(q)>=0;
   });
   cres.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
-  if(!res.length && !cres.length){ box.innerHTML='<div style="padding:14px;font-size:13px;color:#94a3b8;">Nessun risultato per \u201c'+mzEsc(q)+'\u201d</div>'; box.style.display='block'; return; }
+  /* ===== CLIENTI SOLO IN ANAGRAFICA (24/11/2026) =====
+     La barra cercava i clienti solo dentro le pratiche: un cliente creato a
+     mano con "+ Nuovo cliente", senza preventivi ne' contratti, veniva
+     salvato ma qui non usciva mai, e sembrava perso. Ora si guarda anche
+     l'anagrafica (nome, cognome, ragione sociale, telefono, email, CF). */
+  var _anag=[];
+  try{
+    var _ovA=(typeof clStore==='function')?clStore():{};
+    var _termA=q.split(/\s+/).filter(Boolean);
+    Object.keys(_ovA).forEach(function(k){
+      var e=_ovA[k]; if(!e||typeof e!=='object'||e.deleted===true) return;
+      var blob=((e.nome||'')+' '+(e.cognome||'')+' '+(e.ragSociale||'')+' '+(e.telefono||'')+' '+(e.email||'')+' '+(e.cf||'')+' '+(e.piva||'')).toLowerCase();
+      for(var i=0;i<_termA.length;i++){ if(blob.indexOf(_termA[i])<0) return; }
+      _anag.push({key:k, cl:e});
+    });
+  }catch(e){}
+  if(!res.length && !cres.length && !_anag.length){ box.innerHTML='<div style="padding:14px;font-size:13px;color:#94a3b8;">Nessun risultato per \u201c'+mzEsc(q)+'\u201d</div>'+gsNuovoClienteRiga(q); box.style.display='block'; return; }
   var h='';
   // sezione CLIENTI (anagrafica)
-  if(cres.length && typeof clKeyOf==='function'){
+  if((cres.length||_anag.length) && typeof clKeyOf==='function'){
     var _seenCl={}, _clienti=[];
+    _anag.forEach(function(o){ if(_seenCl[o.key]) return; _seenCl[o.key]=1; _clienti.push(o); });
     /* Si raggruppa per COLLEGAMENTO, non per il nome scritto sulla pratica:
        un nome digitato diversamente creava una seconda voce che non si apriva
        nemmeno, perche' dietro non c'era nessuna scheda in anagrafica.
@@ -24585,6 +24602,7 @@ function gsearchRun(){
       }).join('');
     }
   }
+  if(!_anag.length && !cres.length) h+=gsNuovoClienteRiga(q);
   // sezione clienti / pratiche
   /* Un preventivo gia' trasformato non serve piu': la pratica vera e' il
      contratto, e mostrarli entrambi faceva aprire il documento sbagliato.
@@ -24654,6 +24672,20 @@ function gsearchRun(){
     if(tot>shown.length) h+='<div style="padding:8px 12px;font-size:11px;color:#94a3b8;">+'+(tot-shown.length)+' altri veicoli\u2026 affina la ricerca</div>';
   }
   box.innerHTML=h; box.style.display='block';
+}
+/* Dalla barra di ricerca: se il cliente non c'e', lo si crea al volo con
+   quello che si e' scritto (prima parola = cognome, il resto = nome). */
+function gsNuovoClienteRiga(q){
+  var qq=String(q||'').trim(); if(!qq || /\d{3,}/.test(qq)) return '';
+  return '<div onclick="gsearchNuovoCliente()" style="display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;border-top:1px solid #f1f5f9;background:#eff6ff;color:#1a4fa0;font-weight:800;font-size:13px;">+ Nuovo cliente \u00ab'+mzEsc(qq.toUpperCase())+'\u00bb</div>';
+}
+function gsearchNuovoCliente(){
+  var inp=document.getElementById('gsearch-input'); var q=inp?String(inp.value||'').trim():'';
+  var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
+  if(inp){ inp.value=''; inp.blur(); }
+  var p=q.split(/\s+/).filter(Boolean);
+  try{ if(typeof sidebarNav==='function') sidebarNav('clienti', document.getElementById('si-clienti')); }catch(e){}
+  setTimeout(function(){ try{ clNuovo((p[0]||'').toUpperCase(), p.slice(1).join(' ').toUpperCase()); }catch(e){} }, 170);
 }
 function gsearchVaiClienti(q){
   var box=document.getElementById('gsearch-results'); if(box) box.style.display='none';
@@ -27991,8 +28023,13 @@ var _clTab='tutti';
 function clTab(t){ _clTab=t; clRender(); }
 var _clSel=null;
 function clEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function clStore(){ try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
-function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); }catch(e){}
+/* Se la memoria del browser e' piena, setItem fallisce: prima l'errore
+   veniva ignorato e il cliente nuovo spariva. Ora l'anagrafica resta in
+   memoria per la sessione (e sul cloud), e lo si segnala una volta. */
+var _clMemo=null, _clMemoAvvisato=false;
+function clStore(){ if(_clMemo) return _clMemo; try{ return JSON.parse(localStorage.getItem(EA_CLIENTI_KEY)||'{}'); }catch(e){ return {}; } }
+function clStoreSave(o){ try{ localStorage.setItem(EA_CLIENTI_KEY, JSON.stringify(o)); _clMemo=null; }catch(e){ _clMemo=o;
+    if(!_clMemoAvvisato){ _clMemoAvvisato=true; try{ console.warn('Anagrafica clienti: memoria del browser piena, salvo solo sul cloud', e); }catch(_){} } }
   try{ clAggregaInvalida(); }catch(e){} }
 /* --- anagrafiche sul cloud: prima vivevano solo dentro al browser ----
    NB: la tabella si chiama 'clienti_app' e non 'clienti' perche' su questo
@@ -28012,9 +28049,11 @@ function clSupaSaveList(arr){
   (arr||[]).forEach(function(e){ if(e&&e.id && e.deleted!==true) o[e.id]=e; });
   clStoreSave(o);
 }
-function clSupaUpsert(key){
+function clSupaUpsert(key, rec){
   try{
-    var e=clStore()[key]; if(!e) return;
+    /* rec passato direttamente: se la memoria del browser e' piena il
+       salvataggio locale fallisce in silenzio, ma sul cloud deve arrivare */
+    var e=clStore()[key]||rec; if(!e) return;
     e.id=key;
     if(typeof supaUpsert==='function') supaUpsert('clienti_app', e);
   }catch(e2){}
@@ -28510,7 +28549,7 @@ function clSalvaAnagrafica(keyEnc){
   if(eaEmailVietata(e.email)){ alert(eaEmailVietataMsg(e.email)); return; }
   if(eaEmailVietata(e.email2)){ alert(eaEmailVietataMsg(e.email2)); return; }
   e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
-  clSupaUpsert(key);
+  clSupaUpsert(key, e);
   var _n=clPropagaAPratiche(key, e);
   if(typeof tcToastNew==='function'){
     tcToastNew('\ud83d\udcbe Anagrafica salvata'
@@ -28537,14 +28576,22 @@ function clAddIndSalva(keyEnc){
   if(typeof tcToastNew==='function') tcToastNew('\ud83d\udccd Nuovo indirizzo aggiunto (il precedente resta in storico)',true);
   clRender();
 }
-function clNuovo(){
-  var nome=prompt('Nome del nuovo cliente:',''); if(nome===null) return; nome=(nome||'').trim();
-  var cognome=(prompt('Cognome:','')||'').trim();
+function clNuovo(cognDef, nomeDef){
+  var cognome=prompt('Cognome (o ragione sociale) del nuovo cliente:', cognDef||''); if(cognome===null) return; cognome=(cognome||'').trim().toUpperCase();
+  var nome=prompt('Nome:', nomeDef||''); if(nome===null) return; nome=(nome||'').trim().toUpperCase();
   if(!nome && !cognome){ alert('Inserisci almeno nome o cognome.'); return; }
+  /* Se esiste gia' un cliente con lo stesso nome e cognome si apre quello,
+     invece di crearne un doppione. */
+  try{
+    var _gia=clAggrega().filter(function(c){ return String(c.cognome||'').trim().toUpperCase()===cognome && String(c.nome||'').trim().toUpperCase()===nome; });
+    if(_gia.length && confirm('Esiste gi\u00e0 '+cognome+' '+nome+' in anagrafica. Apro quella scheda?\n\n(Annulla = crea comunque un cliente nuovo)')){ _clSel=_gia[0].key; clRender(); return; }
+  }catch(e){}
   var key='m:'+Date.now();
-  var ov=clStore(); ov[key]={nome:nome,cognome:cognome,manual:true,updatedAt:Date.now()}; clStoreSave(ov);
-  clSupaUpsert(key);
-  _clSel=key; clRender();
+  var rec={id:key,nome:nome,cognome:cognome,manual:true,createdAt:Date.now(),updatedAt:Date.now()};
+  var ov=clStore(); ov[key]=rec; clStoreSave(ov);
+  clSupaUpsert(key, rec);
+  _clSel=key; _clFiltri.q=''; clRender();
+  if(typeof tcToastNew==='function') tcToastNew('\ud83d\udc64 Cliente creato e salvato: completa telefono, email e codice fiscale e premi Salva anagrafica', true);
 }
 /* ===== DOCUMENTI DELLE PRATICHE NELLA SCHEDA CLIENTE =====
    Un documento caricato dal riepilogo di una vendita viene archiviato sotto
@@ -32808,6 +32855,23 @@ function cvBuildHTML(c, tipo){
       }
     }
   }catch(_e){}
+  /* ===== ESTENSIONE DI GARANZIA 12 + 12 MESI (24/11/2026) =====
+     Quando si sceglie la garanzia 24 mesi, su proposta e contratto si
+     stampano le condizioni: i 12 mesi in piu' coprono solo la rottura
+     del motore e valgono solo con la manutenzione fatta da noi. */
+  try{
+    if(String(c.garanziaMesi||'')==='24' && !_cvDetailView){
+      var _gx=(typeof parLoad==='function')?(parLoad().garanziaExt||''):'';
+      if(!_gx && typeof PARAM_GARANZIA_EXT_DEF!=='undefined') _gx=PARAM_GARANZIA_EXT_DEF;
+      if(tipo==='preventivo'){
+        doc+='<div class="cvh" style="margin-top:10px;">Estensione di garanzia — 12 + 12 mesi</div>'
+          +'<div class="cvbox" style="font-size:10px;line-height:1.45;">12 mesi di garanzia standard, più 12 mesi di estensione che coprono <b>solo la rottura del motore</b> (organi interni: monoblocco, testata, albero motore, pistoni, bielle, valvole). Esclusi organi esterni, sensori, sonde e spie. Valida solo con la manutenzione eseguita presso Europa Auto S.r.l. Le condizioni complete sono riportate nel contratto.</div>';
+      } else if(_gx){
+        doc+='<div class="cvh" style="margin-top:10px;">Estensione di garanzia — 12 mesi aggiuntivi (solo motore)</div>'
+          +'<div class="cvbox" style="font-size:9.5px;line-height:1.45;white-space:pre-line;">'+cvEsc(_gx)+'</div>';
+      }
+    }
+  }catch(_e){}
   var _cond=(tipo==='preventivo')?'':((typeof parLoad==='function')?((isFinale?parLoad().condizioniFinali:parLoad().condizioni)||''):'');
   if(_cond){ _cond=_cond.replace(/L'acquirente, ai sensi e per gli effetti degli artt\. 1341 e 1342 c\.c\.[\s\S]*?\(clausola 13\)\.\s*/,''); }
   /* Via il titolo ripetuto in cima al testo: il documento ne stampa gia' uno. */
@@ -34324,7 +34388,8 @@ var EA_LINK_RECENSIONI='https://g.page/r/CfP6etGmdA-yEBM/review';
 /* Bozza da sistemare con Davide: e' il testo che finisce sul contratto
    quando c'e' il pacchetto manutenzione. Si modifica dai Parametri. */
 var PARAM_PACCHETTO_MANUT_DEF = "Il Pacchetto Manutenzione comprende la manutenzione ORDINARIA del veicolo per la durata indicata, da eseguirsi presso Europa Auto S.r.l. o officina da essa indicata, previa prenotazione:\n\u2022 un tagliando all'anno (cambio olio motore e filtri: olio, aria, abitacolo, carburante, secondo il piano del costruttore);\n\u2022 freni (pastiglie e dischi) una volta ogni 40.000 km;\n\u2022 liquidi (freni, raffreddamento, servosterzo, lavavetri) e cinghie servizi secondo il piano di manutenzione del costruttore;\n\u2022 ogni altro intervento di manutenzione ordinaria previsto dal piano del costruttore nella durata del pacchetto.\nSono ESCLUSI: pneumatici, batteria, guasti meccanici ed elettrici, danni da incidente, uso improprio, negligenza o mancata manutenzione, e ogni intervento non riconducibile alla manutenzione ordinaria.\nIl pacchetto \u00e8 legato al veicolo, non \u00e8 rimborsabile n\u00e9 cedibile, e decade in caso di mancato rispetto delle scadenze di manutenzione previste dal costruttore.";
-var PARAM_DEF={ condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, pacchettoManut:PARAM_PACCHETTO_MANUT_DEF, pacchettoManutDove:'condizioni', validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:EA_LINK_RECENSIONI, iban:'IT88E0344033990000001004900', maxPreparazioni:2,
+var PARAM_GARANZIA_EXT_DEF="1. OGGETTO E DURATA. Il veicolo è coperto dalla garanzia standard di 12 (dodici) mesi dalla data di consegna. L'Estensione di Garanzia aggiunge ulteriori 12 (dodici) mesi, che decorrono dal giorno successivo alla scadenza della garanzia standard (dal 13° al 24° mese dalla consegna).\n\n2. COSA COPRE. Nei 12 mesi aggiuntivi la copertura riguarda ESCLUSIVAMENTE la rottura meccanica degli organi interni del motore, cioè: basamento (monoblocco), testata, albero motore, alberi a camme, pistoni e segmenti, bielle e bronzine, valvole e relative sedi e guide, punterie e bilancieri. È coperta soltanto la rottura che impedisce il funzionamento del motore, accertata da Europa Auto S.r.l.\n\n3. COSA NON COPRE. Sono esclusi dall'Estensione tutti gli organi esterni e ausiliari del motore e ogni altra parte del veicolo, tra cui a titolo esemplificativo: sensori, sonde, attuatori, centraline e cablaggi; spie e segnalazioni del cruscotto; turbocompressore, impianto di iniezione e iniettori, pompa carburante; alternatore, motorino di avviamento, batteria; impianto di raffreddamento (radiatore, pompa acqua, termostato); valvola EGR, filtro antiparticolato (FAP/DPF), catalizzatore e impianto di scarico; cinghie e catene di distribuzione con tenditori e pulegge; guarnizioni e paraoli; frizione, volano e cambio; materiali di consumo e parti soggette a usura. Non sono considerate rotture: accensione di spie, rumorosità, vibrazioni, perdite o consumo di olio entro i limiti indicati dal costruttore.\n\n4. CONDIZIONE DI VALIDITÀ: MANUTENZIONE PRESSO EUROPA AUTO. L'Estensione è valida solo se tutta la manutenzione ordinaria (tagliandi) del periodo di garanzia è eseguita presso la sede di Europa Auto S.r.l., nei tempi e chilometraggi previsti dal costruttore, e risulta documentata. Una manutenzione saltata, in ritardo o eseguita altrove fa decadere l'Estensione.\n\n5. ALTRE ESCLUSIONI. L'Estensione non opera per danni dovuti a: incidente, urto o evento esterno; uso improprio, competizioni, sovraccarico; mancato controllo o rabbocco di olio e liquidi; prosecuzione della marcia con spia di avaria o di temperatura accesa; rifornimento errato o carburante inquinato; ingresso di acqua nel motore; modifiche o elaborazioni non autorizzate; riparazioni eseguite da terzi senza autorizzazione scritta di Europa Auto S.r.l.\n\n6. COME SI ATTIVA. In caso di guasto il cliente deve fermare il veicolo e contattare subito Europa Auto S.r.l., prima di qualsiasi intervento. La diagnosi e la riparazione sono eseguite presso Europa Auto S.r.l. o presso un'officina da essa indicata per iscritto. Se il guasto risulta non coperto, i costi di diagnosi e smontaggio sono a carico del cliente, previo preventivo.\n\n7. LIMITI. L'Estensione copre ricambi e manodopera necessari alla riparazione, fino al valore commerciale del veicolo al momento del guasto. Non sono rimborsati traino, auto sostitutiva, fermo tecnico e danni indiretti. Europa Auto S.r.l. può scegliere se riparare o sostituire il motore con un'unità equivalente, nuova o revisionata.\n\n8. TITOLARITÀ. L'Estensione è riferita al veicolo e al cliente indicati nel presente contratto e non è trasferibile senza consenso scritto di Europa Auto S.r.l.\n\n9. DIRITTI DEL CONSUMATORE. L'Estensione è una garanzia convenzionale aggiuntiva: non riduce né sostituisce i diritti del consumatore previsti dalla garanzia legale di conformità (artt. 128 e seguenti del Codice del Consumo).";
+var PARAM_DEF={ garanziaExt:PARAM_GARANZIA_EXT_DEF, condizioni:PARAM_CONDIZIONI_DEF, condizioniFinali:PARAM_CONDIZIONI_FINALI_DEF, pacchettoManut:PARAM_PACCHETTO_MANUT_DEF, pacchettoManutDove:'condizioni', validFrom:'', validTo:'', ppMinore54:450, ppUguale54:530, ppOltre54:7, dini:130, immatricolazione:130, minivoltura:200, garanzia24:400, assicurazione:PARAM_ASSIC_DEF, linkRecensioni:EA_LINK_RECENSIONI, iban:'IT88E0344033990000001004900', maxPreparazioni:2,
   /* I numeri stanno qui e non sparsi nel codice: quando cambiano si
      modificano una volta sola, da Parametri, e vanno a posto ovunque.
      telefono   = quello che il cliente legge e chiama
@@ -34774,6 +34839,7 @@ function parInit(){
     +'</select>'
     +'<div style="font-size:11px;color:#94a3b8;margin:4px 0 10px;">In entrambi i casi il totale del contratto e la fattura comprendono il pacchetto: cambia solo dove il cliente lo legge.</div>';
   h+=lab('Condizioni PACCHETTO MANUTENZIONE (stampate su preventivo e contratto quando il pacchetto \u00e8 presente)')+'<textarea id="par_pacchettoManut" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:160px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.pacchettoManut)+'</textarea>';
+  h+=lab('Condizioni ESTENSIONE DI GARANZIA 12 + 12 mesi (stampate su proposta e contratto quando si sceglie la garanzia 24 mesi)')+'<textarea id="par_garanziaExt" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.garanziaExt||PARAM_GARANZIA_EXT_DEF)+'</textarea>';
   h+=lab('Condizioni CONTRATTO FINALE (stampate alla consegna)')+'<textarea id="par_condizioniFinali" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:12px;min-height:200px;box-sizing:border-box;line-height:1.5;">'+fnEsc(p.condizioniFinali)+'</textarea>';
   h+=apPannelloHTML();
   h+='</div>';
@@ -34822,7 +34888,7 @@ function parTab(k){
 function parSalva(){
   var g=function(k){ var el=document.getElementById('par_'+k); return el?el.value:''; };
   var p={};
-  ['telefono','telefonoWa','telefonoPrepara','logoUrl','waFraseSocial','fonteConfermano','condizioni','condizioniFinali','pacchettoManut','pacchettoManutDove','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
+  ['telefono','telefonoWa','telefonoPrepara','logoUrl','waFraseSocial','fonteConfermano','condizioni','condizioniFinali','garanziaExt','pacchettoManut','pacchettoManutDove','validFrom','validTo','ppMinore54','ppUguale54','ppOltre54','dini','immatricolazione','minivoltura','garanzia24','assicurazione','iban','maxPreparazioni','fatturaBaseCarrozzeria','fatturaBaseTagliandi','linkRecensioni'].forEach(function(k){ p[k]=g(k); });
   p.updatedAt=Date.now(); p.id='parametri';
   /* Anche se il locale e' pieno i parametri devono partire per il cloud:
      e' li' che li leggono gli altri. Prima si salva su Supabase, poi si
@@ -36827,6 +36893,7 @@ function tgOlioHtml(f){
     h+='<b style="font-size:14px;">'+tgEsc(o.viscosita||'')+'</b>'+((o.specifiche||[]).length?(' · '+tgEsc(o.specifiche.join(' · '))):'')
       +(o.capacita?(' · <b>'+tgEsc(o.capacita)+' l</b> con filtro'):'')
       +(o.motoreTrovato?('<br><span style="color:#92400e;">Motore: '+tgEsc(o.motoreTrovato)+'</span>'):'')
+      +(o.daMemoria?'<br><span style="color:#166534;">⚡ Preso dalla memoria: questo motore era già stato cercato. <b>✨ Trova olio con AI</b> rifà la ricerca.</span>':'')
       +'<br><span style="color:#92400e;">Ricerca fatta '+(o.fonte==='libretto'?'dal <b>tipo motore del libretto</b>':'da <b>marca, modello, cilindrata e potenza</b> (nessun libretto in archivio)')+'</span>'
       +(o.note?('<br>'+tgEsc(o.note)):'')
       +'<br><span style="color:'+(o.certezza==='bassa'?'#b91c1c':'#a16207')+';">Affidabilità: '+tgEsc(o.certezza||'media')+' — controlla sempre con la scheda del costruttore.</span>'
@@ -36837,8 +36904,13 @@ function tgOlioHtml(f){
 }
 function tgOlioStato(t, col){ var el=document.getElementById('tg-olio-out'); if(el){ el.style.color=col||'#78350f'; el.innerHTML=t; } }
 function tgOlioPost(body){
-  return fetch(EA_OLIO_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify(body) })
-    .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); });
+  /* oltre i 2 minuti si smette di aspettare: prima poteva restare su
+     "Cerco..." per diversi minuti */
+  var ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  var tmo=ctl?setTimeout(function(){ try{ ctl.abort(); }catch(e){} }, 125000):null;
+  return fetch(EA_OLIO_URL,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+EA_MSG_KEY,'apikey':EA_MSG_KEY}, body:JSON.stringify(body), signal:ctl?ctl.signal:undefined })
+    .then(function(r){ if(tmo) clearTimeout(tmo); return r.json().catch(function(){ return { ok:false, error:'HTTP '+r.status }; }); },
+          function(e){ if(tmo) clearTimeout(tmo); if(e && e.name==='AbortError') return { ok:false, error:'la ricerca ha impiegato troppo, riprova con \u2728 Trova olio con AI' }; throw e; });
 }
 function tgLeggiLibretto(input){
   var file=input&&input.files&&input.files[0]; if(input) input.value=''; if(!file) return;
@@ -36946,8 +37018,13 @@ function tgCercaOlioOnline(dv, fonte, auto){
   var b=document.getElementById('tg-olio-btn');
   var fine=function(){ window._tgOlioInCorso=null; if(b){ b.disabled=false; b.textContent='✨ Trova olio con AI'; } };
   if(!marca && !modello && !mot){ fine(); tgOlioStato('Scrivi almeno marca e modello dell’auto.', '#b91c1c'); return; }
-  tgOlioStato('⏳ Cerco online l’olio prescritto '+(mot?('per il motore <b>'+tgEsc(mot)+'</b> (dal libretto)'):('per '+tgEsc((marca+' '+modello).trim())+(cil?(' '+tgEsc(cil)+' cc'):'')+(kw?(' '+tgEsc(kw)+' kW'):'')))+'… <span style="color:#a16207;">fino a un minuto</span>');
-  tgOlioPost({ azione:'olio', marca:marca, modello:modello, motore:mot, anno:anno, cilindrata:cil, kw:kw, alimentazione:L.alimentazione||dv.alimentazione||'' })
+  var _msgBase='⏳ Cerco l’olio prescritto '+(mot?('per il motore <b>'+tgEsc(mot)+'</b>'):('per '+tgEsc((marca+' '+modello).trim())+(cil?(' '+tgEsc(cil)+' cc'):'')+(kw?(' '+tgEsc(kw)+' kW'):'')))+'… ';
+  var _t0=Date.now();
+  var _tick=function(){ var el=document.getElementById('tg-olio-out'); if(!el || window._tgOlioTimer!==_timer) return; var sec=Math.round((Date.now()-_t0)/1000);
+    el.style.color='#78350f'; el.innerHTML=_msgBase+'<span style="color:#a16207;">'+sec+' s'+(sec>20?' · sto cercando online, al massimo 2 minuti':'')+'</span>'; };
+  var _timer=setInterval(_tick, 1000); window._tgOlioTimer=_timer; _tick();
+  var _fine0=fine; fine=function(){ clearInterval(_timer); if(window._tgOlioTimer===_timer) window._tgOlioTimer=null; _fine0(); };
+  tgOlioPost({ azione:'olio', marca:marca, modello:modello, motore:mot, anno:anno, cilindrata:cil, kw:kw, alimentazione:L.alimentazione||dv.alimentazione||'', forza:!auto })
   .then(function(j){
     fine();
     if(!j || !j.ok){ tgOlioStato('Ricerca non riuscita'+((j&&j.error)?(': '+tgEsc(j.error)):'')+'. Controlla che la funzione olio-motore sia attiva su Supabase.', '#b91c1c'); return; }
@@ -36973,7 +37050,16 @@ function tgOlioInFattura(auto){
        quella generica ("OLIO MOTORE") o quella messa dall'AI in precedenza */
     var d=String(_tgRighe[i].desc||'').trim().toUpperCase();
     if(d===desc.toUpperCase()) return;
-    if(!/^OLIO\s*MOTORE\.?$/.test(d) && d!==String(o.descMessa||'').toUpperCase()) return;
+    if(!/^OLIO\s*MOTORE\.?$/.test(d) && d!==String(o.descMessa||'').toUpperCase()){
+      /* riga scritta a mano: non si tocca, ma se la gradazione e' diversa
+         da quella trovata lo si dice (es. riga 0W30, costruttore 5W-30) */
+      try{
+        var vr=(d.match(/\b(\d{1,2})\s*W\s*-?\s*(\d{2})\b/)||[]), vo=(String(o.viscosita||'').toUpperCase().match(/\b(\d{1,2})\s*W\s*-?\s*(\d{2})\b/)||[]);
+        if(vr[0] && vo[0] && (vr[1]!==vo[1] || vr[2]!==vo[2]) && typeof tcToastNew==='function')
+          tcToastNew('\u26a0\ufe0f In fattura c\u2019\u00e8 '+vr[1]+'W-'+vr[2]+', ma per questo motore risulta '+vo[1]+'W-'+vo[2]+'. Controlla, o premi \u00abMetti nella riga OLIO MOTORE\u00bb.', false);
+      }catch(_v){}
+      return;
+    }
   }
   if(i<0){ _tgRighe.splice(1,0,{ cod:'', desc:desc, qta:(q>0?q:1), um:'LT', prezzo:0 }); }
   else { _tgRighe[i].desc=desc; if(q>0) _tgRighe[i].qta=q; if(!_tgRighe[i].um) _tgRighe[i].um='LT'; }
