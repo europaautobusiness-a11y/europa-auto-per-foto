@@ -23317,7 +23317,10 @@ function onDaDecidere(a){
   /* solo le vendite avvisate con la regola nuova: le vecchie opzionate erano
      gia' sparite dal sito e la vista continua a nasconderle */
   if(!a.sitoAvvisi) return false;
+  if(a.sitoVenduta) return false;                         /* gia' segnata VENDUTA sul sito */
   var st=a.stato||'disponibile';
+  /* solo le vendite in corso: le consegnate hanno il timbro da sole (ultime 5) */
+  if(st==='venduta') return false;
   var imp=(ON_STATI_IMPEGNO.indexOf(st)>=0) || !!a.impegnata;
   if(!imp) return false;
   return String(a.sitoLasciaStato||'')!==String(st);
@@ -23355,6 +23358,10 @@ function onAvvisaVendita(autoId, cv, fase){
 function onAvvisaVenditaOra(autoId, cv, fase){
   try{
     if(!autoId || typeof mzLoad!=='function') return;
+    /* Alla consegna non si avvisa piu': l'avviso e' gia' partito alla vendita,
+       e dopo la consegna il sito tiene da solo le ultime 5 consegnate
+       (vista "vetrina" su Supabase). Davide, 23/11. */
+    if(fase==='consegna') return;
     var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===autoId; }); if(i<0) return;
     var a=l[i];
     if(!onVisibileSulSito(a)) return;                       /* non e' davvero sul sito: niente da chiedere */
@@ -23368,15 +23375,15 @@ function onAvvisaVenditaOra(autoId, cv, fase){
     var vend=String((cv&&cv.venditore)||((typeof _currentUserName!=='undefined'&&_currentUserName)||'')).trim();
     var cosa=(fase==='consegna')?'consegnata':'venduta';
     var testo='🌐 '+nome+' è stata '+cosa+(vend?(' da '+vend):'')+(cli?(' a '+cli):'')
-      +' ma è ancora sul sito. Decidi tu se toglierla: Auto online → Vendute ancora sul sito.';
+      +'. In Auto online decidi se segnarla VENDUTA sul sito.';
     try{ notifPush(testo, '🌐', { ruoli:['admin'] }); }catch(e){}
     var corpo='<p>'+mzEsc(nome)+' è stata <b>'+cosa+'</b>'+(vend?(' da '+mzEsc(vend)):'')+(cli?(' a '+mzEsc(cli)):'')+'.</p>'
-      +'<p>L’auto <b>è ancora pubblicata sul sito</b>: non viene tolta in automatico, perché con il finanziamento la vendita può ancora saltare.</p>'
-      +'<p>Per toglierla: gestionale → <b>Auto online</b> → riquadro <b>Vendute ancora sul sito</b> → <b>Togli dal sito</b>. Foto e dati restano nella scheda “Vendute (tolte dal sito)”.</p>'
-      +((fase==='consegna')?'<p>L’auto è stata consegnata: la vendita è conclusa.</p>':'<p>Se il finanziamento non passa, lasciala online.</p>');
+      +'<p>Per ora sul sito l’auto resta <b>normale</b>, con prezzo e rata (col finanziamento la vendita può ancora saltare).</p>'
+      +'<p>Quando sei sicuro: gestionale → <b>Auto online</b> → <b>Segna VENDUTA sul sito</b>. Comparirà il timbro arancione, senza rata.</p>'
+      +'<p>Dopo la consegna l’auto resta tra le <b>ultime 5 consegnate</b> e sparisce da sola quando ne vengono consegnate altre.</p>';
     var html=(typeof eaMailWrap==='function')?eaMailWrap(corpo):corpo;
     ['amministrazione@europaautosrl.it','europaautobusiness@gmail.com'].forEach(function(d){
-      try{ eaInviaMessaggio({ to:d, subject:'Auto '+cosa+': toglierla dal sito? — '+nome, html:html }); }catch(e){}
+      try{ eaInviaMessaggio({ to:d, subject:'Auto '+cosa+' — '+nome, html:html }); }catch(e){}
     });
   }catch(e){}
 }
@@ -23390,12 +23397,21 @@ function onTogliSito(id){
   a.updatedAt=Date.now(); mzSave(l); try{ mzSupaUpsert(a); }catch(e){}
   onRender(); if(typeof tcToastNew==='function') tcToastNew('Tolta dal sito: '+nome, true);
 }
+/* Segna VENDUTA sul sito: l'auto resta pubblicata con il timbro, senza rata
+   (la vista "vetrina" legge sitoVenduta). Davide, 24/11. */
+function onSegnaVenduta(id){
+  if(!onSoloTitolare()){ alert('Solo l’amministrazione può decidere cosa mostra il sito.'); return; }
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
+  l[i].sitoVenduta=Date.now(); l[i].updatedAt=Date.now();
+  mzSave(l); try{ mzSupaUpsert(l[i]); }catch(e){}
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Sul sito ora ha il timbro VENDUTA', true);
+}
 function onLasciaSito(id){
   if(!onSoloTitolare()) return;
   var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; }); if(i<0) return;
   l[i].sitoLasciaStato=l[i].stato||'disponibile'; l[i].sitoLasciaTs=Date.now(); l[i].updatedAt=Date.now();
   mzSave(l); try{ mzSupaUpsert(l[i]); }catch(e){}
-  onRender(); if(typeof tcToastNew==='function') tcToastNew('Resta online come “Venduta”', true);
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Resta sul sito come disponibile', true);
 }
 function onRimettiSito(id){
   if(!onSoloTitolare()) return;
@@ -23437,8 +23453,8 @@ function onDaDecidereHTML(){
   var l=mzLoad().filter(onDaDecidere);
   if(!l.length || !onSoloTitolare()) return '';
   var h='<div style="background:#fff7ed;border:2px solid #fb923c;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
-    +'<div style="font-weight:900;font-size:15px;color:#9a3412;margin-bottom:3px;">⚠️ Vendute ancora sul sito ('+l.length+')</div>'
-    +'<div style="font-size:12.5px;color:#9a3412;margin-bottom:10px;line-height:1.45;">Hanno un contratto (o sono già consegnate). Sul sito si vedono con il timbro “VENDUTA”: restano fino alla consegna e poi tra le ultime 5 consegnate, dopo spariscono da sole. Su AutoScout24 invece non vanno. Toglile solo se vuoi nasconderle prima.</div>';
+    +'<div style="font-weight:900;font-size:15px;color:#9a3412;margin-bottom:3px;">⚠️ Vendute: segnarle VENDUTA sul sito? ('+l.length+')</div>'
+    +'<div style="font-size:12.5px;color:#9a3412;margin-bottom:10px;line-height:1.45;">Hanno il contratto firmato. Finché non le segni, sul sito restano <b>normali</b>, con prezzo e rata. <b>Segna VENDUTA</b> mette il timbro arancione, toglie la rata e lascia solo “Cerchi un’auto simile?”. Dopo la consegna restano tra le <b>ultime 5 consegnate</b> e poi spariscono da sole.</div>';
   l.forEach(function(a){
     var f=onFoto1(a), st=a.stato||'disponibile';
     var stTxt=(st==='venduta')?'Consegnata':'Contratto firmato';
@@ -23447,8 +23463,9 @@ function onDaDecidereHTML(){
       +'<div style="flex:1;min-width:160px;"><div style="font-weight:800;font-size:13.5px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</div>'
       +'<div style="font-size:11.5px;color:#64748b;">'+mzEsc(a.targa||'')+(a.targa?' · ':'')+'<b style="color:'+(st==='venduta'?'#166534':'#b45309')+';">'+stTxt+'</b>'
       +(a.sitoLasciaStato?' · lasciata online prima':'')+'</div></div>'
-      +'<button onclick="onTogliSito(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Togli dal sito</button>'
-      +'<button onclick="onLasciaSito(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Lascia online</button>'
+      +'<button onclick="onSegnaVenduta(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:none;background:#ea580c;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Segna VENDUTA sul sito</button>'
+      +'<button onclick="onLasciaSito(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">Lasciala disponibile</button>'
+      +'<button onclick="onTogliSito(\''+a.id+'\')" title="Toglie l’auto dal sito del tutto" style="padding:8px 10px;border-radius:8px;border:none;background:none;color:#94a3b8;font-family:inherit;font-weight:600;font-size:11.5px;cursor:pointer;text-decoration:underline;">nascondi del tutto</button>'
       +'</div>';
   });
   return h+'</div>';
@@ -24973,9 +24990,9 @@ function mzMediaRender(){
   if(_mzMedia.giro360 && _mzMedia.giro360.frames && _mzMedia.giro360.frames.length){
     var fr=_mzMedia.giro360.frames;
     h+=_riga('<img src="'+mzEscA(fr[0])+'" style="width:110px;height:62px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto;">',
-      'Giro a 360\u00b0'+(_mzMedia.giro360.ai?' <span style="color:#7c3aed;">\u2728 migliorato con AI</span>':''), fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
+      'Giro a 360\u00b0'+(_mzMedia.giro360.studio?' <span style="color:#15803d;">\uD83C\uDFC1 in showroom</span>':_mzMedia.giro360.ai?' <span style="color:#7c3aed;">\u2728 migliorato con AI</span>':''), fr.length+' fotogrammi'+(_mzMedia.giro360.ts?(' \u00b7 '+new Date(_mzMedia.giro360.ts).toLocaleDateString('it-IT')):''),
       _bt('\u21BB Anteprima','mzGiroAnteprima()','link')
-      +_bt((_mzMedia.giro360.ai?'\u2728 Rifai con AI':'\u2728 Migliora con AI'),'mzGiroMiglioraAI(null)','')
+      +_bt((_mzMedia.giro360.studio?'\uD83C\uDFC1 Rifai showroom':'\uD83C\uDFC1 Showroom'),'mzGiroStudio(null)','')
       +((_mzMedia.giro360.ai && _mzMedia.giro360.originali)?_bt('\u21A9 Originale','mzGiroOriginale()',''):'')
       +_bt('\u2702 Inquadra','mzGiroInquadra()','')+_bt('\uD83D\uDDD1',"_mzMedia.giro360=null;mzMediaRender();",'del'));
   }
@@ -25131,9 +25148,152 @@ function mzGiroMiglioraAI(blobs){
     mzMediaStato('<span style="color:#dc2626;">Miglioramento AI non riuscito: '+mzEscA((err&&err.message)||err)+'</span> <span style="color:#64748b;">Il giro resta com’era.</span>');
   }).then(function(){ _mzMediaBusy=false; try{ bmps.forEach(function(b){ b.close&&b.close(); }); }catch(e){} });
 }
+/* ===== GIRO 360 IN SHOWROOM =====
+   Per ogni fotogramma del video:
+   1) l'intelligenza artificiale (nel browser, gratis) toglie lo sfondo;
+   2) si misura l'auto: dove tocca terra, quanto e' alta, dov'e' il centro;
+   3) si ammorbidiscono le misure tra un fotogramma e l'altro e si mette
+      l'auto sempre alla stessa altezza da terra, centrata e della stessa
+      grandezza (niente piu' "balli" girando);
+   4) si compone su uno showroom chiaro con ombra che segue le ruote e un
+      leggero riflesso sul pavimento.
+   I fotogrammi originali restano in giro360.originali ("↩ Originale"). */
+var EA_BGR_URL='https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm';
+var G360_STUDIO={ W:1600, H:1000, orizzonte:0.58, terra:0.86, altezza:0.46, maxLarg:0.90 };
+var _g360Bgr=null;
+function g360Bgr(){
+  if(!_g360Bgr) _g360Bgr=import(window.EA_BGR_LOCALE||EA_BGR_URL).catch(function(e){ _g360Bgr=null; throw new Error('non riesco a caricare lo strumento che toglie lo sfondo ('+((e&&e.message)||e)+')'); });
+  return _g360Bgr;
+}
+function g360Scontorna(blob){
+  return g360Bgr().then(function(m){
+    var cfg={ model:'medium', output:{ format:'image/png', quality:1 } };
+    if(window.EA_BGR_DATA) cfg.publicPath=window.EA_BGR_DATA;
+    return m.removeBackground(blob, cfg);
+  });
+}
+/* sfondo showroom (uguale per tutti i fotogrammi) */
+function g360Sfondo(){
+  var S=G360_STUDIO, c=document.createElement('canvas'); c.width=S.W; c.height=S.H; var x=c.getContext('2d');
+  var hy=Math.round(S.H*S.orizzonte);
+  var g=x.createLinearGradient(0,0,0,hy); g.addColorStop(0,'#f7f8fa'); g.addColorStop(1,'#e5e8ed'); x.fillStyle=g; x.fillRect(0,0,S.W,hy);
+  g=x.createLinearGradient(0,hy,0,S.H); g.addColorStop(0,'#d4d8df'); g.addColorStop(1,'#eef0f4'); x.fillStyle=g; x.fillRect(0,hy,S.W,S.H-hy);
+  g=x.createLinearGradient(0,hy-14,0,hy+14); g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(.5,'rgba(255,255,255,.55)'); g.addColorStop(1,'rgba(255,255,255,0)'); x.fillStyle=g; x.fillRect(0,hy-14,S.W,28);
+  g=x.createRadialGradient(S.W/2,S.H*.6,S.H*.25,S.W/2,S.H*.6,S.W*.75); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(20,28,40,.16)'); x.fillStyle=g; x.fillRect(0,0,S.W,S.H);
+  return c;
+}
+/* misure dell'auto scontornata: riquadro e profilo inferiore (dove tocca terra) */
+function g360Misura(bm){
+  var w=320, h=Math.max(1,Math.round(w*bm.height/bm.width)), c=document.createElement('canvas'); c.width=w; c.height=h;
+  var x=c.getContext('2d',{ willReadFrequently:true }); x.drawImage(bm,0,0,w,h);
+  var d=x.getImageData(0,0,w,h).data, righe=new Array(h).fill(0), col=new Array(w).fill(0), fondo=new Array(w).fill(-1);
+  for(var y=0;y<h;y++) for(var i=0;i<w;i++) if(d[(y*w+i)*4+3]>128){ righe[y]++; col[i]++; if(y>fondo[i]) fondo[i]=y; }
+  var soglia=2, y0=-1,y1=-1,x0=-1,x1=-1;
+  for(var a=0;a<h;a++) if(righe[a]>soglia){ if(y0<0) y0=a; y1=a; }
+  for(var b=0;b<w;b++) if(col[b]>soglia){ if(x0<0) x0=b; x1=b; }
+  if(y0<0||x0<0) return null;
+  var k=bm.width/w;
+  return { x0:x0*k, x1:(x1+1)*k, y0:y0*k, y1:(y1+1)*k, fondo:fondo.map(function(v,i){ return (col[i]>soglia && v>=0)?v*k:-1; }), passo:k };
+}
+function g360Componi(ctx, sfondo, bm, m, sc, ox, oy){
+  var S=G360_STUDIO, W=S.W, H=S.H;
+  ctx.globalAlpha=1; ctx.filter='none'; ctx.globalCompositeOperation='source-over';
+  ctx.drawImage(sfondo,0,0);
+  var cw=bm.width*sc, ch=bm.height*sc, hAuto=(m.y1-m.y0)*sc;
+  /* riflesso tenue sotto l'auto */
+  var r=document.createElement('canvas'); r.width=Math.ceil(cw); r.height=Math.ceil(hAuto*0.6); var rx=r.getContext('2d');
+  rx.save(); rx.translate(0, (m.y1*sc)); rx.scale(1,-1); rx.drawImage(bm,0,0,cw,ch); rx.restore();
+  rx.globalCompositeOperation='destination-in';
+  var gr=rx.createLinearGradient(0,0,0,r.height); gr.addColorStop(0,'rgba(0,0,0,.13)'); gr.addColorStop(1,'rgba(0,0,0,0)'); rx.fillStyle=gr; rx.fillRect(0,0,r.width,r.height);
+  ctx.filter='blur(2px)'; ctx.drawImage(r, ox, oy+m.y1*sc-4); ctx.filter='none';
+  /* ombra che segue il profilo inferiore vero (in 3/4 le ruote non sono alla stessa altezza) */
+  var o=document.createElement('canvas'); o.width=W; o.height=H; var oc=o.getContext('2d');
+  var o2=document.createElement('canvas'); o2.width=W; o2.height=H; var oc2=o2.getContext('2d');
+  oc.fillStyle=oc2.fillStyle='#0c101a';
+  var passo=Math.max(1, m.passo*sc);
+  m.fondo.forEach(function(v,i){
+    if(v<0) return; var X=ox+i*m.passo*sc, Y=oy+v*sc;
+    oc.fillRect(X, Y-hAuto*0.06, passo+1, hAuto*0.11);
+    oc2.fillRect(X, Y-3, passo+1, 7);
+  });
+  ctx.globalAlpha=.50; ctx.filter='blur(16px)'; ctx.drawImage(o,0,0);
+  ctx.globalAlpha=.78; ctx.filter='blur(4px)'; ctx.drawImage(o2,0,0);
+  ctx.globalAlpha=1; ctx.filter='none';
+  ctx.drawImage(bm, ox, oy, cw, ch);
+}
+function mzGiroStudio(blobs){
+  var g=_mzMedia.giro360; if(!g || !g.frames || !g.frames.length) return;
+  if(_mzMediaBusy){ alert('Attendi: c’è già un caricamento in corso.'); return; }
+  _mzMediaBusy=true; var _idAuto=(typeof _mzId!=='undefined')?_mzId:null;
+  var originali=(g.originali && (g.ai||g.studio))?g.originali.slice():g.frames.slice();
+  var sorgenti=blobs||originali, n=sorgenti.length, tagli=[], misure=[];
+  var S=G360_STUDIO;
+  mzMediaStato('⏳ 🏁 Preparo lo showroom: carico lo strumento che toglie lo sfondo… <span style="color:#94a3b8;">la prima volta circa 30 secondi</span>');
+  var i=0;
+  var prossimo=function(){
+    if(i>=n) return Promise.resolve();
+    var k=i++;
+    var src=sorgenti[k];
+    return (src instanceof Blob ? Promise.resolve(src) : fetch(src,{ mode:'cors', cache:'no-store' }).then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.blob(); }))
+      .then(g360Scontorna).then(function(png){ return createImageBitmap(png); })
+      .then(function(bm){ tagli[k]=bm; misure[k]=g360Misura(bm);
+        mzMediaStato('⏳ 🏁 Tolgo lo sfondo: fotogramma '+(k+1)+'/'+n+'… <span style="color:#94a3b8;">qualche minuto, non chiudere la scheda</span>');
+        return prossimo(); });
+  };
+  prossimo().then(function(){
+    var buoni=misure.filter(Boolean).length;
+    if(buoni<n*0.7) throw new Error('in troppi fotogrammi non ho trovato l’auto ('+(n-buoni)+' su '+n+')');
+    /* auto tagliata dal video (tocca il bordo sinistro o destro): lo showroom
+       la mostrerebbe a pezzi, quindi ci si ferma e si spiega come rigirarlo */
+    var tagliate=0; misure.forEach(function(m,k){ if(!m) return; var W0=tagli[k].width; if(m.x0<=W0*0.01 || m.x1>=W0*0.99) tagliate++; });
+    if(tagliate>n*0.15) throw new Error('in '+tagliate+' fotogrammi su '+n+' l’auto esce dall’inquadratura, e nello showroom si vedrebbe tagliata. Rigira il video con il telefono in orizzontale, a 3-4 metri dall’auto, tenendola sempre intera e al centro');
+    for(var a=0;a<n;a++) if(!misure[a]){ for(var d=1; d<n; d++){ var q=misure[(a+d)%n]||misure[((a-d)%n+n)%n]; if(q){ misure[a]=q; break; } } }
+    var alt=misure.map(function(m){ return m.y1-m.y0; }), cx=misure.map(function(m){ return (m.x0+m.x1)/2; }), fo=misure.map(function(m){ return m.y1; });
+    /* mediana su 3 fotogrammi (toglie gli errori del ritaglio) e poco altro:
+       ogni fotogramma viene portato alla stessa altezza e allo stesso centro */
+    var med3=function(a){ return a.map(function(v,i){ var t=[a[(i+n-1)%n],v,a[(i+1)%n]].sort(function(x,y){return x-y;}); return t[1]; }); };
+    var altS=mzGiroMedia(med3(alt),0,1), cxS=cx, foS=fo;   /* centro e appoggio: quelli di ogni fotogramma */
+    var target=S.H*S.altezza;
+    var sc=altS.map(function(h){ return target/h; });
+    var largMax=0; misure.forEach(function(m,k){ largMax=Math.max(largMax, (m.x1-m.x0)*sc[k]); });
+    if(largMax>S.W*S.maxLarg){ var f=S.W*S.maxLarg/largMax; sc=sc.map(function(v){ return v*f; }); }
+    var c=document.createElement('canvas'); c.width=S.W; c.height=S.H; var ctx=c.getContext('2d');
+    var sfondo=g360Sfondo(), out=[], k2=0, base=S.H*S.terra;
+    return new Promise(function(resolve){
+      var uno=function(){
+        if(k2>=n){ resolve(out); return; }
+        var k=k2++, s=sc[k];
+        var ox=S.W/2-cxS[k]*s, oy=base-foS[k]*s;
+        g360Componi(ctx, sfondo, tagli[k], misure[k], s, ox, oy);
+        mzMediaStato('⏳ 🏁 Compongo lo showroom '+(k+1)+'/'+n+'…');
+        c.toBlob(function(bl){ out.push(bl); setTimeout(uno,0); }, 'image/jpeg', 0.9);
+      };
+      uno();
+    });
+  }).then(function(blobsOut){
+    var urls=new Array(blobsOut.length), idx=0, ok=0, ko=0, nome='giro360studio-'+Date.now();
+    var su=function(){
+      if(idx>=blobsOut.length) return Promise.resolve();
+      var k=idx++;
+      return mzMediaUpload(blobsOut[k], nome+'-'+String(k+1).padStart(2,'0')+'.jpg')
+        .then(function(r){ urls[k]=r.url; ok++; }, function(){ ko++; })
+        .then(function(){ mzMediaStato('⏳ 🏁 Carico i fotogrammi '+(ok+ko)+'/'+blobsOut.length+'… <span style="color:#94a3b8;">non chiudere la scheda</span>'); return su(); });
+    };
+    return Promise.all([su(),su(),su()]).then(function(){
+      if(ko) throw new Error(ko+' fotogrammi non caricati: riprova con «🏁 Showroom»');
+      var cur=_mzMedia.giro360||{};
+      _mzMedia.giro360={ frames:urls, n:urls.length, ts:cur.ts||Date.now(), fonte:cur.fonte||'', ai:true, studio:true, originali:originali };
+      mzMediaRender(); _mzMediaBusy=false;
+      mzAutoSalvaMedia(_idAuto, '🏁 Giro 360° in showroom pronto: sfondo tolto, auto centrata con ombra e riflesso. Per tornare indietro «↩ Originale».');
+    });
+  }).catch(function(err){
+    mzMediaStato('<span style="color:#dc2626;">Showroom non riuscito: '+mzEscA((err&&err.message)||err)+'</span> <span style="color:#64748b;">Il giro resta com’era.</span>');
+  }).then(function(){ _mzMediaBusy=false; try{ tagli.forEach(function(b){ b&&b.close&&b.close(); }); }catch(e){} });
+}
+
 function mzGiroOriginale(){
   var g=_mzMedia.giro360; if(!g || !g.originali) return;
-  if(!confirm('Tornare al giro 360° originale, senza le correzioni dell’AI?')) return;
+  if(!confirm('Tornare al giro 360° originale (video con lo sfondo vero, senza showroom)?')) return;
   _mzMedia.giro360={ frames:g.originali.slice(), n:g.originali.length, ts:g.ts, fonte:g.fonte||'' };
   mzMediaRender(); mzAutoSalvaMedia(_mzId, '↩ Ripristinato il giro 360° originale.');
 }
@@ -25468,7 +25628,7 @@ function mzGiroUpload(files){
       _mzMedia.giro360={ frames:buoni, n:buoni.length, ts:Date.now(), fonte:f.name||'' };
       mzMediaRender(); _mzMediaBusy=false;
       mzAutoSalvaMedia(_idAuto, '✅ Giro a 360° pronto ('+buoni.length+' fotogrammi).');
-      if(mzGiroAiAuto() && ko===0) setTimeout(function(){ mzGiroMiglioraAI(frames); }, 300);
+      if(mzGiroAiAuto() && ko===0) setTimeout(function(){ mzGiroStudio(frames); }, 300);
     });
   }).catch(function(err){ mzMediaStato('<span style="color:#dc2626;">Giro 360° non riuscito: '+mzEscA((err&&err.message)||err)+'</span>'); })
   .then(function(){ _mzMediaBusy=false; });

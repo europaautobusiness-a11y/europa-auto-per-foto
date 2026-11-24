@@ -192,6 +192,14 @@ img{display:block}
 .thumbs::-webkit-scrollbar{display:none}
 .thumbs img{width:64px;height:48px;object-fit:cover;border-radius:7px;cursor:pointer;border:2px solid transparent;flex:none;opacity:.75}
 .thumbs img.on{border-color:var(--blu);opacity:1}
+/* striscia delle miniature: frecce per saltare avanti e indietro, rotella e trascinamento */
+.thumbs-w{position:relative;display:flex;align-items:center;gap:6px;margin-top:9px}
+.thumbs-w .thumbs{margin-top:0;flex:1;cursor:grab}
+.thumbs-w .thumbs.trascina{cursor:grabbing;scroll-behavior:auto}
+.thumbs-w .thumbs.trascina img{pointer-events:none}
+.th-nav{flex:none;width:32px;height:48px;border-radius:9px;border:1px solid var(--linea);background:#fff;color:var(--ink);font-size:24px;font-weight:700;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.th-nav:hover{background:#f1f5f9}
+.th-nav[disabled]{opacity:.35;cursor:default}
 .dt-tit{margin-top:18px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .dt-tit h2{font-size:clamp(20px,3.6vw,27px);font-weight:900;letter-spacing:-.02em;line-height:1.15}
 .dt-tit .all{font-size:14px;color:var(--grigio);font-weight:600;margin-top:3px}
@@ -935,6 +943,7 @@ var CAMPI_PUBBLICI=['marca','modello','allestimento','anno','km','colore','alime
 
 var VETRINA_VER='2026-08-06b';
 var VETRINA_DIAG={};
+var CARICATO=false;   /* finche' le auto non sono arrivate resta lo scheletro di caricamento */
 var AUTO=[];      /* tutte le auto pubblicabili */
 var VISTA=[];     /* dopo filtri/ordinamento */
 
@@ -1183,6 +1192,7 @@ function normalizza(raw){
     else if(raw[k.toLowerCase()]!==undefined) a[k]=raw[k.toLowerCase()];
   });
   a.id=raw.id;
+  if(raw.vendutasito!==undefined) a.vendutasito=raw.vendutasito;
   if(typeof a.foto==='string'){ try{a.foto=JSON.parse(a.foto);}catch(e){a.foto=[];} }
   if(!Array.isArray(a.foto)) a.foto=[];
   if(typeof a.giro360==='string'){ try{ a.giro360=JSON.parse(a.giro360); }catch(e){ a.giro360=null; } }
@@ -1213,7 +1223,11 @@ function motivoScarto(a, controllaOnline){
 /* Auto vendute: dalla firma del contratto (opzionata / prenotata) fino alla
    consegna, piu' le ultime 5 consegnate (le sceglie la vista "vetrina").
    Sul sito restano con il timbro VENDUTA, nell'ordine normale dell'elenco. */
-function venduta(a){ return ['opzionata','prenotata','venduta'].indexOf(String(a&&a.stato||''))>=0; }
+function venduta(a){
+  /* la vista "vetrina" dice se mostrare il timbro (vendutasito); se manca, vale lo stato */
+  if(a && a.vendutasito!=null && a.vendutasito!=='') return String(a.vendutasito)==='true';
+  return ['opzionata','prenotata','venduta'].indexOf(String(a&&a.stato||''))>=0;
+}
 function pubblicabile(a, controllaOnline){ return !motivoScarto(a, controllaOnline); }
 
 function carica(){
@@ -1256,6 +1270,7 @@ function carica(){
       });
       VETRINA_DIAG.pubblicate=AUTO.length;
       try{ console.log('VETRINA', JSON.stringify(VETRINA_DIAG)); }catch(e){}
+      CARICATO=true;
       popolaFiltri(); applica(); apriDaHash();
       var el=document.getElementById('hero-sub');
       var _nd=AUTO.filter(function(a){ return !venduta(a); }).length;
@@ -1264,6 +1279,7 @@ function carica(){
     .catch(function(e){
       VETRINA_DIAG.errore=String((e&&e.message)||e);
       try{ console.log('VETRINA errore', VETRINA_DIAG.errore); }catch(_e){}
+      CARICATO=true;
       erroreRete();
     });
 }
@@ -1352,6 +1368,7 @@ function targaHTML(a){
 }
 function render(){
   var g=document.getElementById('grid');
+  if(!CARICATO) return;   /* niente "nessuna auto" o diagnosi mentre i dati stanno arrivando */
   var _nDisp=VISTA.filter(function(a){ return !venduta(a); }).length;
   document.getElementById('tcount').innerHTML=VISTA.length?('<b>'+_nDisp+'</b> auto disponibili'):'';
   if(!AUTO.length){
@@ -1381,7 +1398,7 @@ function render(){
     var _v=venduta(a);
     return (_v?'<div class="card vend" role="group" aria-label="'+esc(a.marca+' '+a.modello)+' venduta">'
              :'<button class="card" onclick="dtApri(\''+esc(a.id)+'\')" aria-label="'+esc(a.marca+' '+a.modello)+'">')
-      +'<div class="cimg'+(venduta(a)?' opzv':'')+'">'+cov+badge+sconto+(a.foto.length>1?('<span class="cnum">📷 '+a.foto.length+'</span>'):'')+'</div>'
+      +'<div class="cimg'+(venduta(a)?' opzv':'')+'">'+cov+badge+sconto+'</div>'
       +'<div class="cbody">'
       +'<div><div class="ctit"><span class="mk">'+esc(cap(a.marca))+'</span> '+esc(cap(a.modello))+'</div>'
       +(a.allestimento?('<div class="csub">'+esc(a.allestimento)+'</div>'):'')+'</div>'
@@ -1424,7 +1441,9 @@ function dtApri(id){
       +'</div>'
       +(fs.length>1?'<button class="gal-nav pv" onclick="galVai(-1)" aria-label="Foto precedente">‹</button><button class="gal-nav nx" onclick="galVai(1)" aria-label="Foto successiva">›</button><div class="gal-ct" id="gal-ct">1 / '+fs.length+'</div>':'')
       +'</div>'
-      +(fs.length>1?('<div class="thumbs" id="thumbs">'+fs.map(function(f,i){return '<img src="'+esc(f.url)+'" class="'+(i===0?'on':'')+'" onclick="galSet('+i+')" alt="" loading="lazy">';}).join('')+'</div>'):'');
+      +(fs.length>1?('<div class="thumbs-w"><button type="button" class="th-nav pv" onclick="thScorri(-1)" aria-label="Miniature precedenti">‹</button>'
+        +'<div class="thumbs" id="thumbs">'+fs.map(function(f,i){return '<img src="'+esc(f.url)+'" class="'+(i===0?'on':'')+'" onclick="galSet('+i+')" alt="Foto '+(i+1)+'" loading="lazy">';}).join('')+'</div>'
+        +'<button type="button" class="th-nav nx" onclick="thScorri(1)" aria-label="Miniature successive">›</button></div>'):'');
   } else {
     gal='<div class="gal"><div class="gal-tr"><div class="fr" style="display:flex;align-items:center;justify-content:center;color:#94a3b8;font-weight:700;padding:20px;text-align:center;">Foto in arrivo — contattaci per foto e video del veicolo</div></div></div>';
   }
@@ -1526,6 +1545,7 @@ function dtApri(id){
   try{ if(a.giro360) g360Avvia(a); }catch(e){}
   var dt=document.getElementById('dt'); dt.classList.add('open'); dt.scrollTop=0;
   document.body.style.overflow='hidden';
+  setTimeout(thAttiva, 50);
   if(location.hash!=='#auto-'+encodeURIComponent(id)) history.pushState({auto:id},'','#auto-'+encodeURIComponent(id));
 }
 function dtClose(){
@@ -1545,9 +1565,43 @@ function galScroll(){
   var i=Math.round(tr.scrollLeft/tr.clientWidth);
   var ct=document.getElementById('gal-ct'); if(ct)ct.textContent=(i+1)+' / '+tr.children.length;
   var th=document.getElementById('thumbs');
-  if(th){ Array.prototype.forEach.call(th.children,function(im,j){im.classList.toggle('on',j===i);}); }
+  if(th){ Array.prototype.forEach.call(th.children,function(im,j){im.classList.toggle('on',j===i);});
+    /* la miniatura della foto mostrata resta sempre visibile nella striscia */
+    clearTimeout(th._seg); th._seg=setTimeout(function(){
+      var on=th.children[i]; if(!on || th.classList.contains('trascina')) return;
+      var x=on.offsetLeft-th.offsetLeft, w=th.clientWidth;
+      if(x<th.scrollLeft || x+on.offsetWidth>th.scrollLeft+w){ th._dest=Math.max(0,x-(w-on.offsetWidth)/2); th.scrollTo({left:th._dest,behavior:'smooth'}); }
+      thFrecce(); }, 150); }
 }
-function galSet(i){ var tr=document.getElementById('gal-tr'); if(tr)tr.scrollTo({left:i*tr.clientWidth,behavior:'smooth'}); }
+/* frecce della striscia: saltano di quasi una schermata di miniature */
+function thScorri(d){
+  var th=document.getElementById('thumbs'); if(!th) return;
+  var max=th.scrollWidth-th.clientWidth, da=(th._anim&&th._dest!=null)?th._dest:th.scrollLeft;
+  th._dest=Math.max(0,Math.min(max, da+d*Math.max(120,th.clientWidth*0.85))); th._anim=1;
+  th.scrollTo({left:th._dest,behavior:'smooth'});
+  clearTimeout(th._fa); th._fa=setTimeout(function(){ th._anim=0; thFrecce(); },450);
+}
+function thFrecce(){
+  var th=document.getElementById('thumbs'); if(!th) return; var w=th.parentNode;
+  var pv=w.querySelector('.th-nav.pv'), nx=w.querySelector('.th-nav.nx'), fine=th.scrollWidth-th.clientWidth-2;
+  if(pv) pv.disabled=th.scrollLeft<=2; if(nx) nx.disabled=th.scrollLeft>=fine;
+  var nascondi=th.scrollWidth<=th.clientWidth+2; if(pv) pv.style.display=nascondi?'none':''; if(nx) nx.style.display=nascondi?'none':'';
+}
+/* rotella del mouse = scorrimento orizzontale; trascinamento col mouse */
+function thAttiva(){
+  var th=document.getElementById('thumbs'); if(!th || th._ok) return; th._ok=1;
+  th.addEventListener('wheel',function(e){ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ th.scrollLeft+=e.deltaY; e.preventDefault(); } },{passive:false});
+  th.addEventListener('scroll',function(){ clearTimeout(th._t); th._t=setTimeout(thFrecce,80); },{passive:true});
+  var giu=false, x0=0, s0=0, mosso=false;
+  th.addEventListener('mousedown',function(e){ giu=true; mosso=false; x0=e.clientX; s0=th.scrollLeft; });
+  window.addEventListener('mousemove',function(e){ if(!giu) return; var dx=e.clientX-x0; if(Math.abs(dx)>5){ mosso=true; th.classList.add('trascina'); } if(mosso) th.scrollLeft=s0-dx; });
+  window.addEventListener('mouseup',function(){ if(!giu) return; giu=false; setTimeout(function(){ th.classList.remove('trascina'); },0); });
+  thFrecce();
+}
+function galSet(i){ var tr=document.getElementById('gal-tr'); if(!tr) return;
+  /* salto lungo (es. dalla prima all'ultima): istantaneo; foto vicina: scorrimento morbido */
+  var ora=Math.round(tr.scrollLeft/tr.clientWidth);
+  tr.scrollTo({left:i*tr.clientWidth,behavior:(Math.abs(i-ora)>2?'auto':'smooth')}); }
 function galVai(d){ var tr=document.getElementById('gal-tr'); if(!tr)return; var i=Math.round(tr.scrollLeft/tr.clientWidth)+d;
   i=Math.max(0,Math.min(tr.children.length-1,i)); galSet(i); }
 
