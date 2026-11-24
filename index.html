@@ -7212,6 +7212,7 @@ function pAggiornaSottocosto(cv){
     /* Array.prototype.slice: su qualche browser NodeList non ha forEach, e
        qui si romperebbe in silenzio lasciando il pulsante cliccabile. */
     var btns=Array.prototype.slice.call(box.querySelectorAll('.ptb'));
+    var _prima=PS.sotto;
 
     if(gg===null && !pz){
       _pSottoBloccato=false; _pSottoAuto=null; _pSottoForzato=false;
@@ -7283,6 +7284,10 @@ function pAggiornaSottocosto(cv){
       righe.push('<span style="color:#94a3b8;">Puoi cambiarlo tu: la modifica resta segnata.</span>');
     }
     nota.innerHTML = righe.join('<br>');
+    /* L'importo a video deve corrispondere a quello che si salva: prima qui
+       si cambiava PS.sotto senza ricalcolare, lo schermo mostrava l'importo
+       vecchio e al salvataggio ne usciva un altro. */
+    if(_prima!==PS.sotto){ try{ pCalcola(); }catch(e){} }
   }catch(e){}
 }
 
@@ -7290,8 +7295,8 @@ function ptog(k,v,btn){
   if(k==='fonte' && window._pFonteBloccata){ alert('La provenienza di questo cliente \u00e8 gi\u00e0 registrata nel CRM: '+window._pFonteBloccata+'.\n\nSi cambia solo dal CRM, e solo l\u2019amministratore.'); return; }
   /* Il sottocosto non si tocca quando lo decide la giacenza \u2014 salvo il
      titolare, per cui il blocco non viene mai acceso. */
-  if(k==='sotto' && _pSottoBloccato) return;
-  if(k==='sotto'){
+  if(k==='sotto' && _pSottoBloccato && !window._pApertura) return;
+  if(k==='sotto' && !window._pApertura){
     _pSottoForzato = (_pSottoAuto!==null && v!==_pSottoAuto);
     if(_pSottoForzato && pPuoForzareSotto()){
       try{
@@ -8197,7 +8202,10 @@ function pCaricaVendita(cvId){
     try{ pAzMostra(cv); }catch(e){}
     try{ pFonteSync(cv); }catch(e){}
     /* si continua la bozza gia' creata dalla vendita, non se ne apre una nuova */
-    try{ var _b=pProvvDiCv(cv.id); _pEditingId=_b?_b.r.id:null; }catch(e){ _pEditingId=null; }
+    window._pCvCorrente=cv.id;
+    /* se si stava gia' modificando una riga, si continua quella: prima qui
+       l'id veniva azzerato e al salvataggio nasceva una seconda riga */
+    try{ var _b=pProvvDiCv(cv.id); if(_b) _pEditingId=_b.r.id; }catch(e){}
     var cl=cv.cliente||{}, a=cv.autoSnapshot||{};
     var set=function(id,v){ var el=document.getElementById(id); if(el) el.value=(v==null?'':v); };
     set('pCliente', cvNomeCliente(cl));
@@ -8521,6 +8529,13 @@ function pSupaMigra(rows){
    Le altre righe ricevono la lapide, come con Elimina, cosi' non
    ritornano da altri dispositivi ne' dal foglio Google.
    ===================================================================== */
+/* La stessa vendita scritta in due modi ("ROSSI MARIO" / "MARIO ROSSI",
+   "PANDA" / "PANDA CITY LIFE 1.0") deve dare la stessa chiave. */
+function pChiaveVendita(r){
+  var cli=String((r&&r.cliente)||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean).sort().join(' ');
+  var mod=String((r&&r.modello)||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean)[0]||'';
+  return (cli&&mod)?(cli+'|'+mod):'';
+}
 function pTogliDoppioni(list){
   try{
     var norm=function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
@@ -8533,7 +8548,7 @@ function pTogliDoppioni(list){
     };
     var mod=function(r){ return Math.max(+(r.updatedAt||0), +((r.manuale&&r.manuale.ts)||0), (Number(r.id)>1e12?Number(r.id):0)); };
     var gruppi={};
-    list.forEach(function(r){ if(!r||r.deleted||!r.cliente||!r.modello) return; var k=norm(r.cliente)+'|'+norm(r.modello); (gruppi[k]=gruppi[k]||[]).push(r); });
+    list.forEach(function(r){ if(!r||r.deleted) return; var k=pChiaveVendita(r); if(!k) return; (gruppi[k]=gruppi[k]||[]).push(r); });
     var via={}, tolti=0;
     Object.keys(gruppi).forEach(function(k){
       var g=gruppi[k]; if(g.length<2) return;
@@ -8546,6 +8561,9 @@ function pTogliDoppioni(list){
       blocchi.push(cur);
       blocchi.forEach(function(b){
         if(b.length<2) return;
+        /* due contratti diversi sono due vendite vere: non si uniscono */
+        var _cvs={}; b.forEach(function(r){ if(r.cvId) _cvs[String(r.cvId)]=1; });
+        if(Object.keys(_cvs).length>1) return;
         var complete=b.filter(function(r){ return r.bozza!==true; });
         var base=(complete.length?complete:b).slice().sort(function(x,y){ return mod(y)-mod(x); })[0];
         var legata=b.filter(function(r){ return r.cvId; })[0] || b[0];
@@ -8896,16 +8914,28 @@ function pSalva() {
   /* Ultima rete: stesso cliente e stessa auto gia' nel registro (non bozza)
      ma il gestionale non sa che e' una modifica: si chiede invece di
      aggiungere una seconda riga in silenzio. */
+  /* ===== MAI UNA SECONDA RIGA PER LA STESSA VENDITA (24/11) =====
+     Se il gestionale non sa quale riga si sta modificando (per esempio si
+     e' aperta la provvigione e poi si e' ricaricata dalla pratica), la
+     cerca da solo: stesso contratto, oppure stesso cliente e stessa auto
+     scritti anche in modo diverso, vendita entro 45 giorni. La aggiorna,
+     senza aggiungerne un'altra. */
   if(!existingEntry){
-    var _norm=function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
-    var _gia=reg.filter(function(r){ return r && r.bozza!==true && !r.deleted
-      && _norm(r.cliente)===_norm(entry.cliente) && _norm(r.modello)===_norm(entry.modello); })[0];
+    var _cvCor=window._pCvCorrente||null;
+    var _k=pChiaveVendita(entry), _ora=Date.now();
+    var _gia=reg.filter(function(r){
+      if(!r || r.deleted || pTombHa(r.id)) return false;
+      if(_cvCor && r.cvId && String(r.cvId)===String(_cvCor)) return true;
+      if(!_k || pChiaveVendita(r)!==_k) return false;
+      if(_cvCor && r.cvId && String(r.cvId)!==String(_cvCor)) return false;   /* un altro contratto */
+      var _t=Number(r.updatedAt)||Number(r.id)||0;
+      return !_t || Math.abs(_ora-_t) < 45*86400000 || r.mese===entry.mese;
+    }).sort(function(a,b){ return (b.bozza===true?0:1)-(a.bozza===true?0:1) || (Number(b.updatedAt)||0)-(Number(a.updatedAt)||0); })[0];
     if(_gia){
-      if(confirm('Esiste gi\u00e0 una provvigione per '+entry.cliente+' \u2014 '+(entry.marca||'')+' '+entry.modello+' ('+(_gia.data||pGetMeseLabel(_gia.mese))+').\n\nOK = aggiorno quella (consigliato)\nAnnulla = ne aggiungo una nuova (solo se \u00e8 davvero un\u2019altra vendita)')){
-        entry.id=_gia.id; entry.data=_gia.data||entry.data; entry.mese=_gia.mese||entry.mese; entry.cvId=_gia.cvId||entry.cvId||null;
-        existingEntry=_gia;
-      }
-    }
+      entry.id=_gia.id; entry.data=_gia.data||entry.data; entry.mese=_gia.mese||entry.mese; entry.cvId=_gia.cvId||_cvCor||entry.cvId||null;
+      existingEntry=_gia; _adottata=_gia;
+      try{ if(typeof tcToastNew==='function') tcToastNew('Aggiornata la provvigione gi\u00e0 presente di '+entry.cliente, true); }catch(e){}
+    } else if(_cvCor && !entry.cvId){ entry.cvId=_cvCor; }
   }
   if(!existingEntry && !entry.cvId){
     var _gemella=reg.filter(function(r){
@@ -8925,7 +8955,9 @@ function pSalva() {
 
   if(_adottata){const idx=reg.findIndex(x=>String(x.id)===String(entry.id));if(idx!==-1)reg[idx]=entry;else reg.unshift(entry);}else{reg.unshift(entry);}
   entry.updatedAt = Date.now();
-  _pEditingId=null;
+  _pEditingId=null; window._pCvCorrente=null;
+  /* eventuali doppioni rimasti della stessa vendita si tolgono subito */
+  try{ var _pul=pTogliDoppioni(reg.slice()); if(_pul && _pul.length!==reg.length){ reg.length=0; Array.prototype.push.apply(reg,_pul); } }catch(e){}
   pSaveReg(reg);
   pSupaUpsert(entry);
   pRenderReg();
@@ -9011,6 +9043,7 @@ function pModifica(id){
   }
   if(!r) { alert('Dati non trovati.\n\nRicarica la pagina per rileggere il registro dal database.'); return; }
   _pEditingId=id;
+  window._pCvCorrente=r.cvId||null;
   // Naviga alla sezione provvigioni se non siamo già lì
   var viewProvv = document.getElementById('view-provv');
   if (!viewProvv || !viewProvv.classList.contains('active')) {
@@ -9053,7 +9086,10 @@ function pModifica(id){
     }
   }catch(e){}
   if(r.tipo!=='noFin'){
-    ['eta','sotto','rate','cpi','fi','gap'].forEach(k=>{if(r[k])ct('ptg-'+k,r[k]);});
+    /* si rimettono i pulsanti come nella riga salvata, senza le domande
+       sulla forzatura (che si riferivano alla provvigione aperta prima) */
+    window._pApertura=true;
+    try{ ['eta','sotto','rate','cpi','fi','gap'].forEach(k=>{if(r[k])ct('ptg-'+k,r[k]);}); }finally{ window._pApertura=false; }
     if(r.fi&&r.fi!=='NO'&&r.fiMesi){ct('ptg-fiMesi',String(r.fiMesi));const mw=document.getElementById('pFiMesiWrap');if(mw)mw.style.display='block';}
   }
   const warn=document.getElementById('pEditingBanner');
@@ -9066,10 +9102,15 @@ function pModifica(id){
        premendo "Da delibera": aprendo un'altra provvigione restava quella
        del cliente precedente. Ora si rifa' sul contratto di QUESTA riga. */
     try{
-      _pSottoAuto=null; _pSottoForzato=false; _pSottoBloccato=false;
+      _pSottoAuto=null; _pSottoBloccato=false;
+      /* una forzatura gia' salvata resta: prima il ricalcolo del sottocosto
+         la cancellava e al salvataggio tornava il valore del calcolo */
+      _pSottoForzato=!!(r.sottoForzato && r.sottoForzato.scelto);
+      if(_pSottoForzato) PS.sotto=r.sottoForzato.scelto;
       var _cvR=(r.cvId&&typeof cvById==='function')?cvById(r.cvId):null;
       if(!_cvR && typeof pTrovaDelibera==='function') _cvR=pTrovaDelibera(r.cliente||'', r.modello||'');
       pAggiornaSottocosto(_cvR);
+      pCalcola();
     }catch(e){}
     const f=document.getElementById('pCliente');
     if(f)f.scrollIntoView({behavior:'smooth',block:'start'});
