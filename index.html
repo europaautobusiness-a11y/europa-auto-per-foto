@@ -23511,6 +23511,80 @@ function onDaDecidereHTML(){
   });
   return h+'</div>';
 }
+/* ===== VECCHIE OPZIONATE ANCORA ONLINE (24/11/2026) =====
+   Le auto vendute PRIMA che esistesse il riquadro qui sopra non hanno mai
+   ricevuto l'avviso: sono rimaste con l'interruttore Online acceso e stato
+   "opzionata"/"prenotata", e il sito le mostrava. Qui si elencano, lette
+   dal CLOUD (alcune non sono piu' nella memoria di questo browser), con
+   "Togli dal sito" una per una o tutte insieme. Foto e dati restano. */
+window._onVecchie=window._onVecchie||null; window._onVecchieTs=window._onVecchieTs||0;
+function onVecchiaDaTogliere(d){
+  if(!d || d.deleted || d.nlt || d.sitoTolta || String(d.online)!=='true') return false;
+  if(d.sitoAvvisi || d.sitoVenduta) return false;                 /* vendite nuove: le gestisce il riquadro sopra */
+  var st=d.stato||'disponibile';
+  var imp=(st==='opzionata'||st==='prenotata') || (st==='disponibile' && (d.impegnata===true||d.impegnata==='true'));
+  if(!imp) return false;
+  return String(d.sitoLasciaStato||'')!==String(st);
+}
+function onVecchieCarica(){
+  var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+  if(window._onVecchieInCorso || (Date.now()-window._onVecchieTs)<60000) return;
+  window._onVecchieInCorso=true;
+  sb.from('magazzino').select('id,data').eq('data->>online','true').then(function(r){
+    window._onVecchieInCorso=false; window._onVecchieTs=Date.now();
+    if(!r || r.error){ return; }
+    var loc={}; try{ mzLoad().forEach(function(a){ if(a&&a.id) loc[a.id]=a; }); }catch(e){}
+    window._onVecchie=(r.data||[]).map(function(x){ var d=x.data||{}; d.id=d.id||x.id; return d; })
+      .filter(function(d){ var l=loc[d.id]; if(l && (l.sitoTolta || l.online!==true)) return false; return onVecchiaDaTogliere(d); });
+    try{ if(document.getElementById('on-vecchie')) onRender(); }catch(e){}
+  }, function(){ window._onVecchieInCorso=false; });
+}
+function onVecchieHTML(){
+  if(!onSoloTitolare()) return '';
+  onVecchieCarica();
+  var l=window._onVecchie||[];
+  if(!l.length) return '<div id="on-vecchie"></div>';
+  var h='<div id="on-vecchie" style="background:#fef2f2;border:2px solid #f87171;border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:200px;font-weight:900;font-size:15px;color:#991b1b;">Vecchie vendute ancora sul sito ('+l.length+')</div>'
+    +'<button onclick="onVecchieTogliTutte()" style="padding:8px 12px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Togli tutte dal sito</button></div>'
+    +'<div style="font-size:12.5px;color:#991b1b;margin:3px 0 8px;line-height:1.45;">Risultano opzionate o prenotate ma sono state vendute prima che esistesse il riquadro qui sopra, quindi sono rimaste online. Se sono davvero vendute, toglile: foto e dati restano in “Vendute (tolte dal sito)”. Se una è ancora in trattativa, premi “È ancora in vendita”.</div>';
+  l.forEach(function(a){
+    var f=onFoto1(a);
+    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #fecaca;border-radius:10px;padding:8px;margin-top:6px;">'
+      +(f?'<div style="width:70px;height:50px;border-radius:7px;background:#f1f5f9 url(\''+f+'\') center/cover;flex:none;"></div>':'')
+      +'<div style="flex:1;min-width:160px;"><div style="font-weight:800;font-size:13.5px;">'+mzEsc(((a.marca||'')+' '+(a.modello||'')).trim())+'</div>'
+      +'<div style="font-size:11.5px;color:#64748b;">'+mzEsc(a.targa||'')+(a.targa?' · ':'')+'<b style="color:#b45309;">'+mzEsc(a.stato||'impegnata')+'</b></div></div>'
+      +'<button onclick="onVecchiaTogli(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:none;background:#dc2626;color:#fff;font-family:inherit;font-weight:800;font-size:12.5px;cursor:pointer;">Togli dal sito</button>'
+      +'<button onclick="onVecchiaTieni(\''+a.id+'\')" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;">È ancora in vendita</button>'
+      +'</div>';
+  });
+  return h+'</div>';
+}
+/* scrive sull'auto: se c'e' nella memoria locale si aggiorna anche li' */
+function onVecchiaScrivi(id, cambia){
+  var v=(window._onVecchie||[]).filter(function(x){ return x.id===id; })[0];
+  var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===id; });
+  var a=(i>=0)?l[i]:v; if(!a) return;
+  cambia(a); a.updatedAt=Date.now();
+  if(i>=0) mzSave(l);
+  try{ mzSupaUpsert(a); }catch(e){}
+  window._onVecchie=(window._onVecchie||[]).filter(function(x){ return x.id!==id; });
+}
+function onVecchiaTogli(id, zitto){
+  onVecchiaScrivi(id, function(a){ a.online=false; a.onlineTs=Date.now(); a.sitoTolta=Date.now();
+    a.sitoToltaDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''); });
+  if(!zitto){ onRender(); if(typeof tcToastNew==='function') tcToastNew('Tolta dal sito', true); }
+}
+function onVecchiaTieni(id){
+  onVecchiaScrivi(id, function(a){ a.sitoLasciaStato=a.stato||'disponibile'; a.sitoLasciaTs=Date.now(); });
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Resta sul sito', true);
+}
+function onVecchieTogliTutte(){
+  var l=(window._onVecchie||[]).slice(); if(!l.length) return;
+  if(!confirm('Tolgo dal sito '+l.length+' auto?\n\nFoto e dati restano: le ritrovi in Auto online → Vendute (tolte dal sito), da dove puoi rimetterle online.')) return;
+  l.forEach(function(a){ onVecchiaTogli(a.id, true); });
+  onRender(); if(typeof tcToastNew==='function') tcToastNew('Tolte dal sito: '+l.length, true);
+}
 function onVenduteHTML(){
   var l=mzLoad().filter(function(a){ return a && a.sitoTolta && !a.deleted; })
     .sort(function(x,y){ return (y.sitoTolta||0)-(x.sitoTolta||0); });
@@ -23602,7 +23676,7 @@ function onSchedaEsporreHTML(a){
     +(rata?('<div class="rata"><div class="r">da '+rata.rata+' €/mese</div><div class="s">con anticipo di '+mig(rata.anticipo)+' €</div><div class="n">Esempio indicativo di finanziamento, salvo approvazione della finanziaria. Chiedi in sede la tua rata su misura.</div></div>'):'<div style="flex:1"></div>')
     +(qr?('<div class="qr"><img src="'+qr+'" alt="QR">Inquadra per foto, video e dettagli</div>'):'')
     +'</div>'
-    +'<div class="foot"><div><div class="az">EUROPA AUTO SRL</div>Via Nigra 4 · Paderno Dugnano (MI) · europaautosrl.it</div><div class="tel">Tel. 02 9181820<br><span style="font-size:19px;">WhatsApp 333 710 7403</span></div></div>'
+    +'<div class="foot"><div><div class="az">EUROPA AUTO SRL</div>Via Nigra 4 · Paderno Dugnano (MI) · europaautosrl.it</div><div class="tel"><span style="font-size:17px;">Tel. / WhatsApp</span><br>02 9181820</div></div>'
     +'</body></html>';
   return h;
 }
@@ -23666,6 +23740,7 @@ function onRender(){
     +(q?'<div style="font-size:12.5px;color:#64748b;margin:-6px 0 10px;">'+list.length+' auto per \u201c'+String(window._onCerca).replace(/</g,'&lt;')+'\u201d</div>':'');
 
   h+=onDaDecidereHTML();
+  h+=onVecchieHTML();
   if(filtro==='vendute'){ w.innerHTML=h+onVenduteHTML(); return; }
   var _nPronte=Math.max(0, nPronte-nOnline);
   h+='<div style="background:'+(_nPronte?'#ecfdf5':'#f8fafc')+';border:1px solid '+(_nPronte?'#86efac':'#e2e8f0')+';border-radius:10px;padding:11px 13px;margin-bottom:10px;font-size:13px;color:#0f172a;line-height:1.5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
