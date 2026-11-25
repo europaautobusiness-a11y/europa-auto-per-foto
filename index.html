@@ -25039,9 +25039,40 @@ function mzFotoHtml(){
     +'<button type="button" onclick="document.getElementById(\'mz-foto-input\').click()" style="width:100%;padding:11px;border-radius:8px;border:2px dashed #94a3b8;background:#f8fafc;color:#334155;font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;">\u2795 Aggiungi foto</button>'
     +'<div id="mz-foto-stato" style="font-size:12px;color:#64748b;margin-top:6px;"></div>';
 }
-function mzFotoInit(a){ _mzFoto=(a && Array.isArray(a.foto))?a.foto.slice():[]; mzFotoRender(); }
+function mzFotoInit(a){ _mzFoto=(a && Array.isArray(a.foto))?a.foto.slice():[];
+  /* bozza di foto di un'auto nuova non ancora salvata */
+  try{ if(!_mzFoto.length && typeof _mzId!=='undefined' && _mzId){ var b=JSON.parse(localStorage.getItem('ea_mz_foto_bozza_'+_mzId)||'null'); if(Array.isArray(b) && b.length) _mzFoto=b; } }catch(e){}
+  mzFotoRender(); }
+/* ===== FOTO SALVATE DA SOLE (25/11/2026, Davide) =====
+   Dopo ogni foto caricata, eliminata o messa in copertina, l'elenco foto
+   si salva subito sull'auto (memoria e cloud), senza premere Salva: si
+   tocca SOLO il campo foto, il resto della scheda resta com'e' finche'
+   non si salva. Per un'auto nuova, mai salvata, le foto restano in una
+   bozza e si salvano col primo Salva. */
+var _mzFotoAutoT=null;
+function mzFotoAutoSalva(){
+  clearTimeout(_mzFotoAutoT);
+  _mzFotoAutoT=setTimeout(function(){
+    try{
+      if(typeof _mzId==='undefined' || !_mzId || !Array.isArray(_mzFoto)) return;
+      var l=mzLoad(), i=l.findIndex(function(x){ return x && x.id===_mzId; });
+      var st=document.getElementById('mz-foto-stato');
+      if(i<0){
+        try{ localStorage.setItem('ea_mz_foto_bozza_'+_mzId, JSON.stringify(_mzFoto)); }catch(e){}
+        if(st && _mzFoto.length && !_mzFotoBusy) st.innerHTML=(st.innerHTML||'')+'<br><span style="color:#b45309;">Auto nuova: le foto si salvano quando premi Salva la prima volta.</span>';
+        return;
+      }
+      var prima=JSON.stringify(l[i].foto||[]), ora=JSON.stringify(_mzFoto);
+      if(prima===ora) return;
+      l[i].foto=_mzFoto.slice(); l[i].updatedAt=Date.now();
+      mzSave(l); try{ mzSupaUpsert(l[i]); }catch(e){}
+      if(st && !_mzFotoBusy) st.innerHTML='\u2705 Foto salvate ('+_mzFoto.length+')';
+    }catch(e){ try{ console.warn('salvataggio automatico foto', e); }catch(_){} }
+  }, 600);
+}
 function mzFotoRender(){
   var el=document.getElementById('mz-foto-list'); if(!el) return;
+  mzFotoAutoSalva();
   if(!_mzFoto.length){ el.innerHTML='<div style="font-size:12px;color:#94a3b8;">Nessuna foto caricata</div>'; return; }
   el.innerHTML=_mzFoto.map(function(f,i){
     return '<div style="position:relative;width:84px;height:84px;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;'+(i===0?'box-shadow:0 0 0 2px #1a4fa0;':'')+'">'
@@ -26026,7 +26057,7 @@ function mzFotoUpload(files){
       var msg='\u2705 '+ok+' foto caricate';
       if(ko) msg+=' \u00b7 <span style="color:#dc2626;font-weight:700;">'+ko+' non riuscite</span>';
       if(orig>0 && risp>0) msg+=' <span style="color:#94a3b8;">('+mzFotoBytes(orig)+' \u2192 '+mzFotoBytes(risp)+')</span>';
-      msg+='<br><b>Ricordati di salvare l\u2019auto.</b>';
+      msg+='<br><span style="color:#166534;">Salvate in automatico.</span>';
       st.innerHTML=msg;
     }
   };
@@ -27422,6 +27453,7 @@ function mzSalva(){
   var list=mzLoad(); var idx=list.findIndex(function(x){return x.id===a.id;});
   if(idx>=0) list[idx]=a; else list.push(a);
   mzSave(list); mzSupaUpsert(a); if(typeof mzPropagaContratti==='function') mzPropagaContratti(a);
+  try{ localStorage.removeItem('ea_mz_foto_bozza_'+a.id); }catch(e){}
   /* lascia detto cosa ha salvato: serve a chi vuole proseguire col contratto */
   window._mzUltimoSalvato = a.id;
   /* Un'auto estera che riceve la targa italiana E' un'immatricolazione, anche

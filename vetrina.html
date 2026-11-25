@@ -182,6 +182,22 @@ img{display:block}
 .gal{position:relative;border-radius:var(--r);overflow:hidden;background:#e8edf4;box-shadow:var(--ombra)}
 .gal-tr{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .gal-tr::-webkit-scrollbar{display:none}
+.gal-full{position:absolute;top:10px;right:10px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(15,23,42,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.gal-full:hover{background:rgba(15,23,42,.8)}
+#lb{display:none;position:fixed;inset:0;z-index:2147483000;background:#000}
+#lb.on{display:block}
+html.lb-aperto,html.lb-aperto body{overflow:hidden}
+.lb-tr{display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.lb-tr::-webkit-scrollbar{display:none}
+.lb-fr{flex:none;width:100%;height:100%;display:flex;align-items:center;justify-content:center;scroll-snap-align:center;touch-action:pan-x pinch-zoom}
+.lb-fr img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;user-select:none}
+.lb-x{position:absolute;top:max(12px,env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:50%;border:none;background:rgba(255,255,255,.16);color:#fff;font-size:20px;cursor:pointer}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;border:none;background:rgba(255,255,255,.16);color:#fff;font-size:30px;line-height:1;cursor:pointer}
+.lb-nav.pv{left:12px}.lb-nav.nx{right:12px}
+.lb-x:hover,.lb-nav:hover{background:rgba(255,255,255,.3)}
+.lb-x:focus-visible,.lb-nav:focus-visible,.gal-full:focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.lb-ct{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);color:#fff;font-size:14px;font-weight:600;background:rgba(0,0,0,.45);padding:4px 12px;border-radius:999px}
+@media (max-width:640px){.lb-nav{display:none}}
 .gal-tr .fr{flex:none;width:100%;aspect-ratio:4/3;scroll-snap-align:center}
 .gal-tr .fr img{width:100%;height:100%;object-fit:cover}
 .gal-ct{position:absolute;right:10px;bottom:10px;background:rgba(15,23,42,.68);color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
@@ -1461,8 +1477,9 @@ function dtApri(id){
   var gal;
   if(fs.length){
     gal='<div class="gal"><div class="gal-tr" id="gal-tr" onscroll="galScroll()">'
-      +fs.map(function(f,i){return '<div class="fr"><img src="'+esc(f.url)+'" alt="'+esc(nome)+' — foto '+(i+1)+'"'+(i>0?' loading="lazy"':'')+'></div>';}).join('')
+      +fs.map(function(f,i){return '<div class="fr"><img src="'+esc(f.url)+'" alt="'+esc(nome)+' — foto '+(i+1)+'"'+(i>0?' loading="lazy"':'')+' onclick="lbApri('+i+')" style="cursor:zoom-in"></div>';}).join('')
       +'</div>'
+      +'<button type="button" class="gal-full" onclick="lbApri()" aria-label="Guarda le foto a schermo intero"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>'
       +(fs.length>1?'<button class="gal-nav pv" onclick="galVai(-1)" aria-label="Foto precedente">‹</button><button class="gal-nav nx" onclick="galVai(1)" aria-label="Foto successiva">›</button><div class="gal-ct" id="gal-ct">1 / '+fs.length+'</div>':'')
       +'</div>'
       +(fs.length>1?('<div class="thumbs-w"><button type="button" class="th-nav pv" onclick="thScorri(-1)" aria-label="Miniature precedenti">‹</button>'
@@ -1626,6 +1643,47 @@ function galSet(i){ var tr=document.getElementById('gal-tr'); if(!tr) return;
   /* salto lungo (es. dalla prima all'ultima): istantaneo; foto vicina: scorrimento morbido */
   var ora=Math.round(tr.scrollLeft/tr.clientWidth);
   tr.scrollTo({left:i*tr.clientWidth,behavior:(Math.abs(i-ora)>2?'auto':'smooth')}); }
+/* ===== FOTO A SCHERMO INTERO (25/11/2026) =====
+   Tocco o clic sulla foto (o sul pulsante in alto a destra): la foto si apre
+   piena, su fondo nero, intera e senza tagli. Si scorre col dito, con le
+   frecce o con i tasti; sul telefono si puo' ingrandire con due dita.
+   Chiudendo, la galleria resta sulla foto che si stava guardando. */
+function lbApri(i){
+  var tr=document.getElementById('gal-tr'); if(!tr) return;
+  var imgs=tr.querySelectorAll('.fr img'); if(!imgs.length) return;
+  if(i==null) i=Math.round(tr.scrollLeft/tr.clientWidth);
+  var lb=document.getElementById('lb');
+  if(!lb){ lb=document.createElement('div'); lb.id='lb'; lb.setAttribute('role','dialog'); lb.setAttribute('aria-modal','true'); lb.setAttribute('aria-label','Foto a schermo intero'); document.body.appendChild(lb); }
+  var h='<div class="lb-tr" id="lb-tr">';
+  Array.prototype.forEach.call(imgs,function(im){ h+='<div class="lb-fr"><img src="'+esc(im.getAttribute('src'))+'" alt="'+esc(im.getAttribute('alt')||'')+'" loading="lazy" onclick="event.stopPropagation()"></div>'; });
+  h+='</div><div class="lb-ct" id="lb-ct"></div>'
+    +'<button type="button" class="lb-x" onclick="lbChiudi()" aria-label="Chiudi">\u2715</button>'
+    +(imgs.length>1?'<button type="button" class="lb-nav pv" onclick="lbVai(-1)" aria-label="Foto precedente">\u2039</button><button type="button" class="lb-nav nx" onclick="lbVai(1)" aria-label="Foto successiva">\u203a</button>':'');
+  lb.innerHTML=h; lb.classList.add('on'); document.documentElement.classList.add('lb-aperto');
+  var t=document.getElementById('lb-tr');
+  t.onscroll=function(){ var k=Math.round(t.scrollLeft/t.clientWidth); var ct=document.getElementById('lb-ct'); if(ct) ct.textContent=(k+1)+' / '+t.children.length; };
+  /* clic sul fondo nero (fuori dalla foto) = chiudi */
+  t.onclick=function(e){ if(e.target===t || e.target.classList.contains('lb-fr')) lbChiudi(); };
+  requestAnimationFrame(function(){ t.scrollLeft=i*t.clientWidth; t.onscroll(); });
+  var x=lb.querySelector('.lb-x'); if(x) try{ x.focus({preventScroll:true}); }catch(e){}
+}
+function lbVai(d){ var t=document.getElementById('lb-tr'); if(!t) return;
+  var k=Math.max(0,Math.min(t.children.length-1, Math.round(t.scrollLeft/t.clientWidth)+d));
+  t.scrollTo({left:k*t.clientWidth,behavior:'smooth'}); }
+function lbChiudi(){
+  var lb=document.getElementById('lb'); if(!lb || !lb.classList.contains('on')) return;
+  var t=document.getElementById('lb-tr'); var k=t?Math.round(t.scrollLeft/t.clientWidth):0;
+  lb.classList.remove('on'); lb.innerHTML=''; document.documentElement.classList.remove('lb-aperto');
+  var tr=document.getElementById('gal-tr'); if(tr) tr.scrollLeft=k*tr.clientWidth;
+}
+/* con la foto aperta, Esc chiude la foto (non la scheda) e le frecce scorrono */
+document.addEventListener('keydown',function(e){
+  var lb=document.getElementById('lb'); if(!lb || !lb.classList.contains('on')) return;
+  if(e.key==='Escape'){ e.stopImmediatePropagation(); e.preventDefault(); lbChiudi(); }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); lbVai(1); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); lbVai(-1); }
+}, true);
+window.addEventListener('resize',function(){ var t=document.getElementById('lb-tr'); if(t && t.onscroll){ var ct=document.getElementById('lb-ct'); var k=ct?(parseInt(ct.textContent,10)-1):0; t.scrollLeft=Math.max(0,k)*t.clientWidth; } });
 function galVai(d){ var tr=document.getElementById('gal-tr'); if(!tr)return; var i=Math.round(tr.scrollLeft/tr.clientWidth)+d;
   i=Math.max(0,Math.min(tr.children.length-1,i)); galSet(i); }
 
