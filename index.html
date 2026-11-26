@@ -19737,7 +19737,16 @@ function sinRender(){
       gI.forEach(function(s){ html+=sinCard(s); });
     }
   } else {
-    var lista=all.filter(function(x){return (x.stato||'attesa_apertura')===_sinTab;}).sort(byCreated);
+    /* Liquidate: l'ultima liquidata in cima (25/11/2026). Data di
+       liquidazione; per le pratiche vecchie che non l'hanno, la data del
+       bonifico ricevuto, poi l'ultima modifica. */
+    var quandoLiq=function(x){
+      if(x.liquidatoAt) return +x.liquidatoAt;
+      var d=[x.dataRicezioneIntegrazione, x.dataRicezione].map(function(v){ var t=Date.parse(String(v||'').slice(0,10)); return isNaN(t)?0:t; });
+      return Math.max(d[0], d[1]) || +(x.updatedAt||0) || +(x.createdAt||0);
+    };
+    var lista=all.filter(function(x){return (x.stato||'attesa_apertura')===_sinTab;})
+      .sort(_sinTab==='liquidato' ? function(a,b){ return quandoLiq(b)-quandoLiq(a); } : byCreated);
     if(!lista.length){ wrap.innerHTML=vuoto(SIN_STATI[_sinTab]); return; }
     lista.forEach(function(s){ html+=sinCard(s); });
   }
@@ -20439,6 +20448,9 @@ function sinSalva(id, isNew){
   var _ts=document.getElementById('sinf-tipoSinistro'); s.tipoSinistro=_ts?_ts.value:'';
   s.appuntamento=s.peritoOnline?'':g('appuntamento'); s.note=g('note');
   s.stato=g('stato')||'attesa_apertura';
+  /* liquidata dal menu dello stato: si segna quando (serve all'ordine) */
+  if(s.stato==='liquidato' && !s.liquidatoAt) s.liquidatoAt=Date.now();
+  if(s.stato!=='liquidato' && s.liquidatoAt) delete s.liquidatoAt;
   var idx=list.findIndex(function(x){return x.id===id;});
   var _nuovo=(idx<0);
   if(idx>=0) list[idx]=s; else list.push(s);
@@ -22994,7 +23006,11 @@ var MZ_SINONIMI={
     'elettrica':'Elettrica','elettrico':'Elettrica','ev':'Elettrica',
     'ibrida':'Ibrida','ibrido':'Ibrida','hybrid':'Ibrida',
     'benzina/elettrico':'Ibrida','benzina/elettrica':'Ibrida','elettrico/benzina':'Ibrida',
-    'diesel/hybrid':'Ibrida','diesel/elettrico':'Ibrida','mhev':'Ibrida','hev':'Ibrida','phev':'Ibrida',
+    'diesel/hybrid':'Ibrida','diesel/elettrico':'Ibrida','mhev':'Ibrida','hev':'Ibrida',
+    /* ibride ricaricabili alla presa (25/11/2026) */
+    'phev':'Ibrida plug-in','plug-in':'Ibrida plug-in','plugin':'Ibrida plug-in','ibridaplug-in':'Ibrida plug-in',
+    'ibridaplugin':'Ibrida plug-in','plug-inhybrid':'Ibrida plug-in','pluginhybrid':'Ibrida plug-in',
+    'benzina/elettrico(plug-in)':'Ibrida plug-in','ibridoplug-in':'Ibrida plug-in','ibridoplugin':'Ibrida plug-in',
     'benzina/gpl':'Benzina/GPL','gpl/benzina':'Benzina/GPL','benzinagpl':'Benzina/GPL',
     'benzina/metano':'Benzina/Metano','metano/benzina':'Benzina/Metano'
   },
@@ -23009,7 +23025,7 @@ function mzNormVal(key, val){
   var k=v.toLowerCase().replace(/\s+/g,'');
   return tab[k] || v;
 }
-var MZ_ALIM=['Benzina','Diesel','GPL','Metano','Ibrida','Elettrica','Benzina/GPL','Benzina/Metano'];
+var MZ_ALIM=['Benzina','Diesel','GPL','Metano','Ibrida','Ibrida plug-in','Elettrica','Benzina/GPL','Benzina/Metano'];
 var MZ_CAMBIO=['Manuale','Automatico'];
 var _mzFiltro='disponibile';
 var _mzId=null;
@@ -29691,13 +29707,60 @@ function cvForm(id, fromVend){
   h+='</div></div></div>';   /* chiude: colonna destra, griglia, contenitore */
   var m=document.getElementById('cv-modal'); if(m && m.parentNode!==document.body){ document.body.appendChild(m); } m.innerHTML=h; m.style.display='block';
   try{ if(typeof eaBackShow==='function') eaBackShow(); }catch(e){}
-  cvGar(_cv.garanziaMesi||'12'); cvRenderExtra(); cvRenderPag(); cvLive(); try{ cvPromoBox(); }catch(e){}
+  cvGar(_cv.garanziaMesi||'12', true); cvRenderExtra(); cvRenderPag(); cvLive(); try{ cvPromoBox(); }catch(e){}
   /* il prefisso deve combaciare con quello del pannello, altrimenti la
      lista dei documenti gia' caricati non compare mai */
   try{ docListaRender('pratica', _cv.id, 'cvdoc_'+_cv.id); }catch(e){}
 }
 function cvChiudi(){ var m=document.getElementById('cv-modal'); if(m){ m.style.display='none'; m.innerHTML=''; } try{ eaPostoPulisci('cv'); }catch(e){} }
-function cvGar(mesi){ _cv.garanziaMesi=mesi; var p=(typeof parLoad==='function')?parLoad():{}; var n=function(x){var v=parseFloat(x);return isNaN(v)?0:v;}; _cv.garanziaImporto=(mesi==='24')?n(p.garanzia24):0; var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24'); if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';} if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';} var gc=document.getElementById('cv-gar-costo'); if(gc){ gc.innerHTML=(mesi==='24')?('Costo garanzia 24 mesi (da Parametri): <b>'+cvEuro(_cv.garanziaImporto)+'</b>'):'Garanzia 12 mesi inclusa (legale)'; } if(typeof cvLive==='function') cvLive(); }
+/* ===== PREZZO ESTENSIONE DI GARANZIA (26/11/2026) =====
+   Il prezzo della garanzia 24 mesi arriva da Parametri. Solo
+   l'amministrazione puo' cambiarlo (scontarlo) nella singola pratica; i
+   venditori lo vedono ma non lo toccano. Riaprendo la pratica il prezzo
+   scontato resta (prima tornava quello di Parametri). */
+function cvGarListino(){ var p=(typeof parLoad==='function')?parLoad():{}; var v=parseFloat(p.garanzia24); return isNaN(v)?0:v; }
+function cvGar(mesi, tieni){
+  if(mesi==='24' && _cv.garanziaMesi==='24') tieni=true;   /* ri-cliccare 24 mesi non toglie lo sconto */
+  _cv.garanziaMesi=mesi;
+  var lst=cvGarListino();
+  if(mesi==='24'){
+    var cur=parseFloat(_cv.garanziaImporto);
+    /* riaprendo una pratica si tiene il prezzo che aveva (anche se poi
+       Parametri e' cambiato); cliccando 24 mesi si riparte dal listino */
+    if(!(tieni && !isNaN(cur) && cur>0)) { _cv.garanziaImporto=lst; delete _cv.garanziaPrezzoMod; }
+  } else { _cv.garanziaImporto=0; delete _cv.garanziaPrezzoMod; }
+  var b1=document.getElementById('cv-gar-12'), b2=document.getElementById('cv-gar-24');
+  if(b1){var on=mesi==='12'; b1.style.background=on?'#1a4fa0':'#fff'; b1.style.color=on?'#fff':'#334155'; b1.style.borderColor=on?'#1a4fa0':'#cbd5e1';}
+  if(b2){var o2=mesi==='24'; b2.style.background=o2?'#1a4fa0':'#fff'; b2.style.color=o2?'#fff':'#334155'; b2.style.borderColor=o2?'#1a4fa0':'#cbd5e1';}
+  cvGarCostoRender();
+  if(typeof cvLive==='function') cvLive();
+}
+function cvGarCostoRender(){
+  var gc=document.getElementById('cv-gar-costo'); if(!gc) return;
+  if(_cv.garanziaMesi!=='24'){ gc.innerHTML='Garanzia 12 mesi inclusa (legale)'; return; }
+  var lst=cvGarListino(), imp=parseFloat(_cv.garanziaImporto)||0, mod=!!_cv.garanziaPrezzoMod;
+  var nota=mod?(' <span style="color:#b45309;">\u2014 scontata dall\u2019amministrazione (listino '+cvEuro(lst)+')</span>'):'';
+  if(typeof isAdmin==='function' && isAdmin()){
+    gc.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Prezzo garanzia 24 mesi: '
+      +'<input id="cv-gar-prezzo" type="number" min="0" step="1" value="'+imp+'" onchange="cvGarPrezzo(this.value)" style="width:110px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:13px;font-weight:700;"> \u20ac'
+      +(mod?(' <button type="button" onclick="cvGarPrezzo(null)" style="padding:4px 9px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;font-size:12px;cursor:pointer;">Torna al listino</button>'):'')
+      +'</div><div style="margin-top:3px;">Listino da Parametri: '+cvEuro(lst)+'. Solo l\u2019amministrazione pu\u00f2 cambiarlo.'+(mod?nota:'')+'</div>';
+  } else {
+    gc.innerHTML='Costo garanzia 24 mesi: <b>'+cvEuro(imp)+'</b>'+nota+'<br><span style="color:#94a3b8;">Il prezzo lo pu\u00f2 cambiare solo l\u2019amministrazione.</span>';
+  }
+}
+function cvGarPrezzo(v){
+  if(!(typeof isAdmin==='function' && isAdmin())){ alert('Il prezzo della garanzia lo pu\u00f2 cambiare solo l\u2019amministrazione.'); cvGarCostoRender(); return; }
+  var lst=cvGarListino();
+  if(v===null){ _cv.garanziaImporto=lst; delete _cv.garanziaPrezzoMod; }
+  else {
+    var n=parseFloat(String(v).replace(',','.')); if(isNaN(n) || n<0) n=lst;
+    _cv.garanziaImporto=Math.round(n*100)/100;
+    if(Math.abs(_cv.garanziaImporto-lst)<0.005) delete _cv.garanziaPrezzoMod;
+    else _cv.garanziaPrezzoMod={ da:((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||''), ts:Date.now(), listino:lst };
+  }
+  cvGarCostoRender(); if(typeof cvLive==='function') cvLive();
+}
 /* Ricerca nel menu auto: si digita e restano solo i veicoli che
    corrispondono per marca, modello, targa, telaio o numero interno. */
 /* Report veicolo: i dati si prendono dal magazzino invece di riscriverli. */
