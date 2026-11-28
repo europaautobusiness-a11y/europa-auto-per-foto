@@ -49482,6 +49482,7 @@ function ml7Render(){
 }
 
 function crmLeadCarica(cb){
+  try{ sitoAutoCarica().then(function(){},function(){}); }catch(e){}   /* elenco auto del sito pronto per il pulsante WhatsApp */
   var sb=(typeof sbClient==='function')?sbClient():null;
   try{ ml7Carica(null); }catch(e){}
   if(!sb){ _leadErrore='Database non raggiungibile.'; _leadNoSessione=false; if(cb) cb(); return; }
@@ -49940,7 +49941,7 @@ function crmRenderLeadOnline(){
     if(l.budget) h+='<div style="margin-top:4px;font-size:12px;color:#94a3b8;">Budget indicato: '+crmEsc(l.budget)+'</div>';
 
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">';
-    if(wa) h+='<a href="https://wa.me/'+wa+'" target="_blank" rel="noopener" style="padding:8px 13px;border-radius:8px;background:#25d366;color:#fff;text-decoration:none;font-size:12.5px;font-weight:800;">\ud83d\udcac WhatsApp</a>';
+    if(wa) h+='<button onclick="crmLeadWaSito(\''+l.id+'\')" title="Apre WhatsApp con il messaggio pronto e il link dell\u2019auto sul sito" style="padding:8px 13px;border-radius:8px;border:none;background:#25d366;color:#fff;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\ud83d\udcac WhatsApp</button>';
     /* Invio dal server, senza aprire il telefono: per ora in prova. */
     if(tel) h+='<button onclick="waChatApri(\''+crmEsc(tel)+'\',\''+crmEsc(String(l.nome||'').replace(/'/g,''))+'\')" title="Conversazione dentro il gestionale" style="padding:8px 13px;border-radius:8px;border:1px solid #25d366;background:#fff;color:#128c7e;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;">\ud83d\udcac Chat gestionale</button>';
     if(tel) h+='<a href="tel:'+crmEsc(tel)+'" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;text-decoration:none;font-size:12.5px;font-weight:700;">\ud83d\udcde Chiama</a>';
@@ -49962,6 +49963,99 @@ function crmRenderLeadOnline(){
 }
 
 
+/* ===== LEAD ONLINE → WHATSAPP CON IL LINK DELL'AUTO (28/11/2026) =====
+   Il pulsante WhatsApp del lead apre la chat con il messaggio di Rudy gia'
+   scritto e, in cima, il link della stessa auto su www.europaautosrl.it
+   (es. .../p/renault-rafale-174448). L'auto sul sito si riconosce da marca,
+   modello, PREZZO e COLORE (dal magazzino, se l'auto del lead si trova li',
+   altrimenti da quello che c'e' scritto nel lead). I km NON si guardano:
+   spesso sul sito e nel gestionale sono diversi (Davide). Se non c'e'
+   una corrispondenza sicura il messaggio parte senza link, e lo si dice.
+   L'elenco delle auto del sito lo prepara la funzione Supabase sito-auto. */
+var EA_SITO_AUTO_URL='https://jasrectyddshjizpxiia.supabase.co/functions/v1/sito-auto';
+var _sitoAuto=null, _sitoAutoTs=0, _sitoAutoInCorso=null;
+var LEAD_WA_TESTO='Buongiorno! \ud83d\ude0a\n\nLa vettura da Lei richiesta \u00e8 al momento disponibile.\n\nHa gi\u00e0 un\u2019idea di quando vorrebbe venire a visionarla? Siamo aperti anche il sabato, quindi possiamo organizzarci in base alle sue esigenze.\n\nSe ha un\u2019auto da permutare, pu\u00f2 inviarmi direttamente qui su WhatsApp qualche foto e i principali dati della vettura: in questo modo posso fare una prima valutazione gi\u00e0 prima del suo appuntamento.\n\nMi dica pure quale giorno le sarebbe pi\u00f9 comodo!';
+function sitoAutoCarica(){
+  if(_sitoAuto && Date.now()-_sitoAutoTs<15*60000) return Promise.resolve(_sitoAuto);
+  if(_sitoAutoInCorso) return _sitoAutoInCorso;
+  _sitoAutoInCorso=fetch(EA_SITO_AUTO_URL,{ headers:{ apikey:EA_MSG_KEY, Authorization:'Bearer '+EA_MSG_KEY } })
+    .then(function(r){ return r.json(); })
+    .then(function(d){ _sitoAutoInCorso=null; _sitoAuto=(d&&d.auto)||[]; _sitoAutoTs=Date.now(); return _sitoAuto; },
+          function(e){ _sitoAutoInCorso=null; throw e; });
+  return _sitoAutoInCorso;
+}
+/* colore base, per confrontare "Grigio Platinum metallizzato" con "grigio" */
+function sitoColore(s){
+  var t=sitoNorm(s); if(!t) return '';
+  var mappa=[['nero','nero black nera schwarz noir'],['bianco','bianco bianca white weiss blanc perla'],['grigio','grigio grigia grey gray grau gris antracite titanio'],['argento','argento silver silber argent'],['blu','blu blue azzurro azzurra blau bleu'],['rosso','rosso rossa red rot rouge bordeaux'],['verde','verde green grun vert'],['giallo','giallo gialla yellow gelb'],['arancione','arancione arancio orange'],['marrone','marrone brown braun bronzo'],['beige','beige sabbia sand champagne'],['viola','viola purple']];
+  var parole=t.split(' ');
+  for(var i=0;i<mappa.length;i++){ var al=mappa[i][1].split(' '); for(var j=0;j<parole.length;j++){ if(al.indexOf(parole[j])>=0) return mappa[i][0]; } }
+  return '';
+}
+function sitoNorm(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
+function sitoNumero(s){ var t=String(s==null?'':s).replace(/[^\d.,]/g,'').replace(/[.,](?=\d{3}(\D|$))/g,'').replace(',','.'); var n=parseFloat(t); return isFinite(n)?Math.round(n):0; }
+/* rif = { marca, modello, prezzo, colore } (i km non contano) */
+function sitoTrovaAuto(lista, rif){
+  var m=sitoNorm(rif.marca), mo=sitoNorm(rif.modello).split(' ')[0]||'';
+  if(!m) return null;
+  var cand=(lista||[]).filter(function(a){
+    if(!a || !a.url) return false;
+    var t=' '+sitoNorm([a.titolo,a.nomeSlug,a.marca,a.modello].join(' '))+' ';
+    return t.indexOf(' '+m+' ')>=0 && (!mo || t.indexOf(' '+mo+' ')>=0 || (mo.length>=4 && t.indexOf(mo)>=0));
+  });
+  if(!cand.length) return null;
+  var conta=0;
+  var colRif=sitoColore(rif.colore);
+  cand.forEach(function(a){
+    var s=0, ok=0;
+    /* prezzo: uguale o quasi (entro il 3%) */
+    if(rif.prezzo && a.prezzo){ var dp=Math.abs(a.prezzo-rif.prezzo)/rif.prezzo; s+=dp*3; if(dp<=0.03) ok++; else if(dp>0.12) s+=5; } else s+=1;
+    /* colore: stesso colore base */
+    var colA=sitoColore([a.colore, a.titolo, a.nomeSlug].join(' '));
+    if(colRif && colA){ if(colRif===colA){ ok++; s-=0.2; } else s+=4; } else s+=0.5;
+    a._s=s; a._ok=ok;
+  });
+  cand.sort(function(x,y){ return x._s-y._s; });
+  var b=cand[0];
+  if(cand.length===1 && b._s<5) return b;           /* l'unica di quel modello, e i numeri non stonano */
+  if(b._ok>=1 && (cand.length===1 || cand[1]._s-b._s>0.05)) return b;   /* km o prezzo combaciano */
+  return null;
+}
+function crmLeadRiferimento(l){
+  var testo=[l.auto||'', l.messaggio||''].join(' \n ');
+  var a=(typeof waVideoTrovaAuto==='function')?waVideoTrovaAuto(testo):null;
+  if(a) return { marca:a.marca, modello:a.modello, prezzo:sitoNumero(a.prezzoVen), colore:a.colore||'', daMagazzino:true };
+  var w=String(l.auto||'').split('\u00b7')[0].trim().split(/\s+/);
+  var col=(testo.match(/colore\s*:?\s*([A-Za-z\u00c0-\u00ff]+(?:\s+[A-Za-z\u00c0-\u00ff]+)?)/i)||[])[1]||'';
+  if(!col){ var cb=sitoColore(testo); if(cb) col=cb; }
+  var pr=(testo.match(/\u20ac\s*(\d{1,3}(?:[.\s]\d{3})+|\d{4,6})|(\d{1,3}(?:[.\s]\d{3})+|\d{4,6})(?:,\d{2})?\s*\u20ac/)||[]);
+  return { marca:w[0]||'', modello:w[1]||'', prezzo:sitoNumero(pr[1]||pr[2]), colore:col };
+}
+function crmLeadWaSito(id){
+  var l=null; try{ l=(_leadCache||[]).filter(function(x){ return x && x.id===id; })[0]; if(l && typeof crmLeadPulisci==='function') l=crmLeadPulisci(l); }catch(e){}
+  if(!l) return;
+  var tel=String(l.telefono||''); var wa=tel?('39'+tel.replace(/\D/g,'').replace(/^39/,'')):'';
+  if(!wa){ alert('Questo contatto non ha un numero di telefono.'); return; }
+  /* la finestra si apre subito (al clic), se no il browser la blocca;
+     l'indirizzo si mette quando si sa il link */
+  var win=null; try{ win=window.open('about:blank','_blank'); }catch(e){}
+  var apri=function(link, nota){
+    var url='https://wa.me/'+wa+'?text='+encodeURIComponent((link?link+'\n\n':'')+LEAD_WA_TESTO);
+    if(win && !win.closed){ try{ win.location.href=url; }catch(e){ eaApri(url); } } else eaApri(url);
+    if(nota && typeof tcToastNew==='function') tcToastNew(nota, !!link);
+  };
+  var rif=crmLeadRiferimento(l);
+  var scaduto=false, t=setTimeout(function(){ scaduto=true; apri('', '\u26a0\ufe0f Il sito non ha risposto in tempo: messaggio aperto senza il link dell\u2019auto.'); }, 9000);
+  sitoAutoCarica().then(function(lista){
+    if(scaduto) return; clearTimeout(t);
+    var a=sitoTrovaAuto(lista, rif);
+    if(a) apri(a.url, '\ud83d\udd17 Link del sito: '+(a.titolo||a.nomeSlug||a.slug));
+    else apri('', '\u26a0\ufe0f Non trovo con sicurezza '+((rif.marca||'')+' '+(rif.modello||'')).trim()+' sul sito: messaggio aperto senza link.');
+  }, function(){
+    if(scaduto) return; clearTimeout(t);
+    apri('', '\u26a0\ufe0f Elenco del sito non disponibile: messaggio aperto senza link.');
+  });
+}
 /* ===== DUE MODI DI TOGLIERE UN CLIENTE DALL'ELENCO =====
    Sono situazioni diverse e vanno trattate diversamente.
 
