@@ -5413,6 +5413,94 @@ function waApiInvia(dati){
   }).then(function(r){ return r.json().catch(function(){ return {ok:false, errore:'risposta non leggibile'}; }); });
 }
 
+/* 28/11/2026: il TESTO VERO dei modelli approvati su Meta (funzione
+   wa-modelli). Serve a mostrare nella chat la richiesta di recensione
+   esattamente come arriva al cliente, e non il testo che usiamo per mail
+   e invio a mano, che e' diverso. Si tiene in memoria per 6 ore. */
+var EA_WA_MODELLI_URL='https://jasrectyddshjizpxiia.supabase.co/functions/v1/wa-modelli';
+var _waModelli=null, _waModelliInCorso=null;
+(function(){ try{ var c=JSON.parse(localStorage.getItem('ea_wa_modelli')||'null'); if(c && c.ts && Date.now()-c.ts<6*3600000 && c.modelli) _waModelli=c.modelli; }catch(e){} })();
+function waModelliCarica(forza){
+  if(_waModelli && !forza) return Promise.resolve(_waModelli);
+  if(_waModelliInCorso) return _waModelliInCorso;
+  _waModelliInCorso=fetch(EA_WA_MODELLI_URL+(forza?'?forza=1':''), { headers:{ 'Authorization':'Bearer '+EA_MSG_KEY, 'apikey':EA_MSG_KEY } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      _waModelliInCorso=null;
+      if(j && j.ok && j.modelli && j.modelli.length){
+        _waModelli=j.modelli;
+        try{ localStorage.setItem('ea_wa_modelli', JSON.stringify({ ts:Date.now(), modelli:j.modelli })); }catch(e){}
+      }
+      return _waModelli;
+    }, function(){ _waModelliInCorso=null; return _waModelli; });
+  return _waModelliInCorso;
+}
+/* Il messaggio del modello con le variabili gia' messe: null se il modello
+   non e' (ancora) noto. */
+function waModelloComponi(nome, lingua, variabili){
+  if(!_waModelli || !nome) return null;
+  var t=null;
+  _waModelli.forEach(function(m){ if(m.nome===nome && (!lingua || m.lingua===lingua)) t=t||m; });
+  if(!t) _waModelli.forEach(function(m){ if(m.nome===nome) t=t||m; });
+  if(!t) return null;
+  var vv=variabili||[];
+  var metti=function(x){ return String(x||'').replace(/\{\{\s*(\d+)\s*\}\}/g, function(a,n){ var v=vv[(+n)-1]; return (v==null||v==='')?a:String(v); }); };
+  var out={ nome:t.nome, intest:'', immagine:'', formatoIntest:'', corpo:'', piede:'', pulsanti:[] };
+  (t.componenti||[]).forEach(function(c){
+    var tipo=String(c.type||'').toUpperCase();
+    if(tipo==='HEADER'){
+      out.formatoIntest=String(c.format||'').toUpperCase();
+      if(out.formatoIntest==='TEXT') out.intest=metti(c.text);
+      else { try{ out.immagine=(c.example&&c.example.header_handle&&c.example.header_handle[0])||''; }catch(e){} }
+    } else if(tipo==='BODY') out.corpo=metti(c.text);
+    else if(tipo==='FOOTER') out.piede=String(c.text||'');
+    else if(tipo==='BUTTONS') (c.buttons||[]).forEach(function(b){ out.pulsanti.push({ testo:String(b.text||''), tipo:String(b.type||''), url:String(b.url||'') }); });
+  });
+  return out;
+}
+/* Il modello di una richiesta di recensione salvata in chat: quello
+   scritto nel messaggio, o (per le richieste vecchie) ricavato dal tipo di
+   buono e dalla pratica. */
+function waModelloDelMsg(m){
+  if(!m || m.direzione!=='out') return null;
+  var mod=m.modello||null;
+  if(!mod && m.recensione && m.tipo==='template' && typeof WA_REC_MOD!=='undefined'){
+    var tipo=m.recensione.tipo||'gratuita', w=WA_REC_MOD[tipo]||WA_REC_MOD.gratuita, vars=null;
+    try{
+      var cv=cvLoad().filter(function(x){ return x.id===m.recensione.cvId; })[0];
+      if(cv){ var r0=cvRecTesto(cv, tipo); vars=[ String(r0.nome||'').trim()||'cliente', String(r0.auto||'auto').trim() ]; }
+    }catch(e){}
+    if(!vars){ var n0=String(m.nome||'').trim().split(/\s+/)[0]||'cliente'; vars=[ (typeof eaNomeBello==='function')?eaNomeBello(n0):n0, 'auto' ]; }
+    mod={ nome:w.nome, lingua:w.lingua, variabili:vars };
+  }
+  if(!mod) return null;
+  return waModelloComponi(mod.nome, mod.lingua, mod.variabili);
+}
+/* Il fumetto del modello come lo vede il cliente su WhatsApp. */
+function waModelloHtml(c, etichetta){
+  var fmt=function(x){ return eaEscq(x).replace(/\*([^*\n]+)\*/g,'<b>$1</b>').replace(/_([^_\n]+)_/g,'<i>$1</i>'); };
+  var h='';
+  if(etichetta) h+='<div style="font-size:11px;color:#667781;font-weight:700;margin-bottom:5px;">'+eaEscq(etichetta)+'</div>';
+  if(c.formatoIntest==='IMAGE'){
+    h+= c.immagine
+      ? '<img src="'+eaEscq(c.immagine)+'" alt="" loading="lazy" onerror="this.style.display=\'none\'" style="display:block;width:100%;max-width:300px;border-radius:7px;margin-bottom:6px;">'
+      : '<div style="background:#e9edef;border-radius:7px;padding:22px 8px;text-align:center;color:#667781;font-size:12px;margin-bottom:6px;">\uD83D\uDDBC\uFE0F Immagine del modello</div>';
+  } else if(c.formatoIntest && c.formatoIntest!=='TEXT'){
+    h+='<div style="background:#e9edef;border-radius:7px;padding:14px 8px;text-align:center;color:#667781;font-size:12px;margin-bottom:6px;">'+eaEscq(c.formatoIntest.toLowerCase())+' del modello</div>';
+  }
+  if(c.intest) h+='<div style="font-weight:800;font-size:14px;color:#111b21;margin-bottom:4px;">'+fmt(c.intest)+'</div>';
+  h+='<div style="font-size:13.5px;color:#111b21;line-height:1.45;white-space:pre-wrap;word-break:break-word;">'+fmt(c.corpo)+'</div>';
+  if(c.piede) h+='<div style="font-size:12px;color:#667781;margin-top:5px;">'+eaEscq(c.piede)+'</div>';
+  return h;
+}
+function waModelloPulsanti(c){
+  if(!c || !c.pulsanti || !c.pulsanti.length) return '';
+  return c.pulsanti.map(function(b){
+    var ico=(b.tipo==='URL')?'\u2197\uFE0F ':((b.tipo==='PHONE_NUMBER')?'\uD83D\uDCDE ':'\u21A9\uFE0F ');
+    return '<div style="border-top:1px solid rgba(0,0,0,.08);text-align:center;padding:8px 6px;color:#027eb5;font-size:13.5px;font-weight:600;"'+(b.url?(' title="'+eaEscq(b.url)+'"'):'')+'>'+ico+eaEscq(b.testo)+'</div>';
+  }).join('');
+}
+
 /* ===================== CONVERSAZIONE WHATSAPP =====================
    I messaggi in arrivo li salva la funzione wa-ricevi su Supabase, anche
    col gestionale chiuso. Qui si leggono e si risponde.
@@ -5562,9 +5650,13 @@ function waChatDisegna(msgs){
       +'La conversazione parte da quando il gestionale \u00e8 stato collegato: '
       +'quello che c\'era prima resta solo sul telefono.</span></div>';
   } else {
-    var h='';
+    var h='', _serveModelli=false;
     msgs.forEach(function(m){
       var mio=(m.direzione==='out');
+      var _mod=null;
+      if(mio && (m.modello || (m.recensione && m.tipo==='template'))){
+        _mod=waModelloDelMsg(m); if(!_mod) _serveModelli=true;
+      }
       var ora=''; try{ var dt=new Date(m.ts||0); ora=('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2); }catch(e){}
       var spunta='';
       if(mio){
@@ -5573,12 +5665,19 @@ function waChatDisegna(msgs){
       }
       h+='<div style="display:flex;justify-content:'+(mio?'flex-end':'flex-start')+';margin-bottom:7px;">'
         +'<div style="max-width:76%;background:'+(mio?'#dcf8c6':'#fff')+';border-radius:9px;padding:7px 10px;box-shadow:0 1px 1px rgba(0,0,0,.13);">'
-        +'<div style="font-size:13.5px;color:#111b21;line-height:1.45;white-space:pre-wrap;word-break:break-word;">'+eaEscq(m.testo||'')+'</div>'
+        +(_mod
+          ? waModelloHtml(_mod, (String(m.testo||'').split('\n')[0].indexOf('\u2b50 Richiesta recensione')===0)?String(m.testo||'').split('\n')[0]:'')
+          : '<div style="font-size:13.5px;color:#111b21;line-height:1.45;white-space:pre-wrap;word-break:break-word;">'+eaEscq(m.testo||'')+'</div>')
         +(m.mediaId?waMediaHtml(m):(m.media&&/^https?:/.test(m.media)?('<a href="'+eaEscq(m.media)+'" target="_blank" rel="noopener" style="display:inline-block;margin-top:4px;font-size:12.5px;color:#1a4fa0;font-weight:700;">\u25B6 Apri il video</a>'):''))
         +'<div style="font-size:10.5px;color:'+(mio&&m.stato==='read'?'#53bdeb':'#667781')+';text-align:right;margin-top:3px;">'+ora+spunta+'</div>'
+        +(_mod?waModelloPulsanti(_mod):'')
         +'</div></div>';
     });
     corpo.innerHTML=h;
+    if(_serveModelli && !_waModelli && !window._waModelliProvato){
+      window._waModelliProvato=true;
+      waModelliCarica().then(function(x){ if(x && document.getElementById('wa-chat-corpo')) waChatDisegna(msgs); });
+    }
     corpo.scrollTop=corpo.scrollHeight;
   }
 
@@ -33142,9 +33241,15 @@ function cvBuildHTML(c, tipo){
      comprende comunque. */
   var _pmDove=(typeof parLoad==='function')?(parLoad().pacchettoManutDove||'condizioni'):'condizioni';
   (c.costiExtra||[]).forEach(function(x){
-    if(!cvNum(x.importo)) return;
     var _isPk=!!(x.pacchetto || /pacchetto\s+manutenzione/i.test(String(x.desc||'')));
     if(_isPk && _pmDove!=='tabella') return;
+    /* 28/11/2026: una voce con la descrizione ma a 0 (es. PRIMO TAGLIANDO
+       regalato) si stampa lo stesso, con scritto "Incluso" */
+    if(!cvNum(x.importo)){
+      if(!String(x.desc||'').trim() || _isPk) return;
+      doc+='<div class="cvrow"><div>'+cvPromoRisalta(cvEsc(x.desc))+'</div><div class="amt">Incluso</div></div>';
+      return;
+    }
     doc+=row(cvEsc(x.desc||'Costo extra'),cvNum(x.importo));
   });
   if(c.permutaOn && t.permVal){ doc+=row('Permuta'+((c.permuta&&c.permuta.modello)?(' ('+cvEsc(c.permuta.modello)+')'):''), t.permVal,'',true); if(t.minivolt) doc+=row('Minivoltura', t.minivolt); }
@@ -44902,7 +45007,7 @@ function cvRecWa(id, tipo){
   var tel=(cv.cliente&&cv.cliente.telefono)||'';
   if(typeof waValido==='function' && !waValido(tel)){ alert('Il cliente non ha un numero di cellulare valido per WhatsApp.'); return; }
   if(cv.recensione && cv.recensione.richiestaTs){ alert('La richiesta di recensione a questo cliente \u00e8 gi\u00e0 stata mandata. Per rimandarla usa il tasto Rimanda.'); return; }
-  var r0=cvRecTesto(cv, tipo), testo=r0.testo;
+  var r0=cvRecTesto(cv, tipo), testo=r0.testo, modInfo=null;
 
   /* 28/11/2026: la richiesta si scrive anche nella chat WhatsApp del
      gestionale (icona accanto alla campanella), come i messaggi scritti a
@@ -44916,6 +45021,7 @@ function cvRecWa(id, tipo){
       var rec={ telefono:num, nome:nomeCl, direzione:'out', tipo:(stato==='manuale'?'text':'template'),
                 testo:'\u2b50 Richiesta recensione ('+etich+')'+(nota?(' \u2014 '+nota):'')+'\n\n'+testo,
                 ts:Date.now(), stato:stato, da:(typeof _currentUserEmail!=='undefined'?_currentUserEmail:''), recensione:{ cvId:id, tipo:tipo } };
+      if(stato!=='manuale' && modInfo) rec.modello=modInfo;
       sb.from('wa_messaggi').upsert({ id:idMeta||('recensione_'+id+'_'+Date.now()), data:rec }).then(function(){ try{ if(typeof waChatCarica==='function' && document.getElementById('wa-chat')) waChatCarica(); }catch(e){} },function(){});
     }catch(e){}
   };
@@ -44927,6 +45033,7 @@ function cvRecWa(id, tipo){
   var dati={ to: waNumero(tel), template:m.nome, lingua:m.lingua,
              variabili:[ String(r0.nome||'').trim()||'cliente', String(r0.auto||'auto').trim() ],
              vero:(typeof waNumVero==='function')?waNumVero():true };
+  modInfo={ nome:m.nome, lingua:m.lingua, variabili:dati.variabili.slice() };
   if(typeof tcToastNew==='function') tcToastNew('Invio in corso\u2026', true);
 
   waApiInvia(dati)
