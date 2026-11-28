@@ -198,6 +198,11 @@ html.lb-aperto,html.lb-aperto body{overflow:hidden}
 .lb-x:focus-visible,.lb-nav:focus-visible,.gal-full:focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
 .lb-ct{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);color:#fff;font-size:14px;font-weight:600;background:rgba(0,0,0,.45);padding:4px 12px;border-radius:999px}
 @media (max-width:640px){.lb-nav{display:none}}
+#lb360{display:none;position:fixed;inset:0;z-index:2147483000;background:#000}
+#lb360.on{display:block}
+#lb360 .lb360-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+#lb360 .g360{border-radius:0;background:#000;aspect-ratio:auto;margin:0}
+.g360 .gal-full{z-index:3}
 .gal-tr .fr{flex:none;width:100%;aspect-ratio:4/3;scroll-snap-align:center}
 .gal-tr .fr img{width:100%;height:100%;object-fit:cover}
 .gal-ct{position:absolute;right:10px;bottom:10px;background:rgba(15,23,42,.68);color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
@@ -1051,7 +1056,8 @@ document.addEventListener('keydown',function(e){ if(e.key==='Escape') assicChiud
 function g360HTML(a){
   if(!a.giro360) return '';
   var fr=a.giro360.frames;
-  return '<div class="g360" id="g360"><img id="g360-img" src="'+esc(fr[0])+'" alt="Giro a 360\u00b0"><span class="lab">\u21BB 360\u00b0</span><span class="hint"><span class="r">\u21BB</span>360\u00b0 \u00b7 Trascina per girare l\u2019auto</span></div>';
+  return '<div class="g360" id="g360"><img id="g360-img" src="'+esc(fr[0])+'" alt="Giro a 360\u00b0"><span class="lab">\u21BB 360\u00b0</span><span class="hint"><span class="r">\u21BB</span>360\u00b0 \u00b7 Trascina per girare l\u2019auto</span>'
+    +'<button type="button" class="gal-full" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()" onclick="event.stopPropagation();g360Grande()" aria-label="Guarda il 360\u00b0 a schermo intero"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div>';
 }
 function g360Avvia(a){
   var box=document.getElementById('g360'), img=document.getElementById('g360-img'); if(!box||!img||!a.giro360) return;
@@ -1069,16 +1075,65 @@ function g360Avvia(a){
   window._g360Disponi=disponi;
   if(img.complete) disponi(); else img.addEventListener('load', disponi, {once:true});
   window.addEventListener('resize', disponi);
-  var set=function(k){ cur=((k%n)+n)%n; img.src=fr[cur]; };
+  window._g360Auto=a; window._g360Cur=0;
+  window._g360Set=g360Trascina(box, img, fr, function(k){ window._g360Cur=k; });
+  /* i fotogrammi si scaricano subito, cosi' la rotazione e' fluida */
+  fr.forEach(function(u){ var im=new Image(); im.src=u; });
+}
+/* trascinare per girare l'auto: usato dal riquadro e dallo schermo intero */
+function g360Trascina(box, img, fr, cambia){
+  var n=fr.length, cur=0, down=false, x0=0, c0=0;
+  var set=function(k){ cur=((k%n)+n)%n; img.src=fr[cur]; if(cambia) cambia(cur); };
   var px=function(e){ return (e.touches&&e.touches[0])?e.touches[0].clientX:e.clientX; };
   var start=function(e){ down=true; x0=px(e); c0=cur; box.classList.add('mosso'); box.style.cursor='grabbing'; };
   var move=function(e){ if(!down) return; set(c0-Math.round((px(e)-x0)/(box.clientWidth/n))); };
   var end=function(){ if(!down) return; down=false; box.style.cursor='grab'; box.classList.remove('mosso'); };
   box.addEventListener('mousedown',start); box.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
   box.addEventListener('touchstart',start,{passive:true}); box.addEventListener('touchmove',move,{passive:true}); box.addEventListener('touchend',end);
-  /* i fotogrammi si scaricano subito, cosi' la rotazione e' fluida */
-  fr.forEach(function(u){ var im=new Image(); im.src=u; });
+  return function(k){ set(k); };
 }
+/* ===== 360 A SCHERMO INTERO (28/11/2026) =====
+   Come per le foto: il giro si apre grande su fondo nero, si gira col dito,
+   col mouse o con le frecce; Esc, la X o il nero chiudono. Si riparte
+   dall'angolo che si stava guardando e chiudendo il riquadro resta li'. */
+function g360Grande(){
+  var a=window._g360Auto; if(!a || !a.giro360) return;
+  var fr=a.giro360.frames;
+  var lb=document.getElementById('lb360');
+  if(!lb){ lb=document.createElement('div'); lb.id='lb360'; lb.setAttribute('role','dialog'); lb.setAttribute('aria-modal','true'); lb.setAttribute('aria-label','Giro a 360\u00b0 a schermo intero'); document.body.appendChild(lb); }
+  lb.innerHTML='<div class="lb360-wrap" onclick="if(event.target===this) g360Chiudi()"><div class="g360" id="g360-big"><img id="g360-big-img" src="'+esc(fr[window._g360Cur||0])+'" alt="Giro a 360\u00b0"><span class="hint"><span class="r">\u21BB</span>Trascina per girare l\u2019auto</span></div></div>'
+    +'<button type="button" class="lb-x" onclick="g360Chiudi()" aria-label="Chiudi">\u2715</button>'
+    +'<button type="button" class="lb-nav pv" onclick="g360Passo(-1)" aria-label="Gira a sinistra">\u2039</button><button type="button" class="lb-nav nx" onclick="g360Passo(1)" aria-label="Gira a destra">\u203a</button>';
+  lb.classList.add('on'); document.documentElement.classList.add('lb-aperto');
+  var box=document.getElementById('g360-big'), img=document.getElementById('g360-big-img'), t=null;
+  var disponi=function(){
+    var w=img.naturalWidth, h=img.naturalHeight; if(!w||!h) return;
+    if(!t) t=g360Taglio(a.giro360, w, h);
+    /* il piu' grande possibile dentro lo schermo, con le proporzioni giuste */
+    box.style.width=Math.floor(Math.min(window.innerWidth, window.innerHeight*0.92*t.r))+'px';
+    g360Disponi(box, img, t);
+  };
+  window._g360BigDisponi=disponi;
+  if(img.complete) disponi(); else img.addEventListener('load', disponi, {once:true});
+  var set=g360Trascina(box, img, fr, function(k){ window._g360Cur=k; });
+  set(window._g360Cur||0);
+  window._g360BigSet=set;
+  var x=lb.querySelector('.lb-x'); if(x) try{ x.focus({preventScroll:true}); }catch(e){}
+}
+function g360Passo(d){ if(window._g360BigSet) window._g360BigSet((window._g360Cur||0)+d*Math.max(1,Math.round(((window._g360Auto&&window._g360Auto.giro360.frames.length)||36)/24))); }
+function g360Chiudi(){
+  var lb=document.getElementById('lb360'); if(!lb || !lb.classList.contains('on')) return;
+  lb.classList.remove('on'); lb.innerHTML=''; window._g360BigSet=null; window._g360BigDisponi=null;
+  document.documentElement.classList.remove('lb-aperto');
+  if(window._g360Set) window._g360Set(window._g360Cur||0);
+}
+document.addEventListener('keydown',function(e){
+  var lb=document.getElementById('lb360'); if(!lb || !lb.classList.contains('on')) return;
+  if(e.key==='Escape'){ e.stopImmediatePropagation(); e.preventDefault(); g360Chiudi(); }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); g360Passo(1); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); g360Passo(-1); }
+}, true);
+window.addEventListener('resize',function(){ if(window._g360BigDisponi) window._g360BigDisponi(); });
 function g360Taglio(g, W, H){
   var t=g&&g.taglio;
   if(t && t.z) return { r:+t.r||W/H, z:+t.z||1, x:+t.x||0, y:+t.y||0, rot:+t.rot||0 };
@@ -1455,7 +1510,8 @@ function render(){
         if(venduta(a)) rt=null;
         var rata=venduta(a)?'<div class="crata csim">Cerchi un\u2019auto simile? <button type="button" onclick="infoApri(\''+esc(String(a.id))+'\',true)">Chiedici</button></div>':rt?('<div class="crata">oppure da <b>'+rt+' \u20ac</b>/mese</div>'
           +'<div class="cant">con anticipo di '+esc(euro(ant))+'</div>'
-          +(function(){ var f=finInfo(a.prezzoVen,0,a); return f?('<div class="cfin">TAN fisso '+pct(f.tan)+'% \u00b7 TAEG '+pct(f.taeg)+'%<sup>*</sup></div>'):''; })()):'';
+          /* TAN e TAEG solo nella scheda dell'auto (28/11/2026, Davide) */
+          ):'';
         return '<div class="cfoot"><div class="cfp">'
           +'<div class="cprice">'+barrato+'<span class="pp">'+esc(euro(a.prezzoVen)||'\u2014')+'</span></div>'
           +rata+'</div></div>';
@@ -2340,13 +2396,13 @@ aiCarica();
 .bru{position:fixed;right:14px;bottom:84px;z-index:139;width:210px;pointer-events:none;opacity:0;transform:translateY(30px) scale(.8);transform-origin:right bottom;transition:opacity .35s,transform .6s cubic-bezier(.2,1.4,.4,1);cursor:pointer;font-family:var(--disp,inherit)}
 .bru.on{opacity:1;transform:none;pointer-events:auto}
 .bru-img{display:block;width:210px;height:auto;margin:0;position:relative;z-index:1;filter:drop-shadow(0 12px 18px rgba(15,23,42,.28));animation:bru-dondola 3.2s ease-in-out 1s infinite}
-.bru-nastro{position:relative;z-index:2;margin:-16px 4px 0;background:linear-gradient(180deg,#2153b8,#0f2f78);color:#fff;border-radius:26px;padding:10px 14px 14px;text-align:center;box-shadow:0 10px 24px rgba(15,23,42,.3),inset 0 2px 0 rgba(255,255,255,.18);transform:rotate(-4deg)}
-.bru-nastro b{display:block;font-family:var(--disp,inherit);font-size:28px;font-weight:800;letter-spacing:-.01em;line-height:1.05;text-shadow:0 2px 0 rgba(0,0,0,.18)}
-.bru-nastro span{display:block;margin-top:3px;font-size:14.5px;font-weight:700;font-style:italic;line-height:1.2}
+.bru-nastro{position:relative;z-index:2;margin:-16px -4px 0;background:linear-gradient(180deg,#2153b8,#0f2f78);color:#fff;border-radius:26px;padding:10px 6px 14px;text-align:center;box-shadow:0 10px 24px rgba(15,23,42,.3),inset 0 2px 0 rgba(255,255,255,.18);transform:rotate(-4deg)}
+.bru-nastro b{display:block;font-family:var(--disp,inherit);font-size:30.8px;font-weight:800;letter-spacing:-.01em;line-height:1.05;white-space:nowrap;text-shadow:0 2px 0 rgba(0,0,0,.18)}
+.bru-nastro span{display:block;margin-top:3px;font-size:17.6px;font-weight:700;font-style:italic;line-height:1.2}
 .bru-nastro i{position:absolute;left:18%;right:12%;bottom:5px;height:4px;border-radius:4px;background:linear-gradient(90deg,#5ee7ff,#9fd2ff);transform:rotate(-1.5deg)}
 .bru-x{position:absolute;top:4px;right:0;z-index:3;width:30px;height:30px;border-radius:50%;border:none;background:#fff;color:#0f172a;font-size:18px;font-weight:700;line-height:30px;text-align:center;cursor:pointer;box-shadow:0 4px 12px rgba(15,23,42,.25);padding:0}
 @keyframes bru-dondola{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-5px) rotate(-2deg)}}
-@media(max-width:600px){ .bru{width:145px;right:10px;bottom:80px} .bru-img{width:145px} .bru-nastro{margin:-11px 3px 0;padding:7px 8px 11px;border-radius:22px} .bru-nastro b{font-size:19px} .bru-nastro span{font-size:11px} .bru-nastro i{height:3px;bottom:4px} .bru-x{width:26px;height:26px;line-height:26px;font-size:16px} }
+@media(max-width:600px){ .bru{width:145px;right:10px;bottom:80px} .bru-img{width:145px} .bru-nastro{margin:-11px -2px 0;padding:7px 4px 11px;border-radius:22px} .bru-nastro b{letter-spacing:-.02em} .bru-nastro b{font-size:20.9px} .bru-nastro span{font-size:13.3px} .bru-nastro i{height:3px;bottom:4px} .bru-x{width:26px;height:26px;line-height:26px;font-size:16px} }
 @media(prefers-reduced-motion:reduce){ .bru{transition:none} .bru-img{animation:none} }
 .ai-av.bru-av{background:#fff;padding:0;overflow:hidden}
 .ai-av.bru-av img{width:100%;height:100%;display:block;object-fit:cover}

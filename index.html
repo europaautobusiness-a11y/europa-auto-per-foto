@@ -15012,11 +15012,27 @@ function tcMostraIP(){
 var RICHIESTE_KEY='ea_richieste_v1';
 var RICHIESTE_DEL_KEY='ea_richieste_del_v1';
 function riTombstones(){ try{ return JSON.parse(localStorage.getItem(RICHIESTE_DEL_KEY)||'[]'); }catch(e){ return []; } }
-function riAddTombstone(id){
+/* ===== FERIE ELIMINATE CHE TORNAVANO (28/11/2026) =====
+   L'eliminazione cancellava la riga dal cloud e la ricordava solo su QUESTO
+   dispositivo. Ogni altro dispositivo che aveva ancora la voce in memoria
+   (PC dell'ufficio, telefono del dipendente), al primo aggiornamento la
+   trovava "mancante" sul cloud e la rimandava su: dopo un po' la voce
+   ricompariva. Ora la riga resta sul cloud segnata come ELIMINATA, con la
+   data: tutti i dispositivi la vedono piu' nuova della loro copia, la
+   tolgono e se la ricordano. */
+function riTombLocale(id){
   if(!id) return;
   var t=riTombstones();
-  if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(RICHIESTE_DEL_KEY,JSON.stringify(t));}catch(e){} }
-  if(typeof supaDelete==='function') supaDelete('richieste', id);
+  if(t.indexOf(id)<0){ t.push(id); try{localStorage.setItem(RICHIESTE_DEL_KEY,JSON.stringify(t.slice(-3000)));}catch(e){} }
+}
+function riAddTombstone(id, rec){
+  if(!id) return;
+  riTombLocale(id);
+  var base={}; try{ var x=rec||(JSON.parse(localStorage.getItem(RICHIESTE_KEY)||'[]')).filter(function(r){ return r&&r.id===id; })[0]; if(x) for(var k in x) base[k]=x[k]; }catch(e){}
+  base.id=id; base.deleted=true; base.updatedAt=Date.now();
+  base.eliminatoDa=((typeof _currentUserEmail!=='undefined'&&_currentUserEmail)||'');
+  if(typeof supaUpsert==='function') supaUpsert('richieste', base);
+  else if(typeof supaDelete==='function') supaDelete('richieste', id);
 }
 var RICHIESTE_SHEET='Richieste';
 
@@ -15036,8 +15052,10 @@ function riEliminaDef(id){
 function riSupaLoad(){
   if(typeof supaLoadList!=='function') return;
   supaLoadList('richieste', riLoad, function(arr){
+    /* le voci segnate eliminate sul cloud si ricordano anche qui */
+    arr.forEach(function(x){ if(x && x.deleted===true) riTombLocale(x.id); });
     var t=riTombstones();
-    riSaveLocal(arr.filter(function(x){ return x && t.indexOf(x.id)<0; }));
+    riSaveLocal(arr.filter(function(x){ return x && x.deleted!==true && t.indexOf(x.id)<0; }));
   }, function(){
     try{ if(typeof riRenderAdmin==='function') riRenderAdmin(); }catch(e){}
     try{ if(typeof riAggiornaBadge==='function') riAggiornaBadge(); }catch(e){}
@@ -15242,6 +15260,7 @@ function tcAssegnaFerieSet(email,date,cat,ore){
   // togli QUALSIASI voce approvata che copre quel giorno (no duplicati) ed elimina dal foglio
   var daTogliere=[];
   riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ daTogliere.push(r.id); } });
+  daTogliere.forEach(function(id){ riAddTombstone(id); });   /* anche le voci sostituite non devono tornare */
   var l=riLoad().filter(function(r){ return daTogliere.indexOf(r.id)<0; });
   if(typeof GS_URL!=='undefined'&&GS_URL){ daTogliere.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
   var r={ id:'ri_'+Date.now(), dipendente:email, nome:nome, categoria:cat, dataInizio:date, dataFine:date, ore:oreN, nota:'(inserito da admin)', stato:'approvato', creato:new Date().toISOString() };
@@ -15255,8 +15274,8 @@ function tcAssegnaFerieRimuovi(email,date){
   var target=null; riLoad().forEach(function(r){ if(r.stato==='approvato'&&r.dipendente===email&&date>=r.dataInizio&&date<=r.dataFine){ target=r; } });
   if(!target){ tcAssegnaFerieClose(); return; }
   if(target.dataInizio!==target.dataFine){ if(!confirm('Questa voce copre dal '+riData(target.dataInizio)+' al '+riData(target.dataFine)+'. Rimuovere l\'intero periodo?')) return; }
+  riAddTombstone(target.id, target);
   riSaveLocal(riLoad().filter(function(r){ return r.id!==target.id; }));
-  riAddTombstone(target.id);
   if(typeof GS_URL!=='undefined'&&GS_URL){ try{ gsJsonp({action:'delete', sheet:RICHIESTE_SHEET, id:target.id}); }catch(e){} }
   tcAssegnaFerieClose();
   if(typeof tcAdminRenderRegistro==='function') tcAdminRenderRegistro();
@@ -15288,7 +15307,7 @@ function riDedup(){
   });
   if(dropIds.length){
     riSaveLocal(keep);
-    if(typeof supaDelete==='function'){ dropIds.forEach(function(id){ try{ supaDelete('richieste', id); }catch(e){} }); }
+    dropIds.forEach(function(id){ try{ riAddTombstone(id); }catch(e){} });
     if(typeof GS_URL!=='undefined'&&GS_URL){ dropIds.forEach(function(id){ try{ gsJsonp({action:'delete',sheet:RICHIESTE_SHEET,id:id}); }catch(e){} }); }
   }
   return keep;
@@ -28598,7 +28617,7 @@ function clSupaUpsert(key, rec){
        salvataggio locale fallisce in silenzio, ma sul cloud deve arrivare */
     var e=clStore()[key]||rec; if(!e) return;
     e.id=key;
-    if(typeof supaUpsert==='function') supaUpsert('clienti_app', e);
+    if(typeof supaUpsert==='function') return supaUpsert('clienti_app', e);
   }catch(e2){}
 }
 function clSupaLoad(){
@@ -28816,7 +28835,7 @@ function clRenderDettaglio(){
     +'<div style="flex:1;">'+lab('Secondo telefono')+inp('cl_telefono2',c.telefono2||'')+'</div>'
     +'<div style="flex:1;">'+lab('Seconda email')+inp('cl_email2',c.email2||'')+'</div></div>';
   h+=lab('Codice fiscale')+inp('cl_cf',c.cf);
-  h+='<button onclick="clSalvaAnagrafica(\''+keyEnc+'\')" style="margin-top:12px;padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;">\ud83d\udcbe Salva anagrafica</button>';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;"><button id="cl-salva-btn" onclick="clSalvaAnagrafica(\''+keyEnc+'\')" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:800;font-family:inherit;cursor:pointer;transition:background .2s;">\ud83d\udcbe Salva anagrafica</button><span id="cl-salva-esito" role="status" aria-live="polite" style="font-size:13px;font-weight:700;"></span></div>';
   h+='</div>';
   h+='<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:14px;">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-weight:800;color:#1a4fa0;">Indirizzi</div><button onclick="clAddIndForm(\''+keyEnc+'\')" style="padding:7px 12px;border-radius:7px;border:1px solid #1a4fa0;background:#fff;color:#1a4fa0;font-weight:700;font-family:inherit;font-size:12px;cursor:pointer;">+ Aggiungi indirizzo</button></div>';
@@ -29092,13 +29111,29 @@ function clSalvaAnagrafica(keyEnc){
   if(eaEmailVietata(e.email)){ alert(eaEmailVietataMsg(e.email)); return; }
   if(eaEmailVietata(e.email2)){ alert(eaEmailVietataMsg(e.email2)); return; }
   e.updatedAt=Date.now(); ov[key]=e; clStoreSave(ov);
-  clSupaUpsert(key, e);
+  var _cloud=clSupaUpsert(key, e);
   var _n=clPropagaAPratiche(key, e);
   if(typeof tcToastNew==='function'){
     tcToastNew('\ud83d\udcbe Anagrafica salvata'
       + (_n ? (' \u00b7 aggiornate '+_n+(_n===1?' pratica':' pratiche')) : ''), true);
   }
   clRender();
+  /* 28/11/2026: conferma ben visibile accanto al pulsante (il riquadro in
+     basso poteva sfuggire): prima "salvo...", poi l'esito del cloud. */
+  var ora=new Date(), hh=('0'+ora.getHours()).slice(-2)+':'+('0'+ora.getMinutes()).slice(-2);
+  var mostra=function(ok, testo){
+    var b=document.getElementById('cl-salva-btn'), es=document.getElementById('cl-salva-esito');
+    if(b){ b.textContent=ok===false?'\u26a0\ufe0f Salvata solo qui':(ok?'\u2705 Anagrafica salvata':'\u23f3 Salvo\u2026'); b.style.background=ok===false?'#b45309':(ok?'#15803d':'#64748b'); }
+    if(es){ es.style.color=ok===false?'#b45309':(ok?'#15803d':'#64748b'); es.textContent=testo||''; }
+  };
+  mostra(null, '');
+  var fine=function(ok){
+    mostra(ok, ok ? ('Salvata alle '+hh+(_n?(' \u00b7 aggiornate anche '+_n+(_n===1?' pratica':' pratiche')):''))
+                  : 'Salvata su questo PC, il cloud non ha risposto: riprover\u00e0 da solo appena torna la connessione.');
+    setTimeout(function(){ var b=document.getElementById('cl-salva-btn'); if(b){ b.textContent='\ud83d\udcbe Salva anagrafica'; b.style.background='#16a34a'; } }, 4000);
+  };
+  if(_cloud && typeof _cloud.then==='function') _cloud.then(function(ok){ fine(ok!==false); }, function(){ fine(false); });
+  else fine(!!(typeof sbClient==='function' && sbClient()));
 }
 function clAddIndForm(keyEnc){
   var box=document.getElementById('cl-addind'); if(!box) return;
@@ -39931,8 +39966,10 @@ function _cmpApri(cvId){
       prod:(q.length===3)?'1U':'1N', acc:'000000', tab:'8CK',
       valore:Math.round(_tot*100)/100, anticipo:Math.round((_tot-imp-_pk)*100)/100,
       mese:(q.length===3)?parseInt(q[1],10):'', anno:(q.length===3)?parseInt(q[0],10):'',
-      durata:(d.durata||60), cpi:'', cvt:'', gap:'', kasko:'',
-      provincia:String((cv.cliente&&cv.cliente.prov)||'').toUpperCase().trim(),
+      /* Compass, valori di partenza fissi (28/11/2026, Davide):
+         provincia MB, durata 60 mesi, polizza CVT PREMIUM */
+      durata:60, cpi:'', cvt:'PREMIUM', gap:'', kasko:'',
+      provincia:'MB',
       durataCop:60, cfi:'', pagamento:'SDD'
     };
     var p=Object.assign({}, def, prima||{});
@@ -39991,10 +40028,13 @@ function cmpModuloHtml(p){
       +'<div id="cmp_ris"></div>';
 }
 function cmpAvvia(p){
-    window._cmpIniziale=p;
+    window._cmpIniziale=p; window._cmpNetFatto=false;
     cmpTabRefresh(p.tab, p.durata);
     /* polizze scelte la volta prima */
-    ['cpi','cvt','gap','kasko'].forEach(function(k){ var e=document.getElementById('cmp_'+k); if(e && p[k]) e.value=p[k]; });
+    ['cpi','cvt','gap','kasko'].forEach(function(k){ var e=document.getElementById('cmp_'+k); if(e && p[k]){
+      /* confronto senza spazi: nelle tabelle i nomi possono averne */
+      var o=Array.prototype.filter.call(e.options, function(x){ return String(x.value).trim().toUpperCase()===String(p[k]).trim().toUpperCase(); })[0];
+      if(o) e.value=o.value; } });
     cmpCalcNow();
 }
 /* ===== COMPASS NEL PREVENTIVO =====
@@ -40029,8 +40069,8 @@ function cmpDaPreventivo(idx){
       var def={ prod:(q.length===3)?'1U':'1N', acc:'000000', tab:'8CK',
         valore:Math.round(_tot*100)/100, anticipo:Math.round((_tot-imp-_pk)*100)/100,
         mese:(q.length===3)?parseInt(q[1],10):'', anno:(q.length===3)?parseInt(q[0],10):'',
-        durata:((typeof cvNum==='function')?cvNum(pag.rate):parseInt(pag.rate,10))||60, cpi:'', cvt:'', gap:'', kasko:'',
-        provincia:String((_cv.cliente&&_cv.cliente.prov)||'').toUpperCase().trim(), durataCop:60, cfi:'', pagamento:'SDD' };
+        durata:60, cpi:'', cvt:'PREMIUM', gap:'', kasko:'',
+        provincia:'MB', durataCop:60, cfi:'', pagamento:'SDD' };
       /* simulazione gia' fatta su questo pagamento: si riparte da li', ma
          valore e anticipo seguono sempre il preventivo di adesso */
       var p=Object.assign({}, def, pag.compassStato||{}, { valore:def.valore, anticipo:def.anticipo });
@@ -40092,7 +40132,7 @@ function cmpStandalone(){
   cmpCaricaTabelle(function(ok){
     if(!ok){ w.innerHTML='<div style="padding:40px 16px;text-align:center;color:#b91c1c;">Tabelle Compass non disponibili.</div>'; return; }
     var p=window._cmpStandaloneUltimo||{ prod:'1U', acc:'000000', tab:'8CK', valore:'', anticipo:'', mese:'', anno:'',
-      durata:60, cpi:'', cvt:'', gap:'', kasko:'', provincia:'MI', durataCop:60, cfi:'', pagamento:'SDD' };
+      durata:60, cpi:'', cvt:'PREMIUM', gap:'', kasko:'', provincia:'MB', durataCop:60, cfi:'', pagamento:'SDD' };
     w.innerHTML=simBarraFin()+cmpModuloHtml(p);
     cmpAvvia(p);
   });
@@ -40125,6 +40165,15 @@ function cmpDurRefresh(durSel){
   };
   riempi('cpi', el.cpi, {AIGA7:'CPI AIGA7', AIGA8:'CPI AIGA8'});
   riempi('cvt', el.cvt); riempi('gap', el.gap); riempi('kasko', el.kasko, {KASK1:'KASKO'});
+  /* CVT PREMIUM di partenza (il valore nelle tabelle puo' avere spazi) */
+  try{
+    var ec=document.getElementById('cmp_cvt');
+    if(ec && !ec.value && !window._cmpNetFatto){
+      window._cmpNetFatto=true;
+      var on=Array.prototype.filter.call(ec.options, function(o){ return /^\s*PREMIUM\s*$/i.test(o.value); })[0];
+      if(on){ ec.value=on.value; }
+    }
+  }catch(e){}
 }
 var _cmpT=null;
 function cmpCalcSoon(){ clearTimeout(_cmpT); _cmpT=setTimeout(cmpCalcNow, 250); }
@@ -40876,6 +40925,19 @@ function simRender(){
   var prodotti = simLista('prodotti','B',4,12);
   var cpi      = ['NO'].concat(simLista('assicurazioni','B',4,6));
   var cvt      = ['NO'].concat(simLista('assicurazioni','E',5,20));
+  /* 28/11/2026, valori di partenza (Davide): polizza CVT NET, durata 60
+     mesi, provincia MB. Si mettono la prima volta che si apre il simulatore;
+     poi restano le scelte fatte a mano. */
+  if(!window._simDefaultFatti){
+    window._simDefaultFatti=true;
+    try{
+      var _net=cvt.filter(function(x){ return /^\s*NET\b/i.test(String(x)); })[0];
+      if(_net) simSet('C24', _net);
+      simSet('D24', 60);
+      if(simProvince().indexOf('MB')>=0) simSet('E24', 'MB');
+      if(!(simNum(simGet('E10'))>0)) simSet('E10', 60);
+    }catch(e){}
+  }
   var durate   = ['12','24','36','48','60','72'];
   var care     = ['NO','12','24','36','48','60'];
   var prov     = simProvince();
@@ -45304,14 +45366,17 @@ function supaUpsert(table, rec, dallaCoda){
   if(!sb){ supaCodaMetti(table, rec); supaSegnalaErrore(table, 'Supabase non raggiungibile'); return; }
   try{
     var _rec=rec, _ts=rec.updatedAt||0;
-    sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){
-      if(res&&res.error){ supaCodaMetti(table, _rec); supaSegnalaErrore(table, res.error.message); }
+    /* restituisce true/false: chi vuole sapere se e' arrivato sul cloud
+       (es. la conferma di "Salva anagrafica") puo' aspettare il risultato */
+    return sb.from(table).upsert({ id:String(rec.id), data:rec }).then(function(res){
+      if(res&&res.error){ supaCodaMetti(table, _rec); supaSegnalaErrore(table, res.error.message); return false; }
       else {
         /* tolgo dalla coda solo se nel frattempo non e' arrivata una versione piu' nuova */
         try{ var q=supaCodaLeggi(), k=table+'|'+_rec.id; if(q[k] && ((q[k].rec&&q[k].rec.updatedAt)||0)<=_ts){ delete q[k]; supaCodaScrivi(q); } }catch(e){}
         _supaErrVisti[table]=0; supaFasciaOk();
+        return true;
       }
-    }, function(err){ supaCodaMetti(table, _rec); supaSegnalaErrore(table, (err&&err.message)||err); });
+    }, function(err){ supaCodaMetti(table, _rec); supaSegnalaErrore(table, (err&&err.message)||err); return false; });
   }catch(e){ supaCodaMetti(table, rec); supaSegnalaErrore(table, (e&&e.message)||e); }
 }
 /* ===== SCRITTURE AUTOMATICHE: SOLO SE LA COPIA E' FRESCA =====
