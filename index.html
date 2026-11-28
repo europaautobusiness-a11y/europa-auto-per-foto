@@ -44877,6 +44877,37 @@ function cvRecWa(id, tipo){
     })
     .catch(function(){ ripiego(); });
 }
+/* Le richieste di recensione mandate su WhatsApp PRIMA che la chat le
+   registrasse (fino al 28/11/2026) si aggiungono una volta nella chat,
+   con la loro data vera: cosi' anche quelle si vedono nella conversazione
+   del cliente. Si fa una volta per dispositivo; rifarlo non crea doppioni
+   (stesso identificativo). */
+var CV_REC_CHAT_DAL=Date.parse('2026-11-28T17:00:00+01:00');
+function cvRecRecuperaChat(){
+  try{
+    if(localStorage.getItem('ea_rec_chat_recupero')==='fatto') return;
+    var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+    if(typeof _currentUserEmail==='undefined' || !_currentUserEmail) return;
+    var righe=[];
+    cvLoad().forEach(function(cv){
+      if(!cv || !cv.cliente) return;
+      var tutte=[].concat(cv.recensionePrecedenti||[], cv.recensione?[cv.recensione]:[]);
+      tutte.forEach(function(r){
+        if(!r || r.canale!=='whatsapp' || !r.richiestaTs || r.richiestaTs>=CV_REC_CHAT_DAL) return;
+        var num=(typeof waNum==='function')?waNum(cv.cliente.telefono):String(cv.cliente.telefono||'').replace(/\D/g,'');
+        if(!num) return;
+        var tipo=cvRecTipo(r.tipo), testo=''; try{ testo=cvRecTesto(cv, tipo).testo; }catch(e){}
+        righe.push({ id:'recensione_'+cv.id+'_'+r.richiestaTs, data:{
+          telefono:num, nome:((cv.cliente.nome||'')+' '+(cv.cliente.cognome||'')).trim(), direzione:'out', tipo:'template',
+          testo:'\u2b50 Richiesta recensione ('+((CV_REC_TIPI[tipo]&&CV_REC_TIPI[tipo].etichetta)||tipo)+')'+(testo?('\n\n'+testo):''),
+          ts:r.richiestaTs, stato:'sent', da:'', recensione:{ cvId:cv.id, tipo:tipo, recuperata:true } } });
+      });
+    });
+    if(!righe.length){ localStorage.setItem('ea_rec_chat_recupero','fatto'); return; }
+    sb.from('wa_messaggi').upsert(righe).then(function(r){ if(r && !r.error) localStorage.setItem('ea_rec_chat_recupero','fatto'); }, function(){});
+  }catch(e){}
+}
+(function(){ var n=0; var t=setInterval(function(){ n++; if((typeof _currentUserEmail!=='undefined' && _currentUserEmail && typeof cvLoad==='function' && cvLoad().length) || n>60){ clearInterval(t); cvRecRecuperaChat(); } }, 2000); })();
 function cvRecMail(id, tipo){
   tipo=cvRecTipo(tipo);
   var cv=cvLoad().filter(function(x){return x.id===id;})[0]; if(!cv) return;
