@@ -44835,7 +44835,22 @@ function cvRecWa(id, tipo){
   if(cv.recensione && cv.recensione.richiestaTs){ alert('La richiesta di recensione a questo cliente \u00e8 gi\u00e0 stata mandata. Per rimandarla usa il tasto Rimanda.'); return; }
   var r0=cvRecTesto(cv, tipo), testo=r0.testo;
 
-  var ripiego=function(){ waOpen(tel, testo); cvRecSegna(id, 'whatsapp', tipo); };
+  /* 28/11/2026: la richiesta si scrive anche nella chat WhatsApp del
+     gestionale (icona accanto alla campanella), come i messaggi scritti a
+     mano: aprendo la conversazione del cliente si vede cosa e' partito. */
+  var registra=function(stato, idMeta, nota){
+    try{
+      var sb=(typeof sbClient==='function')?sbClient():null; if(!sb) return;
+      var num=(typeof waNum==='function')?waNum(tel):String(tel).replace(/\D/g,'');
+      var nomeCl=((cv.cliente&&((cv.cliente.nome||'')+' '+(cv.cliente.cognome||'')))||'').trim();
+      var etich=(CV_REC_TIPI[tipo]&&CV_REC_TIPI[tipo].etichetta)||tipo;
+      var rec={ telefono:num, nome:nomeCl, direzione:'out', tipo:(stato==='manuale'?'text':'template'),
+                testo:'\u2b50 Richiesta recensione ('+etich+')'+(nota?(' \u2014 '+nota):'')+'\n\n'+testo,
+                ts:Date.now(), stato:stato, da:(typeof _currentUserEmail!=='undefined'?_currentUserEmail:''), recensione:{ cvId:id, tipo:tipo } };
+      sb.from('wa_messaggi').upsert({ id:idMeta||('recensione_'+id+'_'+Date.now()), data:rec }).then(function(){ try{ if(typeof waChatCarica==='function' && document.getElementById('wa-chat')) waChatCarica(); }catch(e){} },function(){});
+    }catch(e){}
+  };
+  var ripiego=function(){ waOpen(tel, testo); cvRecSegna(id, 'whatsapp', tipo); registra('manuale', null, 'aperta su WhatsApp, inviata a mano'); };
 
   if(typeof waApiInvia!=='function' || typeof waNumero!=='function'){ ripiego(); return; }
 
@@ -44849,6 +44864,7 @@ function cvRecWa(id, tipo){
     .then(function(r){
       if(r && (r.ok===true || r.messages)){
         cvRecSegna(id, 'whatsapp', tipo);
+        registra('sent', r.id || (r.messages&&r.messages[0]&&r.messages[0].id) || null);
         try{
           if(typeof tcToastNew==='function') tcToastNew('Richiesta di recensione inviata su WhatsApp', true);
           if(typeof notifPush==='function') notifPush('Recensione chiesta su WhatsApp \u2014 '+((cv.cliente&&cv.cliente.cognome)||''), '\u2b50');
